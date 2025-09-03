@@ -1,160 +1,177 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { RouterView } from "vue-router";
+import { themeChange } from "theme-change";
+import { onMounted } from "vue";
 
-const greetMsg = ref("");
-const name = ref("");
+onMounted(() => {
+  themeChange(false);
+});
 
-async function greet() {
-  // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-  greetMsg.value = await invoke("greet", { name: name.value });
-}
+const themeList = [
+  "light",
+  "dark",
+  "cupcake",
+  "bumblebee",
+  "emerald",
+  "corporate",
+  "synthwave",
+  "retro",
+  "cyberpunk",
+  "valentine",
+  "halloween",
+  "garden",
+  "forest",
+  "aqua",
+  "lofi",
+  "pastel",
+  "fantasy",
+  "wireframe",
+  "black",
+  "luxury",
+  "dracula",
+  "cmyk",
+  "autumn",
+  "business",
+  "acid",
+  "lemonade",
+  "night",
+  "coffee",
+  "winter",
+  "dim",
+  "nord",
+  "sunset",
+  "caramellatte",
+  "abyss",
+  "silk",
+];
 </script>
 
 <template>
-  <main class="container">
-    <h1>Welcome to Tauri + Vue</h1>
-
-    <div class="row">
-      <a href="https://vitejs.dev" target="_blank">
-        <img src="/vite.svg" class="logo vite" alt="Vite logo" />
-      </a>
-      <a href="https://tauri.app" target="_blank">
-        <img src="/tauri.svg" class="logo tauri" alt="Tauri logo" />
-      </a>
-      <a href="https://vuejs.org/" target="_blank">
-        <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
-      </a>
-    </div>
-    <p>Click on the Tauri, Vite, and Vue logos to learn more.</p>
-
-    <form class="row" @submit.prevent="greet">
-      <input id="greet-input" v-model="name" placeholder="Enter a name..." />
-      <button type="submit">Greet</button>
-    </form>
-    <p>{{ greetMsg }}</p>
-  </main>
+  <header class="fixed p-2 flex w-full justify-end z-10">
+    <button
+      class="btn group btn-sm gap-1.5 px-1.5 btn-ghost"
+      popovertarget="theme-chooser"
+      style="anchor-name: --anchor-theme-chooser"
+    >
+      <div
+        class="bg-base-100 group-hover:border-base-content/20 border-base-content/10 grid shrink-0 grid-cols-2 gap-0.5 rounded-md border p-1 transition-colors"
+      >
+        <div class="bg-base-content size-1 rounded-full"></div>
+        <div class="bg-primary size-1 rounded-full"></div>
+        <div class="bg-secondary size-1 rounded-full"></div>
+        <div class="bg-accent size-1 rounded-full"></div>
+      </div>
+      <svg
+        width="12px"
+        height="12px"
+        class="mt-px hidden size-2 fill-current opacity-60 sm:inline-block"
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 2048 2048"
+      >
+        <path
+          d="M1799 349l242 241-1017 1017L7 590l242-241 775 775 775-775z"
+        ></path>
+      </svg>
+    </button>
+    <ul
+      class="dropdown dropdown-end menu w-48 max-h-[calc(100vh-32*var(--spacing))] rounded-box bg-base-100 shadow-sm"
+      popover
+      id="theme-chooser"
+      style="position-anchor: --anchor-theme-chooser"
+    >
+      <li class="menu-title text-xs">主题</li>
+      <li v-for="theme in themeList" :key="theme">
+        <button
+          class="gap-3 px-2 [&_svg]:visible"
+          :data-set-theme="theme"
+          data-act-class="[&_svg]:visible"
+        >
+          <div
+            :data-theme="theme"
+            class="bg-base-100 grid shrink-0 grid-cols-2 gap-0.5 rounded-md p-1 shadow-sm"
+          >
+            <div class="bg-base-content size-1 rounded-full"></div>
+            <div class="bg-primary size-1 rounded-full"></div>
+            <div class="bg-secondary size-1 rounded-full"></div>
+            <div class="bg-accent size-1 rounded-full"></div>
+          </div>
+          <div class="flex-1 truncate">{{ theme }}</div>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            class="invisible h-3 w-3 shrink-0"
+          >
+            <path
+              d="M20.285 2l-11.285 11.567-5.286-5.011-3.714 3.716 9 8.728 15-15.285z"
+            ></path>
+          </svg>
+        </button>
+      </li>
+    </ul>
+  </header>
+  <RouterView />
 </template>
 
-<style scoped>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #249b73);
-}
-
-</style>
+<!--suppress CssUnusedSymbol -->
 <style>
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes: all;
+}
+@plugin "@tailwindcss/typography";
 
-  color: #0f0f0f;
-  background-color: #f6f6f6;
+@custom-variant dark (&:where(
+  [data-theme=dark],
+  [data-theme=dark] *,
+  [data-theme=synthwave],
+  [data-theme=synthwave] *,
+  [data-theme=halloween],
+  [data-theme=halloween] *,
+  [data-theme=forest],
+  [data-theme=forest] *,
+  [data-theme=black],
+  [data-theme=black] *,
+  [data-theme=luxury],
+  [data-theme=luxury] *,
+  [data-theme=dracula],
+  [data-theme=dracula] *,
+  [data-theme=business],
+  [data-theme=business] *,
+  [data-theme=night],
+  [data-theme=night] *,
+  [data-theme=coffee],
+  [data-theme=coffee] *
+  [data-theme=dim],
+  [data-theme=dim] *,
+  [data-theme=sunset],
+  [data-theme=sunset] *,
+  [data-theme=abyss],
+  [data-theme=abyss] *,
+));
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
+#app {
+  width: 100%;
+  height: 100vh;
 }
 
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
+.list-move, /* 对移动中的元素应用的过渡 */
+.list-enter-active,
+.list-leave-active {
+  transition: all 0.5s ease;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
+.list-enter-from,
+.list-leave-to {
+  opacity: 0;
+  transform: translateX(30px);
 }
 
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
+/* 确保将离开的元素从布局流中删除
+  以便能够正确地计算移动的动画。 */
+.list-leave-active {
+  position: absolute;
 }
-
-.row {
-  display: flex;
-  justify-content: center;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
-
-  a:hover {
-    color: #24c8db;
-  }
-
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
-  }
-}
-
 </style>

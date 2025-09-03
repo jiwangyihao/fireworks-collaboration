@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    fireworks_collaboration_lib::run()
+    fireworks_collaboration_lib::run();
 }
