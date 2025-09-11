@@ -12,11 +12,29 @@ dist
 dist-ssr
 *.local
 
+# Vite / Vitest / Build caches
+.vite
+coverage
+*.tsbuildinfo
+.eslintcache
+
+# Package manager store
+.pnpm-store
+
+# Tauri / Rust build outputs
+src-tauri/target/
+
+# Env files
+.env
+.env.*
+!.env.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
+Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj
