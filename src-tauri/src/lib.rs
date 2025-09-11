@@ -4,7 +4,19 @@ use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 use tauri::State;
+use tauri::Manager;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+mod logging;
+mod events;
+mod core;
+
+use core::config::{loader as cfg_loader, model::AppConfig};
+
+type SharedConfig = Arc<Mutex<AppConfig>>;
+// 新增：配置基目录（由 Tauri 的 app_config_dir 决定）
+type ConfigBaseDir = PathBuf;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct OAuthCallbackData {
@@ -40,6 +52,23 @@ type OAuthState = Arc<Mutex<Option<OAuthCallbackData>>>;
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+// 新增：获取配置
+#[tauri::command]
+async fn get_config(cfg: State<'_, SharedConfig>) -> Result<AppConfig, String> {
+    cfg.lock().map(|c| c.clone()).map_err(|e| e.to_string())
+}
+
+// 新增：设置并保存配置
+#[tauri::command]
+#[allow(non_snake_case)]
+async fn set_config(newCfg: AppConfig, cfg: State<'_, SharedConfig>, base: State<'_, ConfigBaseDir>) -> Result<(), String> {
+    {
+        let mut guard = cfg.lock().map_err(|e| e.to_string())?;
+        *guard = newCfg.clone();
+    }
+    cfg_loader::save_at(&newCfg, &*base).map_err(|e| e.to_string())
 }
 
 // 启动简单的 HTTP 服务器来处理 OAuth 回调
@@ -350,7 +379,10 @@ fn get_system_proxy() -> Result<SystemProxy, String> { Ok(inner_get_system_proxy
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    // 初始化日志
+    logging::init_logging();
+
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
@@ -361,8 +393,27 @@ pub fn run() {
             start_oauth_server,
             get_oauth_callback_data,
             clear_oauth_state,
-            get_system_proxy
-        ])
+            get_system_proxy,
+            get_config,
+            set_config,
+        ]);
+
+    // 在 setup 中解析系统应用配置目录并加载配置，然后注入全局状态
+    builder = builder.setup(|app| {
+        let base_dir: PathBuf = app
+            .path()
+            .app_config_dir()
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        // 确保目录存在并加载/创建配置
+        let cfg = cfg_loader::load_or_init_at(&base_dir).unwrap_or_default();
+        tracing::info!(target = "config", base = %base_dir.display(), level = %cfg.logging.log_level, "loaded config");
+        // 注入状态
+        app.manage(Arc::new(Mutex::new(cfg)) as SharedConfig);
+        app.manage::<ConfigBaseDir>(base_dir);
+        Ok(())
+    });
+
+    builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -23,6 +23,13 @@ tauri-plugin-shell = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-http = "2"
 urlencoding = "2.1"
+# 新增：日志与错误、工具类依赖（P0.1）
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+anyhow = "1"
+thiserror = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+base64 = "0.22"
 
 # Windows specific dependencies for registry access
 [target.'cfg(windows)'.dependencies]

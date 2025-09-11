@@ -91,7 +91,7 @@ src/
 
 ## 3. 配置文件（P0 最小字段）
 
-`config/config.json` 示例（仅当前需要）：
+配置文件示例（仅当前需要）：
 ```json
 {
   "http": {
@@ -117,9 +117,13 @@ src/
 }
 ```
 
+存储位置（P0.1 实际实现）：
+- 写入 Tauri 应用配置目录 app_config_dir：`<app_config_dir>/config/config.json`
+  - Windows 示例：`%APPDATA%/top.jwyihao.fireworks-collaboration/config/config.json`
+
 加载策略：
 - 启动时读取（不存在则写入默认模板）
-- set_config 保存：整体覆盖写回（暂不热更新事件）
+- `set_config(newCfg)` 保存：整体覆盖写回 app_config_dir（同时更新内存），不触发应用重启（dev）
 
 ---
 
