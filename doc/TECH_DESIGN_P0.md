@@ -1,0 +1,499 @@
+# P0 阶段细化版行动指南与 Roadmap
+
+> 目标：在最短可控周期内交付“可用、可测、安全基线可接受”的首个技术增量：
+> 1) 通用伪 SNI HTTP 请求 API（含 SAN 白名单 + 可配置伪 SNI + 日志脱敏）
+> 2) 基础 Git Clone（基于 gitoxide）
+> 3) 任务模型（注册 / 状态 / 事件 / 取消）及前端展示
+> 4) TLS 自定义验证（SAN 白名单）
+> 5) 最小配置体系（静态加载 + 写回）
+> 6) 基础日志与错误分类（初级版）
+
+---
+
+## 0. 总览节拍（建议 2–3 周内完成）
+
+| 子阶段 | 名称 | 主要交付 | 预估 | 依赖 |
+|--------|------|----------|------|------|
+| P0.1 | 基础环境与骨架 | 目录、依赖、事件通道、配置加载 | 0.5~1d | 无 |
+| P0.2 | 任务基础设施 | TaskRegistry + 事件发射 + 取消 Token | 1d | P0.1 |
+| P0.3 | TLS & 验证器 | rustls 集成 + SAN 白名单 + 伪 SNI 选项判定 | 1d | P0.1 |
+| P0.4 | HTTP 客户端核心 | hyper/rustls 统一封装 + timing 采集 | 1.5d | P0.3 |
+| P0.5 | http_fake_request API | Tauri command + 日志脱敏 + 大响应 WARN | 1d | P0.4 |
+| P0.6 | Git Clone 基础 | gitoxide 集成 + 任务事件（progress/state） | 1.5d | P0.2 |
+| P0.7 | 前端面板与可视化 | HTTP Tester + Git Clone 面板 + 任务列表 | 2d | P0.2 / P0.5 / P0.6 |
+| P0.8 | 测试与校验 | 单元 + 集成 + 手动脚本 + 基线性能 | 1.5d | 前全部 |
+| P0.9 | 文档与初发布 | README / 开发指南 / 变更日志 | 0.5d | P0.8 |
+
+*如资源紧张，可将 P0.7 拆成：先任务列表 + HTTP Tester，再补 Git Panel*
+
+---
+
+## 1. 范围边界（只做 / 不做）
+
+| 只做 | 说明 |
+|------|------|
+| HTTP 单次完整请求（内存缓冲 body） | 不实现流式 |
+| Fake SNI 手动开关 + 静态伪域 | 不做动态策略 |
+| SAN 白名单静态配置 | 不支持运行时热更新 |
+| Git Clone 单 Remote（HTTPS） | 不做 shallow / partial / retry 优化 |
+| 任务取消协作式 | 不做强制硬中断 |
+| 配置启动加载 + 手动保存覆盖 | 不做文件监测热更新 |
+| 日志脱敏（Authorization） | 仅简单替换 **REDACTED** |
+| 错误分类基础版 | 不做细粒度错误码体系 |
+
+| 不做 | 理由 |
+|------|------|
+| IP 优选 / 代理 / Push / Fetch | 后续阶段 |
+| SPKI Pin / 指纹事件 | 属于 P7 |
+| 指标系统 (metrics) | P9 |
+| LFS / Streaming / HTTP/2 | 后续演进 |
+| 任务策略覆盖 | P2+ |
+| 大文件 body 流式处理 | P10 预研 |
+
+---
+
+## 2. 代码结构（首批落地最小骨架）
+
+```
+src-tauri/
+  src/
+    main.rs
+    events/
+      emitter.rs
+    api/
+      http_fake_api.rs
+      git_api.rs
+      task_api.rs
+      config_api.rs
+    core/
+      tasks/{mod.rs, registry.rs, model.rs}
+      http/{mod.rs, client.rs, types.rs}
+      tls/{mod.rs, verifier.rs}
+      git/{mod.rs, clone.rs, progress.rs}
+      config/{mod.rs, model.rs, loader.rs}
+      util/{base64.rs, timing.rs, redact.rs, error.rs}
+    logging.rs
+config/
+  config.json (初始模板)
+src/
+  api/tauri.ts
+  api/http.ts
+  api/git.ts
+  api/tasks.ts
+  stores/tasks.ts
+  stores/logs.ts
+  views/HttpTester.vue
+  views/GitPanel.vue
+  components/TaskList.vue
+```
+
+---
+
+## 3. 配置文件（P0 最小字段）
+
+`config/config.json` 示例（仅当前需要）：
+```json
+{
+  "http": {
+    "fakeSniEnabled": true,
+    "fakeSniHost": "baidu.com",
+    "followRedirects": true,
+    "maxRedirects": 5,
+    "largeBodyWarnBytes": 5242880
+  },
+  "tls": {
+    "sanWhitelist": [
+      "github.com",
+      "*.github.com",
+      "*.githubusercontent.com",
+      "*.githubassets.com",
+      "codeload.github.com"
+    ]
+  },
+  "logging": {
+    "authHeaderMasked": true,
+    "logLevel": "info"
+  }
+}
+```
+
+加载策略：
+- 启动时读取（不存在则写入默认模板）
+- set_config 保存：整体覆盖写回（暂不热更新事件）
+
+---
+
+## 4. 详细任务拆解（按子阶段）
+
+### P0.1 基础环境与骨架
+1. 添加依赖（Cargo.toml）：
+    - hyper, hyper-rustls, rustls, tokio, tracing, serde, serde_json, anyhow, thiserror, uuid, base64
+    - gitoxide（`git-repository` crate）
+2. 初始化 tracing（logging.rs）
+3. 事件发射器（基于 Tauri `app_handle.emit_all` 封装）
+4. 配置模块：
+    - model.rs 定义 Config 结构
+    - loader.rs：`load_or_init()`, `save(cfg)`
+5. 前端：创建 store（tasks/logs）+ 基础 Tauri invoke 封装
+
+验收：应用启动无 panic；前端能获取配置（get_config）。
+
+### P0.2 任务基础设施
+1. 定义 TaskKind / TaskState / TaskMeta
+2. TaskRegistry:
+    - create() -> (task_id, token)
+    - update_state()
+    - snapshot(id) / list()
+    - cancel(id)
+3. 事件：
+    - `task://state` {taskId, state, kind}
+    - `task://progress` {taskId, progressType, value...}
+4. 取消：
+    - 使用 `CancellationToken`；任务内部周期性检查
+
+验收：模拟启动一个“假任务”（sleep）并能取消；前端任务列表实时刷新。
+
+### P0.3 TLS 验证器
+1. 自定义 `ServerCertVerifier` 包装 rustls 默认验证
+2. 解析证书 SAN（使用 `x509-parser` 或 rustls 提供的 API，如果引入额外 crate 则标记依赖）
+3. SAN 白名单匹配（支持通配符 `*.github.com`）
+4. Fake SNI 判定逻辑函数：
+   ```
+   fn should_use_fake(cfg, force_real: bool) -> bool
+   ```
+5. 错误归类：返回自定义 Error（ErrorCategory::Verify）
+
+验收：对 github.com 正常；对非白名单域（如 example.com）应返回 SAN mismatch。
+
+### P0.4 HTTP 客户端核心
+1. 建立 `HttpClient`（内部管理 hyper::Client<HttpsConnector>）
+2. 连接阶段分解 timing：
+    - DNS（可暂不单独分，标记为 0）
+    - TCP connect
+    - TLS handshake
+    - 首字节 & 总时长
+3. 支持伪 SNI：
+    - 若 fake，构造 rustls `ServerName` 为伪域；但 Host 头仍使用真实域
+4. 响应：
+    - 读取全量 body -> Vec<u8>
+    - 大小超警阈值 -> warn 日志
+5. 返回结构 HttpFakeResp（含 timing / usedFakeSni / body_base64 / status / headers）
+
+验收：调用 API 请求 github.com 正常返回；fakeSniEnabled 切换后 usedFakeSni 字段变化。
+
+### P0.5 http_fake_request API
+1. Tauri command 参数映射前端模型
+2. 校验 URL 协议 https://
+3. 白名单域校验
+4. 授权头脱敏日志：
+    - 记录前：对 headers["Authorization"] 使用固定占位
+5. 重定向（初版可简单跟随，保留计数；超限报错）
+6. 错误分类映射：
+    - 超时 / IO -> Network
+    - TLS handshake -> Tls
+    - SAN mismatch -> Verify
+7. 前端 HttpTester.vue：
+    - 表单：URL / Method / Headers / Body（可选）
+    - 显示：Status / Timing / Body (decoded text 预览) / usedFakeSni
+
+验收：可对 `https://github.com/` 发请求获 200；关闭白名单时（测试） -> 拒绝；伪 SNI on/off 可见差异。
+
+### P0.6 Git Clone 基础
+1. 引入 gitoxide：使用 `git_repository::clone::fetch_then_checkout(...)` 或等价 API
+2. 包装为异步（spawn blocking）
+3. 进度回调：
+    - side-band 进度解析（对象数量 / bytes）
+    - 发送 `git://progress` 或复用 `task://progress`
+4. 错误分类：
+    - 网络失败：Network
+    - 协议解析：Protocol
+5. 取消支持：
+    - 在循环/回调中检查 token；若取消 -> 中断返回 Err(Cancel)
+6. API：
+    - `git_clone(repo_url, dest_path)` 返回 taskId
+    - `git_cancel(taskId)`
+
+前端 GitPanel：
+- 输入：仓库 URL、保存路径（可用固定临时目录先行）
+- 展示：任务状态 + 进度条 + 取消按钮
+
+验收：克隆中型公开仓库（如 `https://github.com/rust-lang/log`）成功；取消在中途触发后任务状态= canceled。
+
+### P0.7 前端面板与可视化
+1. TaskList.vue：列表显示（ID / Kind / State / Start Time）
+2. GitPanel.vue：发起 clone + 进度条（对象数 / 已接收大小）
+3. HttpTester.vue：历史请求简表（保留最近 N 条）
+4. 全局错误提示（分类显示）
+5. 配置界面（简版）开关 fakeSniEnabled + 保存调用 set_config
+
+验收：单应用内同时进行多个 clone + HTTP 调试不会 UI 卡死；任务状态实时刷新。
+
+### P0.8 测试与校验
+1. Rust 单元测试：
+    - SAN 匹配（通配符 / 精确域）
+    - 脱敏函数 redact_auth()
+    - Fake SNI 判定逻辑
+2. 集成测试（可选feature `ci-tests`）：
+    - http_fake_request github.com 返回 200
+    - 白名单外域拒绝
+3. 手动脚本（docs/manual-tests.md）：
+    - 分别测 Fake SNI on/off
+    - 取消一个 clone
+4. 性能基线（人工记录）：
+    - Clone 同一仓库 vs 系统 git 时间（只做参考，不优化）
+
+验收：测试全部通过；关键路径无 panic；严重日志无 ERROR（除故意触发）
+
+### P0.9 文档与发布
+1. README 添加：
+    - P0 能力列表
+    - 构建步骤（pnpm install / cargo tauri dev）
+    - 安全基线（SAN 白名单 & 伪 SNI 行为）
+2. CONTRIBUTING（简版）
+3. CHANGELOG：`P0 Initial Delivery`
+4. 打标：创建 GitHub Release `v0.1.0-P0`
+
+验收：新开发者按 README 能运行并成功执行一次 clone + http_fake_request。
+
+---
+
+## 5. 事件与数据格式（P0 最低集）
+
+| 事件 | Payload 示例 |
+|------|--------------|
+| task://state | `{ "taskId":"...", "kind":"GitClone", "state":"running" }` |
+| task://progress | `{ "taskId":"...","kind":"GitClone","phase":"Receiving","objects":120,"bytes":1048576 }` |
+| task://error | `{ "taskId":"...","category":"Network","message":"timeout" }` |
+| http://fakeRequest (可选) | `{ "url":"https://github.com","status":200,"usedFakeSni":true,"connectMs":42 }` |
+
+（前端先至少处理 state / progress / error）
+
+---
+
+## 6. 错误分类（P0 最小映射表）
+
+| Rust 层错误来源 | 分类 |
+|-----------------|------|
+| IO (连接超时 / refused) | Network |
+| TLS handshake (rustls error) | Tls |
+| SAN mismatch | Verify |
+| gitoxide protocol decode | Protocol |
+| 用户调用 cancel | Cancel |
+| unwrap/panic (recover) | Internal |
+| 非 2xx HTTP | Network（或后续扩展 HTTPStatus） |
+
+---
+
+## 7. 日志策略
+
+| 级别 | 内容 |
+|------|------|
+| info | 启动 / 配置加载 / 任务开始/结束 |
+| warn | 大响应警告 / SAN 列表为空（防御） |
+| error | 任务失败原因（已脱敏） |
+| debug（可选） | TLS timing / redirect 链（默认关闭） |
+
+脱敏实现：
+```
+fn redact_auth(headers: &mut HeaderMap) {
+  if let Some(v) = headers.get_mut("Authorization") {
+    *v = HeaderValue::from_static("REDACTED");
+  }
+}
+```
+
+---
+
+## 8. 测试清单（快速版）
+
+| 类别 | 用例 | 预期 |
+|------|------|------|
+| SAN | github.com | OK |
+| SAN | api.github.com | OK (通配符) |
+| SAN | example.com | Verify Error |
+| Fake SNI | enabled + force_real=false | usedFakeSni=true |
+| Fake SNI | enabled + force_real=true | usedFakeSni=false |
+| HTTP Redirect | 301 -> final | redirect count ≤ max |
+| Large Body | 下载 > 阈值 | WARN 日志 |
+| Git Clone | 正常仓库 | Completed |
+| Git Cancel | 中途取消 | State=Canceled |
+| 多任务 | 2 clone + 1 http | 均正常，UI 不阻塞 |
+| 错误分类 | 非白名单域 | Verify |
+| 错误分类 | TLS 故意错误域（自建不可信证书，可跳过） | Tls |
+| 日志脱敏 | 带 Authorization | 日志中无 token |
+
+---
+
+## 9. 验收指标（P0 Done Definition）
+
+| 指标 | 标准 |
+|------|------|
+| 功能 | 可成功执行 http_fake_request（fake on/off）与 git clone（至少两个不同仓库） |
+| 任务 | 任务列表实时展示，取消有效 |
+| 安全 | 白名单拦截非授权域；Authorization 未出现在日志 |
+| 稳定 | 连续运行 3 次 clone + 5 次 HTTP 请求无崩溃 |
+| 可用性 | 新开发者 30 分钟内可成功构建并跑通 |
+| 文档 | README/CHANGELOG/基本贡献说明存在 |
+
+---
+
+## 10. 风险与即时缓解（仅 P0）
+
+| 风险 | 触发 | 缓解 |
+|------|------|------|
+| gitoxide 进度未正确传递 | API 差异 | 简化先只发送总 bytes；后续细化 |
+| Fake SNI 导致握手失败 | 某些网络策略 | 自动回退：失败后用真实 SNI 重试一次（P0 可直接 fail，记录 TODO） |
+| 前端状态丢失 | 刷新页面 | 低风险，P0 不持久化任务（标记 enhancement） |
+| 大响应耗内存 | 用户请求极大文件 | WARN + 建议后续 Streaming |
+| 证书解析依赖不稳定 | 解析 SAN 失败 | 若解析失败 -> Treat as verify error，记录日志 |
+
+---
+
+## 11. 后续进入 P1 的准备点（P0 内留 Hook）
+
+| 未来点 | P0 准备 |
+|--------|---------|
+| Retry 策略 | 预留 HttpStrategy.retry 结构（暂未使用） |
+| IP 优选 | http::client 内部 connect 抽象成 trait 接口 connect_host() |
+| 代理 | 预留构造 HttpClient 时的 ProxyConfig Option |
+| 指纹记录 | 在 TLS 验证成功路径上记录 leaf cert DER Hash（暂写 debug） |
+| Push/Fetch | Git 任务分类枚举预留 GitFetch/GitPush |
+
+---
+
+## 12. 建议每日迭代检查列表（Standup Checklist）
+
+- 昨日完成哪一子阶段清单项？
+- 今日计划是否会引入新依赖或结构变更？
+- 是否新增/修改公共接口（需要前端同步）？
+- 是否出现未记录的错误分类情况？ → 更新 mapping
+- 是否发现潜在流式需求提前暴露？ → 记录到 Backlog
+
+---
+
+## 13. Backlog（P0 实施中可能出现但不阻塞交付的项）
+
+| 项 | 说明 | 处理策略 |
+|----|------|----------|
+| Redirect 安全限制 | 同域 / 跨域策略增强 | 标记 P1 |
+| 任务持久化 | 重启恢复 | P2 考虑 |
+| Clone 目标路径冲突策略 | 覆盖 / 跳过 / 失败 | 先直接失败，记录 |
+| UI 任务过滤/搜索 | 体验增强 | P1+ |
+| Fake SNI 回退机制 | 失败自动真实 SNI | P3 与 Git 统一 |
+| 进度估算优化 | Git pack 深度估计 | 后期 |
+
+---
+
+## 14. 初始实现顺序（开发者可直接按此执行）
+
+1. 拉分支：`feature/p0-core`
+2. 添加依赖 & logging 初始化
+3. 配置模块 + 默认文件写入
+4. TaskRegistry + 简单测试
+5. TLS 验证器 + 白名单测试
+6. HTTP 客户端（含伪 SNI、timing）
+7. http_fake_request command + 前端 HttpTester
+8. git clone 封装 + 任务事件 + 前端 GitPanel
+9. 错误分类与日志脱敏完善
+10. 单元 & 手动测试清单执行
+11. 文档与整理 / tag v0.1.0-P0
+
+---
+
+## 15. 输出示例（关键接口约定）
+
+### Tauri Command：http_fake_request（请求/响应示例）
+
+请求：
+```json
+{
+  "url": "https://github.com/",
+  "method": "GET",
+  "headers": { "User-Agent": "P0Test" },
+  "bodyBase64": null,
+  "forceRealSni": false,
+  "followRedirects": true,
+  "maxRedirects": 5,
+  "timeoutMs": 30000
+}
+```
+
+响应：
+```json
+{
+  "ok": true,
+  "status": 200,
+  "usedFakeSni": true,
+  "ip": "140.82.xx.xx",
+  "timing": { "connectMs": 41, "tlsMs": 55, "firstByteMs": 120, "totalMs": 350 },
+  "headers": { "content-type": "text/html; charset=utf-8" },
+  "bodyBase64": "...",
+  "redirects": [],
+  "bodySize": 58231
+}
+```
+
+---
+
+## 16. 快速验收脚本建议（手动）
+
+```bash
+# 1. 启动应用后：
+# 2. 在 HTTP Tester 发请求：
+curl -I https://github.com  # 对比状态
+
+# 3. 切换 config fakeSniEnabled=false 再次请求比较 usedFakeSni 标志
+# 4. Git Clone (UI 发起) 目录检查是否完整
+# 5. Clone 过程中点击取消 -> 目录应不完整且任务状态=Canceled
+# 6. 检查日志：未出现 Authorization 原文
+```
+
+---
+
+## 17. 交付清单（完成时应打勾）
+
+- [ ] config.json 默认文件生成
+- [ ] SAN 白名单验证通过测试
+- [ ] http_fake_request 支持 Fake SNI
+- [ ] 大 body 警告日志
+- [ ] 任务注册 / 状态 / 取消
+- [ ] Git Clone 成功 + 进度事件可见
+- [ ] 错误分类基础可用
+- [ ] 授权头日志脱敏
+- [ ] 前端：任务列表 + GitPanel + HttpTester
+- [ ] README / CHANGELOG / 手动测试文档
+- [ ] v0.1.0-P0 tag
+
+---
+
+## 18. 如需并行分工建议
+
+| 角色 | 并行切块 |
+|------|----------|
+| Backend A | TaskRegistry + Git Clone 封装 |
+| Backend B | TLS 验证器 + HTTP 客户端 |
+| Frontend A | Task store + TaskList + GitPanel |
+| Frontend B | HttpTester + 配置界面 |
+| QA/Support | 用例草拟 + 手动脚本 + 文档校对 |
+
+每日合并顺序：先核心库（tasks / tls / http），再 API，最后前端对接。
+
+---
+
+## 19. 成功标志（业务/体验角度）
+
+- “我能快速诊断某个网络路径（fake on/off 差异）”
+- “我能看到 Git 克隆实时进度并随时取消”
+- “我不会因为误操作访问一个非 GitHub 域”
+- “授权凭证不会泄漏到日志”
+
+---
+
+## 20. 下一阶段衔接提示（P1 准备）
+
+在完成 P0 后，可立即创建以下 Issue：
+1. Support Git Fetch / Push
+2. Introduce retry strategy in HttpClient
+3. Add per-task strategy override placeholder
+4. Improve progress granularity (objects vs bytes)
+5. Optional: fallback to real SNI on fake failure
