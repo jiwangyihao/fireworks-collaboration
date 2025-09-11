@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { RouterView } from "vue-router";
 import { themeChange } from "theme-change";
-import { onMounted } from "vue";
+import { onMounted, provide, ref } from "vue";
+import { UserInfo } from "./utils/github-auth.ts";
 
 onMounted(() => {
   themeChange(false);
@@ -44,10 +45,23 @@ const themeList = [
   "abyss",
   "silk",
 ];
+
+const authenticated = ref(false);
+provide("authenticated", authenticated);
+const user = ref<UserInfo | null>(null);
+provide("user", user);
 </script>
 
 <template>
-  <header class="fixed p-2 flex w-full justify-end z-10">
+  <header class="fixed p-3 flex w-full h-14 gap-4 justify-end z-10">
+    <div v-if="user" class="flex items-center gap-2">
+      <div class="avatar">
+        <div class="h-7 w-7 rounded-full">
+          <img :src="user.avatar_url" />
+        </div>
+      </div>
+      <span class="font-bold text-sm">{{ user.name }}</span>
+    </div>
     <button
       class="btn group btn-sm gap-1.5 px-1.5 btn-ghost"
       popovertarget="theme-chooser"
@@ -123,6 +137,30 @@ const themeList = [
 }
 @plugin "@tailwindcss/typography";
 
+/*noinspection CssInvalidPropertyValue*/
+@plugin "daisyui/theme" {
+  name: "light";
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 1rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 2px;
+  --noise: 1;
+}
+
+/*noinspection CssInvalidPropertyValue*/
+@plugin "daisyui/theme" {
+  name: "dark";
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 1rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 2px;
+  --noise: 1;
+}
+
 @custom-variant dark (&:where(
   [data-theme=dark],
   [data-theme=dark] *,
@@ -151,6 +189,14 @@ const themeList = [
   [data-theme=abyss],
   [data-theme=abyss] *,
 ));
+
+@utility page {
+  @apply w-full min-w-full h-full prose flex flex-col p-4;
+}
+
+@utility vertical-lr {
+  writing-mode: vertical-lr;
+}
 
 #app {
   width: 100%;

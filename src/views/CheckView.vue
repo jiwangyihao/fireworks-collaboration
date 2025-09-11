@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { inject, onMounted, Ref, ref } from "vue";
 import {
   exchangeCodeForToken,
   getUserInfo,
@@ -7,6 +7,7 @@ import {
   removeAccessToken,
   saveAccessToken,
   startOAuthFlow,
+  UserInfo,
   validateToken,
 } from "../utils/github-auth";
 import { createCallbackServer } from "../utils/oauth-server";
@@ -30,31 +31,23 @@ const statusList = ref<Status[]>([
 
 const loginLoading = ref(false);
 const loginLabel = ref("从 GitHub 登录");
-const authenticated = ref(false);
+const authenticated = inject<Ref<boolean>>("authenticated", ref(false));
+const user = inject<Ref<UserInfo | null>>("user", ref(null));
 
 async function checkGitHubAuthentication() {
   const existingToken = await loadAccessToken();
   if (existingToken) {
     const isValid = await validateToken(existingToken);
     if (isValid) {
-      const userInfo = await getUserInfo(existingToken);
-      return {
-        authenticated: true,
-        user: userInfo,
-      };
+      user.value = await getUserInfo(existingToken);
+      authenticated.value = true;
+      return;
     } else {
       await removeAccessToken();
-      return {
-        authenticated: false,
-        user: null,
-      };
     }
-  } else {
-    return {
-      authenticated: false,
-      user: null,
-    };
   }
+  authenticated.value = false;
+  user.value = null;
 }
 
 async function authenticateGitHub() {
@@ -105,10 +98,10 @@ async function authenticateGitHub() {
   await saveAccessToken(accessToken);
 
   // 获取用户信息
-  const user = await getUserInfo(accessToken);
+  user.value = await getUserInfo(accessToken);
   authenticated.value = true;
-  if (authenticated.value && user) {
-    loginLabel.value = `你好，@${user.name || user.login}`;
+  if (authenticated.value && user.value) {
+    loginLabel.value = `你好，@${user.value.name || user.value.login}`;
   } else {
     loginLabel.value = "从 GitHub 登录";
   }
@@ -143,10 +136,9 @@ onMounted(async () => {
 
   loginLoading.value = true;
   loginLabel.value = "正在检查登录状态...";
-  const { authenticated: auth, user } = await checkGitHubAuthentication();
-  authenticated.value = auth;
-  if (auth && user) {
-    loginLabel.value = `你好，@${user.name || user.login}`;
+  await checkGitHubAuthentication();
+  if (authenticated.value && user.value) {
+    loginLabel.value = `你好，@${user.value.name || user.value.login}`;
   } else {
     loginLabel.value = "从 GitHub 登录";
   }
@@ -235,9 +227,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <main
-    class="w-full min-w-full h-full prose flex flex-col items-center justify-center"
-  >
+  <main class="page items-center justify-center">
     <h1>薪火笔记社 · 文档贡献工具</h1>
 
     <TransitionGroup name="list" tag="ul" class="max-w-1/2">
@@ -274,7 +264,7 @@ onMounted(async () => {
               await authenticateGitHub();
             }
             loginLoading = false;
-            await router.push('/test');
+            await router.push('/project');
           }
         }
       "
