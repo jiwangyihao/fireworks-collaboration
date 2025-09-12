@@ -13,6 +13,10 @@ export interface TaskProgressEventPayload {
   kind: string;
   phase: string;
   percent: number;
+  // P0.6 扩展：可选的 Git 进度指标（前端当前不消费，仅为兼容）
+  objects?: number;
+  bytes?: number;
+  total_hint?: number;
 }
 
 let unsubs: (() => void)[] = [];
@@ -50,4 +54,9 @@ export async function startSleepTask(ms: number) {
 
 export async function cancelTask(id: string) {
   return invoke<boolean>("task_cancel", { id });
+}
+
+// P0.6：启动 Git Clone 任务，返回 taskId
+export async function startGitClone(repo: string, dest: string) {
+  return invoke<string>("git_clone", { repo, dest });
 }
