@@ -266,6 +266,32 @@ src/
 
 验收：调用 API 请求 github.com 正常返回；fakeSniEnabled 切换后 usedFakeSni 字段变化。
 
+#### P0.4 实际实现说明 (已完成)
+| 项目 | 实现情况 | 备注 |
+|------|----------|------|
+| 依赖与栈 | hyper 0.14 + tokio-rustls 0.24 + rustls 0.21 + webpki-roots | 与 P0.3 验证器保持一致根证书来源 |
+| 连接路径 | TcpStream -> TLS(tls.connect) -> hyper::client::conn::handshake(HTTP/1.1) | 采用手动握手以便覆盖自定义 SNI |
+| 伪 SNI | `compute_sni_host(forceReal, realHost)` | true 使用伪域名；否则真实域；并记录 usedFakeSni |
+| Host 头 | `upsert_host_header(headers, realHost)` | 无论是否伪 SNI，Host 均强制为真实域 |
+| timing | connectMs / tlsMs / firstByteMs / totalMs | DNS 仍记为 0，不单独拆分 |
+| Body | 全量读取后 base64 返回；超阈值 WARN | WARN 判定为 bodySize 严格大于阈值 |
+| 早失败 | 在触网前先解码 bodyBase64 | 无效 base64 立即返回错误，便于离线单测覆盖 |
+| 返回结构 | 与计划一致；ip 暂为 None；redirects 为空 | 重定向将在 P0.5 的命令层处理 |
+| 验证器 | 复用 P0.3 的 SAN 白名单 verifier | 基于 SNI 域名进行白名单校验 |
+
+单元测试覆盖（新增）：
+- 非 https 协议立即拒绝（不触发网络连接）
+- 无效 bodyBase64 早失败（未触网）
+- 伪 SNI 决策函数（forceReal/开关组合）
+- Host 头写入/覆盖逻辑
+- 大响应 WARN 阈值边界（等于不告警，大于告警）
+
+差异与待办：
+- 未在本阶段暴露 Tauri Command；`http_fake_request` 将在 P0.5 实现
+- 未实现重定向跟随；redirects 由 P0.5 的命令层统一处理
+- 返回的 ip 字段当前为 None；后续在连接阶段增加对端地址提取
+- 日志 WARN 捕获型测试可作为后续增强（需要日志捕获辅助）
+
 ### P0.5 http_fake_request API
 1. Tauri command 参数映射前端模型
 2. 校验 URL 协议 https://
