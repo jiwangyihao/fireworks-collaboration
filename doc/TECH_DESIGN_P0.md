@@ -376,6 +376,49 @@ src/
 
 验收：克隆中型公开仓库（如 `https://github.com/rust-lang/log`）成功；取消在中途触发后任务状态= canceled。
 
+#### P0.6 实际实现说明 (已完成)
+| 项目 | 实现情况 | 备注 |
+|------|----------|------|
+| 依赖 | 引入 `gix = 0.73` 且禁用默认特性，启用 `blocking-network-client`、`worktree-mutation`、`parallel` | 仅使用阻塞克隆 API，放入 `spawn_blocking` 线程 |
+| 任务接线 | `TaskRegistry::spawn_git_clone_task(app, id, token, repo, dest)` | 状态事件：`Pending -> Running -> Completed/Failed/Canceled` |
+| 进度事件 | 现阶段发送粗粒度阶段：`Starting (0)`、`Fetching (10)`、`Checkout (80)`、`Completed (100)` | `TaskProgressEvent` 已扩展 `objects/bytes/total_hint` 字段，后续接入细粒度 |
+| 取消 | 通过 `CancellationToken` + `&AtomicBool` 传给 gix 的 `should_interrupt` | 取消时任务状态转为 `Canceled` |
+| 命令 | `git_clone(repo: String, dest: String) -> taskId` | 由前端发起；取消复用 `task_cancel(taskId)` |
+| 事件通道 | `task://state` 与 `task://progress` | 与 P0.2 一致 |
+
+补充落地细节与兼容性说明：
+- HTTPS 传输支持：默认 `gix` 不内置 HTTPS，需要在 `Cargo.toml` 额外启用 `gix-transport` 的 `http-client-reqwest` 特性以支持 `https://` 克隆；本仓库已在 `src-tauri/Cargo.toml` 增加如下配置：
+  - `gix = { version = "0.73", default-features = false, features = ["blocking-network-client","worktree-mutation","parallel"] }`
+  - `gix-transport = { version = "0.48", default-features = false, features = ["http-client-reqwest"] }`
+  这样即可通过 reqwest/hyper-rustls 栈完成 HTTPS Git 传输，解决“'https' is not compiled in”报错。
+- 阻塞执行与取消桥接：`clone_blocking()` 运行在 `tokio::task::spawn_blocking` 中，避免阻塞异步调度；取消逻辑通过 `CancellationToken` 派生一个 `AtomicBool` 标志传入 gix 的 `should_interrupt`，由一个后台监听任务在收到取消时设置为 true，保证 gix 在安全检查点尽快返回。
+- Windows 路径与 URL 兼容：为避免将本地路径误判为 URL（可能导致长时间等待），`clone_blocking()` 实现了路径判定：
+  - 绝对路径（含盘符，如 `C:\repo`/`C:/repo`）或包含反斜杠 `\`、相对前缀 `./`、`../` 将按“本地路径”处理，使用 `gix::prepare_clone(Path)` 分支；
+  - 其余按远程 URL 处理（`https://`/`http://` 等）。
+- 失败分类与任务收尾：当 gix 返回错误且取消标志未触发，则视为失败，发射 `Failed` 状态事件；若取消标志为真，则发射 `Canceled`；无论何种终止路径均清理内部监听句柄，避免测试或运行时悬挂。
+- 前端集成与调试：
+  - `src/api/tasks.ts` 新增 `startGitClone(repo,dest)`；
+  - 开发环境中在 `src/main.ts` 注入 `window.__fw_debug = { invoke, listen, emit }` 便于 DevTools 手工验证：
+    - `await window.__fw_debug.invoke('git_clone', { repo: 'https://github.com/rust-lang/log', dest: 'C:/tmp/log' })`
+    - 监听 `task://state` / `task://progress` 观察生命周期与进度；
+    - `await window.__fw_debug.invoke('task_cancel', { id })` 触发取消。
+- 测试覆盖（Rust）：增加了无网络依赖的健壮性测试，防止卡死：
+  - 无效 URL/相对路径快速失败；
+  - 立即取消应尽快返回；
+  - Registry 层任务取消、取消前完成、取消前失败的句柄收尾，均确保 `JoinHandle` 等待，不残留后台 watcher 线程。
+- 测试覆盖（前端）：新增 `src/api/__tests__/git.integration.test.ts`，在模拟 Tauri 环境下验证：
+  - `startGitClone()` 会调用 `git_clone` 并返回 taskId；
+  - 初始化事件后，模拟 `task://state`/`task://progress` 能正确驱动 Pinia store 更新；
+  - 取消流程通过 `task_cancel` 调用验证参数正确。
+
+手动验证要点：
+- 在 Dev 模式下通过 `window.__fw_debug` 进行克隆与取消手动测试；
+- 确保目标目录可写且为空目录；若目录已存在，当前策略为交由 gix 返回错误（P0 行为）；
+- Windows 下优先使用绝对路径 `C:/tmp/xxx` 以避免路径歧义；
+- 已启用 HTTPS 支持，如遇证书链问题请先确认系统时间与网络可达性。
+
+前端补充：在 `src/api/tasks.ts` 增加 `startGitClone(repo,dest)` 封装；扩展 Progress 事件 payload 可选字段以适配后续细粒度指标。
+
 ### P0.7 前端面板与可视化
 1. TaskList.vue：列表显示（ID / Kind / State / Start Time）
 2. GitPanel.vue：发起 clone + 进度条（对象数 / 已接收大小）
