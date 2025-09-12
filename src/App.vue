@@ -3,6 +3,7 @@ import { RouterView } from "vue-router";
 import { themeChange } from "theme-change";
 import { onMounted, provide, ref } from "vue";
 import { UserInfo } from "./utils/github-auth.ts";
+import GlobalErrors from "./components/GlobalErrors.vue";
 
 onMounted(() => {
   themeChange(false);
@@ -127,6 +128,7 @@ provide("user", user);
     </ul>
   </header>
   <RouterView />
+  <GlobalErrors />
 </template>
 
 <!--suppress CssUnusedSymbol -->
