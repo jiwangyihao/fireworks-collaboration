@@ -50,6 +50,24 @@ impl ServerCertVerifier for WhitelistCertVerifier {
     }
 }
 
+/// 极不安全：完全跳过证书链与域名校验，仅用于原型阶段联调。
+/// 当 `tls.insecure_skip_verify=true` 时启用。
+pub struct InsecureCertVerifier;
+
+impl ServerCertVerifier for InsecureCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &Certificate,
+        _intermediates: &[Certificate],
+        _server_name: &ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _ocsp_response: &[u8],
+        _now: std::time::SystemTime,
+    ) -> Result<ServerCertVerified, TlsError> {
+        Ok(ServerCertVerified::assertion())
+    }
+}
+
 /// 使用系统根证书构造 WhitelistCertVerifier 的便利函数
 pub fn make_whitelist_verifier(tls: &TlsCfg) -> Arc<dyn ServerCertVerifier> {
     let mut root_store = RootCertStore::empty();
@@ -73,8 +91,13 @@ pub fn create_client_config(tls: &TlsCfg) -> ClientConfig {
         .with_root_certificates(root_store)
         .with_no_client_auth();
 
-    let verifier = make_whitelist_verifier(tls);
-    cfg.dangerous().set_certificate_verifier(verifier);
+    if tls.insecure_skip_verify {
+        // 直接跳过证书校验（仅原型测试，务必默认关闭）
+        cfg.dangerous().set_certificate_verifier(Arc::new(InsecureCertVerifier));
+    } else {
+        let verifier = make_whitelist_verifier(tls);
+        cfg.dangerous().set_certificate_verifier(verifier);
+    }
     cfg
 }
 
@@ -114,7 +137,13 @@ mod tests {
 
     #[test]
     fn test_create_client_config() {
-        let tls = TlsCfg { san_whitelist: vec!["github.com".into(), "*.github.com".into()] };
+        let tls = TlsCfg { san_whitelist: vec!["github.com".into(), "*.github.com".into()], insecure_skip_verify: false };
+        let _cfg = create_client_config(&tls);
+    }
+
+    #[test]
+    fn test_create_client_config_insecure() {
+        let tls = TlsCfg { san_whitelist: vec![], insecure_skip_verify: true };
         let _cfg = create_client_config(&tls);
     }
 }

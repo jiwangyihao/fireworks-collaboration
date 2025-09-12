@@ -14,6 +14,8 @@ pub struct HttpCfg {
 #[serde(rename_all = "camelCase")]
 pub struct TlsCfg {
     #[serde(default = "default_san_whitelist")] pub san_whitelist: Vec<String>,
+    /// 原型期可选：跳过证书链与域名校验（极不安全，默认关闭）
+    #[serde(default)] pub insecure_skip_verify: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,7 +58,7 @@ impl Default for AppConfig {
                 max_redirects: default_max_redirects(),
                 large_body_warn_bytes: default_large_body_warn(),
             },
-            tls: TlsCfg { san_whitelist: default_san_whitelist() },
+            tls: TlsCfg { san_whitelist: default_san_whitelist(), insecure_skip_verify: false },
             logging: LoggingCfg { auth_header_masked: default_true(), log_level: default_log_level() },
         }
     }
