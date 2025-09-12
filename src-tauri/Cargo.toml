@@ -47,6 +47,9 @@ base64 = "0.22"
 # 新增异步运行时依赖（修复 tokio / tokio_util 未解析错误）
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+# TLS & Certs (P0.3)
+rustls = { version = "0.21", features = ["dangerous_configuration"] }
+webpki-roots = "0.25"
 
 [dev-dependencies]
 # 与主运行时一致，测试中使用 current_thread 以减少潜在冲突

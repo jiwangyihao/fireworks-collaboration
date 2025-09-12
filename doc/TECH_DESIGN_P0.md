@@ -204,6 +204,52 @@ src/
 
 验收：对 github.com 正常；对非白名单域（如 example.com）应返回 SAN mismatch。
 
+#### P0.3 实际实现说明 (已完成)
+| 项目 | 实现情况 | 备注 |
+|------|----------|------|
+| 依赖选择 | rustls = 0.21（启用 `dangerous_configuration` 以允许设置自定义验证器）；webpki-roots = 0.25 | 采用内置根证书集合填充 RootCertStore，避免平台差异；后续可选切换 native-certs |
+| 验证器 | `WhitelistCertVerifier` 包装 `WebPkiVerifier` | 先进行标准链验证，通过后再基于 SNI 主机名进行白名单匹配；不解析证书内 SAN 列表（P0 简化）|
+| 白名单匹配 | 支持精确域与前缀通配 `*.`（如 `*.github.com`）| 大小写不敏感；需要存在分隔点且以基域结尾；`github.com` 不匹配 `x.ygithub.com` |
+| 空白名单策略 | 空白名单视为拒绝 | 防御性默认更安全 |
+| 非 DNS SNI | 拒绝 | 当 `ServerName` 为 IP 地址等非 DNS 名称时一律拒绝 |
+| 伪 SNI 判定 | `should_use_fake(cfg, force_real)` | 仅当配置启用且未强制真实 SNI 时返回 true；伪域名读取自配置（P0.4 将实际使用）|
+| ClientConfig | `create_client_config(&TlsCfg)` | 返回注入白名单验证器的 rustls `ClientConfig`，无客户端证书，供 HTTP 客户端直接复用 |
+| 错误暴露 | `TlsError::General("SAN whitelist mismatch")` | 上层在 P0.5 中映射为 Verify 类别 |
+
+实现文件与接口：
+- `src-tauri/src/core/tls/util.rs`
+  - `should_use_fake(cfg: &AppConfig, force_real: bool) -> bool`
+  - `match_domain(pattern: &str, host: &str) -> bool`
+- `src-tauri/src/core/tls/verifier.rs`
+  - `struct WhitelistCertVerifier`（实现 `ServerCertVerifier`）
+  - `make_whitelist_verifier(tls: &TlsCfg) -> Arc<dyn ServerCertVerifier>`
+  - `create_client_config(tls: &TlsCfg) -> ClientConfig`
+
+测试覆盖摘要（均通过）：
+- 伪 SNI 判定：开关与 `force_real` 组合
+- 域匹配：精确/通配、大小写不敏感、多级子域、非标准通配（如 `*.*.github.com`）不匹配
+- 空白名单：任意域名均拒绝
+- 非 DNS SNI：IP 形式的 `ServerName` 被拒绝
+- ClientConfig：可成功构造并注入验证器
+
+差异与待办：
+- 未解析证书内 SAN 列表（基于 SNI 白名单判定即可满足 P0 安全基线）；如需更严格策略，后续可在 P1+ 引入 `x509-parser` 对证书扩展进行解析再比对
+- 未实现 SPKI Pin（按 Roadmap 在 P7 引入）
+- 未实现 Fake 失败自动回退至 Real SNI（按 Roadmap 在 P3 与 Git 一并处理）
+- 与代理策略的联动（代理模式禁用伪 SNI）将在 P4 统一处理
+
+目标风险与缓解：
+| 风险 | 影响 | 缓解 |
+|------|------|------|
+| 仅基于 SNI 的白名单判定 | 未核对证书 SAN 列表 | 保持严格白名单；P1+ 增强为解析 SAN 列表并与白名单求交集 |
+| 根证书集合差异 | 特定平台证书差异导致握手异常 | 采用 webpki-roots 统一基线；必要时提供可选 native-certs 路径 |
+| 伪 SNI 被网络策略阻断 | 连接失败 | 按 Roadmap 在 P3 引入 Fake→Real 回退；当前记录日志即可 |
+
+验收状态：
+- 本地 `cargo test` 全部通过；验证器在白名单内域名通过，在非白名单或非 DNS SNI 情况下拒绝。
+
+（仅新增说明，不修改后续未完成阶段规划。）
+
 ### P0.4 HTTP 客户端核心
 1. 建立 `HttpClient`（内部管理 hyper::Client<HttpsConnector>）
 2. 连接阶段分解 timing：
