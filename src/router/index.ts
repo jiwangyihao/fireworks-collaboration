@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from "vue-router";
 import HomeView from "../views/HomeView.vue";
 import CheckView from "../views/CheckView.vue";
 import ProjectView from "../views/ProjectView.vue";
+import HttpTester from "../views/HttpTester.vue";
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -25,6 +26,11 @@ const router = createRouter({
       path: "/test",
       name: "github",
       component: () => import("../views/GitHubActionsView.vue"),
+    },
+    {
+      path: "/http-tester",
+      name: "httpTester",
+      component: HttpTester,
     },
   ],
 });

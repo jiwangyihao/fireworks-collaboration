@@ -9,6 +9,7 @@ export interface HttpCfg {
 }
 export interface TlsCfg {
   sanWhitelist: string[];
+  insecureSkipVerify?: boolean;
 }
 export interface LoggingCfg {
   authHeaderMasked: boolean;
