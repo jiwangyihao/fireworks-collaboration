@@ -41,7 +41,6 @@ async fn list_snapshots_are_independent_clones() {
     let list_after = reg.list();
     assert_eq!(list_after.len(), 1);
     // 确认之前克隆的 snapshot 不会被内部状态突变（只验证 state 变化不会回写）
-    let old_state = &list_before[0].state;
     let new_state = &list_after[0].state;
     // old_state 可能是 Pending 或 Running；不做具体断言，只要不 panic；确保新状态是完成或已取消之一
     assert!(matches!(new_state, TaskState::Completed | TaskState::Canceled));
