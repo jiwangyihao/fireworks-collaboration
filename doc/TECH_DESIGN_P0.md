@@ -108,7 +108,8 @@ src/
       "*.githubusercontent.com",
       "*.githubassets.com",
       "codeload.github.com"
-    ]
+    ],
+    "insecureSkipVerify": false
   },
   "logging": {
     "authHeaderMasked": true,
@@ -116,6 +117,9 @@ src/
   }
 }
 ```
+
+原型期开关说明（仅用于联调/验证，默认关闭）：
+- `tls.insecureSkipVerify`: 置为 true 时将跳过证书链与域名校验（极不安全）。用于在开发原型期验证“伪 SNI 能否突破某些网络封锁”的可达性实验；请勿在生产或常规开发中启用。
 
 存储位置（P0.1 实际实现）：
 - 写入 Tauri 应用配置目录 app_config_dir：`<app_config_dir>/config/config.json`
@@ -307,6 +311,48 @@ src/
     - 表单：URL / Method / Headers / Body（可选）
     - 显示：Status / Timing / Body (decoded text 预览) / usedFakeSni
 
+#### P0.5 实际实现说明 (已完成)
+| 项目 | 实现情况 | 备注 |
+|------|----------|------|
+| Tauri Command | `http_fake_request(input: HttpRequestInput) -> Result<HttpResponseOutput, String>` | 位于 `src-tauri/src/app.rs`，签名与前端类型一致 |
+| 早期校验 | 仅允许 `https://` URL；缺失 host 直接报错 | 错误归入 `Input` 类别 |
+| 白名单预检 | 在触网前使用 `host_in_whitelist(host, &cfg)` 进行域名白名单校验 | 白名单来自 `cfg.tls.san_whitelist`，空白名单一律拒绝 |
+| 日志脱敏 | `redact_auth_in_headers(headers, mask)` 大小写不敏感替换 Authorization | `mask` 受 `logging.authHeaderMasked` 控制，默认开启 |
+| 重定向处理 | 支持 `followRedirects` 与 `maxRedirects`；收集 `RedirectInfo` 列表 | 301/302/303 规范化为 GET 并清空 body；307/308 保留当前尝试的方法与 body |
+| Location 解析 | 使用 `url::Url` 基于当前 URL 进行相对/绝对解析 | 对每一跳的目标 host 再次执行白名单预检，禁止跳出白名单域 |
+| 客户端复用 | 通过 `HttpClient::new(cfg)` + `send()` 发起请求 | `HttpClient` 内部负责 TCP/TLS/HTTP 握手、SNI 决策与 timing 采集（见 P0.4） |
+| 错误分类 | `classify_error_msg(e)` 将错误映射到 `Verify/Tls/Network/Input/Internal` | 将原始错误信息前缀化返回，如 `Verify: SAN whitelist mismatch ...` |
+| 竞争条件修复 | 克隆 `AppConfig` 后再 `await`，避免跨 `await` 持有 `MutexGuard` | 规避 Tauri/Tokio 非 `Send` 锁导致的编译错误 |
+| 不安全开关 | 当 `tls.insecureSkipVerify=true` 时底层 rustls 使用 Insecure 验证器 | 仅用于原型联调（默认 false，UI 有明确风险提示） |
+
+实现文件与接口：
+- `src-tauri/src/app.rs`
+  - `http_fake_request`：Tauri 命令主体；包含白名单预检、重定向跟随、错误分类与日志脱敏。
+  - `redact_auth_in_headers` / `host_in_whitelist` / `classify_error_msg`：命令层辅助函数。
+- `src-tauri/src/core/http/client.rs`
+  - `HttpClient::send(input: HttpRequestInput) -> HttpResponseOutput`：执行连接、TLS 握手与请求发送，返回完整响应与 timing、usedFakeSni 等。
+- `src-tauri/src/core/http/types.rs`
+  - `HttpRequestInput` / `HttpResponseOutput` / `RedirectInfo` / `TimingInfo`：跨前后端的数据结构。
+- `src-tauri/src/core/tls/verifier.rs`
+  - `create_client_config(tls: &TlsCfg)`：构建 rustls `ClientConfig`；当 `insecureSkipVerify=true` 时启用 `InsecureCertVerifier`（仅原型）。
+- 前端：
+  - `src/api/http.ts`：封装调用 `http_fake_request`。
+  - `src/views/HttpTester.vue`：表单与结果展示，并提供“跳过证书验证（不安全）”显式开关（写入 `tls.insecureSkipVerify`）。
+
+测试覆盖摘要（均通过）：
+- Rust 单测：
+  - `app.rs` 中新增用例覆盖授权脱敏（大小写）、白名单匹配（精确/通配/空表）与错误分类映射。
+  - `http/client.rs` 既有用例覆盖非 https 拒绝、无效 base64 早失败、Host 头覆盖、大响应告警阈值与 SNI 决策。
+- 端到端：
+  - 手动在 HttpTester 中对 `https://github.com/` 发起请求可获得 200；关闭白名单时会被拒绝。
+  - `cargo test` 在本阶段全部通过。
+
+边界与待办：
+- 尚未引入重定向链的集成测试（可后续添加使用本地 mock 端点）。
+- 响应 `ip` 字段当前可能为 `None`；后续可在连接阶段注入对端地址。
+- 错误分类表可进一步细化（如 HTTP 状态类别化）；当前满足 P0 最小可用。
+- Insecure 模式仅用于原型；默认关闭并在 UI 明示风险。
+
 验收：可对 `https://github.com/` 发请求获 200；关闭白名单时（测试） -> 拒绝；伪 SNI on/off 可见差异。
 
 ### P0.6 Git Clone 基础
@@ -432,6 +478,7 @@ fn redact_auth(headers: &mut HeaderMap) {
 | 错误分类 | 非白名单域 | Verify |
 | 错误分类 | TLS 故意错误域（自建不可信证书，可跳过） | Tls |
 | 日志脱敏 | 带 Authorization | 日志中无 token |
+| Insecure Skip | insecureSkipVerify=true + 假 SNI | 握手不因证书不匹配而失败（仅原型验证） |
 
 ---
 

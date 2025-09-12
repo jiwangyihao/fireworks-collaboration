@@ -451,6 +451,71 @@ Tauri Backend (Rust)
 ### Git 伪 SNI (P3)
 在建立 HTTP 连接时调用统一 transport：Fake SNI 握手失败 → Real SNI → IP fallback → 代理 fallback。
 
+#### P3 技术增强：按“真实域名”验证而非按 SNI 名称验证（Real-Host Verification）
+
+目标：当握手使用“伪 SNI”以规避网络策略时，客户端的证书域名匹配不再使用握手传入的 SNI，而是使用“实际要访问的真实域名”（例如 github.com），以减少“仅因伪 SNI 名称不一致而导致的客户端侧校验失败”。
+
+要点与约束：
+- 该能力并不能强行让服务器返回包含真实域名的证书。服务器选择证书通常依据它收到的 SNI；若伪 SNI 与真实域不同，多数服务器会返回默认证书，可能不包含真实域名。
+- 因此该能力常与“Fake→Real 回退”配套：若以真实域名验证失败（证书不含真实域），立即回退一次“使用真实 SNI 重新握手”。
+- 安全基线仍包含：CA 链验证 + 白名单匹配（对比目标域）。
+
+实现方案（Rust + rustls）：
+1) 自定义证书验证器 RealNameCertVerifier
+   - 字段：
+     - inner: WebPkiVerifier（执行标准 CA 链与域名验证）
+     - whitelist: Vec<String>（白名单）
+     - real_host: String（真实域名）
+   - 行为：在 verify_server_cert 中忽略 rustls 提供的 server_name，改用 real_host 构造 `ServerName::try_from(real_host)`，调用 inner.verify_server_cert(...) 完成链与域名匹配；随后以 real_host 进行白名单匹配（通配规则与 P0 一致）。
+
+2) 每次请求按需构建 ClientConfig
+   - 因 real_host 随请求而变，需在发起请求时创建带有 RealNameCertVerifier 的 ClientConfig；避免在共享 ClientConfig 中夹带错误的 real_host。
+   - 对于高频请求，可以考虑配置缓存（key=real_host），权衡构造开销与内存使用。
+
+3) 握手与验证流程（结合伪 SNI）
+   - 握手：SNI=假域（如 baidu.com）；
+   - 验证：RealNameCertVerifier 使用 real_host=github.com 调用 WebPKI 验证域名；
+   - 白名单：基于 real_host 做通配匹配；
+   - 失败路径：若返回证书不含 github.com → 域名匹配失败 → 触发回退链（用真实 SNI 重试一次）。
+
+4) 回退与分类
+   - 首次失败类别：Tls（握手早期失败）或 Verify（链通过但域名/白名单不符）。
+   - 回退一次：SNI=真实域名，验证仍用真实域名（此时名称一致，预计成功）；若仍失败，再按网络/IP/代理策略继续。
+
+5) 伪代码草案
+```
+struct RealNameCertVerifier { inner: WebPkiVerifier, whitelist: Vec<String>, real_host: String }
+impl ServerCertVerifier for RealNameCertVerifier {
+  fn verify_server_cert(&self, end: &Certificate, inter: &[Certificate], _name: &ServerName, scts: &mut dyn Iterator<Item=&[u8]>, ocsp: &[u8], now: SystemTime) -> Result<ServerCertVerified, rustls::Error> {
+    let name = ServerName::try_from(self.real_host.as_str()).map_err(|_| rustls::Error::General("bad real_host".into()))?;
+    self.inner.verify_server_cert(end, inter, &name, scts, ocsp, now)?;
+    if !host_in_whitelist(&self.whitelist, &self.real_host) { return Err(rustls::Error::General("SAN whitelist mismatch".into())); }
+    Ok(ServerCertVerified::assertion())
+  }
+}
+
+fn create_client_config_with_real_name(tls: &TlsCfg, real_host: &str) -> ClientConfig { /* 构造 root store -> WebPkiVerifier -> RealNameCertVerifier(real_host) */ }
+
+async fn connect_with_fake_sni_and_real_verify(real_host: &str, fake_host: &str, cfg: &AppConfig) -> Result<TlsStream> {
+  let client_cfg = create_client_config_with_real_name(&cfg.tls, real_host);
+  let server_name = ServerName::try_from(fake_host)?;
+  tls.connect(server_name, tcp).await
+}
+```
+
+6) 与 P0 的差异
+- P0 白名单与验证是“按 SNI 名称”；P3 则转为“按真实域名”，并在失败时回退“真实 SNI 再试”。
+- 仍保持 CA 链验证；不引入 Insecure 模式。Insecure 模式仅用于原型联调（见 P0 文件）。
+
+7) 风险与测试
+- 风险：服务端因假 SNI 返回默认证书，真实域名验证大概率失败；但回退链会立刻以真实 SNI 重试，确保用户体验。
+- 用例：
+  - 假 SNI + RealName 验证失败 → 回退 Real SNI 成功；
+  - 假 SNI + RealName 验证成功（少数情况，例如默认证书恰含真实域）→ 不回退；
+  - 白名单外域 → 直接 Verify 错误；
+  - 证书链不可信 → Tls 错误。
+
+
 ---
 
 ## 22. 测试策略与用例分类（阶段化）
