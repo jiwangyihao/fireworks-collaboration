@@ -1005,6 +1005,8 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-shell",
  "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "urlencoding",
@@ -4423,6 +4425,8 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
+ "hashbrown 0.15.4",
  "pin-project-lite",
  "tokio",
 ]

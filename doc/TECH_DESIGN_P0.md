@@ -157,6 +157,41 @@ src/
 
 验收：模拟启动一个“假任务”（sleep）并能取消；前端任务列表实时刷新。
 
+#### P0.2 实际实现说明 (已完成)
+| 项目 | 实现情况 | 备注 |
+|------|----------|------|
+| TaskState | Pending / Running / Completed / Failed / Canceled | 与计划一致 |
+| TaskKind | GitClone / HttpFake / Sleep / Unknown | Sleep 用于测试；GitClone/HttpFake 预留，当前核心测试集中于 Sleep |
+| TaskMeta 字段 | id / kind / state / created_at / cancel_token / fail_reason | fail_reason 预留，尚未事件化 |
+| TaskRegistry 方法 | create / list / snapshot / cancel | 外部无独立 update_state，内部 set_state_* 封装 |
+| 状态事件 | task://state | 负载含 taskId/kind/state/createdAt(ms) |
+| 进度事件 | task://progress | 现仅 {taskId, kind, phase, percent}，无 objects/bytes |
+| 错误事件 | 未实现 | 后续 Git/HTTP 失败时补 task://error |
+| 取消机制 | CancellationToken 轮询检查 | Sleep 循环中每 step 检查 token |
+| Sleep 任务实现 | 50ms 步长累进 + percent 计算 | 便于测试快速覆盖 Running / Cancel / Completed |
+| 单元测试 | 3 个（创建初始状态 / 正常完成 / 取消） | registry.rs #[cfg(test)] 通过 |
+| 事件发射适配 | feature="tauri-app" 有效；测试模式 no-op | 保证核心逻辑测试不依赖 Tauri runtime |
+
+#### 差异与待办
+- 进度事件缺少 Git 所需对象/字节统计，计划在 P0.6 扩展（新增 objects/bytes/totalHint 字段）。
+- 未提供 task://error；失败原因暂存 TaskMeta.fail_reason，后续统一 error 事件格式。
+- 未引入 ErrorCategory 枚举；HTTP 与 Git 接入后再统一分类映射。
+- 前端实时消费验证未在本阶段执行（等待 P0.7 UI 集成测试）。
+
+#### 测试覆盖摘要
+- test_create_initial_pending：验证 create 后状态=Pending。
+- test_sleep_task_completes：验证运行完成转 Completed。
+- test_cancel_sleep_task：验证取消后转 Canceled。
+
+#### 目标风险与缓解
+| 风险 | 影响 | 缓解 |
+|------|------|------|
+| 进度维度不足 | Git 进度展示不细致 | P0.6 扩展 TaskProgressEvent 字段 |
+| 缺少错误事件 | 前端无法展示失败原因 | 引入 task://error + fail_reason 发射 |
+| 状态更新分散 | 新任务增加重复代码 | 后续提炼统一 helper（spawn 包装） |
+
+（仅新增说明，不修改后续未完成阶段规划。）
+
 ### P0.3 TLS 验证器
 1. 自定义 `ServerCertVerifier` 包装 rustls 默认验证
 2. 解析证书 SAN（使用 `x509-parser` 或 rustls 提供的 API，如果引入额外 crate 则标记依赖）
