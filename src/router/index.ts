@@ -3,6 +3,7 @@ import HomeView from "../views/HomeView.vue";
 import CheckView from "../views/CheckView.vue";
 import ProjectView from "../views/ProjectView.vue";
 import HttpTester from "../views/HttpTester.vue";
+import GitPanel from "../views/GitPanel.vue";
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -31,6 +32,11 @@ const router = createRouter({
       path: "/http-tester",
       name: "httpTester",
       component: HttpTester,
+    },
+    {
+      path: "/git",
+      name: "git",
+      component: GitPanel,
     },
   ],
 });
