@@ -53,11 +53,77 @@ impl TaskRegistry {
                 elapsed += step;
                 if let Some(app_ref) = &app {
                     let percent = ((elapsed.min(total_ms) as f64 / total_ms as f64) * 100.0) as u32;
-                    let prog = TaskProgressEvent { task_id: id, kind: "Sleep".into(), phase: "Running".into(), percent };
+                    let prog = TaskProgressEvent { task_id: id, kind: "Sleep".into(), phase: "Running".into(), percent, objects: None, bytes: None, total_hint: None };
                     emit_all(app_ref, EV_PROGRESS, &prog);
                 }
             }
             match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Completed), None=> this.set_state_noemit(&id,TaskState::Completed) }
+        })
+    }
+
+    /// 启动 Git Clone 任务（阻塞线程执行），支持取消与基本进度事件
+    pub fn spawn_git_clone_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, repo: String, dest: String) -> JoinHandle<()> {
+        let this = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Running), None => this.set_state_noemit(&id, TaskState::Running) }
+
+            // 预发一个开始事件
+            if let Some(app_ref) = &app {
+                let prog = TaskProgressEvent { task_id: id, kind: "GitClone".into(), phase: "Starting".into(), percent: 0, objects: None, bytes: None, total_hint: None };
+                emit_all(app_ref, EV_PROGRESS, &prog);
+            }
+
+            // 提前检查取消
+            if token.is_cancelled() {
+                match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
+                return;
+            }
+
+            // 准备 should_interrupt 标志，并在后台线程监听取消
+            let interrupt_flag: &'static std::sync::atomic::AtomicBool = Box::leak(Box::new(std::sync::atomic::AtomicBool::new(false)));
+            let token_for_thread = token.clone();
+            let watcher = std::thread::spawn(move || {
+                while !token_for_thread.is_cancelled() && !interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                if token_for_thread.is_cancelled() {
+                    interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            });
+
+            // 进入 Fetch 阶段
+            if let Some(app_ref) = &app {
+                let prog = TaskProgressEvent { task_id: id, kind: "GitClone".into(), phase: "Fetching".into(), percent: 10, objects: None, bytes: None, total_hint: None };
+                emit_all(app_ref, EV_PROGRESS, &prog);
+            }
+
+            // 执行克隆（封装在 core::git::clone 模块）
+            let dest_path = std::path::PathBuf::from(dest.clone());
+            let res = crate::core::git::clone::clone_blocking(repo.as_str(), &dest_path, &*interrupt_flag);
+            match res {
+                Ok(()) => {
+                    if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                        match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
+                        return;
+                    }
+
+                    if let Some(app_ref) = &app {
+                        let prog = TaskProgressEvent { task_id: id, kind: "GitClone".into(), phase: "Completed".into(), percent: 100, objects: None, bytes: None, total_hint: None };
+                        emit_all(app_ref, EV_PROGRESS, &prog);
+                    }
+                    match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Completed), None => this.set_state_noemit(&id, TaskState::Completed) }
+                }
+                Err(e) => {
+                    if interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) || token.is_cancelled() {
+                        match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
+                        return;
+                    }
+                    tracing::error!(target = "git", "clone error: {}", e);
+                    match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
+                }
+            }
+
+            let _ = watcher.join();
         })
     }
 }

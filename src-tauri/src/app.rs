@@ -59,6 +59,14 @@ async fn task_cancel(id:String, reg: State<'_, TaskRegistryState>) -> Result<boo
 #[tauri::command]
 async fn task_start_sleep(ms:u64, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String,String>{ let (id, token)=reg.create(TaskKind::Sleep { ms }); reg.clone().spawn_sleep_task(Some(app), id, token, ms); Ok(id.to_string()) }
 
+// Git 命令：启动克隆任务
+#[tauri::command]
+async fn git_clone(repo: String, dest: String, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitClone { repo: repo.clone(), dest: dest.clone() });
+    reg.clone().spawn_git_clone_task(Some(app), id, token, repo, dest);
+    Ok(id.to_string())
+}
+
 // ========== P0.5 http_fake_request ==========
 fn redact_auth_in_headers(mut h: std::collections::HashMap<String, String>, mask: bool) -> std::collections::HashMap<String, String> {
     if !mask { return h; }
@@ -250,7 +258,7 @@ pub fn run(){
         .manage(Arc::new(TaskRegistry::new()) as TaskRegistryState)
         .invoke_handler(tauri::generate_handler![
             greet,start_oauth_server,get_oauth_callback_data,clear_oauth_state,get_system_proxy,
-            get_config,set_config,task_list,task_cancel,task_start_sleep,task_snapshot,
+            get_config,set_config,task_list,task_cancel,task_start_sleep,task_snapshot,git_clone,
             http_fake_request
         ]);
     builder = builder.setup(|app| { let base_dir: PathBuf = app.path().app_config_dir().unwrap_or_else(|_| std::env::current_dir().unwrap()); let cfg = cfg_loader::load_or_init_at(&base_dir).unwrap_or_default(); app.manage(Arc::new(Mutex::new(cfg)) as SharedConfig); app.manage::<ConfigBaseDir>(base_dir); Ok(()) });

@@ -99,4 +99,8 @@ pub struct TaskProgressEvent {
     pub kind: String,
     pub phase: String,
     pub percent: u32,
+    // P0.6: Git 相关的可选指标
+    pub objects: Option<u64>,
+    pub bytes: Option<u64>,
+    pub total_hint: Option<u64>,
 }
