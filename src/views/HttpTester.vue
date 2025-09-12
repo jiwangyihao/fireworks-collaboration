@@ -28,6 +28,21 @@
             </label>
             <span class="text-xs opacity-70">启用后 TLS 将不校验证书链与域名，仅用于验证伪 SNI 的可达性。</span>
           </div>
+          <div class="grid grid-cols-2 gap-2 mt-2">
+            <label class="label cursor-pointer gap-2"><span>启用 Fake SNI</span><input type="checkbox" v-model="fakeSniEnabled" class="checkbox checkbox-sm" /></label>
+            <input v-model="fakeSniHost" class="input input-bordered input-sm" placeholder="伪 SNI 域名，如 baidu.com" />
+            <button class="btn btn-sm" @click="applyHttpStrategy">保存 HTTP 策略</button>
+          </div>
+        </div>
+        <div class="mt-3">
+          <h3 class="font-semibold">最近请求</h3>
+          <div class="text-xs opacity-60 mb-1">保留最近 10 条，点击可回填</div>
+          <ul class="menu bg-base-200 rounded-box text-sm">
+            <li v-for="h in history" :key="h.key">
+              <a @click="applyHistory(h)">{{ h.method }} {{ h.url }}</a>
+            </li>
+            <li v-if="history.length===0" class="opacity-60 p-2">暂无历史</li>
+          </ul>
         </div>
       </div>
       <div>
@@ -57,6 +72,7 @@
 import { ref, computed, onMounted } from "vue";
 import { httpFakeRequest, type HttpRequestInput, type HttpResponseOutput } from "../api/http";
 import { getConfig, setConfig, type AppConfig } from "../api/config";
+import { useLogsStore } from "../stores/logs";
 
 const method = ref("GET");
 const url = ref("https://github.com/");
@@ -65,9 +81,13 @@ const bodyText = ref("");
 const forceRealSni = ref(false);
 const followRedirects = ref(true);
 const insecureSkipVerify = ref(false);
+const fakeSniEnabled = ref(true);
+const fakeSniHost = ref("baidu.com");
 
 const resp = ref<HttpResponseOutput | null>(null);
 const err = ref<string | null>(null);
+const logs = useLogsStore();
+const history = ref<{ key: string; url: string; method: string; headers: string; bodyText: string; forceRealSni: boolean; followRedirects: boolean }[]>([]);
 
 const decodedText = computed(() => {
   if (!resp.value) return "";
@@ -96,8 +116,13 @@ async function send() {
   try {
     const out = await httpFakeRequest(req);
     resp.value = out;
+    // 记录历史
+    const item = { key: Date.now()+":"+Math.random(), url: url.value, method: method.value, headers: headersText.value, bodyText: bodyText.value, forceRealSni: forceRealSni.value, followRedirects: followRedirects.value };
+    history.value.unshift(item);
+    if (history.value.length > 10) history.value.pop();
   } catch (e:any) {
     err.value = String(e);
+    logs.push("error", `HTTP 请求失败: ${err.value}`);
   }
 }
 
@@ -107,6 +132,8 @@ onMounted(async () => {
   try {
     cfg.value = await getConfig();
     insecureSkipVerify.value = !!cfg.value.tls.insecureSkipVerify;
+    fakeSniEnabled.value = !!cfg.value.http.fakeSniEnabled;
+    fakeSniHost.value = cfg.value.http.fakeSniHost || "baidu.com";
   } catch (e) {
     // 忽略读取失败
   }
@@ -122,7 +149,29 @@ async function applyTlsToggle() {
   } catch (e) {
     // 简单提示：可根据需要接入全局 toast
     console.error("更新配置失败", e);
+    logs.push("error", `更新 TLS 配置失败: ${String(e)}`);
   }
+}
+
+async function applyHttpStrategy() {
+  try {
+    if (!cfg.value) cfg.value = await getConfig();
+    cfg.value!.http.fakeSniEnabled = !!fakeSniEnabled.value;
+    cfg.value!.http.fakeSniHost = (fakeSniHost.value || '').trim() || 'baidu.com';
+    await setConfig(cfg.value!);
+  } catch (e) {
+    console.error("更新 HTTP 策略失败", e);
+    logs.push("error", `更新 HTTP 策略失败: ${String(e)}`);
+  }
+}
+
+function applyHistory(h: { url: string; method: string; headers: string; bodyText: string; forceRealSni: boolean; followRedirects: boolean }){
+  url.value = h.url;
+  method.value = h.method;
+  headersText.value = h.headers;
+  bodyText.value = h.bodyText;
+  forceRealSni.value = h.forceRealSni;
+  followRedirects.value = h.followRedirects;
 }
 </script>
 
