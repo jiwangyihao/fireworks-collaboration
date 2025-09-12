@@ -412,6 +412,18 @@ Tauri Backend (Rust)
 | P9 | 指标 & 简易面板 | Metrics 图表 |
 | P10 | HTTP/2 + Streaming + Pack resume（探索） | 大仓库速度与内存改善 |
 
+## 19.1 进度更新（本仓库）
+
+截至 2025-09-13：已完成 P0.7「前端面板与可视化」阶段的交付，包含：
+- 任务事件接入：前端监听 `task://state` 与 `task://progress`，聚合到 Pinia store（`progressById`）。
+- Git 面板：新增 `GitPanel.vue`，支持输入仓库与目标目录、启动克隆、实时进度条显示与取消任务。
+- HTTP 面板：`HttpTester.vue` 增强了请求历史（点击可回填）与策略开关（Fake SNI / 跳过证书校验[原型]），保存至配置。
+- 全局错误提示：新增日志 store 与全局吐司组件，统一展示错误信息并默认对敏感头进行脱敏日志。
+
+开发者入口：
+- 路由 `/git` 进入 Git 克隆面板；`/` 主页包含导航。
+- 详见实现说明与文件清单：`doc/TECH_DESIGN_P0.md` 的「P0.7 实际实现说明 (已完成)」。
+
 ---
 
 ## 20. 前端 API & 事件（命令清单）

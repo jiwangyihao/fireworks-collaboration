@@ -428,6 +428,47 @@ src/
 
 验收：单应用内同时进行多个 clone + HTTP 调试不会 UI 卡死；任务状态实时刷新。
 
+#### P0.7 实际实现说明 (已完成)
+| 项目 | 实现情况 | 备注 |
+|------|----------|------|
+| 任务列表 | 复用现有 `TaskList.vue`，显示 ID/Kind/State/时间 | 基于 Pinia `tasks` store 的 `list` 快照 |
+| Git 面板 | 新增 `src/views/GitPanel.vue`：输入 repo/dest，启动克隆、展示进度、可取消 | 进度条显示 `percent` 与 `phase`；列表展示任务状态与时间 |
+| 任务进度 | `task://progress` 事件已在前端注册并汇总到 store | `src/api/tasks.ts` 监听 progress，调用 `tasks.updateProgress` |
+| 进度模型 | `tasks` store 扩展 `progressById`（按任务聚合） | 兼容可选字段：`percent`、`phase`、`objects`、`bytes`、`total_hint` |
+| 取消任务 | 面板“取消”按钮调用 `task_cancel` | UI 仅对运行中任务展示取消按钮 |
+| HTTP 面板 | `src/views/HttpTester.vue` 强化：历史记录（最近 N 条）、点击回填；策略开关 | 支持 Fake SNI 与不安全验证开关（原型），保存到配置 |
+| 配置读写 | `getConfig`/`setConfig` 读写 `http.fakeSniEnabled/http.fakeSniHost` 与 `tls.insecureSkipVerify` | 保存后即时生效，不需重启 |
+| 全局错误 | 新增 `src/stores/logs.ts` 与 `src/components/GlobalErrors.vue` 浮动提示 | `HttpTester` 中将错误推送到全局错误队列 |
+| 路由 | 在 `src/router/index.ts` 注册 `/git` 路由 | 可从首页/导航进入克隆面板 |
+| UI 风格 | 继承项目现有样式体系（Tailwind/DaisyUI） | 保持一致的输入/按钮/表格风格 |
+
+实现文件小结：
+- 前端视图与组件：
+  - `src/views/GitPanel.vue`（新增）：克隆输入/启动/进度条/取消/任务表。
+  - `src/views/HttpTester.vue`（增强）：历史列表、策略开关（Fake SNI / Insecure）、错误提示。
+  - `src/components/GlobalErrors.vue`（新增）：全局错误吐司展示。
+- Store 与 API：
+  - `src/stores/tasks.ts`（增强）：新增 `progressById` 与 `updateProgress`；保留 `upsert/remove` 逻辑。
+  - `src/api/tasks.ts`（增强）：`initTaskEvents()` 订阅 `task://state` 与 `task://progress`，更新 store。
+  - `src/stores/logs.ts`（新增）：简单日志栈，支持 push/clear 与长度上限。
+  - `src/router/index.ts`（增强）：新增 `/git` 路由。
+
+测试覆盖摘要（均通过）：
+- Store：`updateProgress` 百分比钳制与可选字段合并；`state` 事件 upsert 行为。
+- 事件接线：模拟 `task://progress` 事件驱动 store 更新。
+- Git 面板：启动克隆调用参数正确；运行中任务展示取消并触发 `task_cancel`。
+- HTTP 面板：发送请求后写入历史；点击历史回填表单；保存策略调用 `setConfig`。
+
+差异与后续待办：
+- Git 进度条当前以 `percent/phase` 为主，`objects/bytes/total_hint` 预留但未在 UI 细化展示（P1+ 可补充丰富展示）。
+- HTTP 历史仅保存在内存，页面刷新丢失；可追加 `localStorage` 持久化（低风险增强）。
+- 可考虑在任务列表增加过滤/搜索、以及错误分类的可视化标记（P1+）。
+
+手动验收要点：
+- 在 `/git` 发起两个不同仓库的 clone，观察两个任务并行运行且进度条独立更新，点击其中一个“取消”后状态转为 `Canceled`。
+- 在 `HttpTester` 分别开启/关闭 Fake SNI 发起 `https://github.com/` 请求，确认响应与 `usedFakeSni` 字段变化；保存/恢复策略开关生效。
+- 任一面板异常时，右上角出现全局错误吐司，若为授权或敏感信息，日志中已做脱敏处理（见 P0.5）。
+
 ### P0.8 测试与校验
 1. Rust 单元测试：
     - SAN 匹配（通配符 / 精确域）
