@@ -1,0 +1,1 @@
+当前开发的终端 Shell 环境为 Powershell，请根据该环境编写终端 Shell。
