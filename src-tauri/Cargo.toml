@@ -53,6 +53,7 @@ webpki-roots = "0.25"
 # HTTP client core (P0.4)
 hyper = { version = "0.14", features = ["client", "http1", "tcp", "stream"] }
 tokio-rustls = "0.24"
+url = "2"
 
 [dev-dependencies]
 # 与主运行时一致，测试中使用 current_thread 以减少潜在冲突

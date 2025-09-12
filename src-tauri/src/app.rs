@@ -2,7 +2,12 @@
 use std::{sync::{Arc, Mutex}, io::{Read, Write}, net::{TcpListener, TcpStream}, thread, path::PathBuf};
 use serde::{Serialize, Deserialize};
 use tauri::{Manager, State};
-use crate::core::{config::{loader as cfg_loader, model::AppConfig}, tasks::{TaskRegistry, SharedTaskRegistry, TaskSnapshot, TaskKind}};
+use crate::core::{
+    config::{loader as cfg_loader, model::AppConfig},
+    tasks::{TaskRegistry, SharedTaskRegistry, TaskSnapshot, TaskKind},
+    http::{types::{HttpRequestInput, HttpResponseOutput, RedirectInfo}, client::HttpClient},
+    tls::util::match_domain,
+};
 use crate::logging;
 
 // ===== State Types =====
@@ -54,6 +59,186 @@ async fn task_cancel(id:String, reg: State<'_, TaskRegistryState>) -> Result<boo
 #[tauri::command]
 async fn task_start_sleep(ms:u64, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String,String>{ let (id, token)=reg.create(TaskKind::Sleep { ms }); reg.clone().spawn_sleep_task(Some(app), id, token, ms); Ok(id.to_string()) }
 
+// ========== P0.5 http_fake_request ==========
+fn redact_auth_in_headers(mut h: std::collections::HashMap<String, String>, mask: bool) -> std::collections::HashMap<String, String> {
+    if !mask { return h; }
+    // 大小写不敏感匹配 Authorization
+    for (k, v) in h.clone().iter() {
+        if k.eq_ignore_ascii_case("authorization") {
+            let _ = v; // silence unused warning
+            h.insert(k.clone(), "REDACTED".into());
+        }
+    }
+    h
+}
+
+fn host_in_whitelist(host: &str, cfg: &AppConfig) -> bool {
+    let wl = &cfg.tls.san_whitelist;
+    if wl.is_empty() { return false; }
+    wl.iter().any(|p| match_domain(p, host))
+}
+
+fn classify_error_msg(e: &str) -> (&'static str, String) {
+    let msg = e.to_string();
+    if msg.contains("SAN whitelist mismatch") { ("Verify", msg) }
+    else if msg.contains("tls handshake") { ("Tls", msg) }
+    else if msg.contains("connect timeout") || msg.contains("connect error") || msg.contains("read body") { ("Network", msg) }
+    else if msg.contains("only https") || msg.contains("invalid URL") || msg.contains("url host missing") { ("Input", msg) }
+    else { ("Internal", msg) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_redact_auth_in_headers_case_insensitive() {
+        let mut h = std::collections::HashMap::new();
+        h.insert("Authorization".to_string(), "Bearer abc".to_string());
+        h.insert("x-other".to_string(), "1".to_string());
+        let out = redact_auth_in_headers(h, true);
+        assert_eq!(out.get("Authorization").unwrap(), "REDACTED");
+        assert_eq!(out.get("x-other").unwrap(), "1");
+
+        let mut h2 = std::collections::HashMap::new();
+        h2.insert("aUtHoRiZaTiOn".to_string(), "token".to_string());
+        let out2 = redact_auth_in_headers(h2, true);
+        assert_eq!(out2.get("aUtHoRiZaTiOn").unwrap(), "REDACTED");
+    }
+
+    #[test]
+    fn test_redact_auth_no_mask_keeps_original() {
+        let mut h = std::collections::HashMap::new();
+        h.insert("Authorization".to_string(), "Bearer xyz".to_string());
+        let out = redact_auth_in_headers(h, false);
+        assert_eq!(out.get("Authorization").unwrap(), "Bearer xyz");
+    }
+
+    #[test]
+    fn test_host_in_whitelist_exact_and_wildcard() {
+        let mut cfg = AppConfig::default();
+        // default has github.com and *.github.com
+        assert!(host_in_whitelist("github.com", &cfg));
+        assert!(host_in_whitelist("api.github.com", &cfg));
+        assert!(!host_in_whitelist("example.com", &cfg));
+
+        // empty whitelist -> reject any
+        cfg.tls.san_whitelist.clear();
+        assert!(!host_in_whitelist("github.com", &cfg));
+    }
+
+    #[test]
+    fn test_classify_error_msg_mapping() {
+        let cases = vec![
+            ("SAN whitelist mismatch", "Verify"),
+            ("Tls: tls handshake", "Tls"),
+            ("connect timeout", "Network"),
+            ("connect error", "Network"),
+            ("read body", "Network"),
+            ("only https", "Input"),
+            ("invalid URL", "Input"),
+            ("url host missing", "Input"),
+            ("some other error", "Internal"),
+        ];
+        for (msg, cat) in cases {
+            let (got, _m) = classify_error_msg(msg);
+            assert_eq!(got, cat, "msg={}", msg);
+        }
+    }
+}
+
+#[tauri::command]
+async fn http_fake_request(input: HttpRequestInput, cfg: State<'_, SharedConfig>) -> Result<HttpResponseOutput, String> {
+    // 将 MutexGuard 限定在局部作用域，避免跨 await 持有非 Send 的锁
+    let cfg_val = {
+        let g = cfg.lock().map_err(|e| e.to_string())?;
+        g.clone()
+    };
+
+    // 早期校验 URL 与 host 白名单
+    let mut current_url = input.url.clone();
+    let parsed = current_url.parse::<hyper::Uri>().map_err(|e| format!("Input: invalid URL - {}", e))?;
+    if parsed.scheme_str() != Some("https") { return Err("Input: only https is supported".into()); }
+    let host = parsed.host().ok_or_else(|| "Input: url host missing".to_string())?;
+    if !host_in_whitelist(host, &cfg_val) {
+        return Err("Verify: SAN whitelist mismatch (precheck)".into());
+    }
+
+    // 日志脱敏后记录一次请求概览
+    let redacted = redact_auth_in_headers(input.headers.clone(), cfg_val.logging.auth_header_masked);
+    tracing::info!(target = "http", method = %input.method, url = %input.url, headers = ?redacted, "http_fake_request start");
+
+    // 构造 client
+    let client = HttpClient::new(cfg_val.clone());
+    let follow = input.follow_redirects;
+    let max_redirects = input.max_redirects;
+    let mut redirects: Vec<RedirectInfo> = Vec::new();
+
+    // 为了处理 301/302/303 -> GET，后续 307/308 需要保留“当前尝试”的方法与 body
+
+    let mut attempt_input = input.clone();
+
+    for i in 0..=max_redirects as u16 {
+        let result = client.send(attempt_input.clone()).await;
+        match result {
+            Ok(mut out) => {
+                // 检查是否需要继续跳转
+                let status = out.status;
+                let is_redirect = matches!(status, 301 | 302 | 303 | 307 | 308);
+                if !is_redirect || !follow { // 不跟随或非跳转
+                    // 合并收集的 redirect 链并返回
+                    out.redirects = redirects;
+                    return Ok(out);
+                }
+                // 提取 Location
+                let location = out.headers.get("location").cloned();
+                if location.is_none() {
+                    out.redirects = redirects;
+                    return Ok(out);
+                }
+                let loc = location.unwrap();
+
+                // 解析并构造下一跳 URL（相对路径基于 current_url）
+                let base = current_url.parse::<url::Url>().map_err(|e| format!("Internal: url parse {}", e))?;
+                let next_url = base.join(&loc).map_err(|e| format!("Input: bad redirect location - {}", e))?.to_string();
+
+                // 白名单预检下一跳 host
+                let next_host = url::Url::parse(&next_url).map_err(|e| format!("Internal: url parse {}", e))?
+                    .host_str().ok_or_else(|| "Input: redirect host missing".to_string())?.to_string();
+                if !host_in_whitelist(&next_host, &cfg_val) { return Err("Verify: SAN whitelist mismatch (redirect)".into()); }
+
+                redirects.push(RedirectInfo { status, location: next_url.clone(), count: (i as u8) + 1 });
+                if i as u8 >= max_redirects { return Err(format!("Network: too many redirects (>{})", max_redirects)); }
+
+                // 方法与 body 处理
+                let mut next_input = attempt_input.clone();
+                next_input.url = next_url.clone();
+                current_url = next_url;
+                match status {
+                    301 | 302 | 303 => {
+                        next_input.method = "GET".into();
+                        next_input.body_base64 = None;
+                    }
+                    307 | 308 => {
+                        // 保持当前尝试的 method/body（非最初的 original）
+                        next_input.method = attempt_input.method.clone();
+                        next_input.body_base64 = attempt_input.body_base64.clone();
+                    }
+                    _ => {}
+                }
+                attempt_input = next_input;
+                continue; // 下一轮尝试
+            }
+            Err(e) => {
+                let (cat, msg) = classify_error_msg(&e.to_string());
+                return Err(format!("{}: {}", cat, msg));
+            }
+        }
+    }
+
+    Err("Network: redirect loop reached without resolution".into())
+}
+
 pub fn run(){
     logging::init_logging();
     let mut builder = tauri::Builder::default()
@@ -65,7 +250,8 @@ pub fn run(){
         .manage(Arc::new(TaskRegistry::new()) as TaskRegistryState)
         .invoke_handler(tauri::generate_handler![
             greet,start_oauth_server,get_oauth_callback_data,clear_oauth_state,get_system_proxy,
-            get_config,set_config,task_list,task_cancel,task_start_sleep,task_snapshot
+            get_config,set_config,task_list,task_cancel,task_start_sleep,task_snapshot,
+            http_fake_request
         ]);
     builder = builder.setup(|app| { let base_dir: PathBuf = app.path().app_config_dir().unwrap_or_else(|_| std::env::current_dir().unwrap()); let cfg = cfg_loader::load_or_init_at(&base_dir).unwrap_or_default(); app.manage(Arc::new(Mutex::new(cfg)) as SharedConfig); app.manage::<ConfigBaseDir>(base_dir); Ok(()) });
     builder.run(tauri::generate_context!()).expect("error while running tauri application");
