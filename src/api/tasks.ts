@@ -33,8 +33,16 @@ export async function initTaskEvents() {
       createdAt: p.createdAt ?? Date.now(),
     });
   });
-  const un2 = await listen<TaskProgressEventPayload>("task://progress", () => {
-    // 可在后续扩展进度条存储
+  const un2 = await listen<TaskProgressEventPayload>("task://progress", (e) => {
+    const p = e.payload;
+    store.updateProgress({
+      taskId: p.taskId,
+      percent: p.percent ?? 0,
+      phase: p.phase,
+      objects: p.objects,
+      bytes: p.bytes,
+      total_hint: p.total_hint,
+    });
   });
   unsubs.push(un1, un2);
 }
