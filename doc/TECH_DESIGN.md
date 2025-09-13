@@ -424,6 +424,8 @@ Tauri Backend (Rust)
 - 路由 `/git` 进入 Git 克隆面板；`/` 主页包含导航。
 - 详见实现说明与文件清单：`doc/TECH_DESIGN_P0.md` 的「P0.7 实际实现说明 (已完成)」。
 
+下一阶段（P1）规划与实施细化请见：`doc/TECH_DESIGN_P1.md`。
+
 ---
 
 ## 20. 前端 API & 事件（命令清单）
