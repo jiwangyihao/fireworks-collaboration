@@ -17,6 +17,7 @@ pub enum TaskState {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum TaskKind {
     GitClone { repo: String, dest: String },
+    GitFetch { repo: String, dest: String },
     HttpFake { url: String, method: String },
     Sleep { ms: u64 },
     Unknown,
@@ -26,6 +27,7 @@ impl TaskKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::GitClone { .. } => "GitClone",
+            Self::GitFetch { .. } => "GitFetch",
             Self::HttpFake { .. } => "HttpFake",
             Self::Sleep { .. } => "Sleep",
             Self::Unknown => "Unknown",
