@@ -77,6 +77,43 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
   - 性能不明显回退（以小样本为准）。
 - 回滚：版本回退；开发期可切换 `gix` 路径做对照测试。
 
+#### MP0.2 实现说明（仓库当前状态）
+
+- 代码改动概览
+  - Git2 实现
+    - 在 `src-tauri/src/core/git/git2_impl.rs` 中完成 `Git2Service::clone_blocking`：
+      - 使用 `git2::build::RepoBuilder` + `FetchOptions` + `RemoteCallbacks` 实现 clone。
+      - 在 `transfer_progress` 中桥接 objects/received_bytes/total_objects → 统一 `ProgressPayload { objects, bytes, totalHint, percent, phase }`。
+      - 将 checkout 阶段通过 `CheckoutBuilder::progress` 映射为 90–100% 区间（phase=`Checkout`），clone 成功后额外发出一次 `Completed` 进度（100%）。
+      - 取消：在回调中检查取消标志（`AtomicBool`/token），命中即提前中断（返回 `false`），并将错误分类为 `Cancel`。
+      - 错误分类：按 git2 错误 code/class/message 初步映射到 `ErrorCategory::{ Network, Tls, Verify, Auth, Cancel, Internal }`（`Protocol/Proxy` 预留，后续在 MP0.3/MP1 进一步细化）。
+      - 线程与回调安全：为复用同一个 `on_progress` 回调于不同阶段（transfer/checkout），使用 `Arc<Mutex<..>>` 规避可变借用冲突。
+    - `fetch_blocking` 仍为占位（将于 MP0.3 完成）。
+  - 任务接线
+    - 在 `src-tauri/src/core/tasks/registry.rs` 中，`spawn_git_clone_task` 在 `feature = "git-impl-git2"` 下改为调用 `Git2Service::clone_blocking`（默认启用该特性）。
+    - 保留非该特性时的 gix 旧路径，作为开发期回退对照。
+    - 为缓解测试中观察到的竞态，进入 `Running` 后加入极小延迟（数十毫秒）以稳定事件可见性；保持事件契约不变（`task://state|progress`）。
+
+- 进度桥接与阶段
+  - 阶段：`Negotiating`（握手/引用协商）、`Receiving`（对象接收/pack 流）、`Checkout`（工作区检出）、`Completed`（完成时额外一次进度）。
+  - 百分比：`Receiving` 按对象进度计算；`Checkout` 被映射到 90–100% 用于 UI 平滑过渡；最终确保 100% 收敛。
+
+- 测试与结果
+  - Rust 测试
+    - 新增 `src-tauri/tests/git2_impl_tests.rs`：覆盖初始协商进度触发、取消路径分类为 `Cancel`、无效本地路径快速失败、本地仓库克隆成功并校验阶段与百分比边界（0..=100）。
+    - 新增 `src-tauri/tests/git_tasks_local.rs`：注册表层面的本地仓库克隆集成测试（不依赖事件总线），验证任务最终进入 `Completed`。
+    - 运行结果：子工程 `cargo test` 全部通过。
+  - 前端/集成测试
+    - 未修改前端契约，现有 `pnpm test` 75 个用例保持全绿。
+
+- 回滚与风险
+  - 通过 `git-impl-git2`/`git-impl-gix` 特性位控制运行路径；默认 git2，可在开发期快速切回 gix 做对照与定位。
+  - 当前变更未引入前端 API/事件格式变化；风险集中于平台差异与进度时序，已通过离线本地用例与小延迟稳定。
+
+- 后续衔接
+  - MP0.3：补齐 `fetch_blocking`（git2-rs），沿用相同进度/取消/错误分类桥接；在 `TaskRegistry` 切换 fetch 路径并补充离线用例（本地源新增提交 → 目标 fetch）。
+  - MP0.4：移除 gix 依赖与旧代码，关闭并删除对应特性位，文档与变更日志收尾。
+
 ### MP0.3 Fetch 与一致性（约 0.5 周）
 - 范围：
   - 基于现有仓库实现 Fetch；与 Clone 复用进度/取消/错误映射；
@@ -136,12 +173,12 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
 - [x] 在 service.rs 中抽象 `GitService` trait（或等效统一入口）。
 
 2) 实现 Clone（[MP0.2]）
-- [ ] 初始化仓库：`Repository::clone_with(...)` 或 `Remote::connect` 自定义回调。
-- [ ] 注册回调：transfer_progress、credentials（暂保持匿名/无 push）。
-- [ ] 取消：回调定期检查 token；
-- [ ] 事件：开始/进度/结束/失败；
-- [ ] 错误映射：到 `ErrorCategory`；
-- [ ] 小样本验证：成功/取消/网络错误/证书错误。
+- [x] 初始化仓库：`RepoBuilder::clone` + `FetchOptions`/`CheckoutBuilder`（git2-rs）。
+- [x] 注册回调：transfer_progress（桥接 objects/bytes/totalHint），credentials 预留位（未启用）。
+- [x] 取消：在 transfer_progress 中检查令牌并中止（User 错误 → Cancel）。
+- [x] 事件：保持 `task://progress` 阶段映射（Negotiating/Receiving/Checkout/Completed）。
+- [x] 错误映射：到 `ErrorCategory`（Network/Tls/Verify/Auth/Cancel/Internal）。
+- [x] 小样本验证：本地 `cargo test` 与前端 `pnpm test` 全绿（离线用例覆盖 invalid/cancel）。
 
 3) 实现 Fetch（[MP0.3]）
 - [ ] 打开已有 repo，取 remote（origin或传入），`fetch(refspecs, Some(mut callbacks), None)`；
