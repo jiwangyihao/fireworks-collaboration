@@ -68,3 +68,10 @@ export async function cancelTask(id: string) {
 export async function startGitClone(repo: string, dest: string) {
   return invoke<string>("git_clone", { repo, dest });
 }
+
+// P1.1：启动 Git Fetch 任务，返回 taskId
+export async function startGitFetch(repo: string, dest: string, preset?: "remote" | "branches" | "branches+tags" | "tags") {
+  const args: Record<string, unknown> = { repo, dest };
+  if (preset && preset !== "remote") args.preset = preset;
+  return invoke<string>("git_fetch", args);
+}

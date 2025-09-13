@@ -6,7 +6,7 @@ export type TaskState =
   | "completed"
   | "failed"
   | "canceled";
-export type TaskKind = "GitClone" | "HttpFake" | "Unknown";
+export type TaskKind = "GitClone" | "GitFetch" | "HttpFake" | "Unknown";
 
 export interface TaskItem {
   id: string;
