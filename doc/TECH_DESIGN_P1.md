@@ -118,6 +118,34 @@
 
 验收：对同一仓库的已有工作副本执行 Fetch 成功（若无变更返回快速完成亦视为成功）。
 
+#### P1.1 实际实现说明 (已完成)
+
+| 项目 | 实现情况 | 备注 |
+|------|----------|------|
+| 依赖与版本 | 使用 gitoxide `gix = 0.73`（禁用默认特性，启用 `blocking-network-client`, `worktree-mutation`, `parallel`），并配合 `gix-transport = 0.48` 开启 `http-client-reqwest` 以支持 HTTPS | 解决“https 未编译支持”的问题；保持与现有 Clone 路径一致 |
+| 后端命令 | 在 `src-tauri/src/app.rs` 暴露 Tauri 命令 `git_fetch(repo: String, dest: String, preset: Option<String>) -> Uuid` | `preset` 为可选 RefSpec 预设；返回任务 ID |
+| 任务接线 | `TaskRegistry::spawn_git_fetch_task(app, id, token, repo, dest, preset)` 负责状态流转与事件发射 | 状态事件：`Pending → Running → Completed/Failed/Canceled`，并确保所有退出路径均正确收敛 watcher 线程 |
+| Fetch 实现 | `core::git::fetch::fetch_blocking_with_progress(repo, dest, should_interrupt, on_progress, preset)` 采用阻塞 API 运行于 `spawn_blocking` 线程 | 预检查 `dest/.git` 存在；通过 `find_fetch_remote` 建立连接，`prepare_fetch` 后 `receive` |
+| 取消 | 通过 `CancellationToken` 与 `AtomicBool` 桥接 gix 的 `should_interrupt` 回调 | 取消触发后在 gix 的安全检查点尽快返回；任务状态=Canceled |
+| 进度事件 | 桥接阶段：`Negotiating` → `Receiving`；并透传 `objects/bytes/total_hint` | 统一发送 `task://progress`：包含 `percent`（钳制 0..100）、`phase`、`objects`、`bytes`、`totalHint` |
+| RefSpec 预设 | 支持 UI 传入 `preset` 注入额外 refspec：<br/>- `branches`: `+refs/heads/*:refs/remotes/origin/*`<br/>- `tags`: `+refs/tags/*:refs/tags/*`<br/>- `branches+tags`: 同时注入两者 | 通过 `gix::refspec::parse` 解析为 `RefSpec` 并设置到 `gix::remote::ref_map::Options.extra_refspecs`；默认 `preset=None` 时依赖远端自身配置（避免 "MissingRefSpecs"） |
+| 前端 API | `src/api/tasks.ts` 新增/扩展 `startGitFetch(repo, dest, preset?)` 封装 | 当选择“remote（默认）”时不下发 `preset`，其余选项透传 |
+| 前端 UI | `src/views/GitPanel.vue` 新增 Fetch 区域与“RefSpec 预设”下拉（remote/branches/branches+tags/tags） | Fetch 按钮允许 `repo` 为空（从默认 remote 拉取）；进度展示 `phase/percent/objects/bytes`；运行中可取消 |
+| Store | `src/stores/tasks.ts` 增强 `progressById` 合并可选字段并钳制百分比 | 兼容字段缺失与重复事件；避免顺序依赖导致的抖动 |
+| 测试覆盖（后端） | Rust 单测覆盖：非仓库目录快速失败、取消前即刻中止、参数签名与预设分支 | 避免网络依赖；确保 `spawn_git_fetch_task` 新签名在测试中正确调用 |
+| 测试覆盖（前端） | Vitest 覆盖：API 预设透传、View 交互（选择预设→调用参数校验）、事件进度渲染（phase/objs/bytes）、取消按钮 | 为避免事件顺序抖动导致的脆弱性，测试不依赖固定数组下标，且每个用例清理监听调用缓存 |
+| 体验对齐 | 为保持一致体验，Clone 亦桥接了 `Negotiating/Receiving/Checkout` 三阶段并复用同一事件模型 | 不改变既有 `git_clone` API；仅增强内部进度回调与事件发射 |
+
+实现要点与边界：
+- `.git` 预检查：若 `dest` 不是有效工作副本，`fetch` 会快速失败并返回明确错误，防止误用。
+- 远端名称：预设 refspec 默认指向 `origin`；后续可选在 UI/后端参数中开放远端名配置（当前非必须）。
+- 进度估算：`total_hint` 可能缺失或不精确，前端以阶段+百分比为主显示，并在 store 侧做百分比钳制。
+- 线程收敛：无论正常、失败或取消路径，均确保 watcher 线程通过中断标记与 `join` 正常退出，避免悬挂。
+
+验收状态：
+- 本地 `cargo test` 与前端 `pnpm test` 全部通过；新增与修改用例稳定运行。
+- UI 手动验证：选择不同预设触发 Fetch，能看到阶段/对象/字节进度；在中途取消，任务状态转为 Canceled 且进度停止。
+
 ### P1.2 Git Push 基础
 目标：支持最基本的 HTTPS Push（Fast-Forward 或创建新分支）。
 
