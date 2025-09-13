@@ -177,6 +177,8 @@ impl TaskRegistry {
     pub fn spawn_git_fetch_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, repo: String, dest: String, preset: Option<String>) -> JoinHandle<()> {
         let this = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
+            #[cfg(feature = "git-impl-git2")]
+            let _ = &preset; // 避免在 git2 路径下未使用的编译告警
             match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Running), None => this.set_state_noemit(&id, TaskState::Running) }
 
             // 预发一个开始事件
@@ -209,21 +211,51 @@ impl TaskRegistry {
             }
 
             let dest_path = std::path::PathBuf::from(dest.clone());
-            // 使用带进度回调的 fetch，实现 Negotiating/Receiving 阶段桥接
-            let app_for_cb = app.clone();
-            let id_for_cb = id.clone();
-            let res = crate::core::git::fetch::fetch_blocking_with_progress(
-                repo.as_str(),
-                &dest_path,
-                &*interrupt_flag,
-                Box::new(move |phase, percent, objects, bytes, total_hint| {
-                    if let Some(app_ref) = &app_for_cb {
-                        let prog = TaskProgressEvent { task_id: id_for_cb, kind: "GitFetch".into(), phase: phase.to_string(), percent, objects, bytes, total_hint };
-                        emit_all(app_ref, EV_PROGRESS, &prog);
-                    }
-                }),
-                preset.as_deref(),
-            );
+            #[cfg(feature = "git-impl-git2")]
+            let res = {
+                use crate::core::git::service::GitService;
+                let service = crate::core::git::git2_impl::Git2Service::new();
+                let app_for_cb = app.clone();
+                let id_for_cb = id.clone();
+                service.fetch_blocking(
+                    repo.as_str(),
+                    &dest_path,
+                    &*interrupt_flag,
+                    move |p| {
+                        if let Some(app_ref) = &app_for_cb {
+                            let prog = TaskProgressEvent {
+                                task_id: id_for_cb,
+                                kind: p.kind,
+                                phase: p.phase,
+                                percent: p.percent,
+                                objects: p.objects,
+                                bytes: p.bytes,
+                                total_hint: p.total_hint,
+                            };
+                            emit_all(app_ref, EV_PROGRESS, &prog);
+                        }
+                    },
+                )
+                .map_err(|e| format!("{}", e))
+            };
+            #[cfg(not(feature = "git-impl-git2"))]
+            let res = {
+                // 使用带进度回调的 gix fetch，实现 Negotiating/Receiving 阶段桥接
+                let app_for_cb = app.clone();
+                let id_for_cb = id.clone();
+                crate::core::git::fetch::fetch_blocking_with_progress(
+                    repo.as_str(),
+                    &dest_path,
+                    &*interrupt_flag,
+                    Box::new(move |phase, percent, objects, bytes, total_hint| {
+                        if let Some(app_ref) = &app_for_cb {
+                            let prog = TaskProgressEvent { task_id: id_for_cb, kind: "GitFetch".into(), phase: phase.to_string(), percent, objects, bytes, total_hint };
+                            emit_all(app_ref, EV_PROGRESS, &prog);
+                        }
+                    }),
+                    preset.as_deref(),
+                )
+            };
             match res {
                 Ok(()) => {
                     if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
