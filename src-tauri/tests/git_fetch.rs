@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use tokio::time::{sleep, Duration, timeout};
 
-use fireworks_collaboration_lib::core::git::fetch::fetch_blocking;
+use fireworks_collaboration_lib::core::git::DefaultGitService;
+use fireworks_collaboration_lib::core::git::service::GitService;
 use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
 use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
 
@@ -31,7 +32,8 @@ async fn test_git_fetch_non_repo_dest_errors_fast() {
         let flag = AtomicBool::new(false);
         let out = tokio::task::spawn_blocking(move || {
             // repo_url 传空串，等价于 `git fetch` 使用默认远程，但由于 dest 不是仓库，应立刻报错
-            fetch_blocking("", &dest, &flag)
+            let svc = DefaultGitService::new();
+            svc.fetch_blocking("", &dest, &flag, |_p| {})
         }).await.expect("spawn_blocking join");
         assert!(out.is_err(), "non-repo dest should error quickly");
     }).await;

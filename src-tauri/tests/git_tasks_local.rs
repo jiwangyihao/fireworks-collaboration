@@ -1,4 +1,4 @@
-#![cfg(all(not(feature = "tauri-app"), feature = "git-impl-git2"))]
+#![cfg(not(feature = "tauri-app"))]
 
 use std::path::PathBuf;
 use std::process::Command;

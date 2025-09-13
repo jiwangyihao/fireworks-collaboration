@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use tokio::time::{sleep, Duration, timeout};
 
-use fireworks_collaboration_lib::core::git::clone::clone_blocking;
+use fireworks_collaboration_lib::core::git::DefaultGitService;
+use fireworks_collaboration_lib::core::git::service::GitService;
 use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
 use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
 
@@ -42,11 +43,12 @@ async fn test_git_clone_invalid_url_early_error() {
         let flag = AtomicBool::new(false);
         // 在阻塞线程中执行，避免阻塞 Tokio 定时器
         let out = tokio::task::spawn_blocking(move || {
-            clone_blocking("not-a-valid-url!!!", &dest, &flag)
+            let svc = DefaultGitService::new();
+            svc.clone_blocking("not-a-valid-url!!!", &dest, &flag, |_p| {})
         }).await.expect("spawn_blocking join");
-        assert!(out.is_err(), "invalid input should error");
-        let msg = out.err().unwrap();
-        assert!(!msg.is_empty(), "error message should not be empty");
+    assert!(out.is_err(), "invalid input should error");
+    let msg = format!("{}", out.err().unwrap());
+    assert!(!msg.is_empty(), "error message should not be empty");
     }).await;
     assert!(res.is_ok(), "test exceeded timeout window");
 }
@@ -58,7 +60,8 @@ async fn test_git_clone_interrupt_flag_cancels_immediately() {
         // 将中断标志置为 true，应使 fetch_then_checkout 立即返回错误（无需触网）
         let flag = AtomicBool::new(true);
         let out = tokio::task::spawn_blocking(move || {
-            clone_blocking("https://github.com/rust-lang/log", &dest, &flag)
+            let svc = DefaultGitService::new();
+            svc.clone_blocking("https://github.com/rust-lang/log", &dest, &flag, |_p| {})
         }).await.expect("join");
         assert!(out.is_err(), "interrupt should cause clone to error quickly");
     }).await;
@@ -139,7 +142,7 @@ async fn test_registry_invalid_url_fails_quick() {
     // 验证在注册表任务层面，明显无效的 URL 会快速失败（不依赖外网）
     let res = timeout(Duration::from_secs(6), async {
         let reg = Arc::new(TaskRegistry::new());
-        let repo = "not-a-valid-url!!!".to_string();
+    let repo = "not-a-valid-url!!!".to_string();
         let dest = std::env::temp_dir().join(format!("fwc-clone-{}", uuid::Uuid::new_v4())).to_string_lossy().to_string();
         let (id, token) = reg.create(TaskKind::GitClone { repo: repo.clone(), dest: dest.clone() });
         let handle = reg.clone().spawn_git_clone_task(None, id, token, repo, dest);
@@ -165,7 +168,8 @@ async fn test_git_clone_relative_path_non_repo_errors_fast() {
         let flag = AtomicBool::new(false);
         let repo = format!("./fwc-not-a-git-repo-{}", uuid::Uuid::new_v4());
         let out = tokio::task::spawn_blocking(move || {
-            clone_blocking(&repo, &dest, &flag)
+            let svc = DefaultGitService::new();
+            svc.clone_blocking(&repo, &dest, &flag, |_p| {})
         }).await.expect("spawn_blocking join");
         assert!(out.is_err(), "relative non-repo path should error quickly");
     }).await;

@@ -1,9 +1,9 @@
-#![cfg(all(not(feature = "tauri-app"), feature = "git-impl-git2"))]
+#![cfg(not(feature = "tauri-app"))]
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use fireworks_collaboration_lib::core::git::service::GitService;
-use fireworks_collaboration_lib::core::git::git2_impl::Git2Service;
+use fireworks_collaboration_lib::core::git::DefaultGitService;
 
 fn unique_temp_dir() -> PathBuf {
     let base = std::env::temp_dir();
@@ -13,7 +13,7 @@ fn unique_temp_dir() -> PathBuf {
 
 #[test]
 fn clone_reports_initial_negotiating_progress() {
-    let service = Git2Service::new();
+    let service = DefaultGitService::new();
     let dest = unique_temp_dir();
     let flag = AtomicBool::new(true); // 立刻取消，避免真实网络
     let mut saw_negotiating = false;
@@ -32,7 +32,7 @@ fn clone_reports_initial_negotiating_progress() {
 
 #[test]
 fn clone_cancel_flag_results_in_cancel_error() {
-    let service = Git2Service::new();
+    let service = DefaultGitService::new();
     let dest = unique_temp_dir();
     let flag = AtomicBool::new(true); // 一开始就取消
     let out = service.clone_blocking(
@@ -47,7 +47,7 @@ fn clone_cancel_flag_results_in_cancel_error() {
 
 #[test]
 fn clone_invalid_local_path_fails_quick() {
-    let service = Git2Service::new();
+    let service = DefaultGitService::new();
     let dest = unique_temp_dir();
     // 使用明显不存在的本地路径（非 URL），git2 会尝试按本地路径处理并失败
     let repo = PathBuf::from("C:/this-path-should-not-exist-xyz/repo");
@@ -81,8 +81,8 @@ fn clone_from_local_repo_succeeds_and_completes_with_valid_progress() {
     run(&["add", "."]);
     run(&["commit", "-m", "init"]);
 
-    // 2) 使用 Git2Service 执行克隆（本地路径，无需网络）
-    let service = Git2Service::new();
+    // 2) 使用 DefaultGitService 执行克隆（本地路径，无需网络）
+    let service = DefaultGitService::new();
     let dest = unique_temp_dir();
     let flag = AtomicBool::new(false);
     let mut completed = false;
@@ -124,7 +124,7 @@ fn fetch_cancel_flag_results_in_cancel_error() {
     run_in(&target, &["init", "--quiet"]);
     run_in(&target, &["remote", "add", "origin", target.to_string_lossy().as_ref()]);
 
-    let service = Git2Service::new();
+    let service = DefaultGitService::new();
     let flag = AtomicBool::new(true); // 立即取消
     let out = service.fetch_blocking(
         "", // 使用默认远程
@@ -167,8 +167,8 @@ fn fetch_updates_remote_tracking_refs() {
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     };
 
-    // 4) 在目标仓库调用 Git2Service::fetch_blocking
-    let service = Git2Service::new();
+    // 4) 在目标仓库调用 DefaultGitService::fetch_blocking
+    let service = DefaultGitService::new();
     let flag = AtomicBool::new(false);
     let got = service.fetch_blocking("", &dst, &flag, |_p| {});
     assert!(got.is_ok(), "fetch should succeed");
