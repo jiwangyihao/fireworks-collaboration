@@ -110,3 +110,74 @@ fn clone_from_local_repo_succeeds_and_completes_with_valid_progress() {
     // 3) 目标目录应已成为 git 仓库
     assert!(dest.join(".git").exists(), "dest should contain .git");
 }
+
+#[test]
+fn fetch_cancel_flag_results_in_cancel_error() {
+    use std::process::Command;
+    // 准备一个本地目标仓库（空 repo，设置 origin 指向自身以满足远程存在，但我们会立即取消）
+    let target = unique_temp_dir();
+    std::fs::create_dir_all(&target).unwrap();
+    let run_in = |dir: &PathBuf, args: &[&str]| {
+        let st = Command::new("git").current_dir(dir).args(args).status().unwrap();
+        assert!(st.success(), "git {:?} in {:?} should succeed", args, dir);
+    };
+    run_in(&target, &["init", "--quiet"]);
+    run_in(&target, &["remote", "add", "origin", target.to_string_lossy().as_ref()]);
+
+    let service = Git2Service::new();
+    let flag = AtomicBool::new(true); // 立即取消
+    let out = service.fetch_blocking(
+        "", // 使用默认远程
+        &target,
+        &flag,
+        |_p| {},
+    );
+    assert!(matches!(out, Err(e) if matches!(e, fireworks_collaboration_lib::core::git::errors::GitError::Categorized { category: fireworks_collaboration_lib::core::git::errors::ErrorCategory::Cancel, .. })), "cancel should map to Cancel category");
+}
+
+#[test]
+fn fetch_updates_remote_tracking_refs() {
+    use std::process::Command;
+    // 1) 创建源仓库并提交一条记录
+    let src = unique_temp_dir();
+    std::fs::create_dir_all(&src).unwrap();
+    let run_src = |args: &[&str]| {
+        let st = Command::new("git").current_dir(&src).args(args).status().unwrap();
+        assert!(st.success(), "git {:?} (src) should succeed", args);
+    };
+    run_src(&["init", "--quiet"]);
+    run_src(&["config", "user.email", "you@example.com"]);
+    run_src(&["config", "user.name", "You"]);
+    std::fs::write(src.join("f.txt"), "1").unwrap();
+    run_src(&["add", "."]);
+    run_src(&["commit", "-m", "c1"]);
+
+    // 2) 使用 git 克隆到目标（确保配置了默认 refspec 与 origin 远程）
+    let dst = unique_temp_dir();
+    let st = Command::new("git").args(["clone", "--quiet", src.to_string_lossy().as_ref(), dst.to_string_lossy().as_ref()]).status().expect("git clone");
+    assert!(st.success(), "initial clone should succeed");
+
+    // 3) 在源仓库新增一次提交
+    std::fs::write(src.join("f.txt"), "2").unwrap();
+    run_src(&["add", "."]);
+    run_src(&["commit", "-m", "c2"]);
+    let src_head = {
+        let out = Command::new("git").current_dir(&src).args(["rev-parse", "HEAD"]).output().unwrap();
+        assert!(out.status.success(), "get src HEAD");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+
+    // 4) 在目标仓库调用 Git2Service::fetch_blocking
+    let service = Git2Service::new();
+    let flag = AtomicBool::new(false);
+    let got = service.fetch_blocking("", &dst, &flag, |_p| {});
+    assert!(got.is_ok(), "fetch should succeed");
+
+    // 5) 验证远程跟踪分支已更新到源 HEAD
+    let dst_remote_head = {
+        let out = Command::new("git").current_dir(&dst).args(["rev-parse", "refs/remotes/origin/master"]).output().unwrap();
+        assert!(out.status.success(), "get dst remote head");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    assert_eq!(dst_remote_head, src_head, "remote-tracking ref should match source HEAD after fetch");
+}

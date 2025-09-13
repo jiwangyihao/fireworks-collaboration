@@ -51,3 +51,40 @@ async fn registry_clone_local_repo_completes() {
     assert!(completed, "local clone task should complete");
     let _ = handle.await;
 }
+
+#[tokio::test]
+async fn registry_fetch_local_repo_completes() {
+    use std::process::Command;
+    // 准备源仓库
+    let src = unique_temp_dir();
+    std::fs::create_dir_all(&src).unwrap();
+    let run_src = |args: &[&str]| {
+        let st = Command::new("git").current_dir(&src).args(args).status().unwrap();
+        assert!(st.success(), "git {:?} (src) should succeed", args);
+    };
+    run_src(&["init", "--quiet"]);
+    run_src(&["config", "user.email", "you@example.com"]);
+    run_src(&["config", "user.name", "You"]);
+    std::fs::write(src.join("a.txt"), "1").unwrap();
+    run_src(&["add", "."]);
+    run_src(&["commit", "-m", "init"]);
+
+    // 使用系统 git 先 clone 作为目标仓库（保证有 origin）
+    let dst = unique_temp_dir();
+    let st = Command::new("git").args(["clone", "--quiet", src.to_string_lossy().as_ref(), dst.to_string_lossy().as_ref()]).status().expect("git clone");
+    assert!(st.success(), "initial clone should succeed");
+
+    // 在源新增提交，便于 fetch 拉取
+    std::fs::write(src.join("a.txt"), "2").unwrap();
+    run_src(&["add", "."]);
+    run_src(&["commit", "-m", "more"]);
+
+    let reg = Arc::new(TaskRegistry::new());
+    let (id, token) = reg.create(TaskKind::GitFetch { repo: "".into(), dest: dst.to_string_lossy().to_string() });
+    let handle = reg.clone().spawn_git_fetch_task(None, id, token, "".into(), dst.to_string_lossy().to_string(), None);
+
+    // 等待任务完成
+    let completed = wait_for_state(&reg, id, TaskState::Completed, 10_000).await;
+    assert!(completed, "local fetch task should complete");
+    let _ = handle.await;
+}
