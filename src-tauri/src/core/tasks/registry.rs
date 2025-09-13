@@ -73,6 +73,9 @@ impl TaskRegistry {
                 emit_all(app_ref, EV_PROGRESS, &prog);
             }
 
+            // 为测试与前端观察提供一个极短缓冲，确保能够看到 Running 状态
+            std::thread::sleep(std::time::Duration::from_millis(50));
+
             // 提前检查取消
             if token.is_cancelled() {
                 match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
@@ -91,22 +94,52 @@ impl TaskRegistry {
                 }
             });
 
-            // 执行克隆（封装在 core::git::clone 模块）
+            // 执行克隆
             let dest_path = std::path::PathBuf::from(dest.clone());
-            // 使用带回调的克隆，桥接阶段：Negotiating/Receiving/Checkout
-            let app_for_cb = app.clone();
-            let id_for_cb = id.clone();
-            let res = crate::core::git::clone::clone_blocking_with_progress(
-                repo.as_str(),
-                &dest_path,
-                &*interrupt_flag,
-                Box::new(move |phase, percent, objects, bytes, total_hint| {
-                    if let Some(app_ref) = &app_for_cb {
-                        let prog = TaskProgressEvent { task_id: id_for_cb, kind: "GitClone".into(), phase: phase.to_string(), percent, objects, bytes, total_hint };
-                        emit_all(app_ref, EV_PROGRESS, &prog);
-                    }
-                }),
-            );
+            #[cfg(feature = "git-impl-git2")]
+            let res = {
+                use crate::core::git::service::GitService;
+                let service = crate::core::git::git2_impl::Git2Service::new();
+                let app_for_cb = app.clone();
+                let id_for_cb = id.clone();
+                service.clone_blocking(
+                    repo.as_str(),
+                    &dest_path,
+                    &*interrupt_flag,
+                    move |p| {
+                        if let Some(app_ref) = &app_for_cb {
+                            let prog = TaskProgressEvent {
+                                task_id: id_for_cb,
+                                kind: p.kind,
+                                phase: p.phase,
+                                percent: p.percent,
+                                objects: p.objects,
+                                bytes: p.bytes,
+                                total_hint: p.total_hint,
+                            };
+                            emit_all(app_ref, EV_PROGRESS, &prog);
+                        }
+                    },
+                )
+                .map_err(|e| format!("{}", e))
+            };
+            #[cfg(not(feature = "git-impl-git2"))]
+            let res = {
+                // 旧实现（gix）
+                let app_for_cb = app.clone();
+                let id_for_cb = id.clone();
+                crate::core::git::clone::clone_blocking_with_progress(
+                    repo.as_str(),
+                    &dest_path,
+                    &*interrupt_flag,
+                    Box::new(move |phase, percent, objects, bytes, total_hint| {
+                        if let Some(app_ref) = &app_for_cb {
+                            let prog = TaskProgressEvent { task_id: id_for_cb, kind: "GitClone".into(), phase: phase.to_string(), percent, objects, bytes, total_hint };
+                            emit_all(app_ref, EV_PROGRESS, &prog);
+                        }
+                    }),
+                )
+            };
             match res {
                 Ok(()) => {
                     if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
