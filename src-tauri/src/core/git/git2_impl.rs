@@ -148,24 +148,118 @@ impl GitService for Git2Service {
 
     fn fetch_blocking<F: FnMut(ProgressPayload)>(
         &self,
-        _repo_url: &str,
+        repo_url: &str,
         dest: &Path,
-        _should_interrupt: &std::sync::atomic::AtomicBool,
+        should_interrupt: &std::sync::atomic::AtomicBool,
         mut on_progress: F,
     ) -> Result<(), GitError> {
-        // 仍为占位，MP0.3 实现。此处保留最小行为以保证编译通过。
+        // 校验目标路径是一个 Git 仓库
         if !dest.join(".git").exists() {
             return Err(GitError::new(ErrorCategory::Internal, "dest is not a git repository (missing .git)"));
         }
+
+        // 进入 Negotiating 阶段
         on_progress(ProgressPayload {
             task_id: uuid::Uuid::nil(),
             kind: "GitFetch".into(),
-            phase: "Init".into(),
+            phase: "Negotiating".into(),
             percent: 0,
             objects: None,
             bytes: None,
             total_hint: None,
         });
-        Ok(())
+
+        // 提前响应取消
+        if should_interrupt.load(Ordering::Relaxed) {
+            return Err(GitError::new(ErrorCategory::Cancel, "user canceled"));
+        }
+
+        // 打开仓库
+        let repo = match git2::Repository::open(dest) {
+            Ok(r) => r,
+            Err(e) => return Err(GitError::new(Self::map_git2_error(&e), format!("open repo: {}", e))),
+        };
+
+        // 构建进度回调
+        let cb = Arc::new(Mutex::new(on_progress));
+        let mut callbacks = git2::RemoteCallbacks::new();
+        let cb_for_transfer = Arc::clone(&cb);
+        callbacks.transfer_progress(move |stats| {
+            if should_interrupt.load(Ordering::Relaxed) { return false; }
+            let received = stats.received_objects() as u64;
+            let total = stats.total_objects() as u64;
+            let bytes = stats.received_bytes() as u64;
+            let percent = if total > 0 { ((received as f64 / total as f64) * 100.0) as u32 } else { 0 };
+            if let Ok(mut f) = cb_for_transfer.lock() {
+                (*f)(ProgressPayload {
+                    task_id: uuid::Uuid::nil(),
+                    kind: "GitFetch".into(),
+                    phase: "Receiving".into(),
+                    percent: percent.min(100),
+                    objects: Some(received),
+                    bytes: Some(bytes),
+                    total_hint: if total > 0 { Some(total) } else { None },
+                });
+            }
+            true
+        });
+
+        let mut fo = git2::FetchOptions::new();
+        fo.remote_callbacks(callbacks);
+        fo.download_tags(git2::AutotagOption::Unspecified);
+        fo.update_fetchhead(true);
+
+        // 选择远程：优先 repo_url 指定；为空时尝试 origin；否则取第一个远程；若均不存在则使用匿名远程（需传入 URL）。
+        let repo_url_trimmed = repo_url.trim();
+        let mut remote = if repo_url_trimmed.is_empty() {
+            match repo.find_remote("origin") {
+                Ok(r) => r,
+                Err(_) => {
+                    // 尝试取第一个远程名
+                    match repo.remotes() {
+                        Ok(names) => {
+                            if let Some(name) = names.iter().flatten().next() {
+                                repo.find_remote(name)
+                                    .map_err(|e| GitError::new(Self::map_git2_error(&e), format!("find first remote: {}", e)))?
+                            } else {
+                                return Err(GitError::new(ErrorCategory::Internal, "no remote configured"));
+                            }
+                        }
+                        Err(e) => return Err(GitError::new(Self::map_git2_error(&e), format!("list remotes: {}", e))),
+                    }
+                }
+            }
+        } else {
+            // 若能按名称找到则使用；否则作为 URL 使用匿名远程
+            match repo.find_remote(repo_url_trimmed) {
+                Ok(r) => r,
+                Err(_) => match repo.remote_anonymous(repo_url_trimmed) {
+                    Ok(r) => r,
+                    Err(e) => return Err(GitError::new(Self::map_git2_error(&e), format!("remote lookup: {}", e))),
+                },
+            }
+        };
+
+        // 执行 fetch（使用远程自身配置的 refspecs）
+        match remote.fetch(&[] as &[&str], Some(&mut fo), None) {
+            Ok(_) => {
+                if let Ok(mut f) = cb.lock() {
+                    (*f)(ProgressPayload {
+                        task_id: uuid::Uuid::nil(),
+                        kind: "GitFetch".into(),
+                        phase: "Completed".into(),
+                        percent: 100,
+                        objects: None,
+                        bytes: None,
+                        total_hint: None,
+                    });
+                }
+                Ok(())
+            }
+            Err(e) => {
+                let cat = Self::map_git2_error(&e);
+                Err(GitError::new(cat, e.message().to_string()))
+            }
+        }
     }
 }
