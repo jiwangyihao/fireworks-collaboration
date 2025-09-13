@@ -14,7 +14,7 @@ name = "fireworks_collaboration_lib"
 [features]
 # 调整：默认不启用 tauri 相关依赖，便于直接 cargo test
 # 运行应用时使用: cargo run --features tauri-app 或 cargo tauri dev --features tauri-app
-default = ["git-impl-git2"]
+default = []
 # 启用 tauri-app 时自动激活相关可选依赖
 tauri-app = [
   "tauri",
@@ -23,10 +23,6 @@ tauri-app = [
   "tauri-plugin-fs",
   "tauri-plugin-http"
 ]
-
-# Git 实现选择（开发阶段双实现并存，默认 git2-rs）
-git-impl-git2 = []
-git-impl-gix = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -58,15 +54,7 @@ webpki-roots = "0.25"
 hyper = { version = "0.14", features = ["client", "http1", "tcp", "stream"] }
 tokio-rustls = "0.24"
 url = "2"
-gix = { version = "0.73", default-features = false, features = [
-  "blocking-network-client",
-  "worktree-mutation",
-  "parallel"
-] }
-# 启用 gix-transport 的 HTTPS 支持（reqwest 后端）
-gix-transport = { version = "0.48", default-features = false, features = [
-  "http-client-reqwest"
-] }
+## MP0.4: 移除 gix 依赖，统一到 git2-rs
 
 # 新增：git2-rs（MP0.1 引入，仅骨架，不改变行为）
 git2 = { version = "0.19" }
