@@ -11,6 +11,8 @@
 - MP1 目标：在 git2-rs 基础上补齐 push，随后灰度引入“自定义 smart subtransport（SNI/证书校验进程内完成）”，淘汰 MITM 代理路径但保留回退开关。
 - 不变部分：任务模型（task://state/progress）、配置命令（get_config/set_config）、HTTP 伪 SNI 调试 API（独立模块，继续可用）。
 
+更新（2025-09-14）：已完成 MP0.4（切换、清理与基线）——后端统一使用 git2-rs；移除 gix 与相关特性开关；前后端全部测试通过，事件/进度/取消契约不变。
+
 关联文档：
 - 旧版 P0 交接稿（现状约定）：`doc/TECH_DESIGN_P0_HANDOFF.md`
 - 旧版 P1 原路线（gitoxide 视角）：`doc/TECH_DESIGN_P1.md`
@@ -47,7 +49,7 @@
   - 新增/确认：`git2 = "0.19"`（与平台兼容的 libgit2 动态/静态链接配置按平台默认，必要时补充 build 注释）。
 
 - 模块替换：
-  - `src-tauri/src/core/git/*`：将 `clone`、`fetch` 实现由 gix 换为 git2-rs；保留统一入口 `service.rs` 风格（建议新增 `git2_impl` 子模块）。
+  - `src-tauri/src/core/git/*`：将 `clone`、`fetch` 实现由 gix 换为 git2-rs；保留统一入口 `service.rs` 风格（使用中性命名 `default_impl` 作为默认实现）。
   - 进度桥接：使用 `RemoteCallbacks::transfer_progress` 映射 objects/received_bytes/total_objects 至 `{ percent, phase, objects, bytes, totalHint }`。
   - 取消：基于 `AtomicBool` + 回调早退；在 `transfer_progress` 与网络阶段检查中断信号。
   - 错误分类：

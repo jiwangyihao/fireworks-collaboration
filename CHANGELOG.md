@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.1-MP0.4 (2025-09-14)
+
+完成 MP0.4：从 gitoxide/gix 完整迁移到 git2-rs，并清理旧实现
+- 后端 Git 实现：统一使用 git2-rs（libgit2 绑定）完成 clone/fetch；
+- 任务/事件：保持命令签名与 `task://state|progress` 事件兼容；
+- 取消与错误：协作式取消生效；错误分类 Network/Tls/Verify/Auth/Protocol/Cancel/Internal；
+- 清理：移除 gix 与 gix-transport 依赖，删除旧的 clone/fetch 与进度桥接模块；移除构建特性开关；
+- 测试：Rust 与前端 75 项测试全部通过。
+
 ## v0.1.0-P0 (2025-09-13)
 
 P0 初始交付：

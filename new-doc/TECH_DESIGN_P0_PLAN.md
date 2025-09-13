@@ -48,8 +48,8 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
   - 模块骨架
     - 新增 `src-tauri/src/core/git/service.rs`：定义统一接口 `GitService` 与进度载荷 `ProgressPayload`。
     - 新增 `src-tauri/src/core/git/errors.rs`：定义 `ErrorCategory` 与 `GitError`（分类错误的标准枚举）。
-    - 新增 `src-tauri/src/core/git/git2_impl.rs`：提供 `Git2Service` 的占位实现，已实现 `GitService` 接口但仅发送初始进度并返回 `Ok(())`，为 MP0.2/MP0.3 的真实实现预留挂点。
-    - 更新 `src-tauri/src/core/git/mod.rs`：导出 `service`、`errors`，并在 `#[cfg(feature = "git-impl-git2")]` 下导出 `git2_impl`。
+  - 新增 `src-tauri/src/core/git/default_impl.rs`：提供默认 Git 实现（`DefaultGitService`）的占位，已实现 `GitService` 接口但仅发送初始进度并返回 `Ok(())`，为 MP0.2/MP0.3 的真实实现预留挂点。
+  - 更新 `src-tauri/src/core/git/mod.rs`：导出 `service`、`errors`、`default_impl`。
   - 运行路径说明
     - 当前任务调度仍调用 `core::git::clone`/`core::git::fetch`（gix 路径），未切换到新接口，确保行为零变化；后续阶段将把 `TaskRegistry` 切换为依赖 `GitService`。
 
@@ -62,7 +62,7 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
   - 回滚：可直接回退提交；或移除默认 `git-impl-git2` 特性（仅影响编译选择，不影响当前运行路径）。
 
 - 后续衔接
-  - MP0.2 将在 `git2_impl` 内落地 `clone` 的 `RemoteCallbacks::transfer_progress` 桥接与取消检查；
+  - MP0.2 将在 `default_impl` 内落地 `clone` 的 `RemoteCallbacks::transfer_progress` 桥接与取消检查；
   - MP0.3 将实现 `fetch` 并与 `clone` 复用错误分类与事件映射；
   - 然后在 `TaskRegistry` 中以 `GitService` 注入替换现有 gix 调用，最后清理 gix 依赖与代码。
 
@@ -81,7 +81,7 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
 
 - 代码改动概览
   - Git2 实现
-    - 在 `src-tauri/src/core/git/git2_impl.rs` 中完成 `Git2Service::clone_blocking`：
+  - 在 `src-tauri/src/core/git/default_impl.rs` 中完成 `DefaultGitService::clone_blocking`：
       - 使用 `git2::build::RepoBuilder` + `FetchOptions` + `RemoteCallbacks` 实现 clone。
       - 在 `transfer_progress` 中桥接 objects/received_bytes/total_objects → 统一 `ProgressPayload { objects, bytes, totalHint, percent, phase }`。
       - 将 checkout 阶段通过 `CheckoutBuilder::progress` 映射为 90–100% 区间（phase=`Checkout`），clone 成功后额外发出一次 `Completed` 进度（100%）。
@@ -90,7 +90,7 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
       - 线程与回调安全：为复用同一个 `on_progress` 回调于不同阶段（transfer/checkout），使用 `Arc<Mutex<..>>` 规避可变借用冲突。
     - `fetch_blocking` 仍为占位（将于 MP0.3 完成）。
   - 任务接线
-    - 在 `src-tauri/src/core/tasks/registry.rs` 中，`spawn_git_clone_task` 在 `feature = "git-impl-git2"` 下改为调用 `Git2Service::clone_blocking`（默认启用该特性）。
+  - 在 `src-tauri/src/core/tasks/registry.rs` 中，`spawn_git_clone_task` 调用 `DefaultGitService::clone_blocking`。
     - 保留非该特性时的 gix 旧路径，作为开发期回退对照。
     - 为缓解测试中观察到的竞态，进入 `Running` 后加入极小延迟（数十毫秒）以稳定事件可见性；保持事件契约不变（`task://state|progress`）。
 
@@ -100,7 +100,7 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
 
 - 测试与结果
   - Rust 测试
-    - 新增 `src-tauri/tests/git2_impl_tests.rs`：覆盖初始协商进度触发、取消路径分类为 `Cancel`、无效本地路径快速失败、本地仓库克隆成功并校验阶段与百分比边界（0..=100）。
+  - 新增 `src-tauri/tests/git_impl_tests.rs`：覆盖初始协商进度触发、取消路径分类为 `Cancel`、无效本地路径快速失败、本地仓库克隆成功并校验阶段与百分比边界（0..=100）。
     - 新增 `src-tauri/tests/git_tasks_local.rs`：注册表层面的本地仓库克隆集成测试（不依赖事件总线），验证任务最终进入 `Completed`。
     - 运行结果：子工程 `cargo test` 全部通过。
   - 前端/集成测试
@@ -129,20 +129,20 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
 
 - 代码改动概览
   - Git2 实现
-    - 在 `src-tauri/src/core/git/git2_impl.rs` 中完成 `Git2Service::fetch_blocking`：
+  - 在 `src-tauri/src/core/git/default_impl.rs` 中完成 `DefaultGitService::fetch_blocking`：
       - 使用 `git2::Repository::open` + `RemoteCallbacks` + `FetchOptions` 实现 fetch；
       - 远程选择策略：`repo_url` 为空优先 `origin`，否则尝试按名称找远程，找不到则以 URL 形式创建匿名远程；
       - 进度桥接：在 `transfer_progress` 中映射 objects/received_bytes/total_objects → 统一 `ProgressPayload { objects, bytes, totalHint, percent, phase="Receiving" }`；启动时额外发出一次 `Negotiating`，成功后发出 `Completed(100%)`；
       - 取消：在 `transfer_progress` 中检查取消标志（`AtomicBool`），命中返回 `false` 以中断；
       - 错误分类：沿用 `map_git2_error`（`Cancel/Network/Tls/Verify/Auth/Protocol/Internal`）。
   - 任务接线
-    - 在 `src-tauri/src/core/tasks/registry.rs` 中，`spawn_git_fetch_task` 在 `feature = "git-impl-git2"` 下改为调用 `Git2Service::fetch_blocking`；
+  - 在 `src-tauri/src/core/tasks/registry.rs` 中，`spawn_git_fetch_task` 调用 `DefaultGitService::fetch_blocking`；
     - 非该特性时保留 gix 旧路径，作为开发期回退对照；
     - 事件契约不变（`task://state|progress`）。
 
 - 测试与结果
   - Rust 测试
-    - 补充 `src-tauri/tests/git2_impl_tests.rs`：
+  - 补充 `src-tauri/tests/git_impl_tests.rs`：
       - `fetch_cancel_flag_results_in_cancel_error`（取消路径分类为 `Cancel`）；
       - `fetch_updates_remote_tracking_refs`（本地源新增提交 → 目标 fetch 后 `refs/remotes/origin/*` 更新至源 HEAD）。
     - 补充 `src-tauri/tests/git_tasks_local.rs`：
@@ -177,7 +177,7 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
 - Feature flag（可选）：`git_impl = ["gix"|"git2"]`；默认 git2。
 
 ### 2.2 模块与接口
-- 目录：`src-tauri/src/core/git/{mod.rs, service.rs, git2_impl.rs, progress.rs, errors.rs}`
+- 目录：`src-tauri/src/core/git/{mod.rs, service.rs, default_impl.rs, errors.rs}`
 - 接口（保持不变）：
   - 命令：`git_clone(repo, dest, opts?)`、`git_fetch(repo, opts?)`、`task_cancel(id)`。
   - 事件：`task://state`（pending|running|completed|failed|canceled）、`task://progress`（objects/bytes/totalHint/percent/phase）。
@@ -221,14 +221,14 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
 - [x] 验证：已有仓库 fetch 成功与各失败路径（新增本地用例覆盖成功与取消；失败路径沿用现有用例与分类映射）。
 
 4) 接口稳定与替换（[MP0.4]）
-- [ ] 命令层保持签名；
-- [ ] 移除 gix 依赖、删除未使用代码；
- - [ ] 彻底关闭并删除 `gix` 构建开关（仅在开发期使用过的临时对比开关）。
+- [x] 命令层保持签名；
+- [x] 移除 gix 依赖、删除未使用代码；
+- [x] 彻底关闭并删除 `gix` 构建开关（仅在开发期使用过的临时对比开关）。
 
 5) 文档与测试（[MP0.4]）
-- [ ] 替换对应单测（mock git2 行为或使用临时仓库）；
-- [ ] 更新 `new-doc/TECH_DESIGN_git2rs.md` 的 P0 章节为“完成”；
-- [ ] 记录迁移变更日志（CHANGELOG.md）。
+- [x] 替换对应单测（mock git2 行为或使用临时仓库）；
+- [x] 更新 `new-doc/TECH_DESIGN_git2rs.md` 的 P0 章节为“完成”；
+- [x] 记录迁移变更日志（CHANGELOG.md）。
 
 ---
 
@@ -273,7 +273,7 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
   - 回滚预案：已记录
 - 交付清单
   - 代码：git2-rs 实现 + 事件/取消/错误映射
-  - 删除：gix 依赖与旧实现
+  - 删除：gix 依赖与旧实现（已完成）
   - 文档：本计划 + 主技术方案 P0 章节更新 + 变更日志
   - 测试：新增/替换用例与说明
 
@@ -305,4 +305,5 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
 ## 附：变更记录（本文件）
 - v1: 初版（MP0 细化拆解）
 - v1.1: 补充 MP0.1 实现说明与完成项勾选
-- v1.2: 新增 MP0.3 实现说明；勾选 Fetch 相关 WBS；记录新增测试用例（git2_impl 与注册表层）。
+- v1.2: 新增 MP0.3 实现说明；勾选 Fetch 相关 WBS；记录新增测试用例（git_impl 与注册表层）。
+- v1.3: MP0.4 完成：移除 gix 依赖与旧实现、删除特性开关，统一 git2 路径；更新测试适配。
