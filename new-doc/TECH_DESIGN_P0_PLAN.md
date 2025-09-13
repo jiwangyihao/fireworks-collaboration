@@ -125,6 +125,40 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
   - CI 绿色。
 - 回滚：版本回退。
 
+#### MP0.3 实现说明（仓库当前状态）
+
+- 代码改动概览
+  - Git2 实现
+    - 在 `src-tauri/src/core/git/git2_impl.rs` 中完成 `Git2Service::fetch_blocking`：
+      - 使用 `git2::Repository::open` + `RemoteCallbacks` + `FetchOptions` 实现 fetch；
+      - 远程选择策略：`repo_url` 为空优先 `origin`，否则尝试按名称找远程，找不到则以 URL 形式创建匿名远程；
+      - 进度桥接：在 `transfer_progress` 中映射 objects/received_bytes/total_objects → 统一 `ProgressPayload { objects, bytes, totalHint, percent, phase="Receiving" }`；启动时额外发出一次 `Negotiating`，成功后发出 `Completed(100%)`；
+      - 取消：在 `transfer_progress` 中检查取消标志（`AtomicBool`），命中返回 `false` 以中断；
+      - 错误分类：沿用 `map_git2_error`（`Cancel/Network/Tls/Verify/Auth/Protocol/Internal`）。
+  - 任务接线
+    - 在 `src-tauri/src/core/tasks/registry.rs` 中，`spawn_git_fetch_task` 在 `feature = "git-impl-git2"` 下改为调用 `Git2Service::fetch_blocking`；
+    - 非该特性时保留 gix 旧路径，作为开发期回退对照；
+    - 事件契约不变（`task://state|progress`）。
+
+- 测试与结果
+  - Rust 测试
+    - 补充 `src-tauri/tests/git2_impl_tests.rs`：
+      - `fetch_cancel_flag_results_in_cancel_error`（取消路径分类为 `Cancel`）；
+      - `fetch_updates_remote_tracking_refs`（本地源新增提交 → 目标 fetch 后 `refs/remotes/origin/*` 更新至源 HEAD）。
+    - 补充 `src-tauri/tests/git_tasks_local.rs`：
+      - `registry_fetch_local_repo_completes`（注册表任务层 fetch 完成，状态进入 `Completed`）。
+    - 运行结果：`cargo test` 全部通过（含新增用例）。
+  - 前端/集成测试：现有 `pnpm test` 75 个用例保持全绿，无契约破坏。
+
+- 回滚与风险
+  - 风险：平台差异与远程选择策略的边缘场景（无远程且未传入 `repo_url`）；
+  - 回滚：通过 `git-impl-git2`/`git-impl-gix` 特性位临时切换；必要时版本回退；
+  - 行为：取消/进度阶段/错误分类与 MP0.2 对齐，无前端改动。
+
+- 后续衔接
+  - MP0.4：清理 gix 依赖与旧代码，关闭并删除对应特性位；完善文档与变更日志；
+  - 可选：补充“注册表层 fetch 取消”用例，进一步增强任务层覆盖度。
+
 ### MP0.4 切换、清理与基线（约 0.5–1 周）
 - 范围：
   - 移除 `gix` 依赖与旧代码；关闭（并最终删除）`gix` 构建开关；确保 git2 唯一路径；
@@ -181,10 +215,10 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
 - [x] 小样本验证：本地 `cargo test` 与前端 `pnpm test` 全绿（离线用例覆盖 invalid/cancel）。
 
 3) 实现 Fetch（[MP0.3]）
-- [ ] 打开已有 repo，取 remote（origin或传入），`fetch(refspecs, Some(mut callbacks), None)`；
-- [ ] 同 Clone 路径桥接进度与取消；
-- [ ] 错误映射一致；
-- [ ] 验证：已有仓库 fetch 成功与各失败路径。
+- [x] 打开已有 repo，取 remote（origin或传入），`fetch(refspecs, Some(mut callbacks), None)`；
+- [x] 同 Clone 路径桥接进度与取消；
+- [x] 错误映射一致；
+- [x] 验证：已有仓库 fetch 成功与各失败路径（新增本地用例覆盖成功与取消；失败路径沿用现有用例与分类映射）。
 
 4) 接口稳定与替换（[MP0.4]）
 - [ ] 命令层保持签名；
@@ -271,3 +305,4 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
 ## 附：变更记录（本文件）
 - v1: 初版（MP0 细化拆解）
 - v1.1: 补充 MP0.1 实现说明与完成项勾选
+- v1.2: 新增 MP0.3 实现说明；勾选 Fetch 相关 WBS；记录新增测试用例（git2_impl 与注册表层）。
