@@ -37,6 +37,35 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
   - 新增最小单测编译通过（无需真实 clone）。
 - 回滚：版本回退；开发期可使用 `gix` 特性位进行对比（上线前移除）。
 
+#### MP0.1 实现说明（仓库当前状态）
+
+- 代码改动概览
+  - 依赖与特性
+    - 在 `src-tauri/Cargo.toml`：
+      - 新增 `git2 = "0.19"` 依赖；
+      - 增加特性开关：`git-impl-git2`、`git-impl-gix`，并将默认特性设为 `default = ["git-impl-git2"]`（仅用于编译路径，不改变运行时行为）；
+      - 保留现有 `gix` 与 `gix-transport` 依赖，后续阶段逐步移除。
+  - 模块骨架
+    - 新增 `src-tauri/src/core/git/service.rs`：定义统一接口 `GitService` 与进度载荷 `ProgressPayload`。
+    - 新增 `src-tauri/src/core/git/errors.rs`：定义 `ErrorCategory` 与 `GitError`（分类错误的标准枚举）。
+    - 新增 `src-tauri/src/core/git/git2_impl.rs`：提供 `Git2Service` 的占位实现，已实现 `GitService` 接口但仅发送初始进度并返回 `Ok(())`，为 MP0.2/MP0.3 的真实实现预留挂点。
+    - 更新 `src-tauri/src/core/git/mod.rs`：导出 `service`、`errors`，并在 `#[cfg(feature = "git-impl-git2")]` 下导出 `git2_impl`。
+  - 运行路径说明
+    - 当前任务调度仍调用 `core::git::clone`/`core::git::fetch`（gix 路径），未切换到新接口，确保行为零变化；后续阶段将把 `TaskRegistry` 切换为依赖 `GitService`。
+
+- 验证结果（本地）
+  - 前端与 API：`pnpm test` 全部通过（保持现有 75 个测试用例全绿）。
+  - Rust 子项目：`cargo check` 与 `cargo test` 全部通过；新增模块编译无警告/错误。
+
+- 回滚与风险
+  - 风险：本阶段仅新增依赖与接口骨架，未改动运行逻辑，风险极低；
+  - 回滚：可直接回退提交；或移除默认 `git-impl-git2` 特性（仅影响编译选择，不影响当前运行路径）。
+
+- 后续衔接
+  - MP0.2 将在 `git2_impl` 内落地 `clone` 的 `RemoteCallbacks::transfer_progress` 桥接与取消检查；
+  - MP0.3 将实现 `fetch` 并与 `clone` 复用错误分类与事件映射；
+  - 然后在 `TaskRegistry` 中以 `GitService` 注入替换现有 gix 调用，最后清理 gix 依赖与代码。
+
 ### MP0.2 Clone 基线（约 0.5–0.75 周）
 - 范围：
   - 使用 git2-rs 实现 Clone；`RemoteCallbacks::transfer_progress` → 统一 `ProgressPayload`；
@@ -102,9 +131,9 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
 ## 3. 任务分解（WBS）
 
 1) 准备（[MP0.1]）
-- [ ] 引入 git2 依赖，编译通过（不接入调用）。
-- [ ] 定义 `ProgressPayload` 与 `ErrorCategory`（沿用枚举）。
-- [ ] 在 service.rs 中抽象 `GitService` trait（或等效统一入口）。
+- [x] 引入 git2 依赖，编译通过（不接入调用）。
+- [x] 定义 `ProgressPayload` 与 `ErrorCategory`（沿用枚举）。
+- [x] 在 service.rs 中抽象 `GitService` trait（或等效统一入口）。
 
 2) 实现 Clone（[MP0.2]）
 - [ ] 初始化仓库：`Repository::clone_with(...)` 或 `Remote::connect` 自定义回调。
@@ -204,3 +233,4 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
 
 ## 附：变更记录（本文件）
 - v1: 初版（MP0 细化拆解）
+- v1.1: 补充 MP0.1 实现说明与完成项勾选
