@@ -277,6 +277,14 @@ pub fn run(){
             get_config,set_config,task_list,task_cancel,task_start_sleep,task_snapshot,git_clone,git_fetch,git_push,
             http_fake_request
         ]);
-    builder = builder.setup(|app| { let base_dir: PathBuf = app.path().app_config_dir().unwrap_or_else(|_| std::env::current_dir().unwrap()); let cfg = cfg_loader::load_or_init_at(&base_dir).unwrap_or_default(); app.manage(Arc::new(Mutex::new(cfg)) as SharedConfig); app.manage::<ConfigBaseDir>(base_dir); Ok(()) });
+    builder = builder.setup(|app| {
+        let base_dir: PathBuf = app.path().app_config_dir().unwrap_or_else(|_| std::env::current_dir().unwrap());
+        // 注入全局配置基目录，确保后续动态加载（如 Git 子传输）与应用一致
+        cfg_loader::set_global_base_dir(&base_dir);
+        let cfg = cfg_loader::load_or_init_at(&base_dir).unwrap_or_default();
+        app.manage(Arc::new(Mutex::new(cfg)) as SharedConfig);
+        app.manage::<ConfigBaseDir>(base_dir);
+        Ok(())
+    });
     builder.run(tauri::generate_context!()).expect("error while running tauri application");
 }

@@ -1,4 +1,5 @@
 use std::{fs, io::Write, path::{Path, PathBuf}};
+use std::sync::OnceLock;
 use anyhow::{Context, Result};
 
 use super::model::AppConfig;
@@ -10,8 +11,20 @@ fn join_default_path(base: &Path) -> PathBuf {
     p
 }
 
+// 全局配置基目录（用于 Tauri 应用在 setup 阶段注入 app_config_dir）
+static GLOBAL_BASE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// 由应用在启动时设置配置基目录，一旦设置将作为默认配置路径的来源。
+/// 重复设置将被忽略（保持第一次设置的值）。
+pub fn set_global_base_dir<P: AsRef<Path>>(base: P) {
+    let _ = GLOBAL_BASE_DIR.set(base.as_ref().to_path_buf());
+}
+
 fn config_path() -> PathBuf {
-    let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let base = GLOBAL_BASE_DIR
+        .get()
+        .cloned()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     join_default_path(&base)
 }
 
@@ -84,7 +97,7 @@ mod tests {
             assert!(std::path::Path::new("config/config.json").exists());
             // 校验部分默认值
             assert!(cfg.http.fake_sni_enabled);
-            assert_eq!(cfg.http.fake_sni_host, "baidu.com");
+            // fake_sni_host 已移除；默认候选仍包含常见域
             assert!(cfg.tls.san_whitelist.iter().any(|d| d.contains("github.com")));
             assert_eq!(cfg.logging.log_level, "info");
         });
