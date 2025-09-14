@@ -1,6 +1,6 @@
 <template>
   <div class="p-4 pt-16 space-y-4">
-  <h2 class="text-xl font-bold">Git 面板（Clone / Fetch）</h2>
+  <h2 class="text-xl font-bold">Git 面板（Clone / Fetch / Push）</h2>
 
     <div class="card bg-base-100 shadow-sm">
       <div class="card-body gap-3">
@@ -18,6 +18,22 @@
           <button class="btn btn-secondary btn-sm" :disabled="!dest || working" @click="startFetch">Fetch</button>
         </div>
         <div class="text-xs opacity-70">建议使用绝对路径，例如 C:/tmp/project；Fetch 时 repo 可留空表示默认远程；如远程缺少 refspec，可用上方预设快速选择</div>
+      </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-sm">
+      <div class="card-body gap-3">
+        <div class="flex gap-2 items-center">
+          <input v-model="pushDest" class="input input-bordered input-sm flex-1" placeholder="C:/tmp/repo（本地仓库路径）" />
+          <input v-model="remote" class="input input-bordered input-sm w-36" placeholder="origin" />
+          <input v-model="refspec" class="input input-bordered input-sm flex-1" placeholder="refs/heads/main:refs/heads/main" />
+          <button class="btn btn-accent btn-sm" :disabled="!pushDest || working" @click="startPush">Push</button>
+        </div>
+        <div class="flex gap-2 items-center">
+          <input v-model="username" class="input input-bordered input-sm w-56" placeholder="用户名（仅 token 可填 x-access-token）" />
+          <input v-model="password" type="password" class="input input-bordered input-sm w-72" placeholder="密码/令牌（可选）" />
+        </div>
+        <div class="text-xs opacity-70">Push 会使用 HTTPS 基础认证；如仅使用 GitHub Token，请将用户名设为 x-access-token，密码填入 token。</div>
       </div>
     </div>
 
@@ -59,13 +75,20 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useTasksStore } from '../stores/tasks';
-import { startGitClone, startGitFetch, cancelTask, listTasks } from '../api/tasks';
+import { startGitClone, startGitFetch, startGitPush, cancelTask, listTasks } from '../api/tasks';
 
 const repo = ref('https://github.com/rust-lang/log');
 const dest = ref('C:/tmp/log');
 const preset = ref<'remote'|'branches'|'branches+tags'|'tags'>('remote');
 const working = ref(false);
 const tasks = useTasksStore();
+
+// Push 相关输入
+const pushDest = ref('C:/tmp/log');
+const remote = ref('origin');
+const refspec = ref('refs/heads/main:refs/heads/main');
+const username = ref('');
+const password = ref('');
 
 function stateClass(s: string) {
   return {
@@ -130,6 +153,32 @@ async function startFetch() {
 
 async function cancel(id: string){
   try { await cancelTask(id); } catch(e){ console.error(e); }
+}
+
+async function startPush() {
+  working.value = true;
+  try {
+    const rs = refspec.value.trim();
+    const args: any = {
+      dest: pushDest.value.trim(),
+      remote: remote.value.trim() || undefined,
+      refspecs: rs ? [rs] : undefined,
+    };
+    if (username.value.trim()) args.username = username.value.trim();
+    if (password.value.trim()) args.password = password.value.trim();
+    await startGitPush(args);
+    await listTasks().then((arr:any[])=>{
+      if (Array.isArray(arr)) {
+        for (const s of arr) {
+          tasks.upsert({ id: s.id, kind: s.kind ?? 'Unknown', state: s.state ?? 'pending', createdAt: s.createdAt ?? Date.now() });
+        }
+      }
+    });
+  } catch (e) {
+    console.error(e);
+  } finally {
+    working.value = false;
+  }
 }
 </script>
 

@@ -75,3 +75,25 @@ export async function startGitFetch(repo: string, dest: string, preset?: "remote
   if (preset && preset !== "remote") args.preset = preset;
   return invoke<string>("git_fetch", args);
 }
+
+// MP1.1：启动 Git Push 任务，返回 taskId
+// 参数：
+// - dest: 本地仓库路径
+// - remote: 远程名（默认 origin）
+// - refspecs: 需要推送的 refspec 列表，例如 ["refs/heads/main:refs/heads/main"]；不传则使用默认
+// - auth: 可选凭证；仅 token 时可使用 { username: "x-access-token", password: token }
+export async function startGitPush(params: {
+  dest: string;
+  remote?: string;
+  refspecs?: string[];
+  username?: string;
+  password?: string;
+}) {
+  const { dest, remote, refspecs, username, password } = params;
+  const args: Record<string, unknown> = { dest };
+  if (remote) args.remote = remote;
+  if (refspecs && refspecs.length > 0) args.refspecs = refspecs;
+  if (username) args.username = username;
+  if (password) args.password = password;
+  return invoke<string>("git_push", args);
+}
