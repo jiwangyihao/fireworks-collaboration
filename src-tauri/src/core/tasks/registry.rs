@@ -246,6 +246,99 @@ impl TaskRegistry {
             let _ = watcher.join();
         })
     }
+
+    /// 启动 Git Push 任务（阻塞线程执行），支持取消与阶段事件
+    pub fn spawn_git_push_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, dest: String, remote: Option<String>, refspecs: Option<Vec<String>>, username: Option<String>, password: Option<String>) -> JoinHandle<()> {
+        let this = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Running), None => this.set_state_noemit(&id, TaskState::Running) }
+
+            if let Some(app_ref) = &app {
+                let prog = TaskProgressEvent { task_id: id, kind: "GitPush".into(), phase: "Starting".into(), percent: 0, objects: None, bytes: None, total_hint: None };
+                emit_all(app_ref, EV_PROGRESS, &prog);
+            }
+
+            if token.is_cancelled() {
+                match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
+                return;
+            }
+
+            // 准备 should_interrupt 标志
+            let interrupt_flag: &'static std::sync::atomic::AtomicBool = Box::leak(Box::new(std::sync::atomic::AtomicBool::new(false)));
+            let token_for_thread = token.clone();
+            let watcher = std::thread::spawn(move || {
+                while !token_for_thread.is_cancelled() && !interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                if token_for_thread.is_cancelled() { interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed); }
+            });
+
+            let dest_path = std::path::PathBuf::from(dest.clone());
+            let res = {
+                use crate::core::git::service::GitService;
+                let service = crate::core::git::DefaultGitService::new();
+                let app_for_cb = app.clone();
+                let id_for_cb = id.clone();
+                // 允许仅提供 token（password）；若 username 为空或缺失，默认使用 "x-access-token"
+                let creds_opt = match (username.as_deref(), password.as_deref()) {
+                    (Some(u), Some(p)) if !u.is_empty() => Some((u, p)),
+                    (None, Some(p)) => Some(("x-access-token", p)),
+                    (Some(u), Some(p)) if u.is_empty() => Some(("x-access-token", p)),
+                    _ => None
+                };
+                let refspecs_vec: Option<Vec<String>> = refspecs.clone();
+                let refspecs_opt: Option<Vec<String>> = refspecs_vec;
+                let refspecs_slices: Option<Vec<&str>> = refspecs_opt.as_ref().map(|v| v.iter().map(|s| s.as_str()).collect());
+                service
+                    .push_blocking(
+                        &dest_path,
+                        remote.as_deref(),
+                        refspecs_slices.as_deref(),
+                        creds_opt.map(|(u,p)| (u, p)),
+                        &*interrupt_flag,
+                        move |p| {
+                            if let Some(app_ref) = &app_for_cb {
+                                let prog = TaskProgressEvent {
+                                    task_id: id_for_cb,
+                                    kind: p.kind,
+                                    phase: p.phase,
+                                    percent: p.percent,
+                                    objects: p.objects,
+                                    bytes: p.bytes,
+                                    total_hint: p.total_hint,
+                                };
+                                emit_all(app_ref, EV_PROGRESS, &prog);
+                            }
+                        },
+                    )
+                    .map_err(|e| format!("{}", e))
+            };
+            match res {
+                Ok(()) => {
+                    if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                        match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
+                        interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                        let _ = watcher.join();
+                        return;
+                    }
+                    if let Some(app_ref) = &app { let prog = TaskProgressEvent { task_id: id, kind: "GitPush".into(), phase: "Completed".into(), percent: 100, objects: None, bytes: None, total_hint: None }; emit_all(app_ref, EV_PROGRESS, &prog); }
+                    match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Completed), None => this.set_state_noemit(&id, TaskState::Completed) }
+                }
+                Err(e) => {
+                    if interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) || token.is_cancelled() {
+                        match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
+                        interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                        let _ = watcher.join();
+                        return;
+                    }
+                    tracing::error!(target = "git", "push error: {}", e);
+                    match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
+                }
+            }
+            interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            let _ = watcher.join();
+        })
+    }
 }
 
 pub type SharedTaskRegistry = Arc<TaskRegistry>;

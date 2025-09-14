@@ -75,6 +75,14 @@ async fn git_fetch(repo: String, dest: String, preset: Option<String>, reg: Stat
     Ok(id.to_string())
 }
 
+// Git 命令：启动 Push 任务（HTTPS 基础）
+#[tauri::command]
+async fn git_push(dest: String, remote: Option<String>, refspecs: Option<Vec<String>>, username: Option<String>, password: Option<String>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitPush { dest: dest.clone(), remote: remote.clone(), refspecs: refspecs.clone(), username: username.clone(), password: password.clone() });
+    reg.clone().spawn_git_push_task(Some(app), id, token, dest, remote, refspecs, username, password);
+    Ok(id.to_string())
+}
+
 // ========== P0.5 http_fake_request ==========
 fn redact_auth_in_headers(mut h: std::collections::HashMap<String, String>, mask: bool) -> std::collections::HashMap<String, String> {
     if !mask { return h; }
@@ -266,7 +274,7 @@ pub fn run(){
         .manage(Arc::new(TaskRegistry::new()) as TaskRegistryState)
         .invoke_handler(tauri::generate_handler![
             greet,start_oauth_server,get_oauth_callback_data,clear_oauth_state,get_system_proxy,
-            get_config,set_config,task_list,task_cancel,task_start_sleep,task_snapshot,git_clone,git_fetch,
+            get_config,set_config,task_list,task_cancel,task_start_sleep,task_snapshot,git_clone,git_fetch,git_push,
             http_fake_request
         ]);
     builder = builder.setup(|app| { let base_dir: PathBuf = app.path().app_config_dir().unwrap_or_else(|_| std::env::current_dir().unwrap()); let cfg = cfg_loader::load_or_init_at(&base_dir).unwrap_or_default(); app.manage(Arc::new(Mutex::new(cfg)) as SharedConfig); app.manage::<ConfigBaseDir>(base_dir); Ok(()) });

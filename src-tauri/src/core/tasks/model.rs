@@ -18,6 +18,7 @@ pub enum TaskState {
 pub enum TaskKind {
     GitClone { repo: String, dest: String },
     GitFetch { repo: String, dest: String },
+    GitPush { dest: String, remote: Option<String>, refspecs: Option<Vec<String>>, username: Option<String>, password: Option<String> },
     HttpFake { url: String, method: String },
     Sleep { ms: u64 },
     Unknown,
@@ -28,6 +29,7 @@ impl TaskKind {
         match self {
             Self::GitClone { .. } => "GitClone",
             Self::GitFetch { .. } => "GitFetch",
+            Self::GitPush { .. } => "GitPush",
             Self::HttpFake { .. } => "HttpFake",
             Self::Sleep { .. } => "Sleep",
             Self::Unknown => "Unknown",
