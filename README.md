@@ -49,7 +49,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "cd '$PWD/src-tauri'; car
 - SAN 白名单强制：仅允许 github.com 相关域（可在配置中调整）
 - 伪 SNI：仅改变握手的 SNI，不削弱 CA 验证；如失败可切换关闭后再试
 - 日志脱敏：Authorization 头默认记录为 `REDACTED`
-- 原型开关：`tls.insecureSkipVerify=true` 仅用于联调，请勿在常规场景启用
+- TLS 校验开关可组合：
+	- `tls.insecureSkipVerify`（默认 false）：跳过默认证书链与主机名校验；
+	- `tls.skipSanWhitelist`（默认 false）：跳过自定义 SAN 白名单校验；
+	- 组合语义：
+		- 默认（两者均 false）：链验证 + 主机名 + 白名单（推荐）。
+		- 仅开启 insecureSkipVerify：保留“仅白名单”校验（Whitelist-only）。
+		- 同时开启两者：完全不做校验（极不安全，仅临时联调）。
 
 ## 🧭 快速导航
 

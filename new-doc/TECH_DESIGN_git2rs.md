@@ -13,6 +13,15 @@
 
 更新（2025-09-14）：已完成 MP0.4（切换、清理与基线）——后端统一使用 git2-rs；移除 gix 与相关特性开关；前后端全部测试通过，事件/进度/取消契约不变。
 
+更新（2025-09-15）：完成 MP1.2（方式A Subtransport 灰度）的关键实现与前后端对齐：
+- 配置：从模型中移除 `http.fakeSniHost`，改为使用 `http.fakeSniHosts: string[]` 候选，运行期维护 last-good SNI；
+- 轮换：`403` 仅在 `GET /info/refs` 阶段按流单次轮换，排除当前 SNI，随机其余候选，否则回退 Real；
+- TLS：拆分开关 `tls.insecureSkipVerify` 与 `tls.skipSanWhitelist`；支持在“跳过默认证书验证”时保留仅 SAN 白名单校验；
+- 代理：检测到代理时禁用 Fake SNI 与 URL 改写；
+- 配置热加载路径一致：subtransport 读取 app_config_dir 注入的全局 base dir，保存后即时生效；
+- 可观测性：HTTP 嗅探与调试日志完善，默认脱敏；
+- 前端：移除 fakeSniHost UI，新增“跳过 SAN 白名单校验”选项，保持 API 兼容。
+
 关联文档：
 - 旧版 P0 交接稿（现状约定）：`doc/TECH_DESIGN_P0_HANDOFF.md`
 - 旧版 P1 原路线（gitoxide 视角）：`doc/TECH_DESIGN_P1.md`
@@ -149,12 +158,12 @@
 
 ---
 
-## 9. 配置模型（MP1 初版）
+## 9. 配置模型（MP1 更新）
 
 `config.json` 关键片段：
-- `httpStrategy`: `{ fakeSniEnabled: boolean, fakeHost: string, enforceDomainWhitelist: boolean }`
-- `retry`: `{ max: number, baseMs: number, factor: number, jitter: boolean }`
-- `tls`: `{ spkiPins?: string[], realHostVerify: boolean }`
+- `http`：`{ fakeSniEnabled: boolean, fakeSniHosts?: string[], sniRotateOn403?: boolean, followRedirects: boolean, maxRedirects: number, largeBodyWarnBytes: number }`
+- `tls`：`{ sanWhitelist: string[], insecureSkipVerify?: boolean, skipSanWhitelist?: boolean }`
+- `retry`：`{ max: number, baseMs: number, factor: number, jitter: boolean }`（规划项，MP1.3）
 - `proxy`: `{ mode: 'off'|'http'|'socks5', url?: string }`
 - `logging`: `{ debugAuthLogging: boolean }`（默认脱敏）
 
@@ -166,7 +175,7 @@
 
 - SAN 白名单：仅允许 Github 域族：`github.com/*.github.com/*.githubusercontent.com/*.githubassets.com/codeload.github.com`。
 - SPKI Pin（可选）：开启后必须匹配，否则直接失败；用于高安全环境；
-- Real-Host 验证：握手使用 Fake SNI 时，按“真实域名”进行证书匹配；若证书不含真实域名 → 立刻回退一次使用 Real SNI 重握手；
+- Real-Host 验证：握手使用 Fake SNI 时，按“真实域名”进行证书匹配（通过 override_host）；若证书不含真实域名 → 立刻回退一次使用 Real SNI 重握手；
 - 证书指纹：记录 leaf SPKI SHA256 与证书整体哈希（后期用于指标与告警）。
 
 ---
@@ -226,10 +235,10 @@
 
 ## 15. 关键时序流程（HTTP / Git / 回退）
 
-HTTP (MP0)：
+HTTP (MP0/MP1)：
 1. 前端发起 http_fake_request → 解析 URL & 校验白名单 → 判定 useFakeSni
-2. 若启用 IP 池（后期）→ 选 IP；TCP → TLS（SNI=伪或真实）
-3. 发送请求与计时（connect/tls/firstByte/total）→ 返回 Base64 Body
+2. 若启用 IP 池（后期）→ 选 IP；TCP → TLS（SNI=伪或真实；代理模式下强制真实 SNI）
+3. 发送请求与计时（connect/tls/firstByte/total）→ 返回 Base64 Body；若 `status=403` 且启用 403 轮换，在信息发现阶段（GET /info/refs）随机切换至不同候选后重试一次
 
 Git Clone (MP0)：
 1. 创建任务记录 → state(pending→running)

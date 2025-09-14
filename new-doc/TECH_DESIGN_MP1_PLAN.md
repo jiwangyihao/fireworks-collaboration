@@ -180,6 +180,45 @@
   - 验收：默认关闭时行为与 MP0 等价；开启灰度后失败可自动回退，成功率不降低；
   - 回退：运行时配置关闭后立即恢复 libgit2 默认路径。
 
+#### MP1.2 实施说明（已落地）
+
+本小节汇总当前代码在 MP1.2 的实际实现，供对照验证：
+
+- 自定义 Subtransport 与 URL 改写
+  - 注册一次性的 `https+custom` subtransport，并在 clone/fetch/push 前根据配置与运行环境将 `https://` 改写为 `https+custom://`：
+    - 命中 SAN 白名单域（`github.com/*.github.com/*.githubusercontent.com/*.githubassets.com/codeload.github.com`）
+    - 已启用 Fake SNI 策略（灰度）
+    - 当前不处于代理模式（代理下禁用 Fake SNI 与灰度改写）
+  - 改写仅改变传输接管点，HTTP 智能协议语义仍由 libgit2 负责。
+
+- SNI 选择与轮换
+  - 统一从配置的 `http.fakeSniHosts: string[]` 候选中选择 Fake SNI；配置项 `fakeSniHost` 已从模型中移除。
+  - 记录“最近成功 SNI”（last-good per real host），后续优先使用，提高成功率与稳定性。
+  - 403 轮换（仅 `GET /info/refs` 阶段）：每个流最多一次，将当前 SNI 从候选中排除，随机选择其它候选；无候选或禁用则回退 Real SNI。
+  - 代理存在时强制使用 Real SNI，并跳过改写。
+
+- TLS 验证与开关
+  - 默认：默认证书链/主机名校验 + 自定义 SAN 白名单校验；伪 SNI 握手时通过 override 以真实主机名进行白名单匹配，避免假 SNI 影响验证。
+  - 新增开关拆分：
+    - `tls.insecureSkipVerify`（默认 false）：跳过默认证书验证；
+    - `tls.skipSanWhitelist`（默认 false）：跳过自定义 SAN 白名单验证；
+    - 组合行为：
+      - 两者均关：执行“链/主机名 + SAN 白名单”；
+      - 仅关 SAN 白名单：仅执行“链/主机名”；
+      - 仅关默认证书：仅执行“SAN 白名单”，作为最小安全闸；
+      - 两者全关：完全跳过校验（仅原型调试用途）。
+
+- 动态配置与路径一致性
+  - 通过全局 base dir 统一配置加载路径（注入 app_config_dir），subtransport 在运行中也能读取最新配置（无需重启）。
+
+- 观测性
+  - HTTP 层有 Header/Body 预览（限长）嗅探，用于定位 Smart HTTP 早期失败；
+  - 事件中可附带 usedFakeSni 等可选字段（调试），日志脱敏。
+
+- 前端对齐
+  - 前端已移除 `fakeSniHost` 字段，仅保留 `fakeSniHosts` 列表与 403 轮换开关；
+  - TLS 设置面板新增“跳过 SAN 白名单校验”复选框。
+
 ### 4.3 MP1.3 Retry v1（统一重试策略）
 
 - 目标：为 Clone/Fetch/Push 建立统一、可配置的重试策略；Push 仅在上传前允许重试。

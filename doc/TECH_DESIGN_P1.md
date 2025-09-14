@@ -79,7 +79,7 @@
 {
 	"http": {
 		"fakeSniEnabled": true,
-		"fakeSniHost": "baidu.com",
+		"fakeSniHosts": ["baidu.com", "qq.com"],
 		"followRedirects": true,
 		"maxRedirects": 5,
 		"largeBodyWarnBytes": 5242880
