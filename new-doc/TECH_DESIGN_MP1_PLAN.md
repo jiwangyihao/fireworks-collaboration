@@ -105,6 +105,62 @@
   - 验收：能成功 push；取消立即生效；错误分类符合预期；日志不泄漏敏感；
   - 回退：通过配置禁用 push 功能或让命令返回“未启用”。
 
+#### MP1.1 实施说明（已落地）
+
+本小节记录当前代码已实现的 MP1.1 具体行为与契约，便于对照验证与后续维护（保持与前端既有事件/任务模型兼容）。
+
+- 命令（当前实现落地签名）
+  - Tauri 命令：`git_push(dest: string, remote?: string, refspecs?: string[], username?: string, password?: string)`
+  - 说明：
+    - `dest`：本地仓库路径（必须是有效的 Git 仓库目录，含 `.git/`）。
+    - `remote`：可选，未传则默认使用 `origin`。
+    - `refspecs`：可选，形如 `refs/heads/<src>:refs/heads/<dst>`；未传则按远程配置的默认推送行为（与 `git2`/远端配置一致）。
+    - `username`/`password`：可选的 HTTPS Basic 凭证。若仅提供令牌且 `username` 为空/未传，则后端自动使用 `x-access-token` 作为用户名以兼容 GitHub。
+  - 事件：沿用现有任务事件通道
+    - `task://state`：`pending|running|completed|failed|canceled`
+    - `task://progress`：push 的阶段化进度（见下）
+    - 注：计划中的标准化 `task://error` 事件在 MP1.1 中未启用；失败时通过 `state=failed` 并记录错误分类与消息。
+
+- 进度与阶段（push）
+  - Registry 预发：`Starting`（percent=0）
+  - 协商阶段：`PreUpload`（来自 `transfer_progress`），附带 `objects/bytes/total_hint` 与 `percent`
+  - 上传阶段：`Upload`（来自 `sideband_progress`，作为上传中信号，不保证精确百分比）
+  - 服务器处理：`PostReceive`（成功路径上发出）
+  - 完成：`Completed`（percent=100）
+
+- 取消与中断
+  - 使用 `CancellationToken` + 原子标志在回调中及时检查；用户取消会映射为 `Cancel` 类别并将任务置为 `canceled`。
+  - 进入上传后不做自动重试（MP1.3 才引入统一重试策略）。
+
+- 错误分类（当前映射）
+  - `Auth`：如 401/403、认证失败相关信息
+  - `Network`：超时、连接错误（含 `ErrorClass::Net`）
+  - `Tls`：TLS/SSL 相关错误
+  - `Verify`：证书链/主机验证错误
+  - `Protocol`：HTTP/协议类错误（`ErrorClass::Http`）
+  - `Cancel`：用户取消或回调中断
+  - `Internal`：其他未归类错误
+
+- 凭证与安全
+  - 支持用户名+密码/令牌，或仅令牌（自动用户名 `x-access-token`）。
+  - 敏感信息默认脱敏，不记录 Authorization/密码/令牌明文。
+
+- 测试覆盖（示例）
+  - 后端集成测试：`src-tauri/tests/git_push.rs`
+    - 本地裸仓库 push 成功用例
+    - 无效目标快速失败
+    - 取消前/中途的取消路径
+    - 任务注册表完成/取消语义
+    - 阶段事件包含 `PreUpload`/`Completed`
+  - 前端：已有 API/视图测试覆盖 push 启动参数透传与按钮交互（Vitest 全绿）。
+
+- 使用与排错要点（GitHub 平台）
+  - 使用 HTTPS push 时请使用 Personal Access Token（前缀通常为 `ghp_` 或 `github_pat_`），而非 OAuth App 访问令牌（`gho_`）。后者无法用于 Git push。
+  - 将用户名留空或填写 `x-access-token`，密码处粘贴 PAT。
+  - 如果组织启用了 SSO，请在 GitHub 的 Token 设置页为目标组织授权该 PAT。
+  - 远端需为 HTTPS 形态；如为 SSH（`git@...:`），请改用对应的 HTTPS URL 或切换到 SSH 推送（不在 MP1.1 范围）。
+  - 示例 refspec：`refs/heads/main:refs/heads/main`（推送本地 `main` 到远程 `main`）。
+
 ### 4.2 MP1.2 自定义 smart subtransport（方式A）灰度
 
 - 目标：对白名单主机启用仅接管连接/TLS/SNI 的自定义 subtransport；失败自动回退；可一键关闭。
