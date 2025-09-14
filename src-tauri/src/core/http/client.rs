@@ -13,7 +13,7 @@ use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::ClientConfig;
 
 use crate::core::config::model::AppConfig;
-use crate::core::tls::util::should_use_fake;
+use crate::core::tls::util::{decide_sni_host_with_proxy, proxy_present};
 use crate::core::tls::verifier::create_client_config;
 
 use super::types::{HttpRequestInput, HttpResponseOutput, TimingInfo};
@@ -32,8 +32,8 @@ impl HttpClient {
 
   /// 计算用于 TLS 握手的 SNI 主机名，并返回是否使用了伪 SNI
   pub fn compute_sni_host(&self, force_real_sni: bool, real_host: &str) -> (String, bool) {
-    let fake = should_use_fake(&self.cfg, force_real_sni);
-    if fake { (self.cfg.http.fake_sni_host.clone(), true) } else { (real_host.to_string(), false) }
+    let proxy = proxy_present();
+    decide_sni_host_with_proxy(&self.cfg, force_real_sni, real_host, proxy)
   }
 
   /// Host 头写入或覆盖为真实域
@@ -182,7 +182,7 @@ mod tests {
   fn test_compute_sni_host_fake_and_real() {
     let mut cfg = AppConfig::default();
     cfg.http.fake_sni_enabled = true;
-    cfg.http.fake_sni_host = "baidu.com".into();
+    cfg.http.fake_sni_hosts = vec!["baidu.com".into()];
     let client = HttpClient::new(cfg.clone());
     let (sni, used_fake) = client.compute_sni_host(false, "github.com");
     assert_eq!(sni, "baidu.com");
