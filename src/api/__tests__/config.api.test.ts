@@ -10,7 +10,6 @@ import { getConfig, setConfig, type AppConfig } from "../config";
 const fakeCfg: AppConfig = {
   http: {
     fakeSniEnabled: true,
-    fakeSniHost: "baidu.com",
     followRedirects: true,
     maxRedirects: 5,
     largeBodyWarnBytes: 1024,
