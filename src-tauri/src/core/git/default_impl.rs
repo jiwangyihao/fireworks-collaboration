@@ -66,6 +66,21 @@ impl DefaultGitService {
     fn total_hint(total: u64) -> Option<u64> {
         if total > 0 { Some(total) } else { None }
     }
+
+    #[inline]
+    fn push_phase_event<F: FnMut(ProgressPayload)>(cb: &Arc<Mutex<F>>, phase: &str, percent: u32) {
+        if let Ok(mut f) = cb.lock() {
+            (*f)(ProgressPayload {
+                task_id: uuid::Uuid::nil(),
+                kind: "GitPush".into(),
+                phase: phase.into(),
+                percent,
+                objects: None,
+                bytes: None,
+                total_hint: None,
+            });
+        }
+    }
 }
 
 impl GitService for DefaultGitService {
@@ -229,6 +244,89 @@ impl GitService for DefaultGitService {
                 let cat = Self::map_git2_error(&e);
                 Err(GitError::new(cat, e.message().to_string()))
             }
+        }
+    }
+
+    fn push_blocking<F: FnMut(ProgressPayload)>(
+        &self,
+        dest: &Path,
+        remote: Option<&str>,
+        refspecs: Option<&[&str]>,
+        creds: Option<(&str, &str)>,
+        should_interrupt: &AtomicBool,
+        mut on_progress: F,
+    ) -> Result<(), GitError> {
+        // 校验并打开仓库
+        if !dest.join(".git").exists() {
+            return Err(GitError::new(ErrorCategory::Internal, "dest is not a git repository (missing .git)"));
+        }
+
+        Self::preflight_generic("GitPush", should_interrupt, &mut on_progress)?;
+
+        let repo = match git2::Repository::open(dest) {
+            Ok(r) => r,
+            Err(e) => return Err(GitError::new(Self::map_git2_error(&e), format!("open repo: {}", e))),
+        };
+
+        // callbacks：凭证、传输进度、push 阶段
+        let cb = Arc::new(Mutex::new(on_progress));
+        let mut callbacks = git2::RemoteCallbacks::new();
+
+        // 凭证回调（HTTPS Basic / Token）
+        if creds.is_some() {
+            let (user, pass) = creds.unwrap();
+            callbacks.credentials(move |_url, _username_from_url, _allowed| {
+                git2::Cred::userpass_plaintext(user, pass)
+            });
+        }
+
+        // 传输进度（pack 上传前的协商阶段）
+        let cb_for_transfer = Arc::clone(&cb);
+        callbacks.transfer_progress(move |stats| {
+            if should_interrupt.load(Ordering::Relaxed) { return false; }
+            let received = stats.received_objects() as u64;
+            let total = stats.total_objects() as u64;
+            let bytes = stats.received_bytes() as u64;
+            let percent = Self::percent(received, total).min(100);
+            if let Ok(mut f) = cb_for_transfer.lock() {
+                (*f)(ProgressPayload { task_id: uuid::Uuid::nil(), kind: "GitPush".into(), phase: "PreUpload".into(), percent, objects: Some(received), bytes: Some(bytes), total_hint: Self::total_hint(total) });
+            }
+            true
+        });
+
+        // push 阶段进度（libgit2 暂无 bytesSent 回调；这里仅阶段事件）
+        let cb_for_phase = Arc::clone(&cb);
+        callbacks.sideband_progress(move |_data| {
+            // 服务器 side-band 信息，作为 Upload 阶段信号（不统计 percent）
+            Self::push_phase_event(&cb_for_phase, "Upload", 50);
+            true
+        });
+
+        let mut po = git2::PushOptions::new();
+        po.remote_callbacks(callbacks);
+
+        // 选择远程
+        let remote_name = remote.unwrap_or("origin");
+        let mut remote = match repo.find_remote(remote_name) {
+            Ok(r) => r,
+            Err(e) => return Err(GitError::new(Self::map_git2_error(&e), format!("find remote '{}': {}", remote_name, e))),
+        };
+
+        // 发出 PreUpload 阶段开始
+        Self::push_phase_event(&cb, "PreUpload", 10);
+
+        // 执行 push
+        let specs: Vec<&str> = refspecs.map(|s| s.to_vec()).unwrap_or_else(|| Vec::new());
+        let push_res = if specs.is_empty() { remote.push(&[] as &[&str], Some(&mut po)) } else { remote.push(&specs, Some(&mut po)) };
+
+        match push_res {
+            Ok(()) => {
+                // 完成阶段
+                Self::push_phase_event(&cb, "PostReceive", 90);
+                Self::push_phase_event(&cb, "Completed", 100);
+                Ok(())
+            }
+            Err(e) => Err(GitError::new(Self::map_git2_error(&e), e.message().to_string())),
         }
     }
 }

@@ -32,4 +32,21 @@ pub trait GitService {
         should_interrupt: &std::sync::atomic::AtomicBool,
         on_progress: F,
     ) -> Result<(), crate::core::git::errors::GitError>;
+
+    /// Push 到远程（HTTPS 基础）。
+    ///
+    /// 输入：
+    /// - dest: 本地仓库路径
+    /// - remote: 远程名（如 "origin"），为空则默认 "origin"
+    /// - refspecs: 需要推送的 refspec 列表（如 ["refs/heads/main:refs/heads/main"]），为空则使用默认推送配置
+    /// - creds: 可选用户名与密码/令牌（若仅提供 token，可将 username 置为 Some("x-access-token") 以兼容 GitHub）
+    fn push_blocking<F: FnMut(ProgressPayload)>(
+        &self,
+        dest: &Path,
+        remote: Option<&str>,
+        refspecs: Option<&[&str]>,
+        creds: Option<(&str, &str)>,
+        should_interrupt: &std::sync::atomic::AtomicBool,
+        on_progress: F,
+    ) -> Result<(), crate::core::git::errors::GitError>;
 }
