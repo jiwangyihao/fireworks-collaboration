@@ -7,12 +7,13 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("../../api/tasks", () => ({
   startGitClone: vi.fn().mockResolvedValue("tid-1"),
   startGitFetch: vi.fn().mockResolvedValue("tid-2"),
+  startGitPush: vi.fn().mockResolvedValue("tid-3"),
   cancelTask: vi.fn(),
   listTasks: vi.fn().mockResolvedValue([]),
 }));
 
 import GitPanel from "../GitPanel.vue";
-import { startGitClone, startGitFetch, cancelTask } from "../../api/tasks";
+import { startGitClone, startGitFetch, startGitPush, cancelTask } from "../../api/tasks";
 import { useTasksStore } from "../../stores/tasks";
 
 describe("views/GitPanel", () => {
@@ -63,5 +64,26 @@ describe("views/GitPanel", () => {
     expect(text).toContain("Receiving");
     expect(text).toContain("objs: 123");
     expect(text).toMatch(/5\.00 MiB|5 MiB/);
+  });
+
+  it("点击 Push 会调用 startGitPush 并传入凭证和 refspec", async () => {
+    const w = mount(GitPanel);
+    // 设置 Push 输入
+    const inputs = w.findAll("input.input.input-bordered.input-sm");
+    // 根据模板顺序：repo, dest, pushDest, remote, refspec, username, password
+    await inputs[2].setValue("C:/tmp/log"); // pushDest
+    await inputs[3].setValue("origin"); // remote
+    await inputs[4].setValue("refs/heads/main:refs/heads/main"); // refspec
+    await inputs[5].setValue("x-access-token"); // username
+    await inputs[6].setValue("token-123"); // password
+    const pushBtn = w.get("button.btn-accent.btn-sm");
+    await pushBtn.trigger("click");
+    expect(startGitPush).toHaveBeenCalledWith({
+      dest: "C:/tmp/log",
+      remote: "origin",
+      refspecs: ["refs/heads/main:refs/heads/main"],
+      username: "x-access-token",
+      password: "token-123",
+    });
   });
 });
