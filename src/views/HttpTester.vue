@@ -28,9 +28,17 @@
             </label>
             <span class="text-xs opacity-70">启用后 TLS 将不校验证书链与域名，仅用于验证伪 SNI 的可达性。</span>
           </div>
+          <div class="flex items-center gap-2 mt-1">
+            <label class="label cursor-pointer gap-2">
+              <span>跳过 SAN 白名单校验</span>
+              <input type="checkbox" v-model="skipSanWhitelist" class="checkbox checkbox-sm" @change="applyTlsToggle" />
+            </label>
+            <span class="text-xs opacity-70">开启仅跳过自定义白名单校验，仍保留常规证书链与主机名校验。</span>
+          </div>
           <div class="grid grid-cols-2 gap-2 mt-2">
             <label class="label cursor-pointer gap-2"><span>启用 Fake SNI</span><input type="checkbox" v-model="fakeSniEnabled" class="checkbox checkbox-sm" /></label>
-            <input v-model="fakeSniHost" class="input input-bordered input-sm" placeholder="伪 SNI 域名，如 baidu.com" />
+            <label class="label cursor-pointer gap-2"><span>403 时自动轮换 SNI</span><input type="checkbox" v-model="sniRotateOn403" class="checkbox checkbox-sm" /></label>
+            <textarea v-model="fakeSniHostsText" class="textarea textarea-bordered w-full col-span-2" rows="3" placeholder="多个候选域名：每行一个，或用逗号分隔，例如\nbaidu.com\nqq.com\nweibo.com"></textarea>
             <button class="btn btn-sm" @click="applyHttpStrategy">保存 HTTP 策略</button>
           </div>
         </div>
@@ -81,8 +89,10 @@ const bodyText = ref("");
 const forceRealSni = ref(false);
 const followRedirects = ref(true);
 const insecureSkipVerify = ref(false);
+const skipSanWhitelist = ref(false);
 const fakeSniEnabled = ref(true);
-const fakeSniHost = ref("baidu.com");
+const fakeSniHostsText = ref("");
+const sniRotateOn403 = ref(true);
 
 const resp = ref<HttpResponseOutput | null>(null);
 const err = ref<string | null>(null);
@@ -132,8 +142,12 @@ onMounted(async () => {
   try {
     cfg.value = await getConfig();
     insecureSkipVerify.value = !!cfg.value.tls.insecureSkipVerify;
-    fakeSniEnabled.value = !!cfg.value.http.fakeSniEnabled;
-    fakeSniHost.value = cfg.value.http.fakeSniHost || "baidu.com";
+  skipSanWhitelist.value = !!(cfg.value.tls as any).skipSanWhitelist;
+  fakeSniEnabled.value = !!cfg.value.http.fakeSniEnabled;
+    // 新增：多候选与 403 轮换
+    const hosts = (cfg.value.http as any).fakeSniHosts as string[] | undefined;
+    fakeSniHostsText.value = (hosts && hosts.length > 0) ? hosts.join("\n") : "";
+    sniRotateOn403.value = (cfg.value.http as any).sniRotateOn403 ?? true;
   } catch (e) {
     // 忽略读取失败
   }
@@ -145,6 +159,7 @@ async function applyTlsToggle() {
       cfg.value = await getConfig();
     }
     cfg.value!.tls.insecureSkipVerify = insecureSkipVerify.value;
+  (cfg.value!.tls as any).skipSanWhitelist = !!skipSanWhitelist.value;
     await setConfig(cfg.value!);
   } catch (e) {
     // 简单提示：可根据需要接入全局 toast
@@ -157,7 +172,11 @@ async function applyHttpStrategy() {
   try {
     if (!cfg.value) cfg.value = await getConfig();
     cfg.value!.http.fakeSniEnabled = !!fakeSniEnabled.value;
-    cfg.value!.http.fakeSniHost = (fakeSniHost.value || '').trim() || 'baidu.com';
+    // 解析候选列表（按换行或逗号分隔，去重、去空格、去空）
+    const raw = (fakeSniHostsText.value || "").split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+    const uniq: string[] = Array.from(new Set(raw));
+    (cfg.value!.http as any).fakeSniHosts = uniq;
+    (cfg.value!.http as any).sniRotateOn403 = !!sniRotateOn403.value;
     await setConfig(cfg.value!);
   } catch (e) {
     console.error("更新 HTTP 策略失败", e);

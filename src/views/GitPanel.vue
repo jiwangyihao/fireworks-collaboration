@@ -38,6 +38,30 @@
     </div>
 
     <div class="card bg-base-100 shadow-sm">
+      <div class="card-body gap-3">
+        <h3 class="font-semibold">SNI / TLS 策略</h3>
+        <div class="grid grid-cols-2 gap-2 items-center">
+          <label class="label cursor-pointer gap-2 col-span-2">
+            <span>跳过证书验证（不安全，仅用于联通性验证）</span>
+            <input type="checkbox" v-model="insecureSkipVerify" class="checkbox checkbox-sm" @change="applyTlsToggle" />
+          </label>
+          <label class="label cursor-pointer gap-2 col-span-2">
+            <span>跳过 SAN 白名单校验</span>
+            <input type="checkbox" v-model="skipSanWhitelist" class="checkbox checkbox-sm" @change="applyTlsToggle" />
+          </label>
+          <label class="label cursor-pointer gap-2"><span>启用 Fake SNI</span><input type="checkbox" v-model="fakeSniEnabled" class="checkbox checkbox-sm" /></label>
+          <label class="label cursor-pointer gap-2"><span>403 时自动轮换 SNI</span><input type="checkbox" v-model="sniRotateOn403" class="checkbox checkbox-sm" /></label>
+          <textarea v-model="fakeSniHostsText" class="textarea textarea-bordered w-full col-span-2" rows="3" placeholder="多个候选域名：每行一个或用逗号分隔"></textarea>
+        </div>
+        <div class="flex items-center gap-2">
+          <button class="btn btn-sm" @click="applyHttpStrategy">保存策略</button>
+          <div class="text-xs opacity-70">{{ policySummary }}</div>
+        </div>
+        <div class="text-xs opacity-70">当前任务的 SNI 状态会在下方“最近任务”的进度阶段列显示。</div>
+      </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-sm">
       <div class="card-body">
         <h3 class="font-semibold mb-2">最近任务</h3>
         <table class="table table-zebra text-sm">
@@ -73,9 +97,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useTasksStore } from '../stores/tasks';
 import { startGitClone, startGitFetch, startGitPush, cancelTask, listTasks } from '../api/tasks';
+import { getConfig, setConfig, type AppConfig } from '../api/config';
+import { useLogsStore } from '../stores/logs';
 
 const repo = ref('https://github.com/rust-lang/log');
 const dest = ref('C:/tmp/log');
@@ -89,6 +115,31 @@ const remote = ref('origin');
 const refspec = ref('refs/heads/main:refs/heads/main');
 const username = ref('');
 const password = ref('');
+
+// SNI/TLS 策略
+const insecureSkipVerify = ref(false);
+const skipSanWhitelist = ref(false);
+const fakeSniEnabled = ref(true);
+const fakeSniHostsText = ref('');
+const sniRotateOn403 = ref(true);
+const cfg = ref<AppConfig | null>(null);
+const logs = useLogsStore();
+
+onMounted(async () => {
+  try {
+    cfg.value = await getConfig();
+  // TLS
+  insecureSkipVerify.value = !!cfg.value.tls.insecureSkipVerify;
+  skipSanWhitelist.value = !!(cfg.value.tls as any).skipSanWhitelist;
+  // HTTP SNI
+  fakeSniEnabled.value = !!cfg.value.http.fakeSniEnabled;
+    const hosts = (cfg.value.http as any).fakeSniHosts as string[] | undefined;
+    fakeSniHostsText.value = (hosts && hosts.length > 0) ? hosts.join('\n') : '';
+    sniRotateOn403.value = (cfg.value.http as any).sniRotateOn403 ?? true;
+  } catch (e) {
+    // 读取失败忽略
+  }
+});
 
 function stateClass(s: string) {
   return {
@@ -111,6 +162,43 @@ function prettyBytes(n?: number) {
   if (n >= kb) return (n / kb).toFixed(2) + ' KiB';
   return n + ' B';
 }
+
+async function applyTlsToggle() {
+  try {
+    if (!cfg.value) cfg.value = await getConfig();
+  cfg.value!.tls.insecureSkipVerify = !!insecureSkipVerify.value;
+  (cfg.value!.tls as any).skipSanWhitelist = !!skipSanWhitelist.value;
+    await setConfig(cfg.value!);
+  } catch (e) {
+    console.error('更新 TLS 配置失败', e);
+    logs.push('error', `更新 TLS 配置失败: ${String(e)}`);
+  }
+}
+
+async function applyHttpStrategy() {
+  try {
+    if (!cfg.value) cfg.value = await getConfig();
+    cfg.value!.http.fakeSniEnabled = !!fakeSniEnabled.value;
+    const raw = (fakeSniHostsText.value || '').split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+    const uniq = Array.from(new Set(raw));
+    (cfg.value!.http as any).fakeSniHosts = uniq;
+    (cfg.value!.http as any).sniRotateOn403 = !!sniRotateOn403.value;
+    await setConfig(cfg.value!);
+  } catch (e) {
+    console.error('更新 HTTP 策略失败', e);
+    logs.push('error', `更新 HTTP 策略失败: ${String(e)}`);
+  }
+}
+
+const policySummary = computed(() => {
+  const parts: string[] = [];
+  parts.push(`insecureSkipVerify=${insecureSkipVerify.value ? 'on' : 'off'}`);
+  parts.push(`fakeSni=${fakeSniEnabled.value ? 'on' : 'off'}`);
+  const cnt = (fakeSniHostsText.value || '').split(/[\n,]/).map(s => s.trim()).filter(Boolean).length;
+  parts.push(`candidates=${cnt}`);
+  parts.push(`rotate403=${sniRotateOn403.value ? 'on' : 'off'}`);
+  return parts.join(' · ');
+});
 
 async function startClone() {
   working.value = true;
