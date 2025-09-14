@@ -58,6 +58,7 @@ url = "2"
 
 # 新增：git2-rs（MP0.1 引入，仅骨架，不改变行为）
 git2 = { version = "0.19" }
+rand = { version = "0.8" }
 
 [dev-dependencies]
 # 与主运行时一致，测试中使用 current_thread 以减少潜在冲突

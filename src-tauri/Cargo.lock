@@ -1000,6 +1000,7 @@ dependencies = [
  "base64 0.22.1",
  "git2",
  "hyper 0.14.32",
+ "rand 0.8.5",
  "rustls 0.21.12",
  "serde",
  "serde_json",
