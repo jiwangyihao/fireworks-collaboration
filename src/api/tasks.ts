@@ -1,6 +1,7 @@
 import { invoke } from "./tauri";
 import { listen } from "@tauri-apps/api/event";
 import { useTasksStore } from "../stores/tasks";
+import { useLogsStore } from "../stores/logs";
 
 export interface TaskStateEventPayload {
   taskId: string;
@@ -23,6 +24,7 @@ let unsubs: (() => void)[] = [];
 
 export async function initTaskEvents() {
   const store = useTasksStore();
+  const logs = useLogsStore();
   // state events
   const un1 = await listen<TaskStateEventPayload>("task://state", (e) => {
     const p = e.payload;
@@ -35,16 +37,36 @@ export async function initTaskEvents() {
   });
   const un2 = await listen<TaskProgressEventPayload>("task://progress", (e) => {
     const p = e.payload;
+    const totalHint = (p as any).total_hint ?? (p as any).totalHint;
     store.updateProgress({
       taskId: p.taskId,
       percent: p.percent ?? 0,
       phase: p.phase,
       objects: p.objects,
       bytes: p.bytes,
-      total_hint: p.total_hint,
+      total_hint: totalHint,
     });
   });
-  unsubs.push(un1, un2);
+  // MP1.5: error events
+  const un3 = await listen<{ taskId: string; kind: string; category: string; code?: string; message: string; retried_times?: number }>(
+    "task://error",
+    (e) => {
+      const p = e.payload;
+      const rt = (p as any).retried_times ?? (p as any).retriedTimes;
+      store.setLastError(p.taskId, {
+        category: p.category,
+        message: p.message,
+        retried_times: rt,
+        // 同时提供 camelCase 便于内部归一
+        // @ts-ignore allow extra field for compatibility
+        retriedTimes: rt,
+      });
+      // 也写入全局日志，便于提示
+      const prefix = p.kind ? `${p.kind}` : "Task";
+      logs.push("error", `${prefix} ${p.category}: ${p.message}`);
+    },
+  );
+  unsubs.push(un1, un2, un3);
 }
 
 export function disposeTaskEvents() {
