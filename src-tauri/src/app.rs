@@ -9,6 +9,7 @@ use crate::core::{
     tls::util::match_domain,
 };
 use crate::logging;
+use dirs_next as dirs;
 
 // ===== State Types =====
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -278,7 +279,10 @@ pub fn run(){
             http_fake_request
         ]);
     builder = builder.setup(|app| {
-        let base_dir: PathBuf = app.path().app_config_dir().unwrap_or_else(|_| std::env::current_dir().unwrap());
+        let base_dir: PathBuf = app.path().app_config_dir().unwrap_or_else(|_| {
+            let identifier = "top.jwyihao.fireworks-collaboration";
+            if let Some(mut dir) = dirs::config_dir() { dir.push(identifier); dir } else { std::env::current_dir().unwrap() }
+        });
         // 注入全局配置基目录，确保后续动态加载（如 Git 子传输）与应用一致
         cfg_loader::set_global_base_dir(&base_dir);
         let cfg = cfg_loader::load_or_init_at(&base_dir).unwrap_or_default();

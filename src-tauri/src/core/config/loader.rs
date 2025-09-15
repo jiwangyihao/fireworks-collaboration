@@ -1,6 +1,7 @@
 use std::{fs, io::Write, path::{Path, PathBuf}};
 use std::sync::OnceLock;
 use anyhow::{Context, Result};
+use dirs_next as dirs;
 
 use super::model::AppConfig;
 
@@ -21,10 +22,21 @@ pub fn set_global_base_dir<P: AsRef<Path>>(base: P) {
 }
 
 fn config_path() -> PathBuf {
-    let base = GLOBAL_BASE_DIR
-        .get()
-        .cloned()
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    // 优先使用应用在启动时注入的基目录；若尚未注入，则回退到系统应用配置目录
+    // Windows: %APPDATA%\<identifier>
+    // macOS: ~/Library/Application Support/<identifier>
+    // Linux: ~/.config/<identifier>
+    let base = GLOBAL_BASE_DIR.get().cloned().unwrap_or_else(|| {
+        // 与 tauri.conf.json 中的 identifier 保持一致
+        let identifier = "top.jwyihao.fireworks-collaboration";
+        if let Some(mut dir) = dirs::config_dir() {
+            dir.push(identifier);
+            dir
+        } else {
+            // 极端环境下获取失败，才回退到当前目录（尽量避免落盘到执行目录）
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        }
+    });
     join_default_path(&base)
 }
 
@@ -90,28 +102,27 @@ mod tests {
     }
 
     #[test]
-    fn test_load_or_init_creates_default() {
+    fn test_load_or_init_creates_default_at_base() {
         with_temp_cwd("create-default", || {
             assert!(!std::path::Path::new("config/config.json").exists());
-            let cfg = load_or_init().expect("should create default config");
+            let cfg = load_or_init_at(Path::new(".")).expect("should create default config at base");
             assert!(std::path::Path::new("config/config.json").exists());
             // 校验部分默认值
             assert!(cfg.http.fake_sni_enabled);
-            // fake_sni_host 已移除；默认候选仍包含常见域
             assert!(cfg.tls.san_whitelist.iter().any(|d| d.contains("github.com")));
             assert_eq!(cfg.logging.log_level, "info");
         });
     }
 
     #[test]
-    fn test_save_and_reload_roundtrip() {
+    fn test_save_and_reload_roundtrip_at_base() {
         with_temp_cwd("save-reload", || {
             let mut cfg = AppConfig::default();
             cfg.http.fake_sni_enabled = false;
             cfg.http.max_redirects = 3;
-            save(&cfg).expect("save should succeed");
+            save_at(&cfg, Path::new(".")).expect("save should succeed");
             // 再次读取
-            let loaded = load_or_init().expect("load should succeed");
+            let loaded = load_or_init_at(Path::new(".")).expect("load should succeed");
             assert_eq!(loaded.http.fake_sni_enabled, false);
             assert_eq!(loaded.http.max_redirects, 3);
         });
