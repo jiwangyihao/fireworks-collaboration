@@ -66,7 +66,7 @@
         <h3 class="font-semibold mb-2">最近任务</h3>
         <table class="table table-zebra text-sm">
           <thead>
-            <tr><th>ID</th><th>类型</th><th>状态</th><th>创建时间</th><th>进度</th><th>操作</th></tr>
+            <tr><th>ID</th><th>类型</th><th>状态</th><th>创建时间</th><th>进度</th><th>最近错误</th><th>操作</th></tr>
           </thead>
           <tbody>
             <tr v-for="t in tasks.items" :key="t.id">
@@ -84,11 +84,25 @@
                   </template>
                 </div>
               </td>
+              <td class="align-top max-w-xs">
+                <template v-if="lastErrorOf(t.id)">
+                  <div class="text-xs space-y-1">
+                    <div class="flex items-center gap-2">
+                      <span class="badge badge-outline" :class="errorBadgeClass(lastErrorOf(t.id)?.category || '')">{{ lastErrorOf(t.id)?.category }}</span>
+                      <span class="opacity-70" v-if="(lastErrorOf(t.id)?.retriedTimes ?? 0) > 0">重试 {{ lastErrorOf(t.id)?.retriedTimes }} 次</span>
+                    </div>
+                    <div class="opacity-80 break-words">{{ lastErrorOf(t.id)?.message }}</div>
+                  </div>
+                </template>
+                <template v-else>
+                  <span class="text-xs opacity-60">-</span>
+                </template>
+              </td>
               <td>
                 <button class="btn btn-xs" v-if="t.state==='running' || t.state==='pending'" @click="cancel(t.id)">取消</button>
               </td>
             </tr>
-            <tr v-if="tasks.items.length===0"><td colspan="6" class="text-center opacity-60">暂无任务</td></tr>
+            <tr v-if="tasks.items.length===0"><td colspan="7" class="text-center opacity-60">暂无任务</td></tr>
           </tbody>
         </table>
       </div>
@@ -152,6 +166,18 @@ function stateClass(s: string) {
 
 function progressOf(id: string) {
   return tasks.progressById[id] || { percent: 0 };
+}
+
+function lastErrorOf(id: string) {
+  return tasks.lastErrorById[id];
+}
+
+function errorBadgeClass(category: string) {
+  // 粗粒度分类颜色：取消->ghost；认证/验证->warning；其它->error
+  const cat = (category || '').toLowerCase();
+  if (cat === 'cancel' || cat === 'canceled') return 'badge-ghost';
+  if (cat === 'auth' || cat === 'verify' || cat === 'tls') return 'badge-warning';
+  return 'badge-error';
 }
 
 function prettyBytes(n?: number) {
