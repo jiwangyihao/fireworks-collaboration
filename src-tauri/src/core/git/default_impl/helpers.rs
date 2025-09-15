@@ -27,7 +27,7 @@ pub fn map_git2_error(e: &git2::Error) -> ErrorCategory {
     use git2::ErrorClass as C;
     if e.code() == git2::ErrorCode::User { return ErrorCategory::Cancel; }
     let msg = e.message().to_ascii_lowercase();
-    if msg.contains("timed out") || msg.contains("timeout") || msg.contains("connection") || matches!(e.class(), C::Net) { return ErrorCategory::Network; }
+    if msg.contains("timed out") || msg.contains("timeout") || msg.contains("connection") || msg.contains("connect") || matches!(e.class(), C::Net) { return ErrorCategory::Network; }
     if msg.contains("ssl") || msg.contains("tls") { return ErrorCategory::Tls; }
     if msg.contains("certificate") || msg.contains("x509") { return ErrorCategory::Verify; }
     if msg.contains("401") || msg.contains("403") || msg.contains("auth")

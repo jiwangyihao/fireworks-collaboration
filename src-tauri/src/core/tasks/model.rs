@@ -107,4 +107,6 @@ pub struct TaskProgressEvent {
     pub objects: Option<u64>,
     pub bytes: Option<u64>,
     pub total_hint: Option<u64>,
+    /// MP1.4: 可选的重试计数（仅在重试事件中出现）
+    pub retried_times: Option<u32>,
 }

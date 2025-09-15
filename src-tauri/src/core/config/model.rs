@@ -36,6 +36,7 @@ pub struct AppConfig {
     pub http: HttpCfg,
     pub tls: TlsCfg,
     pub logging: LoggingCfg,
+    #[serde(default)] pub retry: RetryCfg,
 }
 
 fn default_true() -> bool { true }
@@ -92,7 +93,31 @@ impl Default for AppConfig {
             },
             tls: TlsCfg { san_whitelist: default_san_whitelist(), insecure_skip_verify: false, skip_san_whitelist: false },
             logging: LoggingCfg { auth_header_masked: default_true(), log_level: default_log_level() },
+            retry: RetryCfg::default(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetryCfg {
+    /// 最大重试次数（不含首次尝试）；例如 3 表示最多共尝试 4 次
+    #[serde(default = "default_retry_max")] pub max: u32,
+    /// 初始基准延迟（毫秒）
+    #[serde(default = "default_retry_base_ms")] pub base_ms: u64,
+    /// 指数因子
+    #[serde(default = "default_retry_factor")] pub factor: f64,
+    /// 是否开启随机抖动（±50%）
+    #[serde(default = "default_true")] pub jitter: bool,
+}
+
+fn default_retry_max() -> u32 { 6 }
+fn default_retry_base_ms() -> u64 { 300 }
+fn default_retry_factor() -> f64 { 1.5 }
+
+impl Default for RetryCfg {
+    fn default() -> Self {
+        Self { max: default_retry_max(), base_ms: default_retry_base_ms(), factor: default_retry_factor(), jitter: true }
     }
 }
 
@@ -112,6 +137,10 @@ mod tests {
         assert!(s.contains("\"sanWhitelist\""));
         assert!(s.contains("\"authHeaderMasked\""));
         assert!(s.contains("\"logLevel\""));
+    assert!(s.contains("\"retry\""));
+    assert!(s.contains("\"baseMs\""));
+    assert!(s.contains("\"factor\""));
+    assert!(s.contains("\"jitter\""));
     }
 
     #[test]
@@ -120,12 +149,16 @@ mod tests {
         let json = r#"{
           "http": { "fakeSniEnabled": false },
           "tls": {},
-          "logging": { "logLevel": "debug" }
+                    "logging": { "logLevel": "debug" },
+                    "retry": { "max": 2, "baseMs": 200, "factor": 2.0, "jitter": false }
         }"#;
         let cfg: AppConfig = serde_json::from_str(json).unwrap();
         // 提供的值覆盖
         assert!(!cfg.http.fake_sni_enabled);
         assert_eq!(cfg.logging.log_level, "debug");
+                assert_eq!(cfg.retry.max, 2);
+                assert_eq!(cfg.retry.base_ms, 200);
+                assert!(!cfg.retry.jitter);
         // 未提供的保持默认
         assert!(cfg.http.follow_redirects);
         assert_eq!(cfg.http.max_redirects, 5);

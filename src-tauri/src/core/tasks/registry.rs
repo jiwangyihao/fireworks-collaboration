@@ -4,6 +4,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use crate::events::emitter::{emit_all, AppHandle};
 use super::model::{TaskMeta, TaskKind, TaskState, TaskSnapshot, TaskStateEvent, TaskProgressEvent};
+use super::retry::{load_retry_plan, backoff_delay_ms, is_retryable, categorize};
+use crate::core::git::errors::GitError;
 
 const EV_STATE: &str = "task://state";
 const EV_PROGRESS: &str = "task://progress";
@@ -53,7 +55,7 @@ impl TaskRegistry {
                 elapsed += step;
                 if let Some(app_ref) = &app {
                     let percent = ((elapsed.min(total_ms) as f64 / total_ms as f64) * 100.0) as u32;
-                    let prog = TaskProgressEvent { task_id: id, kind: "Sleep".into(), phase: "Running".into(), percent, objects: None, bytes: None, total_hint: None };
+                    let prog = TaskProgressEvent { task_id: id, kind: "Sleep".into(), phase: "Running".into(), percent, objects: None, bytes: None, total_hint: None, retried_times: None };
                     emit_all(app_ref, EV_PROGRESS, &prog);
                 }
             }
@@ -69,7 +71,7 @@ impl TaskRegistry {
 
             // 预发一个开始事件
             if let Some(app_ref) = &app {
-                let prog = TaskProgressEvent { task_id: id, kind: "GitClone".into(), phase: "Starting".into(), percent: 0, objects: None, bytes: None, total_hint: None };
+                let prog = TaskProgressEvent { task_id: id, kind: "GitClone".into(), phase: "Starting".into(), percent: 0, objects: None, bytes: None, total_hint: None, retried_times: None };
                 emit_all(app_ref, EV_PROGRESS, &prog);
             }
 
@@ -82,77 +84,96 @@ impl TaskRegistry {
                 return;
             }
 
-            // 准备 should_interrupt 标志，并在后台线程监听取消
-            let interrupt_flag: &'static std::sync::atomic::AtomicBool = Box::leak(Box::new(std::sync::atomic::AtomicBool::new(false)));
-            let token_for_thread = token.clone();
-            let watcher = std::thread::spawn(move || {
-                while !token_for_thread.is_cancelled() && !interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                if token_for_thread.is_cancelled() {
-                    interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
-            });
+            let plan = load_retry_plan();
+            let mut attempt: u32 = 0;
+            loop {
+                if token.is_cancelled() { match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }; break; }
 
-            // 执行克隆
-            let dest_path = std::path::PathBuf::from(dest.clone());
-            let res = {
-                use crate::core::git::service::GitService;
-                let service = crate::core::git::DefaultGitService::new();
-                let app_for_cb = app.clone();
-                let id_for_cb = id.clone();
-                service
-                    .clone_blocking(
-                        repo.as_str(),
-                        &dest_path,
-                        &*interrupt_flag,
-                        move |p| {
-                            if let Some(app_ref) = &app_for_cb {
-                                let prog = TaskProgressEvent {
-                                    task_id: id_for_cb,
-                                    kind: p.kind,
-                                    phase: p.phase,
-                                    percent: p.percent,
-                                    objects: p.objects,
-                                    bytes: p.bytes,
-                                    total_hint: p.total_hint,
-                                };
+                // per-attempt interrupt flag and watcher
+                let interrupt_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let interrupt_for_thread = std::sync::Arc::clone(&interrupt_flag);
+                let token_for_thread = token.clone();
+                let watcher = std::thread::spawn(move || {
+                    while !token_for_thread.is_cancelled() && !interrupt_for_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    if token_for_thread.is_cancelled() {
+                        interrupt_for_thread.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                });
+
+                // 执行克隆
+                let dest_path = std::path::PathBuf::from(dest.clone());
+                let res: Result<(), GitError> = {
+                    use crate::core::git::service::GitService;
+                    let service = crate::core::git::DefaultGitService::new();
+                    let app_for_cb = app.clone();
+                    let id_for_cb = id.clone();
+                    service
+                        .clone_blocking(
+                            repo.as_str(),
+                            &dest_path,
+                            &*interrupt_flag,
+                            move |p| {
+                                if let Some(app_ref) = &app_for_cb {
+                                    let prog = TaskProgressEvent {
+                                        task_id: id_for_cb,
+                                        kind: p.kind,
+                                        phase: p.phase,
+                                        percent: p.percent,
+                                        objects: p.objects,
+                                        bytes: p.bytes,
+                                        total_hint: p.total_hint,
+                                        retried_times: None,
+                                    };
+                                    emit_all(app_ref, EV_PROGRESS, &prog);
+                                }
+                            },
+                        )
+                };
+
+                if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
+                    interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    let _ = watcher.join();
+                    break;
+                }
+
+                match res {
+                    Ok(()) => {
+                        if let Some(app_ref) = &app {
+                            let prog = TaskProgressEvent { task_id: id, kind: "GitClone".into(), phase: "Completed".into(), percent: 100, objects: None, bytes: None, total_hint: None, retried_times: None };
+                            emit_all(app_ref, EV_PROGRESS, &prog);
+                        }
+                        match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Completed), None => this.set_state_noemit(&id, TaskState::Completed) }
+                        interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                        let _ = watcher.join();
+                        break;
+                    }
+                    Err(e) => {
+                        let cat = categorize(&e);
+                        tracing::error!(target = "git", category = ?cat, "clone error: {}", e);
+                        if is_retryable(&e) && attempt < plan.max {
+                            let delay = backoff_delay_ms(&plan, attempt);
+                            attempt += 1;
+                            if let Some(app_ref) = &app {
+                                let phase = format!("Retrying (attempt {} of {}) in {} ms", attempt, plan.max, delay);
+                                let prog = TaskProgressEvent { task_id: id, kind: "GitClone".into(), phase, percent: 0, objects: None, bytes: None, total_hint: None, retried_times: Some(attempt) };
                                 emit_all(app_ref, EV_PROGRESS, &prog);
                             }
-                        },
-                    )
-                    .map_err(|e| format!("{}", e))
-            };
-            match res {
-                Ok(()) => {
-                    if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                        match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
-                        // 终止 watcher 线程并退出
-                        interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                        let _ = watcher.join();
-                        return;
+                            interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                            let _ = watcher.join();
+                            std::thread::sleep(std::time::Duration::from_millis(delay));
+                            continue;
+                        } else {
+                            match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
+                            interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                            let _ = watcher.join();
+                            break;
+                        }
                     }
-
-                    if let Some(app_ref) = &app {
-                        let prog = TaskProgressEvent { task_id: id, kind: "GitClone".into(), phase: "Completed".into(), percent: 100, objects: None, bytes: None, total_hint: None };
-                        emit_all(app_ref, EV_PROGRESS, &prog);
-                    }
-                    match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Completed), None => this.set_state_noemit(&id, TaskState::Completed) }
-                }
-                Err(e) => {
-                    if interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) || token.is_cancelled() {
-                        match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
-                        interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                        let _ = watcher.join();
-                        return;
-                    }
-                    tracing::error!(target = "git", "clone error: {}", e);
-                    match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
                 }
             }
-            // 通知 watcher 线程退出后再 join，避免悬挂
-            interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-            let _ = watcher.join();
         })
     }
 
@@ -165,7 +186,7 @@ impl TaskRegistry {
 
             // 预发一个开始事件
             if let Some(app_ref) = &app {
-                let prog = TaskProgressEvent { task_id: id, kind: "GitFetch".into(), phase: "Starting".into(), percent: 0, objects: None, bytes: None, total_hint: None };
+                let prog = TaskProgressEvent { task_id: id, kind: "GitFetch".into(), phase: "Starting".into(), percent: 0, objects: None, bytes: None, total_hint: None, retried_times: None };
                 emit_all(app_ref, EV_PROGRESS, &prog);
             }
 
@@ -174,76 +195,98 @@ impl TaskRegistry {
                 return;
             }
 
-            // 准备 should_interrupt 标志，并在后台线程监听取消
-            let interrupt_flag: &'static std::sync::atomic::AtomicBool = Box::leak(Box::new(std::sync::atomic::AtomicBool::new(false)));
-            let token_for_thread = token.clone();
-            let watcher = std::thread::spawn(move || {
-                while !token_for_thread.is_cancelled() && !interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+            let plan = load_retry_plan();
+            let mut attempt: u32 = 0;
+            loop {
+                if token.is_cancelled() {
+                    match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
+                    break;
                 }
-                if token_for_thread.is_cancelled() {
+
+                let interrupt_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let interrupt_for_thread = std::sync::Arc::clone(&interrupt_flag);
+                let token_for_thread = token.clone();
+                let watcher = std::thread::spawn(move || {
+                    while !token_for_thread.is_cancelled() && !interrupt_for_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    if token_for_thread.is_cancelled() { interrupt_for_thread.store(true, std::sync::atomic::Ordering::Relaxed); }
+                });
+
+                // 进入阶段性进度
+                if let Some(app_ref) = &app {
+                    let prog = TaskProgressEvent { task_id: id, kind: "GitFetch".into(), phase: "Fetching".into(), percent: 10, objects: None, bytes: None, total_hint: None, retried_times: None };
+                    emit_all(app_ref, EV_PROGRESS, &prog);
+                }
+
+                let dest_path = std::path::PathBuf::from(dest.clone());
+                let res: Result<(), GitError> = {
+                    use crate::core::git::service::GitService;
+                    let service = crate::core::git::DefaultGitService::new();
+                    let app_for_cb = app.clone();
+                    let id_for_cb = id.clone();
+                    service
+                        .fetch_blocking(
+                            repo.as_str(),
+                            &dest_path,
+                            &*interrupt_flag,
+                            move |p| {
+                                if let Some(app_ref) = &app_for_cb {
+                                    let prog = TaskProgressEvent {
+                                        task_id: id_for_cb,
+                                        kind: p.kind,
+                                        phase: p.phase,
+                                        percent: p.percent,
+                                        objects: p.objects,
+                                        bytes: p.bytes,
+                                        total_hint: p.total_hint,
+                                        retried_times: None,
+                                    };
+                                    emit_all(app_ref, EV_PROGRESS, &prog);
+                                }
+                            },
+                        )
+                };
+
+                if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
                     interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    let _ = watcher.join();
+                    break;
                 }
-            });
 
-            // 进入阶段性进度（由 gitoxide 回调桥接）
-            if let Some(app_ref) = &app {
-                let prog = TaskProgressEvent { task_id: id, kind: "GitFetch".into(), phase: "Fetching".into(), percent: 10, objects: None, bytes: None, total_hint: None };
-                emit_all(app_ref, EV_PROGRESS, &prog);
-            }
-
-            let dest_path = std::path::PathBuf::from(dest.clone());
-            let res = {
-                use crate::core::git::service::GitService;
-                let service = crate::core::git::DefaultGitService::new();
-                let app_for_cb = app.clone();
-                let id_for_cb = id.clone();
-                service
-                    .fetch_blocking(
-                        repo.as_str(),
-                        &dest_path,
-                        &*interrupt_flag,
-                        move |p| {
-                            if let Some(app_ref) = &app_for_cb {
-                                let prog = TaskProgressEvent {
-                                    task_id: id_for_cb,
-                                    kind: p.kind,
-                                    phase: p.phase,
-                                    percent: p.percent,
-                                    objects: p.objects,
-                                    bytes: p.bytes,
-                                    total_hint: p.total_hint,
-                                };
+                match res {
+                    Ok(()) => {
+                        if let Some(app_ref) = &app { let prog = TaskProgressEvent { task_id: id, kind: "GitFetch".into(), phase: "Completed".into(), percent: 100, objects: None, bytes: None, total_hint: None, retried_times: None }; emit_all(app_ref, EV_PROGRESS, &prog); }
+                        match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Completed), None => this.set_state_noemit(&id, TaskState::Completed) }
+                        interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                        let _ = watcher.join();
+                        break;
+                    }
+                    Err(e) => {
+                        let cat = categorize(&e);
+                        tracing::error!(target = "git", category = ?cat, "fetch error: {}", e);
+                        if is_retryable(&e) && attempt < plan.max {
+                            let delay = backoff_delay_ms(&plan, attempt);
+                            attempt += 1;
+                            if let Some(app_ref) = &app {
+                                let phase = format!("Retrying (attempt {} of {}) in {} ms", attempt, plan.max, delay);
+                                let prog = TaskProgressEvent { task_id: id, kind: "GitFetch".into(), phase, percent: 0, objects: None, bytes: None, total_hint: None, retried_times: Some(attempt) };
                                 emit_all(app_ref, EV_PROGRESS, &prog);
                             }
-                        },
-                    )
-                    .map_err(|e| format!("{}", e))
-            };
-            match res {
-                Ok(()) => {
-                    if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                        match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
-                        interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                        let _ = watcher.join();
-                        return;
+                            interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                            let _ = watcher.join();
+                            std::thread::sleep(std::time::Duration::from_millis(delay));
+                            continue;
+                        } else {
+                            match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
+                            interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                            let _ = watcher.join();
+                            break;
+                        }
                     }
-                    if let Some(app_ref) = &app { let prog = TaskProgressEvent { task_id: id, kind: "GitFetch".into(), phase: "Completed".into(), percent: 100, objects: None, bytes: None, total_hint: None }; emit_all(app_ref, EV_PROGRESS, &prog); }
-                    match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Completed), None => this.set_state_noemit(&id, TaskState::Completed) }
-                }
-                Err(e) => {
-                    if interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) || token.is_cancelled() {
-                        match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
-                        interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                        let _ = watcher.join();
-                        return;
-                    }
-                    tracing::error!(target = "git", "fetch error: {}", e);
-                    match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
                 }
             }
-            interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-            let _ = watcher.join();
         })
     }
 
@@ -254,7 +297,7 @@ impl TaskRegistry {
             match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Running), None => this.set_state_noemit(&id, TaskState::Running) }
 
             if let Some(app_ref) = &app {
-                let prog = TaskProgressEvent { task_id: id, kind: "GitPush".into(), phase: "Starting".into(), percent: 0, objects: None, bytes: None, total_hint: None };
+                let prog = TaskProgressEvent { task_id: id, kind: "GitPush".into(), phase: "Starting".into(), percent: 0, objects: None, bytes: None, total_hint: None, retried_times: None };
                 emit_all(app_ref, EV_PROGRESS, &prog);
             }
 
@@ -263,80 +306,107 @@ impl TaskRegistry {
                 return;
             }
 
-            // 准备 should_interrupt 标志
-            let interrupt_flag: &'static std::sync::atomic::AtomicBool = Box::leak(Box::new(std::sync::atomic::AtomicBool::new(false)));
-            let token_for_thread = token.clone();
-            let watcher = std::thread::spawn(move || {
-                while !token_for_thread.is_cancelled() && !interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                if token_for_thread.is_cancelled() { interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed); }
-            });
+            let plan = load_retry_plan();
+            let mut attempt: u32 = 0;
+            // 用于检测是否进入上传阶段（进入后不再自动重试）
+            let upload_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            loop {
+                if token.is_cancelled() { match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }; break; }
 
-            let dest_path = std::path::PathBuf::from(dest.clone());
-            let res = {
-                use crate::core::git::service::GitService;
-                let service = crate::core::git::DefaultGitService::new();
-                let app_for_cb = app.clone();
-                let id_for_cb = id.clone();
-                // 允许仅提供 token（password）；若 username 为空或缺失，默认使用 "x-access-token"
-                let creds_opt = match (username.as_deref(), password.as_deref()) {
-                    (Some(u), Some(p)) if !u.is_empty() => Some((u, p)),
-                    (None, Some(p)) => Some(("x-access-token", p)),
-                    (Some(u), Some(p)) if u.is_empty() => Some(("x-access-token", p)),
-                    _ => None
+                let interrupt_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                upload_started.store(false, std::sync::atomic::Ordering::Relaxed);
+                let interrupt_for_thread = std::sync::Arc::clone(&interrupt_flag);
+                let token_for_thread = token.clone();
+                let watcher = std::thread::spawn(move || {
+                    while !token_for_thread.is_cancelled() && !interrupt_for_thread.load(std::sync::atomic::Ordering::Relaxed) {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    if token_for_thread.is_cancelled() { interrupt_for_thread.store(true, std::sync::atomic::Ordering::Relaxed); }
+                });
+
+                let dest_path = std::path::PathBuf::from(dest.clone());
+                let res: Result<(), GitError> = {
+                    use crate::core::git::service::GitService;
+                    let service = crate::core::git::DefaultGitService::new();
+                    let app_for_cb = app.clone();
+                    let id_for_cb = id.clone();
+                    let upload_started_cb = std::sync::Arc::clone(&upload_started);
+                    // 允许仅提供 token（password）；若 username 为空或缺失，默认使用 "x-access-token"
+                    let creds_opt = match (username.as_deref(), password.as_deref()) {
+                        (Some(u), Some(p)) if !u.is_empty() => Some((u, p)),
+                        (None, Some(p)) => Some(("x-access-token", p)),
+                        (Some(u), Some(p)) if u.is_empty() => Some(("x-access-token", p)),
+                        _ => None
+                    };
+                    let refspecs_vec: Option<Vec<String>> = refspecs.clone();
+                    let refspecs_opt: Option<Vec<String>> = refspecs_vec;
+                    let refspecs_slices: Option<Vec<&str>> = refspecs_opt.as_ref().map(|v| v.iter().map(|s| s.as_str()).collect());
+                    service
+                        .push_blocking(
+                            &dest_path,
+                            remote.as_deref(),
+                            refspecs_slices.as_deref(),
+                            creds_opt.map(|(u,p)| (u, p)),
+                            &*interrupt_flag,
+                            move |p| {
+                                if p.phase == "Upload" { upload_started_cb.store(true, std::sync::atomic::Ordering::Relaxed); }
+                                if let Some(app_ref) = &app_for_cb {
+                                    let prog = TaskProgressEvent {
+                                        task_id: id_for_cb,
+                                        kind: p.kind,
+                                        phase: p.phase,
+                                        percent: p.percent,
+                                        objects: p.objects,
+                                        bytes: p.bytes,
+                                        total_hint: p.total_hint,
+                                        retried_times: None,
+                                    };
+                                    emit_all(app_ref, EV_PROGRESS, &prog);
+                                }
+                            },
+                        )
                 };
-                let refspecs_vec: Option<Vec<String>> = refspecs.clone();
-                let refspecs_opt: Option<Vec<String>> = refspecs_vec;
-                let refspecs_slices: Option<Vec<&str>> = refspecs_opt.as_ref().map(|v| v.iter().map(|s| s.as_str()).collect());
-                service
-                    .push_blocking(
-                        &dest_path,
-                        remote.as_deref(),
-                        refspecs_slices.as_deref(),
-                        creds_opt.map(|(u,p)| (u, p)),
-                        &*interrupt_flag,
-                        move |p| {
-                            if let Some(app_ref) = &app_for_cb {
-                                let prog = TaskProgressEvent {
-                                    task_id: id_for_cb,
-                                    kind: p.kind,
-                                    phase: p.phase,
-                                    percent: p.percent,
-                                    objects: p.objects,
-                                    bytes: p.bytes,
-                                    total_hint: p.total_hint,
-                                };
+
+                if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
+                    interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    let _ = watcher.join();
+                    break;
+                }
+
+                match res {
+                    Ok(()) => {
+                        if let Some(app_ref) = &app { let prog = TaskProgressEvent { task_id: id, kind: "GitPush".into(), phase: "Completed".into(), percent: 100, objects: None, bytes: None, total_hint: None, retried_times: None }; emit_all(app_ref, EV_PROGRESS, &prog); }
+                        match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Completed), None => this.set_state_noemit(&id, TaskState::Completed) }
+                        interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                        let _ = watcher.join();
+                        break;
+                    }
+                    Err(e) => {
+                        let cat = categorize(&e);
+                        tracing::error!(target = "git", category = ?cat, "push error: {}", e);
+                        // 仅在尚未进入上传阶段时允许自动重试
+                        if !upload_started.load(std::sync::atomic::Ordering::Relaxed) && is_retryable(&e) && attempt < plan.max {
+                            let delay = backoff_delay_ms(&plan, attempt);
+                            attempt += 1;
+                            if let Some(app_ref) = &app {
+                                let phase = format!("Retrying (attempt {} of {}) in {} ms", attempt, plan.max, delay);
+                                let prog = TaskProgressEvent { task_id: id, kind: "GitPush".into(), phase, percent: 0, objects: None, bytes: None, total_hint: None, retried_times: Some(attempt) };
                                 emit_all(app_ref, EV_PROGRESS, &prog);
                             }
-                        },
-                    )
-                    .map_err(|e| format!("{}", e))
-            };
-            match res {
-                Ok(()) => {
-                    if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                        match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
-                        interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                        let _ = watcher.join();
-                        return;
+                            interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                            let _ = watcher.join();
+                            std::thread::sleep(std::time::Duration::from_millis(delay));
+                            continue;
+                        } else {
+                            match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
+                            interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                            let _ = watcher.join();
+                            break;
+                        }
                     }
-                    if let Some(app_ref) = &app { let prog = TaskProgressEvent { task_id: id, kind: "GitPush".into(), phase: "Completed".into(), percent: 100, objects: None, bytes: None, total_hint: None }; emit_all(app_ref, EV_PROGRESS, &prog); }
-                    match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Completed), None => this.set_state_noemit(&id, TaskState::Completed) }
-                }
-                Err(e) => {
-                    if interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) || token.is_cancelled() {
-                        match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
-                        interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                        let _ = watcher.join();
-                        return;
-                    }
-                    tracing::error!(target = "git", "push error: {}", e);
-                    match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
                 }
             }
-            interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-            let _ = watcher.join();
         })
     }
 }
