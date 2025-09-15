@@ -378,6 +378,43 @@
   - 集成：推送与失败路径均能产出预期事件；
   - 验收：前端不需变更亦能正常运行；可选增强展示正常工作。
 
+#### MP1.5 实施说明（已落地）
+
+本节落地了“标准化错误事件 + push 阶段化进度”的能力，并在前端以完全兼容的方式消费；同时补充了 GitPanel 的错误可视化与测试。
+
+- 后端实现
+  - 标准化错误事件：新增并全量接入 `task://error` 通道（常量 `EV_ERROR`），统一负载结构：
+    - Payload：`{ taskId, kind, category, message, retriedTimes? }`（`code?` 预留暂未使用）。
+    - 发出时机：`clone/fetch/push` 的出错与取消路径均会发送；取消映射为 `category=Cancel`。
+    - 重试计数：在统一重试循环里透传当前 `retriedTimes`，便于 UI 呈现“已重试 N 次”。
+  - 进度增强：push 仍按阶段化发出 `task://progress`（`PreUpload|Upload|PostReceive`），必要时在“重试中”阶段事件中附带 `retriedTimes`。已有对象/字节/百分比字段保持不变。
+  - 主要位置：
+    - 事件模型与构造：`src-tauri/src/core/tasks/model.rs`
+    - 任务注册与事件发射：`src-tauri/src/core/tasks/registry.rs`
+    - 错误分类映射沿用：`core/git/default_impl/helpers.rs`（Network/Tls/Verify/Protocol/Proxy/Auth/Cancel/Internal）
+
+- 前端接入（保持兼容）
+  - 事件订阅：在 `src/api/tasks.ts` 订阅 `task://error`，并写入 Pinia `tasks` 仓库的 `lastErrorById`，同时输出到全局日志（脱敏展示）。
+  - 大小写兼容：
+    - 进度事件：兼容 `totalHint` 与 `total_hint`；
+    - 错误事件：兼容 `retriedTimes` 与 `retried_times`；内部统一为 `retriedTimes`。
+  - 仓库结构：`src/stores/tasks.ts` 新增 `lastErrorById: Record<taskId, { category; message; retriedTimes? }>`，并提供 `setLastError`，内部做字段名归一化。
+  - UI 增强：`src/views/GitPanel.vue` 的“最近任务”表格新增“最近错误”一列，以 Badge 展示错误类别并显示“重试 N 次”和错误信息；分类配色粗粒度区分 Cancel/Auth/Verify/Tls/Other。
+
+- 测试与验证
+  - 前端：
+    - `src/api/__tests__/tasks.error.events.test.ts` 覆盖错误事件订阅与日志输出（断言使用 `retriedTimes`）。
+    - `src/stores/__tests__/tasks.error.store.test.ts` 覆盖 `retriedTimes/retried_times` 兼容；
+    - `src/views/__tests__/git-panel.error.test.ts` 覆盖 GitPanel 对“最近错误”的渲染（分类/重试次数/消息）。
+    - 全量 Vitest 通过（83 用例，环境因平台可能有轻微差异）。
+  - 后端：
+    - 无需额外配置即可通过现有测试套；`cargo test` 全绿，包含任务注册表与 git 流程的集成测试。
+
+- 兼容性与回退
+  - 所有新增字段均为可选，未订阅 `task://error` 的消费端不受影响；
+  - 事件字段在输入端兼容 snake_case/camelCase，内部统一输出 camelCase；
+  - 若需要禁用统一重试或错误事件，可通过现有配置关闭重试功能；UI 展示保持降级可用。
+
 ---
 
 ## 5. 命令与事件（契约）
