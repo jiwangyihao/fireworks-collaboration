@@ -22,6 +22,20 @@
 - 可观测性：HTTP 嗅探与调试日志完善，默认脱敏；
 - 前端：移除 fakeSniHost UI，新增“跳过 SAN 白名单校验”选项，保持 API 兼容。
 
+更新（2025-09-15）：完成 MP1.3（Push 使用自定义 Subtransport(A)）与配套改进：
+- Push 流程启用与 clone/fetch 一致的 `https+custom` 改写与回退链，保持灰度与代理互斥路径；
+- 线程局部注入 Authorization，仅限 receive-pack 流程（`GET info/refs?service=git-receive-pack` 与 `POST /git-receive-pack`），clone/fetch 不受影响；
+- 将 receive-pack 的 401 明确映射为 `Auth` 类错误，避免“bad packet length”误导；
+- 传输层与默认 Git 实现拆分为模块目录（`core/git/transport/{mod.rs,register.rs,rewrite.rs,http/{mod.rs,auth.rs,util.rs,stream.rs}}` 与 `core/git/default_impl/*`），旧文件归档；
+- 统一配置读取路径到应用数据目录；新增/完善公共 E2E（clone/fetch）默认启用，CI 环境可通过环境变量禁用；
+- 构建无警告（清理 `private_interfaces`），所有 Rust/前端测试通过。
+
+补充（模块结构与归档说明）：
+
+- 对外导出点：`transport/mod.rs` 暴露 `ensure_registered`、`maybe_rewrite_https_to_custom`、`set_push_auth_header_value`；其中 `set_push_auth_header_value` 由 `transport/http/auth.rs` 提供并在 `mod.rs` 中 re-export。
+- 目录化拆分：原 `transport/http.rs` 拆分为 `http/{mod.rs,auth.rs,util.rs,stream.rs}`；为避免历史文件与目录模块重名导致 `E0761`，通过 `#[path = "http/mod.rs"]` 将 `transport::http` 绑定到目录模块。
+- 归档：历史 `transport/http.rs` 已移动到 `src-tauri/_archive/http.legacy_YYYYMMDD_HHMMSS.rs`，方便回溯而不影响编译。
+
 关联文档：
 - 旧版 P0 交接稿（现状约定）：`doc/TECH_DESIGN_P0_HANDOFF.md`
 - 旧版 P1 原路线（gitoxide 视角）：`doc/TECH_DESIGN_P1.md`

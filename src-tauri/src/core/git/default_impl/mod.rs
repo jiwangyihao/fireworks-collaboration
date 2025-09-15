@@ -24,6 +24,25 @@ impl GitService for DefaultGitService {
     ) -> Result<(), GitError> {
         // 预发与取消检查
         helpers::preflight_generic("GitClone", should_interrupt, &mut on_progress)?;
+        // 若 repo 看起来是本地路径，则进行快速存在性校验，避免阻塞在底层 clone 过程
+        // 判定规则：绝对路径，或以 ./ ../ 开头，或包含反斜杠（Windows 常见），统一按路径处理
+        let repo_trim = repo.trim();
+        let looks_like_path = {
+            let p = std::path::Path::new(repo_trim);
+            p.is_absolute()
+                || repo_trim.starts_with("./")
+                || repo_trim.starts_with("../")
+                || repo_trim.contains('\\')
+        };
+        if looks_like_path {
+            let p = std::path::Path::new(repo_trim);
+            if !p.exists() {
+                return Err(GitError::new(
+                    ErrorCategory::Internal,
+                    format!("source path does not exist: {}", repo_trim),
+                ));
+            }
+        }
         // SNI 状态
         helpers::emit_sni_status("GitClone", Some(repo), &mut on_progress);
         // 注册与改写

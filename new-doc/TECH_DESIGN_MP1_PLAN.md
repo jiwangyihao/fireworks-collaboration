@@ -24,6 +24,15 @@
   - 自定义 subtransport 默认关闭，可按仓/域白名单灰度；失败自动回退 libgit2 默认路径；
   - Retry v1 可通过配置禁用或调低阈值。
 
+状态更新（2025-09-15，MP1.3 已落地）：
+- Push 已对接自定义 smart subtransport（方式A），保持 clone/fetch 行为不变并可灰度启用；
+- 在 push 流程的 receive-pack 阶段（GET info/refs 与 POST /git-receive-pack）按需注入 Authorization 头（线程局部存储），避免明文外泄；
+- 将 receive-pack 返回的 401 明确映射为 Auth 类错误，避免出现“bad packet length”类误导信息；
+- 统一配置读取路径到应用数据目录（app config dir），subtransport 热加载最新配置；
+- 新增/完善公共 E2E（clone/fetch）并默认启用，CI 环境可通过环境变量禁用；
+- 重构：默认 Git 实现与传输层拆分为模块目录（`default_impl/*` 与 `transport/{mod.rs,register.rs,rewrite.rs,http/{mod.rs,auth.rs,util.rs,stream.rs}}`），并归档 legacy 文件；所有测试绿。
+  - 说明：原 `transport/http.rs` 已归档到 `src-tauri/_archive/http.legacy_YYYYMMDD_HHMMSS.rs`；`transport/mod.rs` 统一对外导出 `ensure_registered`/`maybe_rewrite_https_to_custom`/`set_push_auth_header_value`，其中 `set_push_auth_header_value` 由 `http::auth` 模块实现并在 `mod.rs` 中 re-export；为避免历史同名文件造成模块歧义，使用 `#[path = "http/mod.rs"]` 指向目录模块。
+
 ---
 
 ## 1. 范围与目标
@@ -238,6 +247,66 @@
   - 单元：白名单判定、SNI 轮换与回退分支、代理分支；
   - 集成：对本地裸仓库与命中白名单域的远端进行 push，验证 Fake→Real→默认回退链；
   - 验收：默认关闭时与 MP1.1 行为一致；开启灰度后成功率不降低，失败有明确分类；支持一键关闭回退。
+
+#### MP1.3 实施说明（已落地）
+
+本小节记录当前代码在 MP1.3 的具体实现与契约，保持与 clone/fetch 路径一致，并确保灰度与回退：
+
+- 接入与改写
+  - 在 push 前对远端 URL 进行条件改写：命中 SAN 白名单且启用了 Fake SNI、且未启用代理时，将 `https://` 改写为 `https+custom://`，仅改变传输接管点；HTTP 智能协议仍由 libgit2 负责。
+  - 代码位置：`src-tauri/src/core/git/transport/{mod.rs,register.rs,rewrite.rs,http/{mod.rs,auth.rs,util.rs,stream.rs}}`；对外导出 `ensure_registered`、`maybe_rewrite_https_to_custom` 与 `set_push_auth_header_value`（通过 `transport/mod.rs` 统一 re-export）。
+  - 归档：原单文件 `transport/http.rs` 已迁移为目录模块并归档至 `src-tauri/_archive/`，避免与 `http/mod.rs` 重名导致的编译歧义。
+
+##### 维护者速览（模块职责）
+
+- `transport/mod.rs`
+  - 模块装配与对外导出；通过 `#[path = "http/mod.rs"]` 绑定目录模块；re-export `set_push_auth_header_value`。
+- `transport/register.rs`
+  - 自定义 subtransport 的注册与一次性初始化（幂等）。
+- `transport/rewrite.rs`
+  - URL 改写逻辑（`https://` → `https+custom://`）与单元测试；白名单与代理判断。
+- `transport/http/mod.rs`
+  - 自定义 HTTPS smart subtransport 主体（`SmartSubtransport` 的 `action/close` 实现）、SNI 选择与 TLS 握手封装；依赖下述子模块。
+- `transport/http/auth.rs`
+  - 仅 Push 场景的 Authorization 线程局部注入（receive-pack 阶段）；对外通过 `transport/mod.rs` re-export。
+- `transport/http/util.rs`
+  - HTTP 解析与日志辅助（CRLF/双 CRLF 查找、首行与 Host 解析、Body 预览脱敏）。
+- `transport/http/stream.rs`
+  - `SniffingStream` 实现：GET/POST framing、分块/Content-Length/EOF 解码、早期 403 轮换与 401→Auth 映射、读写/seek 实现与调试嗅探。
+  - 默认实现（`default_impl`）在 push 入口按与 clone/fetch 相同逻辑调用上述函数，保证行为一致与可灰度。
+
+- Authorization 注入（仅 push）
+  - 通过线程局部存储在进入 push 前设置 Authorization 值（Basic/PAT），由自定义 subtransport 在以下请求自动注入：
+    - `GET /info/refs?service=git-receive-pack`
+    - `POST /git-receive-pack`
+  - clone/fetch（upload-pack）路径不注入，保持既有行为不变；所有日志默认脱敏。
+
+- 错误映射与用户体验
+  - 对 receive-pack 流程中返回的 401 显式映射为 `Auth`（PermissionDenied）类别，从而避免 libgit2 上层出现“bad packet length”等误导性错误；
+  - 403 在 `GET /info/refs` 阶段触发一次性 SNI 轮换（排除当前候选、随机其余），仍失败回退 Real SNI；上传阶段不做自动重试。
+
+- SNI 策略与回退
+  - 候选来源 `http.fakeSniHosts: string[]`，优先使用“最近成功 SNI”（last-good per real-host）；
+  - 握手失败自动回退 Real SNI；代理存在时强制 Real SNI 并跳过改写；
+  - 回退链保持与 clone/fetch 一致：Fake → Real → libgit2 默认。
+
+- TLS 与安全
+  - 维持默认证书链/主机名校验；在 Fake SNI 握手时按真实主机名执行 SAN 白名单匹配；
+  - 尊重 `tls.insecureSkipVerify` 与 `tls.skipSanWhitelist` 的组合开关；调试日志默认脱敏。
+
+- 配置与热加载
+  - 统一从应用数据目录加载配置（通过 Tauri 注入的 base dir），传输层实时读取，修改后即时生效；
+  - Subtransport 注册（`ensure_registered`）为幂等操作，可重复调用；URL 改写函数具备单元测试覆盖。
+
+- 测试与验证
+  - Rust：全部单元与集成测试通过，包含 URL 改写、SNI 轮换与错误映射用例；
+  - 前端：Vitest 全绿；公共 E2E（clone/fetch）默认启用，CI 下通过环境变量禁用；
+  - 手动：面向 GitHub 的 push 验证了 Authorization 注入与 401 体验提升。
+
+- 代码整洁度
+  - 传输层从单文件重构为模块（`http/register/rewrite`），默认实现拆分为 `default_impl/*`；
+  - 归档 legacy `transport.rs`，消除模块重名；
+  - 调整内部可见性以消除 `private_interfaces` 编译警告，不影响行为。
 
 ### 4.4 MP1.4 Retry v1（统一重试策略）
 
