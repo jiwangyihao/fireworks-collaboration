@@ -325,6 +325,47 @@
   - 验收：失败类别正确分类；最大重试后给出清晰错误；
   - 回退：配置中关闭或调低重试。
 
+#### MP1.4 实施说明（已落地）
+
+本小节记录当前代码在 MP1.4 的具体实现与契约，确保与既有任务/事件模型兼容：
+
+- 配置与默认值
+  - 模型：`retry: { max: number, baseMs: number, factor: number, jitter: boolean }`
+  - 默认：`{ max: 6, baseMs: 300, factor: 1.5, jitter: true }`
+  - 位置：`src-tauri/src/core/config/model.rs`，通过 `loader::load_or_init` 读取，任务层实时生效。
+
+- 重试核心模块与行为
+  - 模块：`src-tauri/src/core/tasks/retry.rs`
+    - `RetryPlan`（由配置派生）、`backoff_delay_ms`（指数退避 ±50% 抖动）、`is_retryable`（按类别判断可重试）
+  - 可重试类别：`Network`；`Protocol` 中的 HTTP 5xx（基于错误消息启发式匹配）
+  - 不可重试：`Auth`/`Tls`/`Verify`/`Cancel`/`Internal` 等
+  - 错误分类来源：`src-tauri/src/core/git/default_impl/helpers.rs::map_git2_error`；已覆盖 timeout/connect 等常见网络错误为 `Network`
+
+- 任务注册表集成
+  - 位置：`src-tauri/src/core/tasks/registry.rs`
+    - `spawn_git_clone_task` / `spawn_git_fetch_task` / `spawn_git_push_task` 内部加入统一重试循环
+    - 取消：每次尝试都有独立的原子中断标志与 watcher 线程，确保取消即时生效
+    - 事件：重试前会通过 `task://progress` 发出“Retrying ...”阶段，并附带可选字段 `retriedTimes`
+
+- Push 特别规则（仅上传前重试）
+  - 进入上传阶段（`phase == "Upload"`）后不再自动重试；通过回调中标记 `upload_started` 实现
+  - 仍保持用户手动取消立即生效
+
+- 无效输入快速失败（不触发重试）
+  - `DefaultGitService::clone_blocking` 在进入底层 clone 前进行输入校验：
+    - 本地路径：若形如路径且不存在，直接返回 `Internal` 错误
+    - URL：仅接受 `http/https`，或 scp-like（`user@host:path`）；其他（如 `ftp://...`、`not-a-valid-url!!!`）立即返回 `Internal`
+  - 该路径保证明显错误不会进入重试循环，符合“invalid url should fail quickly”的预期
+
+- 事件契约
+  - `task://progress` 新增可选字段 `retriedTimes`（仅在重试阶段事件中出现，前端可无感）
+  - 其余字段与语义保持不变
+
+- 测试与验证
+  - 单元：`retry.rs` 增加 5xx 可重试与退避抖动范围测试
+  - 集成：注册表层新增 `invalid url/scheme` 快速失败用例，验证不进入重试
+  - 公网 E2E：默认启用；在 CI 或无外网环境可通过环境变量禁用以保持稳定
+
 ### 4.5 MP1.5 事件增强与错误分类
 
 - 目标：丰富 push 进度信息并标准化错误事件，保持兼容。
