@@ -43,6 +43,24 @@ impl GitService for DefaultGitService {
                 ));
             }
         }
+        // 基础 URL 形态快速校验：允许 http/https 以及常见的 scp-like 语法（user@host:path），否则直接判定为无效输入
+        if !looks_like_path {
+            let looks_like_http = repo_trim.contains("://");
+            let looks_like_scp = repo_trim.contains('@') && repo_trim.contains(':');
+            if looks_like_http {
+                if let Ok(parsed) = url::Url::parse(repo_trim) {
+                    let scheme_ok = matches!(parsed.scheme(), "http" | "https");
+                    if !scheme_ok {
+                        return Err(GitError::new(ErrorCategory::Internal, format!("unsupported url scheme: {}", parsed.scheme())));
+                    }
+                } else {
+                    return Err(GitError::new(ErrorCategory::Internal, "invalid repository url format"));
+                }
+            } else if !looks_like_scp {
+                // 既不像本地路径，也不像 http(s) 或 scp-like，视为明显无效，快速失败
+                return Err(GitError::new(ErrorCategory::Internal, "invalid repository path or url"));
+            }
+        }
         // SNI 状态
         helpers::emit_sni_status("GitClone", Some(repo), &mut on_progress);
         // 注册与改写

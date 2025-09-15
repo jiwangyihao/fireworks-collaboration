@@ -161,6 +161,28 @@ async fn test_registry_invalid_url_fails_quick() {
 }
 
 #[tokio::test]
+async fn test_registry_invalid_scheme_fails_quick() {
+    // 验证 ftp:// 这类非 http(s) 的 scheme 会被快速判定为无效输入并失败（不应触发重试）
+    let res = timeout(Duration::from_secs(6), async {
+        let reg = Arc::new(TaskRegistry::new());
+        let repo = "ftp://example.com/repo.git".to_string();
+        let dest = std::env::temp_dir().join(format!("fwc-clone-{}", uuid::Uuid::new_v4())).to_string_lossy().to_string();
+        let (id, token) = reg.create(TaskKind::GitClone { repo: repo.clone(), dest: dest.clone() });
+        let handle = reg.clone().spawn_git_clone_task(None, id, token, repo, dest);
+
+        let running = wait_for_state(&reg, id, TaskState::Running, 800).await;
+        assert!(running, "should enter running");
+        let failed = wait_for_state(&reg, id, TaskState::Failed, 2000).await;
+        assert!(failed, "invalid scheme should fail quickly");
+
+        // 显式取消以确保 watcher 线程退出
+        let _ = reg.cancel(&id);
+        let _ = timeout(Duration::from_secs(2), async { let _ = handle.await; }).await;
+    }).await;
+    assert!(res.is_ok(), "test exceeded timeout window");
+}
+
+#[tokio::test]
 async fn test_git_clone_relative_path_non_repo_errors_fast() {
     // 使用明显不存在的相对路径，验证路径分支能快速失败
     let res = timeout(Duration::from_secs(5), async {
