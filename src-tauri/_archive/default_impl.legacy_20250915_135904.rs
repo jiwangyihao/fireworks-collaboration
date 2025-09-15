@@ -1,9 +1,11 @@
 use std::{path::Path, sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex}};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 
 use super::{errors::{GitError, ErrorCategory}, service::{GitService, ProgressPayload}};
 use crate::core::config::loader::load_or_init;
 use crate::core::tls::util::{decide_sni_host_with_proxy, proxy_present};
-use crate::core::git::transport::{ensure_registered, maybe_rewrite_https_to_custom};
+use crate::core::git::transport::{ensure_registered, maybe_rewrite_https_to_custom, set_push_auth_header_value};
 use url::Url;
 
 /// 默认 Git 实现（基于 git2-rs），实现 clone/fetch、桥接进度、支持取消、错误分类。
@@ -89,7 +91,10 @@ impl DefaultGitService {
         if msg.contains("certificate") || msg.contains("x509") {
             return ErrorCategory::Verify;
         }
-        if msg.contains("401") || msg.contains("403") || msg.contains("auth") {
+        if msg.contains("401") || msg.contains("403") || msg.contains("auth")
+            || msg.contains("unauthorized") || msg.contains("permission denied")
+            || msg.contains("www-authenticate") || msg.contains("basic realm")
+        {
             return ErrorCategory::Auth;
         }
         if matches!(e.class(), C::Http) {
@@ -359,6 +364,13 @@ impl GitService for DefaultGitService {
             Err(e) => return Err(GitError::new(Self::map_git2_error(&e), format!("open repo: {}", e))),
         };
 
+        // 注册自定义传输并尝试进行 URL 灰度改写（Push 也走同一策略）
+        let cfg = crate::core::config::loader::load_or_init()
+            .map_err(|e| GitError::new(ErrorCategory::Internal, format!("load config: {}", e)))?;
+        if let Err(e) = ensure_registered(&cfg) {
+            return Err(GitError::new(ErrorCategory::Internal, format!("register custom transport: {}", e.message())));
+        }
+
         // callbacks：凭证、传输进度、push 阶段
         let cb = Arc::new(Mutex::new(on_progress));
         let mut callbacks = git2::RemoteCallbacks::new();
@@ -399,7 +411,31 @@ impl GitService for DefaultGitService {
         // 选择远程
         let remote_name = remote.unwrap_or("origin");
         let mut remote = match repo.find_remote(remote_name) {
-            Ok(r) => r,
+            Ok(r) => {
+                // 观测一次 SNI 使用状况（基于远程 URL）
+                if let Some(u) = r.url() {
+                    Self::emit_sni_status("GitPush", Some(u), &mut |p| {
+                        if let Ok(mut f) = cb.lock() { (*f)(p); }
+                    });
+                } else {
+                    Self::emit_sni_status("GitPush", None, &mut |p| {
+                        if let Ok(mut f) = cb.lock() { (*f)(p); }
+                    });
+                }
+                // 若 URL 可改写，则使用匿名远程以改写后的 URL
+                if let Some(u) = r.url() {
+                    if let Some(new_url) = maybe_rewrite_https_to_custom(&cfg, u) {
+                        match repo.remote_anonymous(&new_url) {
+                            Ok(r2) => r2,
+                            Err(e) => return Err(GitError::new(Self::map_git2_error(&e), format!("remote anonymous with rewritten url: {}", e))),
+                        }
+                    } else {
+                        r
+                    }
+                } else {
+                    r
+                }
+            }
             Err(e) => return Err(GitError::new(Self::map_git2_error(&e), format!("find remote '{}': {}", remote_name, e))),
         };
 
@@ -408,7 +444,19 @@ impl GitService for DefaultGitService {
 
         // 执行 push
         let specs: Vec<&str> = refspecs.map(|s| s.to_vec()).unwrap_or_else(|| Vec::new());
+        // 若提供了凭据，则为自定义子传输设置 Authorization 头（Basic base64(user:pass)）
+        if let Some((user, pass)) = creds {
+            let token = format!("{}:{}", user, pass);
+            let enc = BASE64.encode(token.as_bytes());
+            set_push_auth_header_value(Some(format!("Basic {}", enc)));
+        } else {
+            set_push_auth_header_value(None);
+        }
+
         let push_res = if specs.is_empty() { remote.push(&[] as &[&str], Some(&mut po)) } else { remote.push(&specs, Some(&mut po)) };
+
+        // 清理线程局部授权，避免泄漏至后续操作
+        set_push_auth_header_value(None);
 
         match push_res {
             Ok(()) => {
