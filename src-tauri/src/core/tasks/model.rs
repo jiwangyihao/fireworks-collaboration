@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+use crate::core::git::errors::ErrorCategory;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -109,4 +110,41 @@ pub struct TaskProgressEvent {
     pub total_hint: Option<u64>,
     /// MP1.4: 可选的重试计数（仅在重试事件中出现）
     pub retried_times: Option<u32>,
+}
+
+/// MP1.5: 标准化错误事件负载
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskErrorEvent {
+    pub task_id: Uuid,
+    pub kind: String,
+    /// 统一字符串分类：Network|Tls|Verify|Protocol|Proxy|Auth|Cancel|Internal
+    pub category: String,
+    /// 可选的错误代码（预留，当前为空）
+    pub code: Option<String>,
+    pub message: String,
+    /// 已重试次数（若有重试逻辑）
+    pub retried_times: Option<u32>,
+}
+
+impl TaskErrorEvent {
+    pub fn from_parts(task_id: Uuid, kind: &str, category: ErrorCategory, message: impl Into<String>, retried_times: Option<u32>) -> Self {
+        Self {
+            task_id,
+            kind: kind.to_string(),
+            category: match category {
+                ErrorCategory::Network => "Network".into(),
+                ErrorCategory::Tls => "Tls".into(),
+                ErrorCategory::Verify => "Verify".into(),
+                ErrorCategory::Protocol => "Protocol".into(),
+                ErrorCategory::Proxy => "Proxy".into(),
+                ErrorCategory::Auth => "Auth".into(),
+                ErrorCategory::Cancel => "Cancel".into(),
+                ErrorCategory::Internal => "Internal".into(),
+            },
+            code: None,
+            message: message.into(),
+            retried_times,
+        }
+    }
 }

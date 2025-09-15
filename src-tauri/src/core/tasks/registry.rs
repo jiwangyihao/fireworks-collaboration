@@ -3,12 +3,13 @@ use tokio::{time::{sleep, Duration}, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use crate::events::emitter::{emit_all, AppHandle};
-use super::model::{TaskMeta, TaskKind, TaskState, TaskSnapshot, TaskStateEvent, TaskProgressEvent};
+use super::model::{TaskMeta, TaskKind, TaskState, TaskSnapshot, TaskStateEvent, TaskProgressEvent, TaskErrorEvent};
 use super::retry::{load_retry_plan, backoff_delay_ms, is_retryable, categorize};
 use crate::core::git::errors::GitError;
 
 const EV_STATE: &str = "task://state";
 const EV_PROGRESS: &str = "task://progress";
+const EV_ERROR: &str = "task://error";
 
 #[derive(Debug)]
 pub struct TaskRegistry {
@@ -42,6 +43,8 @@ impl TaskRegistry {
     fn set_state_emit(&self, app:&AppHandle, id:&Uuid, s:TaskState){ if self.with_meta(id, |m| m.state = s).is_some(){ self.emit_state(app, id);} }
 
     fn set_state_noemit(&self, id:&Uuid, s:TaskState){ let _ = self.with_meta(id, |m| m.state = s); }
+
+    fn emit_error(&self, app:&AppHandle, evt:&TaskErrorEvent) { emit_all(app, EV_ERROR, evt); }
 
     pub fn spawn_sleep_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, total_ms: u64) -> JoinHandle<()> {
         let this = Arc::clone(self);
@@ -80,6 +83,10 @@ impl TaskRegistry {
 
             // 提前检查取消
             if token.is_cancelled() {
+                if let Some(app_ref) = &app {
+                    let err = TaskErrorEvent::from_parts(id, "GitClone", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None);
+                    this.emit_error(app_ref, &err);
+                }
                 match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
                 return;
             }
@@ -133,6 +140,10 @@ impl TaskRegistry {
                 };
 
                 if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(app_ref) = &app {
+                        let err = TaskErrorEvent::from_parts(id, "GitClone", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None);
+                        this.emit_error(app_ref, &err);
+                    }
                     match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
                     interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                     let _ = watcher.join();
@@ -153,6 +164,10 @@ impl TaskRegistry {
                     Err(e) => {
                         let cat = categorize(&e);
                         tracing::error!(target = "git", category = ?cat, "clone error: {}", e);
+                        if let Some(app_ref) = &app {
+                            let err_evt = TaskErrorEvent::from_parts(id, "GitClone", cat, format!("{}", e), Some(attempt));
+                            this.emit_error(app_ref, &err_evt);
+                        }
                         if is_retryable(&e) && attempt < plan.max {
                             let delay = backoff_delay_ms(&plan, attempt);
                             attempt += 1;
@@ -191,6 +206,10 @@ impl TaskRegistry {
             }
 
             if token.is_cancelled() {
+                if let Some(app_ref) = &app {
+                    let err = TaskErrorEvent::from_parts(id, "GitFetch", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None);
+                    this.emit_error(app_ref, &err);
+                }
                 match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
                 return;
             }
@@ -249,6 +268,10 @@ impl TaskRegistry {
                 };
 
                 if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(app_ref) = &app {
+                        let err = TaskErrorEvent::from_parts(id, "GitFetch", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None);
+                        this.emit_error(app_ref, &err);
+                    }
                     match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
                     interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                     let _ = watcher.join();
@@ -266,6 +289,10 @@ impl TaskRegistry {
                     Err(e) => {
                         let cat = categorize(&e);
                         tracing::error!(target = "git", category = ?cat, "fetch error: {}", e);
+                        if let Some(app_ref) = &app {
+                            let err_evt = TaskErrorEvent::from_parts(id, "GitFetch", cat, format!("{}", e), Some(attempt));
+                            this.emit_error(app_ref, &err_evt);
+                        }
                         if is_retryable(&e) && attempt < plan.max {
                             let delay = backoff_delay_ms(&plan, attempt);
                             attempt += 1;
@@ -302,6 +329,10 @@ impl TaskRegistry {
             }
 
             if token.is_cancelled() {
+                if let Some(app_ref) = &app {
+                    let err = TaskErrorEvent::from_parts(id, "GitPush", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None);
+                    this.emit_error(app_ref, &err);
+                }
                 match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
                 return;
             }
@@ -368,6 +399,10 @@ impl TaskRegistry {
                 };
 
                 if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(app_ref) = &app {
+                        let err = TaskErrorEvent::from_parts(id, "GitPush", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None);
+                        this.emit_error(app_ref, &err);
+                    }
                     match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
                     interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                     let _ = watcher.join();
@@ -385,6 +420,10 @@ impl TaskRegistry {
                     Err(e) => {
                         let cat = categorize(&e);
                         tracing::error!(target = "git", category = ?cat, "push error: {}", e);
+                        if let Some(app_ref) = &app {
+                            let err_evt = TaskErrorEvent::from_parts(id, "GitPush", cat, format!("{}", e), Some(attempt));
+                            this.emit_error(app_ref, &err_evt);
+                        }
                         // 仅在尚未进入上传阶段时允许自动重试
                         if !upload_started.load(std::sync::atomic::Ordering::Relaxed) && is_retryable(&e) && attempt < plan.max {
                             let delay = backoff_delay_ms(&plan, attempt);
