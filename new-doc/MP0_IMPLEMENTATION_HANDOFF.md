@@ -146,7 +146,7 @@
   - 在构建 `FetchOptions`/`Remote` 时注册自定义子传输，仅接管连接/TLS/SNI，HTTP 仍由 libgit2 处理；
   - 与 HTTP 调试模块共享白名单/证书验证策略；失败回退到默认传输。
 
-- Retry v1（MP1.3）：
+- Retry v1（MP1.4）：
   - 根据 `ErrorCategory` 分类进行指数退避重试；
   - Push 仅在上传前允许重试；
   - 事件中可选上报 `retriedTimes`。

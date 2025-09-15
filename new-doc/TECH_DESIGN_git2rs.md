@@ -37,8 +37,8 @@
 | 新 MP0 | 用 git2-rs 替换 gix，实现 clone/fetch 的等价功能，清理 gix 依赖；保留命令名/事件结构/前端不变 | UI 与命令不变，稳定性与兼容性提升 |
 | MP1.1 | Git Push（HTTPS 基础） | 新增 push 命令与 UI 表单（用户名+令牌或仅令牌），日志脱敏 |
 | MP1.2 | 自定义 smart subtransport（方式A）灰度 | URL 重写至自定义 scheme（https+custom），对白名单主机启用内置 TLS/SNI 与证书 pin/TOFU，保留代理回退 |
-| MP1.3 | Retry v1（HTTP/Git 早期错误） | 统一重试策略、指数退避；Push 仅在“进入上传前”允许重试 |
-| MP1.4 | 事件增强与错误分类 | 丰富 progress 对象/字节/阶段；新增 task://error；前端可见最近错误与计数 |
+| MP1.4 | Retry v1（HTTP/Git 早期错误） | 统一重试策略、指数退避；Push 仅在“进入上传前”允许重试 |
+| MP1.5 | 事件增强与错误分类 | 丰富 progress 对象/字节/阶段；新增 task://error；前端可见最近错误与计数 |
 
 不做（本阶段）：代理/IP 优选、系统级证书安装、凭证持久化、安全存储、浅克隆/部分克隆；详见 `doc/TECH_DESIGN_P1.md` 的“只做/不做”。
 
@@ -80,7 +80,7 @@
 
 - MP1.1 Push（HTTPS 基础）：支持 basic/token（PAT）认证，进度/取消/错误分类完善。
 - MP1.2 Subtransport（方式A）灰度：对白名单主机启用 `https+custom` scheme，走内置 TLS（含 Fake SNI / Real-Host 校验），可一键回退。
-- MP1.3 Retry v1：指数退避 + 类别化；Push 仅在“开始上传前”可重试；Clone/Fetch 按安全类别重试。
+- MP1.4 Retry v1：指数退避 + 类别化；Push 仅在“开始上传前”可重试；Clone/Fetch 按安全类别重试。
 
 验收：
 - 能对公开测试仓库完成 Push；错误可读、日志脱敏；可开关自定义 subtransport；所有单测通过。
@@ -163,7 +163,7 @@
 `config.json` 关键片段：
 - `http`：`{ fakeSniEnabled: boolean, fakeSniHosts?: string[], sniRotateOn403?: boolean, followRedirects: boolean, maxRedirects: number, largeBodyWarnBytes: number }`
 - `tls`：`{ sanWhitelist: string[], insecureSkipVerify?: boolean, skipSanWhitelist?: boolean }`
-- `retry`：`{ max: number, baseMs: number, factor: number, jitter: boolean }`（规划项，MP1.3）
+- `retry`：`{ max: number, baseMs: number, factor: number, jitter: boolean }`（规划项，MP1.4）
 - `proxy`: `{ mode: 'off'|'http'|'socks5', url?: string }`
 - `logging`: `{ debugAuthLogging: boolean }`（默认脱敏）
 
