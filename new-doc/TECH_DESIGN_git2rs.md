@@ -1,6 +1,6 @@
 # 技术方案（git2-rs 版本）——从迁移到可控传输的完整路线
 
-> 适用范围：以当前仓库状态为起点（已完成“旧版 P1.1 Git Fetch 基础”，后端采用 gitoxide/gix 路线），在不改变前端 API/事件/任务模型的前提下，完成“新 MP0：从 gitoxide 全面迁移到 git2-rs（libgit2 绑定）”，并规划自定义 smart subtransport（方式A：仅接管连接与 TLS/SNI）的落地路线与回滚策略。
+> 适用范围：以当前仓库状态为起点（已完成“旧版 P1.1 Git Fetch 基础”，后端采用 gitoxide/gix 路线），在不改变前端 API/事件/任务模型的前提下，完成“新 MP0：从 gitoxide 全面迁移到 git2-rs（libgit2 绑定）”，并规划自适应 TLS 传输层（原方式A：仅接管连接与 TLS/SNI）的落地路线与回滚策略。
 
 ---
 
@@ -8,12 +8,13 @@
 
 - 为什么迁移：gitoxide 短期内没有 push 能力；git2-rs（libgit2）在 push/fetch/clone 上更成熟，生态验证充分。
 - 新 MP0 目标：保持既有命令/事件/前端 UI 不变，后端 Git 实现从 gix 替换为 git2-rs；清理 gix 依赖与实现；全部单测通过。
-- MP1 目标：在 git2-rs 基础上补齐 push，随后灰度引入“自定义 smart subtransport（SNI/证书校验进程内完成）”，淘汰 MITM 代理路径但保留回退开关。
-- 不变部分：任务模型（task://state/progress）、配置命令（get_config/set_config）、HTTP 伪 SNI 调试 API（独立模块，继续可用）。
+- MP1 目标：在 git2-rs 基础上补齐 push，并灰度引入“自适应 TLS 传输层（原方式A，仅接管连接/TLS/SNI）”，失败自动回退；后续与 IP 池集成，连接时优选评分最高 IP，只有在确认是 IP 连通性问题时才更换 IP，更换后仍先使用 Fake SNI。
+- P2 将引入本地 Git 操作（init/add/commit/branch/tag/remote/checkout 等）与 shallow/partial，以及任务级策略覆盖；代理支持按规划延后到 P5。
+- 路线图统一为 9 阶段（MP0、MP1、P2…P8），长期目标与现有技术方案保持一致。
 
 更新（2025-09-14）：已完成 MP0.4（切换、清理与基线）——后端统一使用 git2-rs；移除 gix 与相关特性开关；前后端全部测试通过，事件/进度/取消契约不变。
 
-更新（2025-09-15）：完成 MP1.2（方式A Subtransport 灰度）的关键实现与前后端对齐：
+更新（2025-09-15）：完成 MP1.2（自适应 TLS 传输层灰度）的关键实现与前后端对齐：
 - 配置：从模型中移除 `http.fakeSniHost`，改为使用 `http.fakeSniHosts: string[]` 候选，运行期维护 last-good SNI；
 - 轮换：`403` 仅在 `GET /info/refs` 阶段按流单次轮换，排除当前 SNI，随机其余候选，否则回退 Real；
 - TLS：拆分开关 `tls.insecureSkipVerify` 与 `tls.skipSanWhitelist`；支持在“跳过默认证书验证”时保留仅 SAN 白名单校验；
@@ -39,8 +40,9 @@
 关联文档：
 - 旧版 P0 交接稿（现状约定）：`doc/TECH_DESIGN_P0_HANDOFF.md`
 - 旧版 P1 原路线（gitoxide 视角）：`doc/TECH_DESIGN_P1.md`
-- 方式A详细方案与代码骨架：`new-doc/TECH_DESIGN_P1A_git2rs_custom_transport.md`
-- 方式A迁移指南（从代理/MITM 切换）：`new-doc/transport-A-migration.md`
+ - MP0 实施交接稿（git2-rs 基线落地细则）：`new-doc/MP0_IMPLEMENTATION_HANDOFF.md`
+ - MP1 实施交接稿（Push + 自适应 TLS 灰度 + Retry v1）：`new-doc/MP1_IMPLEMENTATION_HANDOFF.md`
+ - MP0/MP1 规划补充（计划层面）：`new-doc/TECH_DESIGN_MP0_PLAN.md`、`new-doc/TECH_DESIGN_MP1_PLAN.md`
 
 ---
 
@@ -50,7 +52,7 @@
 |------|----------|------------------|
 | 新 MP0 | 用 git2-rs 替换 gix，实现 clone/fetch 的等价功能，清理 gix 依赖；保留命令名/事件结构/前端不变 | UI 与命令不变，稳定性与兼容性提升 |
 | MP1.1 | Git Push（HTTPS 基础） | 新增 push 命令与 UI 表单（用户名+令牌或仅令牌），日志脱敏 |
-| MP1.2 | 自定义 smart subtransport（方式A）灰度 | URL 重写至自定义 scheme（https+custom），对白名单主机启用内置 TLS/SNI 与证书 pin/TOFU，保留代理回退 |
+| MP1.2 | 自适应 TLS 传输层（灰度） | URL 重写至自定义 scheme（https+custom），对白名单主机启用内置 TLS/SNI 与证书 pin/TOFU，保留代理回退 |
 | MP1.4 | Retry v1（HTTP/Git 早期错误） | 统一重试策略、指数退避；Push 仅在“进入上传前”允许重试 |
 | MP1.5 | 事件增强与错误分类 | 丰富 progress 对象/字节/阶段；新增 task://error；前端可见最近错误与计数 |
 
@@ -86,39 +88,47 @@
 
 - 事件：沿用 `task://state`/`task://progress`，payload 字段保持兼容；允许附加可选字段（前端已容忍未知字段）。
 
----
+### 2.2 MP1：Push/自适应 TLS 灰度/Retry v1（已完成）
 
-## 3. MP1 路线与分解（Push / Subtransport / Retry）
+目标：在保持前端 API/事件不变的前提下，补齐 Push，并灰度接入“自适应 TLS 传输层（仅接管连接与 TLS/SNI）”，同时引入 Retry v1。
 
-目标：在保持前端 API/事件不变的前提下，补齐 Push，并逐步接入“方式A：自定义 smart subtransport（仅接管连接与 TLS/SNI）”，同时引入 Retry v1。
-
-- MP1.1 Push（HTTPS 基础）：支持 basic/token（PAT）认证，进度/取消/错误分类完善。
-- MP1.2 Subtransport（方式A）灰度：对白名单主机启用 `https+custom` scheme，走内置 TLS（含 Fake SNI / Real-Host 校验），可一键回退。
-- MP1.4 Retry v1：指数退避 + 类别化；Push 仅在“开始上传前”可重试；Clone/Fetch 按安全类别重试。
+- Push（HTTPS 基础）：支持 basic/token（PAT）认证，进度/取消/错误分类完善。
+- Subtransport（自适应 TLS 传输层）灰度：对白名单主机启用 `https+custom` scheme，走内置 TLS（含 Fake SNI / Real-Host 校验），可一键回退。
+- Retry v1：指数退避 + 类别化；Push 仅在“开始上传前”可重试；Clone/Fetch 按安全类别重试。
 
 验收：
 - 能对公开测试仓库完成 Push；错误可读、日志脱敏；可开关自定义 subtransport；所有单测通过。
 
----
-
-## 4. Git Push（HTTPS）设计（git2-rs，面向 MP1）
-
-- 凭证回调：`RemoteCallbacks::credentials` 支持两种：
-  - 用户名 + 令牌（或密码）；
-  - 仅令牌：用户名置为 `x-access-token`（兼容 GitHub），密码为 token。
-- 进度：
-  - `transfer_progress` 提供对象/字节统计；
-  - Push 阶段用 `push_transfer_progress`（若可用）上报 `bytesSent`、`phase`（PreUpload/Upload/PostReceive）。
-- 取消：
-  - 在各回调与大循环检查取消标记，进入上传后不再自动重试，取消立即中止。
-- 错误分类：
-  - 401/403 归为 `Auth`；网络类 → `Network`；TLS/证书 → `Tls/Verify`；
-  - 服务器拒绝（如权限不足、受保护分支）→ `Auth`/`Protocol`；
-  - 上传中断 → `Network` 或 `Cancel`。
+Push（HTTPS）设计（git2-rs）：
+- 凭证回调：`RemoteCallbacks::credentials` 两种：用户名+令牌（或密码）；仅令牌（用户名 `x-access-token`，密码为 token）。
+- 进度：`transfer_progress` 与 `push_transfer_progress`（若可用）上报 `bytesSent` 与 `phase=PreUpload|Upload|PostReceive`。
+- 取消：进入上传后不再自动重试，取消立即中止。
+- 错误分类：401/403→Auth；网络→Network；TLS/证书→Tls/Verify；权限/受保护分支→Auth/Protocol；上传中断→Network/Cancel。
 
 ---
 
-## 5. 自定义 smart subtransport（方式A，面向 MP1）
+## 3. 事件与进度契约（MP1 增强）
+
+- `task://state`：`pending|running|completed|failed|canceled`。
+- `task://progress`：
+  - Clone/Fetch：`{ objects, totalHint, bytes, percent, phase }`
+  - Push：`{ bytesSent, objects, percent, phase }`，phase 示例：`PreUpload|Upload|PostReceive`。
+- `task://error`：`{ category, code?, message, retriedTimes? }`。
+- 兼容性：
+  - 新增字段保持可选；前端现有 UI 不破坏，后续可渐进增强展示。
+  - 大小写兼容：`retriedTimes` | `retried_times`（错误事件）；`totalHint` | `total_hint`（进度事件）。
+
+### 3.1 命令清单（对前端稳定）
+
+- `git_clone(repo: string, dest: string): Promise<string /* taskId */>`
+- `git_fetch(repo: string, dest: string, preset?: 'remote'|'branches'|'branches+tags'|'tags'): Promise<string>`
+- `git_push({ dest: string; remote?: string; refspecs?: string[]; username?: string; password?: string }): Promise<string>`
+- `task_cancel(id: string): Promise<boolean>`
+- `task_list(): Promise<TaskSnapshot[]>`
+
+说明：P2 起在不破坏上述签名的前提下，新增“对象参数重载”，以支持 shallow/partial 与任务级策略覆盖，详见 §18。
+
+## 4. 自适应 TLS 传输层（原方式A，面向 MP1）
 
 设计要点：
 - 触发：只对白名单主机开启（如 github.com 域族）；URL 重写为 `https+custom://...`。
@@ -126,6 +136,7 @@
   - SNI 可为 Fake 或 Real；
   - TLS 使用 rustls，自定义验证器支持 SAN 白名单、可选 SPKI Pin、Real-Host 验证；
   - 代理模式下禁用 Fake SNI（减少可识别特征）。
+  - 与 IP 池协作（启用时）：连接前由 IP 池提供评分最高的候选 IP；仅在确认是 IP 连通性问题时更换 IP，更换后仍优先使用 Fake SNI，再按回退链进行。
 - 回退：连接或验证失败 → 自动切回 Real SNI；仍失败 → 切换 IP（后期）/代理（若可用）；最终回退到 libgit2 默认。
 - 安全基线：不关闭链验证；Fake SNI 仅改变握手 SNI，不降低验证强度。
 
@@ -133,9 +144,16 @@
 1) 默认关闭，通过配置对白名单可单仓开启；
 2) 记录 usedFakeSni/realHost 校验结果与证书指纹（后期指标/日志）。
 
+实现挂接点（简要）：
+- URL 改写：`transport::maybe_rewrite_https_to_custom(url)`
+- 传输注册：`transport::ensure_registered()`（启动时一次）
+- Push 授权注入：`transport::set_push_auth_header_value(value)`（仅 receive-pack）
+- IP 池对接：在建立 TCP 前调用 `ip_pool.pick_best(host)`，失败后根据连通性标记 `ip_pool.report_fail(ip)` 并择优重选
+- 代理互斥：检测代理配置后强制 Real SNI，跳过 Fake SNI 分支
+
 ---
 
-## 6. Retry v1（统一重试策略）
+## 5. Retry v1（统一重试策略）
 
 - 重试类别：
   - 可重试：超时、连接重置、暂时性网络错误、5xx（幂等请求），TLS 握手失败可进行一次“Fake→Real”切换；
@@ -146,33 +164,28 @@
 
 ---
 
-## 7. 事件与进度契约（MP1 增强）
 
-- `task://state`：`pending|running|completed|failed|canceled`。
-- `task://progress`：
-  - Clone/Fetch：`{ objects, totalHint, bytes, percent, phase }`
-  - Push：`{ bytesSent, objects, percent, phase }`，phase 示例：`PreUpload|Upload|PostReceive`。
-- `task://error`：`{ category, code?, message, retriedTimes? }`。
-- 兼容性：新增字段保持可选；前端现有 UI 不破坏，后续可渐进增强展示。
+----
 
----
+## 6. 关键时序流程（HTTP / Git / 回退）
 
-## 8. 错误分类与回退链
+HTTP (MP0/MP1)：
+1. 前端发起 http_fake_request → 解析 URL & 校验白名单 → 判定 useFakeSni
+2. 若启用 IP 池（后期）→ 选 IP；TCP → TLS（SNI=伪或真实；代理模式下强制真实 SNI）
+3. 发送请求与计时（connect/tls/firstByte/total）→ 返回 Base64 Body；若 `status=403` 且启用 403 轮换，在信息发现阶段（GET /info/refs）随机切换至不同候选后重试一次
 
-分类：`Network | Tls | Verify | Protocol | Auth | Proxy | Cancel | Internal`。
+Git Clone (MP0)：
+1. 创建任务记录 → state(pending→running)
+2. git2-rs 默认 HTTP → info/refs → Negotiation → Pack streaming
+3. side-band → progress 事件 → 完成 → state=completed
 
-回退顺序（可配置）：
-1) Fake SNI → 2) Real SNI → 3) 换 IP（P5）→ 4) 代理/直连切换（P4）→ 5) SSH（P8）。
-
-约束：
-- Verify（SAN/SPKI）失败直接失败，不再尝试 Fake/Real 切换；
-- Auth 失败直返，提示用户；
-- Push 上传阶段出错仅回退一次到 Real SNI，不做自动重试；
-- 代理失败达到阈值自动降级直连（并发出 `proxy://fallback` 事件）。
+Git 自适应 TLS（P3 全量推广）：
+统一 transport：Fake SNI 握手失败 → Real SNI → IP fallback（P4）→ 代理 fallback（P5）。
+Real-Host 验证按真实域匹配（详见 §8），失败时回退真实 SNI 再试一次。
 
 ---
 
-## 9. 配置模型（MP1 更新）
+## 7. 配置模型（MP1 更新）
 
 `config.json` 关键片段：
 - `http`：`{ fakeSniEnabled: boolean, fakeSniHosts?: string[], sniRotateOn403?: boolean, followRedirects: boolean, maxRedirects: number, largeBodyWarnBytes: number }`
@@ -183,56 +196,54 @@
 
 任务级覆盖（P2+）：命令入参可选择性覆盖上述策略子集。
 
----
+兼容说明：配置键内部统一使用 camelCase；输入端容忍 snake_case（例如 `base_ms` → `baseMs`）。`retry` 默认值建议 `{ max: 6, baseMs: 300, factor: 1.5, jitter: true }`。
 
-## 10. TLS 与 Fake SNI/Real-Host 验证
+P2 起的任务级覆盖对象（strategyOverride）结构补充：
+```
+strategyOverride?: {
+  http?: { followRedirects?: boolean; maxRedirects?: number },
+  tls?: { insecureSkipVerify?: boolean; skipSanWhitelist?: boolean },
+  retry?: { max?: number; baseMs?: number; factor?: number; jitter?: boolean }
+}
+```
+合并语义：对全局配置做浅合并（shallow merge），未提供字段沿用全局；越权字段忽略并记录告警。
 
-- SAN 白名单：仅允许 Github 域族：`github.com/*.github.com/*.githubusercontent.com/*.githubassets.com/codeload.github.com`。
-- SPKI Pin（可选）：开启后必须匹配，否则直接失败；用于高安全环境；
-- Real-Host 验证：握手使用 Fake SNI 时，按“真实域名”进行证书匹配（通过 override_host）；若证书不含真实域名 → 立刻回退一次使用 Real SNI 重握手；
-- 证书指纹：记录 leaf SPKI SHA256 与证书整体哈希（后期用于指标与告警）。
+示例配置（片段）：
 
----
+```
+{
+  "http": {
+    "fakeSniEnabled": false,
+    "fakeSniHosts": ["a.githubapp.com", "b.githubapp.com"],
+    "sniRotateOn403": true,
+    "followRedirects": true,
+    "maxRedirects": 5,
+    "largeBodyWarnBytes": 10485760
+  },
+  "tls": {
+    "sanWhitelist": [
+      "github.com",
+      "*.github.com",
+      "*.githubusercontent.com",
+      "*.githubassets.com",
+      "codeload.github.com"
+    ],
+    "insecureSkipVerify": false,
+    "skipSanWhitelist": false
+  },
+  "retry": { "max": 6, "baseMs": 300, "factor": 1.5, "jitter": true },
+  "proxy": { "mode": "off" },
+  "logging": { "debugAuthLogging": false }
+}
+```
 
-## 11. Git Smart HTTP 策略（阶段化）
+默认值建议（摘要）：
+- http.followRedirects=true，maxRedirects=5，largeBodyWarnBytes=10MB
+- retry={max:6, baseMs:300, factor:1.5, jitter:true}
+- proxy.mode=off
+- logging.debugAuthLogging=false（默认脱敏）
 
-- MP1：沿用 git2-rs 默认 HTTP，进度/取消/错误分类完善；
-- P2：支持浅克隆（depth）、部分克隆（`filter=blob:none`）并对进度与速率做展示；
-- P3：替换 transport 为方式A的自定义 subtransport（含 Fake/Real 回退与验证策略）。
-
-重定向策略：默认跟随有限次（如 5 次），跨主域重定向需命中白名单。
-
----
-
-## 12. 代理策略与回退
-
-- 支持 HTTP CONNECT 与 SOCKS5；
-- 失败判定：连接/握手/读写错误累计达到阈值触发降级直连，并发 `proxy://fallback`；
-- 与 Fake SNI：代理模式禁用 Fake SNI（避免结合代理产生异常特征）；
-- 恢复：后期通过心跳探测自动恢复代理（P4+）。
-
----
-
-## 13. 可观测性体系（指标与事件）
-
-为便于定位问题与优化性能，在现有事件基础上补充可选指标采集：
-
-| 类别 | 指标示例 |
-|------|----------|
-| TLS | tls_handshake_ms |
-| Git 阶段 | git_phase_duration_ms{phase} |
-| IP 探测 | ip_probe_success_total{source} / ip_rtt_ms |
-| 代理 | proxy_failover_total |
-| 证书 | cert_fp_changes_total |
-| Git 流量 | git_bytes_received_total |
-| HTTP 调试 | http_fake_requests_total / http_fake_request_bytes_total |
-| 大响应 | http_fake_large_response_total |
-
-事件仍用于前端实时显示，指标用于后期统计/面板（P9）。
-
----
-
-## 14. 配置文件与数据落地
+### 7.1 配置文件与数据落地（由原 §11 合并）
 
 | 文件 | 用途 |
 |------|------|
@@ -247,25 +258,40 @@
 
 ---
 
-## 15. 关键时序流程（HTTP / Git / 回退）
+## 8. TLS 与 Fake SNI/Real-Host 验证
 
-HTTP (MP0/MP1)：
-1. 前端发起 http_fake_request → 解析 URL & 校验白名单 → 判定 useFakeSni
-2. 若启用 IP 池（后期）→ 选 IP；TCP → TLS（SNI=伪或真实；代理模式下强制真实 SNI）
-3. 发送请求与计时（connect/tls/firstByte/total）→ 返回 Base64 Body；若 `status=403` 且启用 403 轮换，在信息发现阶段（GET /info/refs）随机切换至不同候选后重试一次
-
-Git Clone (MP0)：
-1. 创建任务记录 → state(pending→running)
-2. git2-rs 默认 HTTP → info/refs → Negotiation → Pack streaming
-3. side-band → progress 事件 → 完成 → state=completed
-
-Git 伪 SNI (P3)：
-统一 transport：Fake SNI 握手失败 → Real SNI → IP fallback → 代理 fallback。
-Real-Host 验证按真实域匹配（详见 §10），失败时回退真实 SNI 再试一次。
+- SAN 白名单：仅允许 Github 域族：`github.com/*.github.com/*.githubusercontent.com/*.githubassets.com/codeload.github.com`。
+- SPKI Pin（可选）：开启后必须匹配，否则直接失败；用于高安全环境；
+- Real-Host 验证：握手使用 Fake SNI 时，按“真实域名”进行证书匹配（通过 override_host）；若证书不含真实域名 → 立刻回退一次使用 Real SNI 重握手；
+- 证书指纹：记录 leaf SPKI SHA256 与证书整体哈希（后期用于指标与告警）。
 
 ---
 
-## 16. 核心数据结构（参考）
+## 9. 代理策略与回退（P5，延后阶段）
+
+- 支持 HTTP CONNECT 与 SOCKS5；
+- 失败判定：连接/握手/读写错误累计达到阈值触发降级直连，并发 `proxy://fallback`；
+- 与 Fake SNI：代理模式禁用 Fake SNI（避免结合代理产生异常特征）；
+- 恢复：后期通过心跳探测自动恢复代理（P5+）。
+
+---
+
+## 10. 错误分类与回退链
+
+分类：`Network | Tls | Verify | Protocol | Auth | Proxy | Cancel | Internal`。
+
+回退顺序（可配置）：
+1) Fake SNI → 2) Real SNI → 3) 换 IP（P4）→ 4) 代理/直连切换（P5）。
+
+约束：
+- Verify（SAN/SPKI）失败直接失败，不再尝试 Fake/Real 切换；
+- Auth 失败直返，提示用户；
+- Push 上传阶段出错仅回退一次到 Real SNI，不做自动重试；
+- 代理失败达到阈值自动降级直连（并发出 `proxy://fallback` 事件）。
+
+---
+
+## 11. 核心数据结构（参考）
 
 ```rust
 enum IpSource { Builtin, History, UserStatic, Dns, Fallback }
@@ -340,7 +366,7 @@ struct TaskMeta {
 
 ---
 
-## 17. 核心伪代码（摘录）
+## 12. 核心伪代码（摘录）
 
 TLS 验证器（简化）：
 ```rust
@@ -392,7 +418,7 @@ async fn http_fake_request(req: HttpFakeReq) -> Result<HttpFakeResp> {
 
 ---
 
-## 18. 仓库目录结构建议
+## 13. 仓库目录结构建议
 
 ```text
 src/
@@ -440,7 +466,7 @@ cert-fp.log
 
 ---
 
-## 19. 风险矩阵（补充）
+## 14. 风险矩阵（补充）
 
 | 风险 | 等级 | 描述 | 当前策略 | 后续强化 |
 |------|------|------|----------|----------|
@@ -459,7 +485,7 @@ cert-fp.log
 
 ---
 
-## 20. 需求映射表（对齐自查）
+## 15. 需求映射表（对齐自查）
 
 | 原方案功能点 | 状态 | 落地阶段 | 仓库实现方式 |
 |--------------|------|----------|--------------|
@@ -470,22 +496,21 @@ cert-fp.log
 | 伪 SNI（Git） | 后移到 P3 | P3 | 统一 transport 替换 |
 | SAN 白名单 | 强制 | MP0 | 自定义 verifier |
 | SPKI Pin | 可选 | P7 | tls::verifier + config |
-| 代理与回退 | 保留 | P4 | proxy::manager |
-| IP 优选 5 来源 | 精简 | P5 | ip_pool with scoring |
+| 代理与回退 | 保留 | P5 | proxy::manager |
+| IP 优选 5 来源 | 精简 | P4 | ip_pool with scoring |
 | 任务事件/取消 | 保留 | MP0 | TaskRegistry + emit |
 | 错误分类 | 保留 | 渐进 | ErrorCategory 枚举 |
 | 指纹事件 | 保留 | P7 | security::fingerprint |
 | 日志脱敏 | 建议 | MP0 | debugAuthLogging 开关 |
 | 任务策略覆盖 | 保留 | P2+ | 覆盖 httpStrategy |
-| LFS 下载 | 保留 | P6 | lfs::module |
-| SSH fallback | 新蓝图后期 | P8 | 额外协议模块 |
-| 性能指标面板 | 后期 | P9 | metrics + UI |
-| HTTP 流式 | 展望 | P10 | streaming body |
-| Pack resume | 展望 | P10 | pack 分段校验 |
+| LFS 下载 | 保留 | P7 | lfs::module |
+| 可观测性面板 | 后期 | P8 | metrics + UI |
+| HTTP 流式 | 展望 | 远期 | streaming body |
+| Pack resume | 展望 | 远期 | pack 分段校验 |
 
 ---
 
-## 21. 后续扩展议题（优先级待定）
+## 16. 后续扩展议题（优先级待定）
 
 | 议题 | 价值 |
 |------|------|
@@ -502,101 +527,223 @@ cert-fp.log
 
 ---
 
-## 22. 完整 Roadmap（MP0–P10）
+## 17. 完整 Roadmap（MP0–P8 + 远期）
 
-注：本路线路径以“先迁移、后增强”为原则，尽量保持前端 API/事件稳定，通过配置灰度与可回退策略降低风险。
+注：本路线图遵循“先稳定基线、再灰度增强、最后全量推广”的策略，保持对前端 API/事件的向后兼容，并为每项能力提供可回退开关。
 
-### MP0 迁移到 git2-rs（已规划/进行中）
-- 目标：替换 gix 为 git2-rs，保持 Clone/Fetch 等价能力与事件/取消一致。
-- 交付：git2-rs 实现的 clone/fetch、进度桥接、错误分类、取消；移除 gix 依赖；单测全绿。
-- 接口影响：无（命令/事件名不变）。
-- 配置：无强制新增；日志脱敏开关建议默认开启。
-- 验收：现有测试全部通过；手动克隆公共仓库成功并有进度。
-- 风险与回退：编译/链接差异 → CI 预构建；如遇平台兼容问题，采用“版本回退”策略；开发阶段可临时使用 gix 构建开关做对比与定位，上线前清理；不提供“系统 git”兜底路径。
+HTTP 策略摘要（由原 §11 合并）：
+- MP1：沿用 git2-rs 默认 HTTP，进度/取消/错误分类完善；
+- P2：支持浅克隆（depth）、部分克隆（`filter=blob:none`）并对进度与速率做展示；
+- P3：自适应 TLS 传输层全量推广（默认启用，仍可关闭），含 Fake/Real 回退与验证策略；
+- P4：启用 IP 池/优选作为可选增强，自适应 TLS 在连接前选取评分最高 IP。
+重定向策略：默认跟随有限次（如 5 次），跨主域重定向需命中白名单。
 
-### MP1 Push + Subtransport(A)灰度 + Retry v1 + 事件增强
-- 目标：打通 HTTPS Push；引入方式A自定义 subtransport（仅接管连接/TLS/SNI）并灰度；建立统一重试规则；完善事件。
-- 交付：
-  - Push：凭证回调（用户名+token/仅token），进度/取消/错误分类；
-  - Subtransport(A)：对白名单主机启用 `https+custom`，Fake→Real 回退；
-  - Retry v1：指数退避 + 类别化（Push 仅上传前重试）；
-  - 事件：task://error + push 阶段化进度（bytesSent/phase）。
-- 接口影响：新增 git_push 命令；进度 payload 可新增可选字段。
-- 配置：`httpStrategy.fakeSniEnabled`、`retry.*`、`tls.realHostVerify`。
-- 验收：能向公开测试仓库 push；方式A可灰度开关与一键回退。
-- 风险与回退：Push 上传中断重复写入 → 仅上传前重试；方式A失败自动回退到 libgit2 默认。
+### MP0 — git2-rs 基线（已完成）
+- 目标：用 git2-rs 等价替换 gix；实现 clone/fetch；进度桥接、取消与错误分类；HTTP 伪 SNI 调试 API 保留。
+- 接口：命令不变；事件 `task://state|progress`。
+- 验收：前后端测试全绿；公共仓库克隆冒烟通过。
+- 回退：版本回退；不依赖系统 git。
 
-### P2 Shallow/Partial + 任务级策略覆盖
-- 目标：在大型仓库下减少数据量并提升速度；命令参数支持 depth 与 filter=blob:none；允许任务级临时覆盖 httpStrategy/retry 子集。
-- 交付：git clone/fetch 的 depth 与 filter 参数；前端表单选项；按任务覆盖配置（白名单字段）。
-- 接口影响：git_clone/git_fetch 命令新增可选参数；事件不变。
-- 配置：保持全局默认 + 任务覆盖。
-- 验收：对同一仓库，浅克隆耗时/字节显著下降；覆盖参数仅影响当前任务。
-- 风险与回退：部分仓库对 partial 支持不佳 → 自动降级；参数校验与 UI 提示。
+### MP1 — Push + 自适应 TLS（灰度）+ Retry v1 + 事件增强（已完成）
+- 目标：HTTPS push（凭证回调）、引入“自适应 TLS 传输层（原方式A，仅接管连接/TLS/SNI）”并灰度；统一 Retry v1；新增 task://error 与 push 阶段化进度。
+- 接口：新增 `git_push`；事件可带 `phase=PreUpload|Upload|PostReceive`、`retriedTimes?`。
+- 验收：本地/公开仓库 push 冒烟；失败场景自动回退；日志脱敏。
+- 回退：一键关闭自适应 TLS；失败链 Fake→Real→libgit2 默认。
 
-### P3 Git 伪 SNI 集成（方式A统一）
-- 目标：将方式A用于 Git Smart HTTP；Fake SNI 与 Real-Host 验证配套，一次 Real SNI 回退；保留代理/直连回退链。
-- 交付：统一 transport 插桩；Fake→Real→换 IP（占位）→代理/直连回退。
-- 接口影响：无；事件中增加 usedFakeSni 等可选字段（调试）。
-- 配置：白名单域、fakeHost、realHostVerify。
-- 验收：在开启方式A时，常见网络策略下可连通；失败路径按回退链稳定收敛。
-- 风险与回退：假 SNI 常拿不到含真实域名的证书 → 迅速回退 Real SNI；禁用方式A可立即恢复默认路径。
+### P2 — 本地 Git 操作 + Shallow/Partial + 任务级策略覆盖
+- 目标：
+  - 本地 Git：`init/add/commit/branch/checkout/tag/remote(set-url/add/remove)` 等常用操作；
+  - clone/fetch 支持 `depth` 与 `filter`（如 `blob:none`）；
+  - 任务级覆盖 `http?`/`tls?`/`retry?` 子集（浅合并全局，仅当前任务生效）。
+- 接口：为本地操作新增命令；在 `git_clone`/`git_fetch` 入参新增 `depth?`、`filter?` 与任务级策略子对象。
+- 验收：本地操作单测覆盖；depth/filter 在本地与中等体量仓库场景验证有效；互斥校验（代理×Fake SNI）有告警。
+- 回退：depth/filter 不支持时退回全量；无效覆盖项忽略并告警。
 
-### P4 代理支持 + 自动回退
-- 目标：支持 HTTP CONNECT 和 SOCKS5；代理失败阈值触发直连回退；后续自动恢复探测。
-- 交付：代理配置与持久化；失败计数与回退事件 proxy://fallback。
-- 接口影响：新增 set_proxy/get_proxy/disable_proxy。
-- 配置：`proxy.mode/url`。
-- 验收：代理可用时走代理；代理持续失败时降级直连并发事件。
-- 风险与回退：与 Fake SNI 叠加导致指纹异常 → 代理模式禁用 Fake SNI。
+### P3 — 自适应 TLS 传输层全量推广与可观测性强化
+- 目标：对白名单域默认启用（仍可关闭）；完善观测（TLS/阶段耗时、证书指纹变更统计）；保持回退链。
+- 接口：无破坏性变更；可选调试字段如 `usedFakeSni?`。
+- 验收：长时稳定；失败回退路径覆盖；无敏感泄漏。
+- 回退：总开关关闭自适应 TLS；回到 libgit2 默认传输。
 
-### P5 IP 优选（5 来源）
-- 目标：从 builtin/history/user_static/dns/fallback 聚合候选 IP，探测评分选优；失败惩罚与冷却；持久化历史。
-- 交付：IP 池、探测、评分、历史文件；UI 展示（可选）；选择最优非冷却 IP。
-- 接口影响：可选 ip_* 诊断命令。
-- 配置：ip-config.json（权重/阈值）。
-- 验收：在不稳定网络下连通性/时延中位数改善；失败后快速切换。
-- 风险与回退：误选差 IP → 快速失败与冷却；保持 DNS 直连兜底。
+### P4 — IP 优选与 IP 池（独立阶段）
+- 目标：引入 IP 池与评分；“自适应 TLS 传输层”连接前自动选择“评分最高 IP”。
+- IP 来源：`builtin`/`history`/`user_static`/`dns`/`fallback`。
+- 切换策略：仅在“确认是 IP 连通性问题”时更换 IP；更换后仍先用 Fake SNI，再按回退链进行。
+- 验收：在不稳定网络下连通性/时延中位数提升；故障注入下能快速切换与冷却。
+- 回退：关闭 IP 池功能，回到系统解析。
 
-### P6 LFS 下载
-- 目标：支持 LFS 对象下载（读取指针、batch 协议、对象 GET），缓存目录与限流。
-- 交付：lfs 模块、缓存目录、下载进度。
-- 接口影响：可能新增 lfs_get 命令（或在 clone/fetch 流程内自动处理）。
-- 配置：lfs-cache 路径与大小阈值。
-- 验收：含 LFS 的仓库能顺利 clone 并下载对象；缓存命中有效。
-- 风险与回退：大对象内存峰值 → 限流/分块；失败则回退普通流。
+### P5 — 代理支持与自动降级（延后阶段）
+- 目标：支持 HTTP/HTTPS 代理与 SOCKS5；失败达到阈值时自动降级直连并可恢复。
+- 互斥：代理模式下强制 Real SNI（与 Fake SNI 互斥）。
+- 接口/配置：`proxy.mode/url` 与阈值、冷却期；可选 `proxy://fallback` 事件。
+- 验收：故障注入验证降级/恢复；事件一致。
+- 回退：禁用自动降级；强制代理或直连配置。
 
-### P7 TLS 强化：SPKI Pin + TOFU + 指纹事件
-- 目标：高安全环境下可选 SPKI pin；TOFU（首次信任）可选；记录证书指纹变化事件。
-- 交付：pin 校验、指纹日志与事件；TOFU 数据文件（可选）。
-- 接口影响：新增 tls_cert_fingerprints 查询。
-- 配置：`tls.spkiPins[]`、`tls.enableTofu`。
-- 验收：pin 不匹配时严格失败；指纹变更事件可观测。
-- 风险与回退：证书轮换导致误报 → pin 轮换流程与 UI 引导。
+### P6 — 凭证存储与安全
+- 目标：安全管理 Token/密码（系统安全存储或加密文件）；默认脱敏日志。
+- 接口：命令层尽量不变；可新增凭证管理命令。
+- 验收：安全扫描通过；过期/撤销流程明确。
+- 回退：关闭存储功能不影响 Push 基线。
 
-### P8 SSH fallback（兜底）
-- 目标：在极端网络下提供 SSH 路径作为最后兜底；与已有策略形成回退链的末端。
-- 交付：ssh 模块（libssh2/ssh2-rs）；凭证/known_hosts 管理（最简）。
-- 接口影响：可选 git_clone_ssh 命令或自动回退策略。
-- 配置：ssh 开关与主机密钥策略。
-- 验收：受限环境下能够完成 clone；安全基线不降低。
-- 风险与回退：密钥管理复杂度 ↑ → 初期仅“已知主机”最小化实现。
+### P7 — LFS 基础支持
+- 目标：识别 LFS，下载基础路径与缓存；限流降低峰值。
+- 接口：可在 clone/fetch 中自动处理或提供单独命令。
+- 验收：含 LFS 仓库流程可用；缓存命中有效。
+- 回退：失败回退普通流并提示。
 
-### P9 可观测性：指标与轻量面板
-- 目标：在事件基础上补充计数器/直方图，前端提供简单趋势面板。
-- 交付：metrics 汇总（可选 exporter）；UI 面板。
-- 接口影响：无；仅调试开关。
-- 配置：metrics 启用、采样率。
-- 验收：关键指标可见（握手时延、失败率、回退次数等）。
-- 风险与回退：开销与隐私 → 采样/脱敏与本地存储。
+### P8 — 可观测性面板与指标汇聚
+- 目标：将 TLS 时延、阶段耗时、代理/IP 失败率、证书指纹变更等指标汇聚到轻量面板（默认关闭）。
+- 接口：无；基于事件与可选指标导出。
+- 验收：指标可视化与开销可控；隐私合规（脱敏/本地）。
+- 回退：关闭面板与指标收集。
 
-### P10 性能与鲁棒增强：HTTP/2 / Streaming / Pack Resume（探索）
-- 目标：降低握手开销、降低内存峰值、降低中断损耗。
-- 交付：
-  - HTTP/2 多路复用（兼容性评估）;
-  - Streaming body（HTTP 调试）与 Git pack 流管线优化;
-  - Pack resume（断点续传探索）。
-- 接口影响：无；内部优化为主。
-- 配置：性能开关与阈值。
-- 验收：在大仓库/差网络场景，端到端耗时与内存占用可观改善（基线对比）。
-- 风险与回退：服务器/代理兼容性 → 按域灰度与快速禁用；严格 A/B 对比与回滚开关。
+附加说明（指标与事件摘要，由原 §13 合并）：
+| 类别 | 指标示例 |
+|------|----------|
+| TLS | tls_handshake_ms |
+| Git 阶段 | git_phase_duration_ms{phase} |
+| IP 探测 | ip_probe_success_total{source} / ip_rtt_ms |
+| 代理 | proxy_failover_total |
+| 证书 | cert_fp_changes_total |
+| Git 流量 | git_bytes_received_total |
+| HTTP 调试 | http_fake_requests_total / http_fake_request_bytes_total |
+| 大响应 | http_fake_large_response_total |
+
+事件仍用于前端实时显示，指标用于后期统计/面板（P8）。
+
+---
+
+## 18. P2 本地 Git 操作（契约草案）
+
+目标：提供常用本地 Git 操作能力，统一事件与错误分类，满足 UI 常用工作流。
+
+命令（初版建议）：
+- `git_init({ dest: string }): Promise<string /* taskId */>`
+- `git_add({ dest: string; paths: string[] }): Promise<string>`
+- `git_commit({ dest: string; message: string; author?: { name: string; email: string }; allowEmpty?: boolean }): Promise<string>`
+- `git_branch({ dest: string; name: string; checkout?: boolean; force?: boolean }): Promise<string>`
+- `git_checkout({ dest: string; ref: string; create?: boolean }): Promise<string>`
+- `git_tag({ dest: string; name: string; message?: string; annotated?: boolean; force?: boolean }): Promise<string>`
+- `git_remote_set({ dest: string; name: string; url: string }): Promise<string>`
+- `git_remote_add({ dest: string; name: string; url: string }): Promise<string>`
+- `git_remote_remove({ dest: string; name: string }): Promise<string>`
+
+事件：
+- 多数本地操作仅发 `task://state`（pending→running→completed/failed/canceled）。
+- 如需耗时统计，可发送一次 `task://progress`（phase=Running, percent=100）。
+
+错误分类：
+- 路径/权限 → `Internal` 或 `Protocol`（按错误源分级）；
+- 冲突/不可快进 → `Protocol`；
+- 用户取消 → `Cancel`。
+
+边界与校验：
+- `git_add` 空路径或不存在路径报错；
+- `git_commit` 默认拒绝空提交（除非 `allowEmpty=true`）；
+- `git_branch` 已存在分支且 `force=false` 报错；
+- `git_checkout` 不存在 ref 且 `create=false` 报错；
+- `git_remote_*` 名称与 URL 校验，保持幂等（set 覆盖、add 要求不存在、remove 要求存在）。
+
+验收：
+- 覆盖 happy path + 2 个失败用例/命令；
+- 事件有序，状态与错误分类正确；
+- 与后续 `git_push`/`git_fetch` 流程无缝衔接（remote 正确生效）。
+
+---
+
+### 18.1 Shallow/Partial（depth/filter）合同
+
+适用命令：`git_clone` 与 `git_fetch`
+
+输入扩展（对象重载，不破坏原签名；前端保持向后兼容）：
+- `git_clone({ repo: string; dest: string; depth?: number; filter?: string; strategyOverride?: Partial<StrategyCfg> }): Promise<string>`
+- `git_fetch({ repo: string; dest: string; preset?: 'remote'|'branches'|'branches+tags'|'tags'; depth?: number; filter?: string; strategyOverride?: Partial<StrategyCfg> }): Promise<string>`
+
+参数约束：
+- `depth`: 可选，正整数；`1` 表示只要最新一层历史；`0` 或负值视为无效（报错）。
+- `filter`: 可选，字符串；首版仅允许：`'blob:none' | 'tree:0'`；非法值报错；与 `depth` 可同时存在。
+- 同时指定时的协同：二者叠加约束内容，即“部分+浅”；实现层使用 git2-rs 对应选项组合。
+- `strategyOverride`: 可选，任务级策略覆盖子对象，仅允许覆盖 `http/tls/retry` 的安全子集；非法键忽略并在日志告警。
+
+默认行为：两参数缺省等价“全量/完整历史”；当后端不支持 `filter`（环境或远端不兼容）时，回退到不带 `filter` 的浅克隆或全量，按“最接近”原则进行，并在进度完成后追加一次 `task://error`（category=Protocol，message="partial filter not supported, fell back to ..."）。
+
+错误映射：
+- 非法 `depth`/`filter` → `Protocol`（code=`InvalidArgument`）。
+- 远端不支持 partial → `Protocol`（code=`PartialNotSupported`，可伴随回退成功或失败）。
+- 服务器拒绝浅操作（策略限制）→ `Auth|Protocol`，带原始消息摘要。
+
+事件示例（clone，部分 + 浅）：
+- 进度：`task://progress { phase: "Negotiation", objects, totalHint }` → `task://progress { phase: "Pack", bytes, percent }`。
+- 完成：`task://state completed`，若发生回退：追加 `task://error { category: "Protocol", message: "partial unsupported; fallback=shallow(depth=1)" }`。
+
+接受标准：
+- 任一参数单独启用、或二者叠加时，完成率、对象数与体积显著小于全量；
+- 失败或不支持时能清晰告知并按最近原则回退；
+- 与 Retry v1 协同，重试不改变 depth/filter 组合，仅在安全类别下进行。
+
+---
+
+### 18.2 任务级策略覆盖（strategyOverride）
+
+结构示例：
+```
+strategyOverride: {
+  http?: { followRedirects?: boolean; maxRedirects?: number },
+  tls?: { insecureSkipVerify?: boolean; skipSanWhitelist?: boolean },
+  retry?: { max?: number; baseMs?: number; factor?: number; jitter?: boolean }
+}
+```
+
+约束：
+- 仅允许覆盖声明字段；越权字段忽略并记录告警。
+- 与全局配置合并策略：浅合并（shallow merge），未提供字段沿用全局。
+- 安全护栏：若启用代理（P5），则强制 `http.fakeSniEnabled=false`，并在任务开始时追加一次告警事件：`task://error { category: "Proxy", message: "proxy mode forces real SNI" }`（不阻断任务）。
+
+---
+
+### 18.3 最小测试矩阵（P2）
+
+A. 本地 Git 命令（每条覆盖三例）
+- Happy path：成功路径
+- 参数非法：触发 `Protocol` 错误
+- 用户取消：`Cancel`
+
+B. Shallow/Partial
+- clone depth=1（无 filter）→ 成功；对象/体积小于全量
+- clone filter=blob:none（无 depth）→ 成功；体积显著下降
+- clone depth=1 + filter=blob:none → 成功；体积与对象均下降
+- fetch depth=1（已有仓库）→ 成功；增量正常
+- filter 不支持的远端 → 回退 + `Protocol` 通知
+- 非法参数（depth=0, filter=unknown）→ 立即 `Protocol` 错误
+
+C. 互斥与护栏
+- 代理开启（模拟，P5 占位）+ fakeSNI=true → 任务启动即发出互斥告警；实际使用 Real SNI
+- Retry v1 与 shallow/partial 组合 → 重试次数与类别符合策略，不改变参数组合
+
+产出：为每条用例保留任务事件快照，校验顺序、字段与分类。
+
+## 19. 附录（术语与交叉引用）
+
+- 术语：
+  - 自适应 TLS 传输层（原方式A）：仅接管连接/TLS/SNI 的自定义 smart subtransport。
+  - Fake SNI / Real SNI：握手时使用的 SNI 名称（伪装/真实）。
+  - IP 来源（用于 IP 池/优选）：builtin（内置）、history（历史）、user_static（用户静态）、dns（DNS 解析）、fallback（兜底）。
+- 参考文档：
+  - MP0 实现交接稿：`new-doc/MP0_IMPLEMENTATION_HANDOFF.md`
+  - MP1 实现交接稿：`new-doc/MP1_IMPLEMENTATION_HANDOFF.md`
+
+### 19.1 关键文件速览（后端/前端）
+- 后端（Rust/Tauri）
+  - `src-tauri/src/core/tasks/registry.rs`：任务注册、生命周期、事件、Retry
+  - `src-tauri/src/core/tasks/model.rs`：任务/事件模型
+  - `src-tauri/src/core/git/default_impl/*`：git2-rs 实现（clone/fetch/push）、错误分类、进度桥接
+  - `src-tauri/src/core/git/transport/*`：自适应 TLS 传输层（注册/改写/授权注入/流）
+  - `src-tauri/src/app.rs`：Tauri 命令出口
+- 前端（Vite/Vue + Pinia）
+  - `src/api/tasks.ts`：事件订阅与归一化
+  - `src/stores/tasks.ts`：任务进度与错误聚合
+  - `src/views/GitPanel.vue`：Push 表单、TLS/SNI 策略、最近错误列
+
+### 19.2 API 速览（事件与命令）
+- 事件：`task://state | task://progress | task://error`
+- 命令：`git_clone`、`git_fetch`、`git_push`、`task_cancel`、`task_list`
