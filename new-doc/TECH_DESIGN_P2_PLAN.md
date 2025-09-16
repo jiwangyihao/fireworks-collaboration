@@ -105,31 +105,25 @@ P2 拆分为 3 个可验收小阶段，阶段间可独立合入与回滚。
 
 #### P2.1 微阶段（可独立验收）
 
-- P2.1a 命令文件骨架
-  - 范围：在 `core/git/default_impl/` 下为 init/add/commit/branch/checkout/tag/remote 创建独立文件，导出同名函数或小型 struct+impl；DefaultGitService 先在 `ops.rs` 转发调用。
-  - 交付：能编译运行；每个命令函数返回 NotImplemented（Protocol）；最小烟测；1–2 个空壳单测。
-  - 验收：cargo build/test 通过；不影响 clone/fetch/push；日志无敏感信息。
-  - 回滚：删除新文件，恢复旧调用路径。
-
-- P2.1b init + add
+- P2.1a init + add
   - 范围：实现 `git_init` 与 `git_add`（含路径校验/工作区范围检查）；state 事件；必要时补 1 条 progress(100)。
   - 交付：成功/参数非法/取消 三例单测；Windows 路径规范化覆盖。
   - 验收：临时目录链路 init→add 跑通；错误分类正确（Protocol/Internal/Cancel）。
   - 回滚：禁用对应命令导出，保留骨架。
 
-- P2.1c commit
+- P2.1b commit
   - 范围：`git_commit`（author 可选、allowEmpty 默认 false）；拒绝空提交（除非 allowEmpty）。
   - 交付：成功/空提交被拒/取消 单测；消息编码与脱敏检查。
   - 验收：init→add→commit 链路可复用；事件有序。
   - 回滚：禁用命令导出，其他命令不受影响。
 
-- P2.1d branch + checkout
+- P2.1c branch + checkout
   - 范围：`git_branch`（force/是否立即 checkout）与 `git_checkout`（create 可选）。
   - 交付：成功/已存在/不存在 分支用例；checkout 失败/取消覆盖。
   - 验收：commit→branch→checkout 链条稳定；冲突/不可快进映射为 Protocol。
   - 回滚：分别禁用命令导出。
 
-- P2.1e tag + remote(set/add/remove)
+- P2.1d tag + remote(set/add/remove)
   - 范围：`git_tag`（轻量/附注、force）与 `git_remote_*`（set 覆盖、add 要求不存在、remove 要求存在）。
   - 交付：每命令 3 例单测；幂等性断言；远端 URL 校验。
   - 验收：全链路演示 init→add→commit→branch→checkout→tag→remote_set/add/remove。
@@ -391,11 +385,10 @@ strategyOverride?: {
 - [ ] 更新本文件“实施细节与落点”为“平级模块化方案”（DoD：文档与代码一致）
 
 1) P2.1 本地 Git 操作
-- [ ] P2.1a 骨架与注册（DoD：编译与最小单测通过，不影响既有命令）
-- [ ] P2.1b `git_init`/`git_add`（DoD：成功/非法/取消用例通过）
-- [ ] P2.1c `git_commit`（DoD：空提交默认拒绝，三例用例通过）
-- [ ] P2.1d `git_branch`/`git_checkout`（DoD：存在性/冲突与取消覆盖）
-- [ ] P2.1e `git_tag`/`git_remote_*`（DoD：幂等/存在性规则与单测覆盖）
+- [ ] P2.1a `git_init`/`git_add`（DoD：成功/非法/取消用例通过）
+- [ ] P2.1b `git_commit`（DoD：空提交默认拒绝，三例用例通过）
+- [ ] P2.1c `git_branch`/`git_checkout`（DoD：存在性/冲突与取消覆盖）
+- [ ] P2.1d `git_tag`/`git_remote_*`（DoD：幂等/存在性规则与单测覆盖）
 
 2) P2.2 Shallow/Partial
 - [ ] P2.2a 入参扩展与校验占位（DoD：非法参数立即报错；无行为变更）
