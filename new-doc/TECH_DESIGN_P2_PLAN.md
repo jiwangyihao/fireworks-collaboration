@@ -44,12 +44,49 @@ P2 拆分为 3 个可验收小阶段，阶段间可独立合入与回滚。
   - 编译通过（cargo build/test）；
   - 对外行为不变（DefaultGitService 仍对外暴露统一入口）；
   - 文档“实施细节与落点”同步为“平级模块化方案”。
+  - 实施状态：已按“命令=模块”创建骨架：`clone.rs`、`fetch.rs`、`push.rs`、`init.rs`、`add.rs`、`commit.rs`、`branch.rs`、`checkout.rs`、`tag.rs`、`remote.rs`；其中 clone/fetch 通过桥接复用 `ops.rs` 现有实现，push 已迁移至独立 `push.rs`，其余命令返回 NotImplemented（Protocol）占位，确保后续 P2.1 渐进落地且对现有行为零影响。
 - 验收：
   - 现有测试全绿；
   - 新增命令文件存在且可编译；已完成功能通过 `ops.rs` → 新文件的桥接调用，或已迁移完毕。
 - 回滚：
   - 删除新建命令文件，回到 `ops.rs` 单文件实现；
   - 不影响 `helpers.rs` 与 `transport/*`。
+
+#### 实现说明（已落地）
+
+- 代码落点与结构
+  - 目录：`src-tauri/src/core/git/default_impl/`
+  - 新增模块（命令=模块，平级）：
+    - 已桥接/迁移：
+      - `clone.rs`（桥接到 `ops::do_clone`）
+      - `fetch.rs`（桥接到 `ops::do_fetch`）
+      - `push.rs`（从 `mod.rs` 迁移为独立实现，保持原行为；内部在执行前调用 `ensure_registered`，并沿用 `set_push_auth_header_value` 的授权注入）
+    - 骨架占位（返回 NotImplemented/Protocol，待 P2.1 渐进实现）：
+      - `init.rs`、`add.rs`、`commit.rs`、`branch.rs`、`checkout.rs`、`tag.rs`、`remote.rs`
+  - `mod.rs` 已 `pub mod` 注册上述文件，并将 `DefaultGitService` 的内部路由改为调用对应模块函数（clone/fetch → 新模块桥接；push → 新模块实现）。
+  - 兼容保留：`helpers.rs` 与 `ops.rs` 均保留不变；clone/fetch 仍由 `ops.rs` 提供内部实现，确保对外行为零变更。
+
+- 测试与验证（禁公网 E2E 场景）
+  - 新增后端测试文件：
+    - `tests/git_local_skeleton.rs`：覆盖本地命令骨架当前返回 `Protocol`（NotImplemented）的契约；用于在正式实现前锁住行为。
+    - `tests/git_clone_preflight.rs`：覆盖 clone 的快速失败分支（不存在的本地源路径、非法 URL scheme、无效 repo 字符串）。说明：为保证跨平台稳定，避免使用 `https:///missing-host` 这类在部分 Windows 工具链下可能触发崩溃的输入，改用稳定的 `mailto:abc` 无效字符串用例。
+    - `tests/git_preconditions_and_cancel.rs`：覆盖取消与前置条件路径（clone 立即取消→`Cancel`；fetch 目标缺少 `.git`→`Internal`；在本地空仓库上 fetch 立即取消→`Cancel`）。
+  - 运行方式（PowerShell）：
+    - 在 `src-tauri` 目录禁用公网 E2E 后运行：
+      ```powershell
+      $env:FWC_E2E_DISABLE = 'true'
+      cargo test -q
+      ```
+    - 仅运行 clone 预检测试：
+      ```powershell
+      $env:FWC_E2E_DISABLE = 'true'
+      cargo test --test git_clone_preflight -q
+      ```
+  - 结果：在禁用公网 E2E 的前提下，后端全部测试通过；前端 `pnpm -s test` 亦全绿。公网 E2E 可在网络可达时移除该环境变量进行验证。
+
+- 兼容性与回滚
+  - 对外 API、事件/进度/错误分类不变；仅内部实现与文件结构重构。
+  - 回滚可按模块粒度移除新文件并恢复 `mod.rs` 调用路径；测试可保留（骨架测试可临时跳过或调整）。
 
 ### P2.1 本地 Git 操作（约 0.5–0.75 周）
 - 范围：
