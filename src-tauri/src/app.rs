@@ -100,6 +100,15 @@ async fn git_add(dest: String, paths: Vec<String>, reg: State<'_, TaskRegistrySt
     Ok(id.to_string())
 }
 
+// Git 命令：提交（allow_empty: 是否允许空提交；author_name/author_email 可选）
+#[tauri::command]
+async fn git_commit(dest: String, message: String, allow_empty: Option<bool>, author_name: Option<String>, author_email: Option<String>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+    let allow_empty_flag = allow_empty.unwrap_or(false);
+    let (id, token) = reg.create(TaskKind::GitCommit { dest: dest.clone(), message: message.clone(), allow_empty: allow_empty_flag, author_name: author_name.clone(), author_email: author_email.clone() });
+    reg.clone().spawn_git_commit_task(Some(app), id, token, dest, message, allow_empty_flag, author_name, author_email);
+    Ok(id.to_string())
+}
+
 // ========== P0.5 http_fake_request ==========
 fn redact_auth_in_headers(mut h: std::collections::HashMap<String, String>, mask: bool) -> std::collections::HashMap<String, String> {
     if !mask { return h; }
@@ -292,6 +301,7 @@ pub fn run(){
         .invoke_handler(tauri::generate_handler![
             greet,start_oauth_server,get_oauth_callback_data,clear_oauth_state,get_system_proxy,
             get_config,set_config,task_list,task_cancel,task_start_sleep,task_snapshot,git_clone,git_fetch,git_push,git_init,git_add,
+            git_commit,
             http_fake_request
         ]);
     builder = builder.setup(|app| {
