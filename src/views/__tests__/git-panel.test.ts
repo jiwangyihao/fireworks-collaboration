@@ -10,12 +10,13 @@ vi.mock("../../api/tasks", () => ({
   startGitPush: vi.fn().mockResolvedValue("tid-3"),
   startGitInit: vi.fn().mockResolvedValue("tid-4"),
   startGitAdd: vi.fn().mockResolvedValue("tid-5"),
+  startGitCommit: vi.fn().mockResolvedValue("tid-6"),
   cancelTask: vi.fn(),
   listTasks: vi.fn().mockResolvedValue([]),
 }));
 
 import GitPanel from "../GitPanel.vue";
-import { startGitClone, startGitFetch, startGitPush, startGitInit, startGitAdd, cancelTask } from "../../api/tasks";
+import { startGitClone, startGitFetch, startGitPush, startGitInit, startGitAdd, startGitCommit, cancelTask } from "../../api/tasks";
 import { useTasksStore } from "../../stores/tasks";
 
 describe("views/GitPanel", () => {
@@ -106,5 +107,13 @@ describe("views/GitPanel", () => {
     const addBtn = w.findAll('button.btn-sm').filter(b=> b.text()==='Add')[0];
     await addBtn.trigger('click');
     expect(startGitAdd).toHaveBeenCalledWith(expect.any(String), ['README.md','src/main.ts']);
+  });
+
+  it("点击 Commit 会调用 startGitCommit", async () => {
+    const w = mount(GitPanel);
+    const commitBtn = w.findAll('button.btn-sm').find(b => b.text()==='Commit');
+    expect(commitBtn).toBeTruthy();
+    await commitBtn!.trigger('click');
+    expect(startGitCommit).toHaveBeenCalled();
   });
 });

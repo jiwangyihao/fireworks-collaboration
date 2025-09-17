@@ -55,6 +55,26 @@
 
     <div class="card bg-base-100 shadow-sm">
       <div class="card-body gap-3">
+        <h3 class="font-semibold">本地提交（Commit）</h3>
+        <div class="flex gap-2 items-center">
+          <input v-model="commitDest" class="input input-bordered input-sm flex-1" placeholder="C:/tmp/repo" />
+          <input v-model="commitMessage" class="input input-bordered input-sm flex-1" placeholder="提交消息" />
+        </div>
+        <div class="flex gap-2 items-center">
+          <input v-model="commitAuthorName" class="input input-bordered input-sm w-48" placeholder="作者名称(可选)" />
+          <input v-model="commitAuthorEmail" class="input input-bordered input-sm w-56" placeholder="作者邮箱(可选)" />
+          <label class="label cursor-pointer gap-2">
+            <span class="text-xs">允许空提交</span>
+            <input type="checkbox" v-model="commitAllowEmpty" class="checkbox checkbox-sm" />
+          </label>
+          <button class="btn btn-sm" :disabled="!commitDest || !commitMessage || working" @click="startCommit">Commit</button>
+        </div>
+        <div class="text-xs opacity-70">默认拒绝空提交；勾选“允许空提交”后可强制写入（例如仅调整作者信息）。</div>
+      </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-sm">
+      <div class="card-body gap-3">
         <h3 class="font-semibold">SNI / TLS 策略</h3>
         <div class="grid grid-cols-2 gap-2 items-center">
           <label class="label cursor-pointer gap-2 col-span-2">
@@ -129,7 +149,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useTasksStore } from '../stores/tasks';
-import { startGitClone, startGitFetch, startGitPush, startGitInit, startGitAdd, cancelTask, listTasks } from '../api/tasks';
+import { startGitClone, startGitFetch, startGitPush, startGitInit, startGitAdd, startGitCommit, cancelTask, listTasks } from '../api/tasks';
 import { getConfig, setConfig, type AppConfig } from '../api/config';
 import { useLogsStore } from '../stores/logs';
 
@@ -149,6 +169,12 @@ const password = ref('');
 const initDest = ref('C:/tmp/new-repo');
 const addDest = ref('C:/tmp/log');
 const addPathsRaw = ref('README.md');
+// Commit 输入
+const commitDest = ref('C:/tmp/log');
+const commitMessage = ref('feat: initial commit');
+const commitAuthorName = ref('');
+const commitAuthorEmail = ref('');
+const commitAllowEmpty = ref(false);
 
 // SNI/TLS 策略
 const insecureSkipVerify = ref(false);
@@ -330,6 +356,21 @@ async function startAdd() {
     const raw = addPathsRaw.value.split(/[\n,]/).map(s=>s.trim()).filter(Boolean);
     if (raw.length===0) return;
     await startGitAdd(addDest.value.trim(), raw);
+    await listTasks().then((arr:any[])=>{ if (Array.isArray(arr)) { for (const s of arr) { tasks.upsert({ id: s.id, kind: s.kind ?? 'Unknown', state: s.state ?? 'pending', createdAt: s.createdAt ?? Date.now() }); } } });
+  } catch(e) { console.error(e); }
+  finally { working.value = false; }
+}
+
+async function startCommit() {
+  working.value = true;
+  try {
+    await startGitCommit({
+      dest: commitDest.value.trim(),
+      message: commitMessage.value,
+      allowEmpty: commitAllowEmpty.value,
+      authorName: commitAuthorName.value.trim() || undefined,
+      authorEmail: commitAuthorEmail.value.trim() || undefined,
+    });
     await listTasks().then((arr:any[])=>{ if (Array.isArray(arr)) { for (const s of arr) { tasks.upsert({ id: s.id, kind: s.kind ?? 'Unknown', state: s.state ?? 'pending', createdAt: s.createdAt ?? Date.now() }); } } });
   } catch(e) { console.error(e); }
   finally { working.value = false; }

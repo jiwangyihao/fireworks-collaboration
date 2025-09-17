@@ -129,3 +129,13 @@ export async function startGitInit(dest: string) {
 export async function startGitAdd(dest: string, paths: string[]) {
   return invoke<string>("git_add", { dest, paths });
 }
+
+// P2.1b: 启动 Git Commit 任务
+export async function startGitCommit(params: { dest: string; message: string; allowEmpty?: boolean; authorName?: string; authorEmail?: string }) {
+  const { dest, message, allowEmpty, authorName, authorEmail } = params;
+  const args: Record<string, unknown> = { dest, message };
+  if (allowEmpty !== undefined) args.allow_empty = allowEmpty; // snake_case 兼容
+  if (authorName) args.author_name = authorName;
+  if (authorEmail) args.author_email = authorEmail;
+  return invoke<string>("git_commit", args);
+}
