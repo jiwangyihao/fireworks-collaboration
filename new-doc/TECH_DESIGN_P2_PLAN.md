@@ -200,6 +200,89 @@ P2 拆分为 3 个可验收小阶段，阶段间可独立合入与回滚。
   - 验收：init→add→commit 链路可复用；事件有序。
   - 回滚：禁用命令导出，其他命令不受影响。
 
+### P2.1b 实现说明（已完成）
+
+本节记录 `git_commit` 的落地细节、测试矩阵与与 P2.1a 复用点，作为后续 branch/checkout 等命令的模板。与设计初衷保持“最小必要进度事件 + 标准错误分类”一致。
+
+#### 1. 代码落点与结构
+- 模块文件：`src-tauri/src/core/git/default_impl/commit.rs`
+- 任务接入：`spawn_git_commit_task`（位于 `core/tasks/registry.rs`）
+- 任务类型：`TaskKind::GitCommit { dest, message, allow_empty, author_name, author_email }`
+- Tauri 命令：`git_commit(dest, message, allow_empty?, author_name?, author_email?)`
+- 前端：
+  - API：`startGitCommit` (`src/api/tasks.ts`)，兼容 snake_case（`allow_empty` 等）输入
+  - Store：TaskKind union 扩展 `GitCommit`
+  - UI：`GitPanel.vue` 新增 “本地提交（Commit）” 卡片（消息、作者、allowEmpty 勾选）
+  - 测试：`views/__tests__/git-panel.test.ts` 新增 Commit 交互用例
+
+#### 2. 行为与语义
+1) 必要校验顺序：
+  - 取消检查（should_interrupt 原子标志）
+  - 目标目录含 `.git`，否则 `Protocol`
+  - 提交消息 `trim()` 后非空，否则 `Protocol`
+2) 空提交判定：
+  - 读取 index 写树：`write_tree()`
+  - 若存在 HEAD：比较 HEAD tree id 与当前 tree id 相等 ⇒ 无变更
+  - 若无 HEAD（首次提交）：index 为空 ⇒ 无变更
+  - `allowEmpty=false` 且无变更 ⇒ `Protocol` 错误；`allowEmpty=true` 则继续
+3) 作者签名：
+  - 未显式提供 → `repo.signature()`（遵循本地 git 配置）
+  - 显式提供需同时具备非空 name & email；任一缺失/空白 ⇒ `Protocol`
+4) 提交：`repo.commit("HEAD", &sig, &sig, message_trimmed, &tree, parents)`；单亲或零亲（首次）
+5) 进度事件：仅发送一条最终 progress（phase=`Committed`, percent=100），符合“本地快速命令只需一次 progress”策略；状态事件仍由任务注册表管理。
+
+#### 3. 取消策略
+- 多阶段检查：入口校验 / 写 index 前 / 创建 commit 前。
+- 任务注册层：若任务启动前已取消（token.cancel()），立即发 Cancel 状态（新增测试覆盖）。
+- 一致性：取消永远不产生部分写入（提交在取消前尚未调用 commit）。
+
+#### 4. 错误分类映射
+| 场景 | 分类 | 说明 |
+|------|------|------|
+| 目录非仓库 / 消息空 / 空提交被拒 / 作者缺字段 | Protocol | 可修正输入 |
+| 用户取消 (token / 原子标志) | Cancel | 与 MP1 分类一致 |
+| I/O / git2 内部错误 (index 写入 / commit) | Internal | 不泄漏底层细节 |
+
+#### 5. 测试矩阵（新增与扩展）
+后端 Rust：
+| 用例 | 目标 | 结果 |
+|------|------|------|
+| 成功提交（有变更） | 基线成功 | 通过 |
+| 二次无变更提交拒绝 | 空提交拒绝 | 通过 |
+| allowEmpty 强制空提交 | 空提交允许 | 通过 |
+| 初始空仓库空提交拒绝 / 允许 | 首次提交边界 | 通过 |
+| 自定义作者成功 | 作者签名 | 通过 |
+| 作者缺失 email | 校验错误 | 通过 |
+| 作者空字符串 | 校验错误 | 通过 |
+| 空消息（空白字符） | 校验错误 | 通过 |
+| 消息裁剪（前后空白+换行） | 语义正确 | 通过 |
+| 原子标志取消（进入前） | Cancel | 通过 |
+| 任务注册预取消（token 先 cancel） | Cancel 分支 | 通过 |
+
+前端：
+- Commit 按钮交互触发 API；TaskKind / 事件仍复用既有逻辑（无需新增解析代码）。
+
+#### 6. 安全与脱敏
+- 未输出绝对路径或作者邮箱到进度事件；日志使用标准 tracing，可后续统一做敏感字段过滤。
+- 提交消息直接写入对象；客户端传入内容已在分类错误中不含系统路径。
+
+#### 7. 性能与扩展性
+- 单次提交路径：CPU/I/O 极短；不额外拆分多 progress；后续若支持大索引增量统计可再拓展 objects/bytes 指标。
+
+#### 8. 回退策略
+- 禁用 Tauri `git_commit` 命令或移除 TaskKind 分支即可回退；UI 卡片独立可条件隐藏；测试文件可标记 `#[ignore]`。
+
+#### 9. 复用指引
+- 空提交检测 / 作者校验逻辑可在后续 tag (annotated) / amend（若实现）复用。
+- 错误分类与取消模板与 init/add 对齐，保证前端无需新增分支。
+
+#### 10. 已知限制 / TODO
+- 未提供 amend / multi-parent (merge) 支持（后续 branch/merge 流程再引入）。
+- 未暴露 GPG / 签名提交；后续需要可在签名构造层扩展。
+- 未加入提交消息规范（如 Conventional Commit 校验），留给上层进行富校验。
+
+---
+
 - P2.1c branch + checkout
   - 范围：`git_branch`（force/是否立即 checkout）与 `git_checkout`（create 可选）。
   - 交付：成功/已存在/不存在 分支用例；checkout 失败/取消覆盖。
@@ -517,3 +600,11 @@ strategyOverride?: {
   - 测试：Rust 新增 `git_add_enhanced.rs` 覆盖绝对路径拒绝 / 去重 / 进度单调性；前端增加 Init/Add 按钮交互测试；
   - 错误分类：参数/路径问题 → Protocol，取消 → Cancel，I/O → Internal；
   - 回退：移除 Tauri 命令或 UI 卡片即可回退；无既有命令行为破坏。
+
+   - v1.5: 完成 P2.1b (`git_commit`):
+    - 后端：实现提交逻辑（空提交检测、allowEmpty、作者校验、单进度事件 Committed、标准分类与多取消点）；
+    - 任务注册：`spawn_git_commit_task` 支持预取消与完成状态；
+    - 前端：GitPanel 新增 Commit 卡片与 API (`startGitCommit`)，TaskKind 扩展；
+    - 测试：新增完整矩阵（成功/空提交拒绝/allowEmpty/作者缺失/作者空字符串/消息裁剪/初始空仓库/取消两路径/注册层预取消）；
+    - 安全：不输出敏感路径，作者/消息按需裁剪；
+    - 回退：移除命令与 UI 卡片即可回退，不影响已有命令。
