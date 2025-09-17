@@ -8,12 +8,14 @@ vi.mock("../../api/tasks", () => ({
   startGitClone: vi.fn().mockResolvedValue("tid-1"),
   startGitFetch: vi.fn().mockResolvedValue("tid-2"),
   startGitPush: vi.fn().mockResolvedValue("tid-3"),
+  startGitInit: vi.fn().mockResolvedValue("tid-4"),
+  startGitAdd: vi.fn().mockResolvedValue("tid-5"),
   cancelTask: vi.fn(),
   listTasks: vi.fn().mockResolvedValue([]),
 }));
 
 import GitPanel from "../GitPanel.vue";
-import { startGitClone, startGitFetch, startGitPush, cancelTask } from "../../api/tasks";
+import { startGitClone, startGitFetch, startGitPush, startGitInit, startGitAdd, cancelTask } from "../../api/tasks";
 import { useTasksStore } from "../../stores/tasks";
 
 describe("views/GitPanel", () => {
@@ -85,5 +87,24 @@ describe("views/GitPanel", () => {
       username: "x-access-token",
       password: "token-123",
     });
+  });
+
+  it("点击 Init 会调用 startGitInit", async () => {
+    const w = mount(GitPanel);
+    const buttons = w.findAll('button');
+    const initBtn = buttons.find(b => /Init/i.test(b.text()));
+    expect(initBtn).toBeTruthy();
+    await initBtn!.trigger('click');
+    expect(startGitInit).toHaveBeenCalled();
+  });
+
+  it("点击 Add 会调用 startGitAdd 并拆分路径", async () => {
+    const w = mount(GitPanel);
+    // 定位 Add 输入：textarea + 按钮
+    const textarea = w.find('textarea.textarea');
+    await textarea.setValue('README.md, src/main.ts');
+    const addBtn = w.findAll('button.btn-sm').filter(b=> b.text()==='Add')[0];
+    await addBtn.trigger('click');
+    expect(startGitAdd).toHaveBeenCalledWith(expect.any(String), ['README.md','src/main.ts']);
   });
 });

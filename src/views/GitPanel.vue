@@ -39,6 +39,22 @@
 
     <div class="card bg-base-100 shadow-sm">
       <div class="card-body gap-3">
+        <h3 class="font-semibold">本地操作（Init / Add）</h3>
+        <div class="flex gap-2 items-center">
+          <input v-model="initDest" class="input input-bordered input-sm flex-1" placeholder="C:/tmp/new-repo" />
+          <button class="btn btn-sm btn-outline" :disabled="!initDest || working" @click="startInit">Init</button>
+          <input v-model="addDest" class="input input-bordered input-sm flex-1" placeholder="C:/tmp/existing-repo" />
+        </div>
+        <div class="flex gap-2 items-start">
+          <textarea v-model="addPathsRaw" class="textarea textarea-bordered textarea-sm flex-1" rows="2" placeholder="要暂存的路径：用换行或逗号分隔"></textarea>
+          <button class="btn btn-sm" :disabled="!addDest || !addPathsRaw || working" @click="startAdd">Add</button>
+        </div>
+        <div class="text-xs opacity-70">Add 会将列出的相对路径（相对于仓库根目录）暂存到索引。支持文件或目录。</div>
+      </div>
+    </div>
+
+    <div class="card bg-base-100 shadow-sm">
+      <div class="card-body gap-3">
         <h3 class="font-semibold">SNI / TLS 策略</h3>
         <div class="grid grid-cols-2 gap-2 items-center">
           <label class="label cursor-pointer gap-2 col-span-2">
@@ -113,7 +129,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useTasksStore } from '../stores/tasks';
-import { startGitClone, startGitFetch, startGitPush, cancelTask, listTasks } from '../api/tasks';
+import { startGitClone, startGitFetch, startGitPush, startGitInit, startGitAdd, cancelTask, listTasks } from '../api/tasks';
 import { getConfig, setConfig, type AppConfig } from '../api/config';
 import { useLogsStore } from '../stores/logs';
 
@@ -129,6 +145,10 @@ const remote = ref('origin');
 const refspec = ref('refs/heads/main:refs/heads/main');
 const username = ref('');
 const password = ref('');
+// Init / Add 输入
+const initDest = ref('C:/tmp/new-repo');
+const addDest = ref('C:/tmp/log');
+const addPathsRaw = ref('README.md');
 
 // SNI/TLS 策略
 const insecureSkipVerify = ref(false);
@@ -293,6 +313,26 @@ async function startPush() {
   } finally {
     working.value = false;
   }
+}
+
+async function startInit() {
+  working.value = true;
+  try {
+    await startGitInit(initDest.value.trim());
+    await listTasks().then((arr:any[])=>{ if (Array.isArray(arr)) { for (const s of arr) { tasks.upsert({ id: s.id, kind: s.kind ?? 'Unknown', state: s.state ?? 'pending', createdAt: s.createdAt ?? Date.now() }); } } });
+  } catch(e) { console.error(e); }
+  finally { working.value = false; }
+}
+
+async function startAdd() {
+  working.value = true;
+  try {
+    const raw = addPathsRaw.value.split(/[\n,]/).map(s=>s.trim()).filter(Boolean);
+    if (raw.length===0) return;
+    await startGitAdd(addDest.value.trim(), raw);
+    await listTasks().then((arr:any[])=>{ if (Array.isArray(arr)) { for (const s of arr) { tasks.upsert({ id: s.id, kind: s.kind ?? 'Unknown', state: s.state ?? 'pending', createdAt: s.createdAt ?? Date.now() }); } } });
+  } catch(e) { console.error(e); }
+  finally { working.value = false; }
 }
 </script>
 

@@ -119,3 +119,13 @@ export async function startGitPush(params: {
   if (password) args.password = password;
   return invoke<string>("git_push", args);
 }
+
+// P2.1a: 启动 Git Init 任务
+export async function startGitInit(dest: string) {
+  return invoke<string>("git_init", { dest });
+}
+
+// P2.1a: 启动 Git Add 任务
+export async function startGitAdd(dest: string, paths: string[]) {
+  return invoke<string>("git_add", { dest, paths });
+}
