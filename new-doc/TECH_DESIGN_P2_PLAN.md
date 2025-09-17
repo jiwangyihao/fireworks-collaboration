@@ -111,6 +111,89 @@ P2 拆分为 3 个可验收小阶段，阶段间可独立合入与回滚。
   - 验收：临时目录链路 init→add 跑通；错误分类正确（Protocol/Internal/Cancel）。
   - 回滚：禁用对应命令导出，保留骨架。
 
+### P2.1a 实现说明（已完成）
+
+本小节补充 v1.4 变更记录中已简述的实现细节，便于后续 P2.1b+ 复用模式、保持一致性与回退可控。
+
+#### 1. 代码落点与结构
+- 模块文件：`src-tauri/src/core/git/default_impl/init.rs`、`add.rs`
+- 任务接入：`src-tauri/src/core/tasks/registry.rs` 新增 `spawn_git_init_task` / `spawn_git_add_task`
+- 任务类型：`TaskKind` 扩展 `GitInit`、`GitAdd`
+- Tauri 命令：`src-tauri/src/app.rs` 注册 `git_init`、`git_add`
+- 前端：
+  - API：`src/api/tasks.ts` 暴露 `startGitInit`、`startGitAdd`
+  - Store：`stores/tasks.ts` 添加 TaskKind 枚举值
+  - UI：`views/GitPanel.vue` 新增 “Init / Add” 卡片（多路径输入自动按换行或逗号分割）
+  - 测试：`views/__tests__/git-panel.test.ts` 覆盖交互
+
+#### 2. 行为与语义
+1) git_init
+   - 幂等：若目标目录已存在且含 `.git`，返回“AlreadyInitialized”语义（通过 progress/phase 或最终 state，不额外报错）。
+   - 目录不存在：自动创建（含多级父目录），再初始化仓库。
+   - 目标为已存在普通文件：判定为参数非法 → `Protocol` 错误。
+   - 取消点：目录创建前后、`Repository::init` 调用前后均检查取消令牌。
+
+2) git_add
+   - 输入校验顺序（早失败→减小副作用窗口）：
+     1. `paths` 非空（空 → `Protocol`）。
+     2. 目标仓库目录存在且包含 `.git`（否则 `Protocol`）。
+     3. 每个用户输入路径：拒绝绝对路径（Windows / *nix 统一判定）→ `Protocol`。
+     4. 组合成工作区内相对路径后 canonicalize；若 canonicalize 失败（不存在）→ `Protocol`。
+     5. Canonical 结果必须 `starts_with(workdir_canonical)`，否则视为越界（目录穿越）→ `Protocol`。
+     6. 去重：保留用户首次出现顺序，利用 `HashSet` 抑制重复（影响后续进度 total_hint 与 percent 计算）。
+   - 进度语义：
+     - 为提升可观测性而放弃“只发一条 progress(100)”的最简模式，改为逐路径阶段化：
+       - 每处理一个唯一路径前发送 `task://progress`：`phase = "Staging <相对路径>"`；
+       - `objects = 已处理唯一路径数`；`total_hint = 唯一路径总数`；`percent = floor(objects / total * 100)`；
+       - 完成全部后发送最终 `task://progress { phase: "Staged", percent: 100 }`（确保 UI 能以统一模式结束）。
+     - 保证 percent 单调非降（测试覆盖）。
+   - 写入：所有路径添加至 index 后一次性 `index.write()`；失败归类为 `Internal`。
+   - 取消点：每个路径处理前检查取消；取消后抛出并在任务层映射为 `Cancel`。
+   - 不展开递归逻辑：保持 libgit2/glob 行为，仅对显式列出的文件或目录添加（后续若引入模式匹配可扩展）。
+
+#### 3. 错误分类映射（与 MP1 保持一致）
+| 场景 | 分类 | 说明 |
+|------|------|------|
+| 参数为空 / 绝对路径 / 不存在 / 越界 / 非仓库目录 | Protocol | 调用者可修复的输入问题 |
+| 取消（令牌触发） | Cancel | 用户主动终止 |
+| I/O / Index 写入 / libgit2 内部失败 | Internal | 不暴露底层细节，日志脱敏 |
+
+#### 4. 安全与防护
+- 路径越界：借助 canonicalize + `starts_with` 阻止 `..` / 符号链接逃逸。
+- 绝对路径拒绝：避免跨仓库 / 非预期磁盘访问。
+- 去重防止重复事件放大 UI 百分比跳变。
+- 日志裁剪：不输出敏感绝对路径，可在后续统一日志层再做红action（当前只输出相对或已裁剪信息）。
+
+#### 5. 取消策略
+- 使用任务注册表提供的取消令牌；在潜在阻塞点（循环每路径前、仓库初始化前、index 写入前）检测；
+- 确保取消时不写入部分 index（因为写入放在所有路径处理后）。
+
+#### 6. 测试矩阵（后端部分）
+- git_init：成功（幂等）、对文件路径失败、取消；
+- git_add：成功（文件+目录）、空列表、越界路径、绝对路径、重复路径去重、取消、百分比单调、最终阶段 `Staged`；
+- 增量测试文件：`tests/git_add_enhanced.rs` 专门验证增强行为。
+
+#### 7. 性能与可扩展性
+- 典型路径数（< 数百）下逐路径 progress 开销极小；
+- 若未来支持海量文件（>1e5），可改为分批（e.g. 每 N=100 触发一次 progress）并记录设计 TODO；当前无需预优化。
+
+#### 8. 回退策略
+- 移除 Tauri 命令导出或在 registry 中禁止 `GitInit` / `GitAdd` 分支即可快速回退到“未实现”状态；
+- UI 卡片独立，可前端层面快速隐藏；
+- 测试：对应新增测试可标记忽略（`#[ignore]`）或临时删除；不影响 clone/fetch/push。
+
+#### 9. 对后续阶段的复用指引
+- `git_add` 的路径校验与 per-item progress 模式可直接抽象成辅助函数供 `commit`（遍历待写树对象时）或未来 `status`/`reset` 类命令使用；
+- 取消与错误映射模板化：后续 `commit/branch/checkout/tag/remote_*` 复用同一枚举分类，不新增分类种类，确保前端解码稳定；
+- 进度字段中 `objects/total_hint` 使用方式为后续命令提供对齐示例。
+
+#### 10. 已知限制 / TODO
+- 未实现路径通配（glob）与 ignore 规则；
+- 未在进度事件中区分“目录展开”与“文件添加”两类阶段；
+- 尚未抽离通用路径校验助手（待 P2.1b/1c 视复用频率决定）。
+
+> 本小节作为已交付实现的“设计与实现快照”，后续若 P2.1b 引入公共助手或抽象层，应更新此处“复用指引 / 已知限制”段落。
+
 - P2.1b commit
   - 范围：`git_commit`（author 可选、allowEmpty 默认 false）；拒绝空提交（除非 allowEmpty）。
   - 交付：成功/空提交被拒/取消 单测；消息编码与脱敏检查。
@@ -427,3 +510,10 @@ strategyOverride?: {
 - v1.1: 增加微阶段拆分（P2.1a–P2.1e，P2.2a–P2.2f，P2.3a–P2.3f）与细化 WBS/DoD，支持更小粒度的开发与验收
  - v1.2: 新增 P2.0 “结构对齐与迁移”，提出平级模块化方案，并将实施细节/WBS 与之对齐
  - v1.3: 结构方案调整为“所有 Git 功能平级模块”，包含 clone/fetch/push 拆分为独立文件与渐进迁移步骤
+ - v1.4: 完成 P2.1a (`git_init`/`git_add`)：
+  - 后端：实现 init 幂等、add 路径校验(含 canonicalize 越界检测)、重复路径去重、绝对路径拒绝、逐路径进度事件 (Staging <path> → Staged)；
+  - 任务注册：`spawn_git_init_task` / `spawn_git_add_task` 接入标准事件模型，GitAdd 传递真实阶段化进度；
+  - 前端：GitPanel 新增 Init/Add 卡片与 API (`startGitInit`/`startGitAdd`)，TaskKind 扩展；
+  - 测试：Rust 新增 `git_add_enhanced.rs` 覆盖绝对路径拒绝 / 去重 / 进度单调性；前端增加 Init/Add 按钮交互测试；
+  - 错误分类：参数/路径问题 → Protocol，取消 → Cancel，I/O → Internal；
+  - 回退：移除 Tauri 命令或 UI 卡片即可回退；无既有命令行为破坏。
