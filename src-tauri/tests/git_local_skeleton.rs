@@ -5,7 +5,6 @@ use std::sync::atomic::AtomicBool;
 
 use fireworks_collaboration_lib::core::git::default_impl as impls;
 use fireworks_collaboration_lib::core::git::errors::{GitError, ErrorCategory};
-use fireworks_collaboration_lib::core::git::service::ProgressPayload;
 
 fn tmp_dir() -> PathBuf {
     let base = std::env::temp_dir();
@@ -20,20 +19,10 @@ fn assert_protocol(e: GitError) {
 }
 
 #[test]
-fn init_add_commit_branch_checkout_tag_remote_are_not_implemented_yet() {
+fn commit_branch_checkout_tag_remote_are_not_implemented_yet() {
     let dest = tmp_dir();
     std::fs::create_dir_all(&dest).unwrap();
     let flag = AtomicBool::new(false);
-
-    // init
-    let r = impls::init::git_init(&dest, &flag, |_p: ProgressPayload| {});
-    assert!(r.is_err());
-    assert_protocol(r.err().unwrap());
-
-    // add
-    let r = impls::add::git_add(&dest, &[], &flag, |_p| {});
-    assert!(r.is_err());
-    assert_protocol(r.err().unwrap());
 
     // commit
     let r = impls::commit::git_commit(&dest, "msg", None, false, &flag, |_p| {});
