@@ -448,6 +448,84 @@ impl TaskRegistry {
             }
         })
     }
+
+    /// 启动 Git Init 任务：初始化一个新的仓库
+    pub fn spawn_git_init_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, dest: String) -> JoinHandle<()> {
+        let this = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Running), None=> this.set_state_noemit(&id,TaskState::Running) }
+            if token.is_cancelled() { // 取消早退
+                if let Some(app_ref)=&app { let err = TaskErrorEvent::from_parts(id, "GitInit", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None); this.emit_error(app_ref,&err);} 
+                match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Canceled), None=> this.set_state_noemit(&id,TaskState::Canceled) }
+                return;
+            }
+            let interrupt_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let dest_path = std::path::PathBuf::from(dest.clone());
+            let res: Result<(), GitError> = {
+                let app_for_cb = app.clone();
+                let id_for_cb = id.clone();
+                crate::core::git::default_impl::init::git_init(&dest_path, &*interrupt_flag, move |_p| {
+                    if let Some(app_ref)=&app_for_cb {
+                        let prog = TaskProgressEvent { task_id: id_for_cb, kind: "GitInit".into(), phase: "Running".into(), percent: 100, objects: None, bytes: None, total_hint: None, retried_times: None };
+                        emit_all(app_ref, EV_PROGRESS, &prog);
+                    }
+                })
+            };
+            if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Some(app_ref)=&app { let err = TaskErrorEvent::from_parts(id, "GitInit", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None); this.emit_error(app_ref,&err);} 
+                match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Canceled), None=> this.set_state_noemit(&id,TaskState::Canceled) }
+                return;
+            }
+            match res {
+                Ok(()) => { match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Completed), None=> this.set_state_noemit(&id,TaskState::Completed) } },
+                Err(e) => {
+                    let cat = super::retry::categorize(&e);
+                    if let Some(app_ref)=&app { let err_evt = TaskErrorEvent::from_parts(id, "GitInit", cat, format!("{}", e), None); this.emit_error(app_ref,&err_evt);} 
+                    match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Failed), None=> this.set_state_noemit(&id,TaskState::Failed) }
+                }
+            }
+        })
+    }
+
+    /// 启动 Git Add 任务：暂存文件
+    pub fn spawn_git_add_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, dest: String, paths: Vec<String>) -> JoinHandle<()> {
+        let this = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Running), None=> this.set_state_noemit(&id,TaskState::Running) }
+            if token.is_cancelled() {
+                if let Some(app_ref)=&app { let err = TaskErrorEvent::from_parts(id, "GitAdd", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None); this.emit_error(app_ref,&err);} 
+                match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Canceled), None=> this.set_state_noemit(&id,TaskState::Canceled) }
+                return;
+            }
+            let interrupt_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let dest_path = std::path::PathBuf::from(dest.clone());
+            let path_vec = paths.clone();
+            let ref_slices: Vec<&str> = path_vec.iter().map(|s| s.as_str()).collect();
+            let res: Result<(), GitError> = {
+                let app_for_cb = app.clone();
+                let id_for_cb = id.clone();
+                crate::core::git::default_impl::add::git_add(&dest_path, &ref_slices, &*interrupt_flag, move |p| {
+                    if let Some(app_ref)=&app_for_cb {
+                        let prog = TaskProgressEvent { task_id: id_for_cb, kind: p.kind, phase: p.phase, percent: p.percent, objects: p.objects, bytes: p.bytes, total_hint: p.total_hint, retried_times: None };
+                        emit_all(app_ref, EV_PROGRESS, &prog);
+                    }
+                })
+            };
+            if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Some(app_ref)=&app { let err = TaskErrorEvent::from_parts(id, "GitAdd", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None); this.emit_error(app_ref,&err);} 
+                match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Canceled), None=> this.set_state_noemit(&id,TaskState::Canceled) }
+                return;
+            }
+            match res {
+                Ok(()) => { match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Completed), None=> this.set_state_noemit(&id,TaskState::Completed) } },
+                Err(e) => {
+                    let cat = super::retry::categorize(&e);
+                    if let Some(app_ref)=&app { let err_evt = TaskErrorEvent::from_parts(id, "GitAdd", cat, format!("{}", e), None); this.emit_error(app_ref,&err_evt);} 
+                    match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Failed), None=> this.set_state_noemit(&id,TaskState::Failed) }
+                }
+            }
+        })
+    }
 }
 
 pub type SharedTaskRegistry = Arc<TaskRegistry>;

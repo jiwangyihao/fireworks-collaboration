@@ -84,6 +84,22 @@ async fn git_push(dest: String, remote: Option<String>, refspecs: Option<Vec<Str
     Ok(id.to_string())
 }
 
+// Git 命令：初始化仓库
+#[tauri::command]
+async fn git_init(dest: String, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitInit { dest: dest.clone() });
+    reg.clone().spawn_git_init_task(Some(app), id, token, dest);
+    Ok(id.to_string())
+}
+
+// Git 命令：暂存文件（paths 为相对路径列表）
+#[tauri::command]
+async fn git_add(dest: String, paths: Vec<String>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitAdd { dest: dest.clone(), paths: paths.clone() });
+    reg.clone().spawn_git_add_task(Some(app), id, token, dest, paths);
+    Ok(id.to_string())
+}
+
 // ========== P0.5 http_fake_request ==========
 fn redact_auth_in_headers(mut h: std::collections::HashMap<String, String>, mask: bool) -> std::collections::HashMap<String, String> {
     if !mask { return h; }
@@ -275,7 +291,7 @@ pub fn run(){
         .manage(Arc::new(TaskRegistry::new()) as TaskRegistryState)
         .invoke_handler(tauri::generate_handler![
             greet,start_oauth_server,get_oauth_callback_data,clear_oauth_state,get_system_proxy,
-            get_config,set_config,task_list,task_cancel,task_start_sleep,task_snapshot,git_clone,git_fetch,git_push,
+            get_config,set_config,task_list,task_cancel,task_start_sleep,task_snapshot,git_clone,git_fetch,git_push,git_init,git_add,
             http_fake_request
         ]);
     builder = builder.setup(|app| {
