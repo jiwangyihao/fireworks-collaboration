@@ -392,6 +392,71 @@ P2 拆分为 3 个可验收小阶段，阶段间可独立合入与回滚。
   - 验收：全链路演示 init→add→commit→branch→checkout→tag→remote_set/add/remove。
   - 回滚：按命令粒度禁用导出。
 
+### P2.1d 实现说明（已完成）
+
+详述 `git_tag` 与 `git_remote_{add,set,remove}` 的实现、增强与测试覆盖。
+
+#### 1. 代码落点
+- 源文件：`core/git/default_impl/tag.rs`、`core/git/default_impl/remote.rs`
+- Registry：新增 `spawn_git_tag_task` / `spawn_git_remote_{add,set,remove}_task`
+- TaskKind：`GitTag | GitRemoteAdd | GitRemoteSet | GitRemoteRemove`
+- 前端：`api/tasks.ts` & `stores/tasks.ts` 扩展，UI 使用通用任务面板展示 phase。
+
+#### 2. Tag 行为
+- 支持轻量 & 附注：`annotated` 标志控制；附注要求非空 `message`。
+- Force：
+  - 轻量：更新 `refs/tags/<name>` 指向当前 HEAD。
+  - 附注：创建新 tag 对象并更新引用；若内容（提交+消息+签名）未变则 OID 相同。
+- Phase：`Tagged` / `AnnotatedTagged`（首次） 与 `Retagged` / `AnnotatedRetagged`（force 覆盖）。
+- 消息规范化：CRLF 与孤立 CR → `\n`；尾部多余空白/空行裁剪成单一结尾换行；内部空行保持。
+- 校验：`validate_tag_name`；仓库存在 & 有 HEAD commit；附注消息非空。
+- 取消点：入口、解析 HEAD 后、写引用/创建对象前。
+
+#### 3. Remote 行为
+- add：远程不存在 → 创建；phase `RemoteAdded`。
+- set：远程存在 → 更新 URL（同 URL 幂等成功）；phase `RemoteSet`。
+- remove：远程存在 → 删除；phase `RemoteRemoved`。
+- URL 校验（顺序严格）：
+  1) 原始字符串含空白（space/tab/newline/carriage return）立即拒绝；
+  2) trim 后为空拒绝；
+  3) 允许 http/https、scp-like、无空格本地路径；
+  4) 其它 scheme 或解析失败 → Protocol。
+- 命名校验：`validate_remote_name`。
+- 取消点：入口与副作用前。
+
+#### 4. 错误分类
+| 类别 | 条件示例 |
+|------|---------|
+| Protocol | 非仓库、无提交、名称非法、tag 已存在(非 force)、附注缺消息、URL 含空白/非法 scheme、add 重复、set/ remove 不存在、空白 URL |
+| Cancel   | 取消标志触发（入口或副作用前） |
+| Internal | 打开仓库失败 / 写引用失败 / 创建 tag 对象失败 / 设置远程失败 |
+
+#### 5. 测试覆盖
+文件：`git_tag_remote.rs` + `git_tag_remote_extra.rs`
+- Tag：轻量/附注创建、重复非 force 拒绝、force OID 变化与不变路径、缺消息拒绝、非法名、无提交拒绝、取消、CRLF 规范化、尾部空行折叠、内部空行保留、轻量 force 同 HEAD OID 不变、附注 force 同消息 OID 不变。
+- Remote：add/set/remove 成功链路、add 重复、set 不存在、remove 不存在、set 幂等、取消、URL 含空格/换行/制表符拒绝、本地路径成功、空白 URL 拒绝。
+
+#### 6. 关键差异点
+- Phase 粒度区分 Retagged* 提升可观测性（无需 OID 差异推断）。
+- URL 校验在 trim 前执行，防止通过尾随换行/空格绕过。
+- Annotated force 同内容保持同 OID 行为由测试锁定，避免误判“总是新对象”。
+
+#### 7. 取消与原子性
+- 多取消断点防止部分写入（引用写前检查）。
+- Remote 操作保证失败不留下半状态（git2 原子语义 + 显式检查）。
+
+#### 8. 回退策略
+- 去掉新命令：移除 Tauri 注册 & TaskKind 分支。
+- 合并 phase：将 Retagged* 分支重写为原 Tagged* 并更新测试。
+- 关闭消息规范化：删除 CR/LF 处理与尾部折叠逻辑并移除相关断言。
+
+#### 9. 已知限制 / TODO
+- 未实现 tag 删除；未支持 ssh:// URL；未自定义 tagger；未做 tag 对象 GC；URL 校验未验证实际可达性。
+
+#### 10. 后续衔接
+- URL/命名/phase 模式将复用到 P2.2 depth / filter 参数校验与后续策略覆盖。
+
+
 ### P2.2 Shallow/Partial（约 0.75–1 周）
 - 范围：
   - `git_clone`/`git_fetch` 入参扩展：`depth?: number`、`filter?: 'blob:none'|'tree:0'`；
