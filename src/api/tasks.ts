@@ -156,3 +156,31 @@ export async function startGitCheckout(params: { dest: string; reference: string
   if (create !== undefined) args.create = create;
   return invoke<string>("git_checkout", args);
 }
+
+// P2.1d: 启动 Git Tag 任务
+export async function startGitTag(params: { dest: string; name: string; message?: string; annotated?: boolean; force?: boolean }) {
+  const { dest, name, message, annotated, force } = params;
+  const args: Record<string, unknown> = { dest, name };
+  if (message !== undefined) args.message = message;
+  if (annotated !== undefined) args.annotated = annotated;
+  if (force !== undefined) args.force = force;
+  return invoke<string>("git_tag", args);
+}
+
+// P2.1d: 启动 Git Remote Set 任务
+export async function startGitRemoteSet(params: { dest: string; name: string; url: string }) {
+  const { dest, name, url } = params;
+  return invoke<string>("git_remote_set", { dest, name, url });
+}
+
+// P2.1d: 启动 Git Remote Add 任务
+export async function startGitRemoteAdd(params: { dest: string; name: string; url: string }) {
+  const { dest, name, url } = params;
+  return invoke<string>("git_remote_add", { dest, name, url });
+}
+
+// P2.1d: 启动 Git Remote Remove 任务
+export async function startGitRemoteRemove(params: { dest: string; name: string }) {
+  const { dest, name } = params;
+  return invoke<string>("git_remote_remove", { dest, name });
+}
