@@ -46,7 +46,7 @@ async fn test_registry_git_fetch_cancel_before_start_results_canceled() {
         let reg = Arc::new(TaskRegistry::new());
         let repo = "".to_string(); // 使用默认远程逻辑
         let dest = unique_temp_dir().to_string_lossy().to_string();
-        let (id, token) = reg.create(TaskKind::GitFetch { repo: repo.clone(), dest: dest.clone() });
+    let (id, token) = reg.create(TaskKind::GitFetch { repo: repo.clone(), dest: dest.clone(), depth: None, filter: None, strategy_override: None });
         token.cancel(); // 启动前取消
     let handle = reg.clone().spawn_git_fetch_task(None, id, token, repo, dest, None);
         let canceled = wait_for_state(&reg, id, TaskState::Canceled, 1000).await;
@@ -62,7 +62,7 @@ async fn test_registry_git_fetch_invalid_dest_fails_quick() {
         let reg = Arc::new(TaskRegistry::new());
         let repo = "".to_string(); // 默认远程逻辑
         let dest = unique_temp_dir().to_string_lossy().to_string();
-        let (id, token) = reg.create(TaskKind::GitFetch { repo: repo.clone(), dest: dest.clone() });
+        let (id, token) = reg.create(TaskKind::GitFetch { repo: repo.clone(), dest: dest.clone(), depth: None, filter: None, strategy_override: None });
     let handle = reg.clone().spawn_git_fetch_task(None, id, token, repo, dest, None);
 
         // 任务可能非常快地从 Pending -> Failed，未必能观测到 Running，这里允许两者其一先出现
