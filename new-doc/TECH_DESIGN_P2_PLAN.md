@@ -456,6 +456,75 @@ P2 拆分为 3 个可验收小阶段，阶段间可独立合入与回滚。
 #### 10. 后续衔接
 - URL/命名/phase 模式将复用到 P2.2 depth / filter 参数校验与后续策略覆盖。
 
+### P2.2a 实现说明（已完成）
+
+本小节记录 P2.2a（`git_clone` / `git_fetch` 入参 `depth` / `filter` / `strategyOverride` 解析与校验“占位实施”）的实际落地，以便后续 P2.2b+ 在此基础上接入真正的 shallow / partial 行为与能力探测回退逻辑。
+
+#### 1. 代码落点与结构
+- 新增文件：`src-tauri/src/core/git/default_impl/opts.rs`
+  - 导出：
+    - 枚举 `PartialFilter { BlobNone, TreeZero }`
+    - 结构 `StrategyHttpOverride` / `StrategyTlsOverride` / `StrategyRetryOverride` / `StrategyOverrideInput`
+    - 结构 `GitDepthFilterOpts { depth: Option<u32>, filter: Option<PartialFilter>, strategy_override: Option<StrategyOverrideInput> }`
+    - 函数 `parse_depth_filter_opts(depth: Option<Value>, filter: Option<String>, strategy_override: Option<Value>) -> Result<GitDepthFilterOpts, GitError>`
+- `TaskKind::GitClone` / `TaskKind::GitFetch` 扩展三个可选字段：`depth` / `filter` / `strategy_override`（保持旧前端未传参数时的兼容）。
+- `tasks/registry.rs`：新增 *_with_opts 版本的 spawn（`spawn_git_clone_task_with_opts` / `spawn_git_fetch_task_with_opts`），在进入重试循环前调用解析函数；保留原始 wrapper 维持旧调用签名。
+- `app.rs`：Tauri 命令 `git_clone` / `git_fetch` 新增可选入参并转发给 *_with_opts 版本；顺序追加，避免破坏既有前端调用位置参数。
+
+#### 2. 行为与语义（占位阶段）
+- 仅进行参数解析 + 校验 + 日志记录，不对底层 libgit2 clone/fetch 逻辑施加任何浅克隆或部分克隆影响；实质仍是“全量 clone / fetch”。
+- depth：
+  - 允许：正整数（>0, <= u32::MAX）
+  - 拒绝：0、负数、非数字（字符串/布尔等）、超过 u32::MAX → `Protocol` 错误（消息：`depth must be positive` / `depth must be a number` / `depth too large`）。
+- filter：
+  - 允许：`blob:none`、`tree:0`（以及测试为同义形式的 `tree:depth=0` 解析路径——后续可决定是否正式纳入，对外文档暂主推前两种）。
+  - 拒绝：其它任意字符串 → `Protocol` 错误（`unsupported filter: <原串>`）。
+  - 空白字符串（只含空格）视为未提供（忽略，不报错）。
+- strategyOverride：
+  - 结构：`{ http?: {...}, tls?: {...}, retry?: {...} }`；字段采用 camelCase + 兼容关键字段 snake_case alias。
+  - 解析成功：仅存储，不应用；未知顶层或内部字段由 serde 忽略（当前未发 warn，后续 P2.3 可加告警）。
+  - 非对象（数组等）或结构不符 → 解析阶段返回 `Protocol`（单元测试覆盖）。部分集成用例记录当前“非对象未导致任务失败”的状态，用于后续提升一致性时更新期望。
+- 解析失败时：任务直接进入 Failed，分类 `Protocol`，不进入网络阶段。
+- 解析成功：在日志中 `info` 记录（结构化输出 depth/filter/strategyOverride 摘要），后续 shallow/partial 实际逻辑可复用此结果避免再次解析。
+
+#### 3. 错误分类与事件
+- 所有输入校验失败 → `Protocol`（保持与 P2 其它命令一致的“可修复输入”分类）。
+- 不新增新的错误分类；未触及网络 I/O 时不会产生 `Internal`；取消逻辑与原 clone/fetch 保持不变。
+- 事件顺序：保持原 clone/fetch 的 state / progress / error 语义；P2.2a 无新增 progress 分支。
+
+#### 4. 测试矩阵（P2.2a + 后续补丁 v1.9.1 / v1.9.2）
+| 类别 | 用例摘要 | 期望 |
+|------|----------|------|
+| depth 合法 | 1 / (u32::MAX) / 与合法 filter 组合 | 解析成功，任务不 Failed |
+| depth 非法 | 0 / 负数 / 超范围 / 字符串 | Protocol 错误，任务 Failed (集成覆盖 0；单测覆盖其余) |
+| filter 合法 | blob:none / tree:0 / (同义 tree:depth=0) | 解析成功 |
+| filter 非法 | 大写变体 / tree:1 / 含内部空格 / 任意其它字符串 | Protocol 错误 |
+| 空 filter | 仅空白 | 忽略，不报错 |
+| depth+filter 组合 | depth=2 + tree:0 | 成功（占位仍全量克隆） |
+| strategyOverride 合法 | http / tls / retry 各单独 + 全部组合 | 解析成功并保留结构 |
+| strategyOverride 非法 | 非对象（数组）、字段类型错误 | 单测 Protocol；集成记录当前未致 Failed 的现状（后续可统一策略） |
+| 未知字段 | 顶层或子字段 | 忽略（未来可加 warn） |
+
+#### 5. 回滚策略
+- 快速移除：删除 `opts.rs` + 移除 TaskKind 新字段 + 删 *_with_opts + 还原 Tauri 命令签名。
+- 温和降级：保留字段但在 registry 中跳过解析函数（直接忽略全部新参数），实现“软关闭”。
+
+#### 6. 对后续阶段的复用
+- P2.2b/c：直接在 clone/fetch 内部使用 `GitDepthFilterOpts.depth` 设置 `RepoBuilder.depth()` / `FetchOptions.depth()`。
+- P2.2d/e：在能力探测失败路径上引用 `filter` 字段构建回退事件（不阻断任务完成），并根据 `depth` 决定是否保持 shallow。
+- P2.3：在任务启动阶段追加 strategyOverride -> 全局策略浅合并（HTTP/TLS/Retry），当前结构已满足静态解析需求。
+
+#### 7. 已知限制 / TODO（占位阶段）
+- 未进行任何能力探测 (`protocol v2` / partial capability)；
+- 未对 strategyOverride 未知字段给出 warn；
+- 未对 filter 同义形式统一规范输出（只在内部测试中使用）；
+- 未提供“允许忽略单个非法字段但继续”模式（当前遇到首个非法即整体失败）。
+
+#### 8. 现状评估
+- 解析层覆盖面：深度、过滤器、策略三块均有边界与组合测试；
+- 行为稳定性：不改变既有 clone/fetch 路径，风险集中在早期参数判定，具备清晰回滚；
+- 后续改动成本：添加 shallow/partial 只需在执行层判断 `opts.depth` / `opts.filter` 应用对应 libgit2 选项并补充能力探测与回退事件。
+
 
 ### P2.2 Shallow/Partial（约 0.75–1 周）
 - 范围：
@@ -815,3 +884,36 @@ strategyOverride?: {
       - 复用展望：`validate_branch_name` 设计为后续 `git_tag` / `git_remote_*` 的命名规则基线，可在需要时抽象为 `refs.rs` 通用助手；控制字符与特殊序列过滤逻辑可直接迁移。
       - 回退策略：如出现兼容性问题，可快速恢复到 v1.7（删除新增规则分支或放宽匹配）。测试可通过忽略新增用例回退。
   - 抽象复用：在后续调整中（同版本后续 patch）已将分支/标签/远端名称校验收敛到 `refname.rs` (`validate_ref_name` + 三个 wrapper)，减少重复逻辑，为即将实现的 tag/remote 命令提供统一入口；回退可单点放宽。
+
+  - v1.9: 完成 P2.2a（`git_clone`/`git_fetch` 入参 `depth` / `filter` / `strategyOverride` 解析与校验占位）:
+    - 新增模块：`core/git/default_impl/opts.rs` 暴露 `parse_depth_filter_opts` 与结构：`GitDepthFilterOpts`、`PartialFilter`、`StrategyOverride*`；
+    - 校验规则：
+      * depth: 必须为正整数（>0）；0/负值/非数字/超 u32 范围 → Protocol
+      * filter: 允许 `blob:none` / `tree:0`；其它值 → Protocol
+      * strategyOverride: 结构化解析 http/tls/retry 子集，未知字段忽略；当前不应用，仅记录日志
+    - TaskKind：`GitClone` / `GitFetch` 扩展可选字段 `{ depth, filter, strategy_override }`，保持旧调用兼容（旧前端未传参数 → None）
+    - Tauri 命令：`git_clone(repo,dest,depth?,filter?,strategy_override?)` / `git_fetch(repo,dest,preset?,depth?,filter?,strategy_override?)`；未破坏原顺序（新增参数置于末尾或文档说明）
+    - 任务注册：在进入重试循环前调用解析函数；非法参数直接 `Failed` + 错误事件（Protocol 分类）；合法参数仅 `tracing::info!` 记录（placeholder，无行为变更）
+    - 测试：
+      * 单元：`opts.rs` 覆盖 depth 正常/0/负、filter 合法与非法、strategyOverride 解析与别名兼容
+      * 集成：新增 `git_clone_fetch_params.rs`：depth=0 触发 Failed；非法 filter 触发 Failed
+    - 回退策略：删除 `opts.rs` 并还原 TaskKind/命令签名；或在解析失败时改为忽略（临时禁用强校验）
+    - 后续衔接：P2.2b/c 将把解析结果绑定到 `RepoBuilder`/`FetchOptions` 实现浅克隆/浅拉取；P2.2d+ 引入 filter 能力探测与回退事件。
+  - v1.9.1: P2.2a 测试与边界强化补丁：
+    - 新增单元测试：depth 溢出 (u64→u32) / 空 filter 拒绝 / filter 同义形式 `tree:depth=0` 支持；
+    - 新增集成测试 `git_clone_fetch_params_valid.rs`：合法 depth=1 + filter=`blob:none` 不触发 Failed；strategyOverride 含未知字段不报错；
+    - 兼容性：不改变外部行为（仍为占位），仅增加测试护栏；全部 `cargo test` 通过；
+    - 文档：记录为 v1.9.1 以与后续 P2.2b 行为性变更区分（防止 shallow 实现与纯解析补丁混淆）。
+  - v1.9.2: P2.2a 进一步组合/类型测试补丁：
+    - 单元测试新增：
+      * depth = u32::MAX 成功；
+      * depth 为字符串类型被拒绝（"depth must be a number"）；
+      * 无效 filter 变体（大写、tree:1、内部空格）全部 Protocol；
+      * depth+filter 组合；
+      * strategyOverride 各子块独立解析（http/tls/retry 单独存在时均成功）；
+      * 非对象 strategyOverride (数组) 在 Task 级当前占位实现未强制 Failed（集成测试记录现状，后续若调整为严格 Protocol 可更新）；
+    - 集成测试新增 `git_clone_fetch_params_combo.rs`：
+      * 同时传递 depth+filter+完整 strategyOverride 不失败；
+      * 非对象 strategyOverride 类型当前被视为占位忽略（状态非 Failed），测试锁定现状并留注释；
+    - 目的：锁定解析稳定性与未来行为调整安全窗，一旦后续 P2.2b/c 引入实际 shallow/partial 行为，可直接替换/补充期望断言；
+    - 风险缓解：排除大小写/空白/数字越界/结构类型错误导致未定义行为的可能。 
