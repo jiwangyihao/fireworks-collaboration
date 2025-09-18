@@ -43,7 +43,7 @@ async fn registry_clone_local_repo_completes() {
     // 启动注册表任务进行克隆
     let reg = Arc::new(TaskRegistry::new());
     let dest = unique_temp_dir().to_string_lossy().to_string();
-    let (id, token) = reg.create(TaskKind::GitClone { repo: src.to_string_lossy().to_string(), dest: dest.clone() });
+    let (id, token) = reg.create(TaskKind::GitClone { repo: src.to_string_lossy().to_string(), dest: dest.clone(), depth: None, filter: None, strategy_override: None });
     let handle = reg.clone().spawn_git_clone_task(None, id, token, src.to_string_lossy().to_string(), dest.clone());
 
     // 等待完成
@@ -80,7 +80,7 @@ async fn registry_fetch_local_repo_completes() {
     run_src(&["commit", "-m", "more"]);
 
     let reg = Arc::new(TaskRegistry::new());
-    let (id, token) = reg.create(TaskKind::GitFetch { repo: "".into(), dest: dst.to_string_lossy().to_string() });
+    let (id, token) = reg.create(TaskKind::GitFetch { repo: "".into(), dest: dst.to_string_lossy().to_string(), depth: None, filter: None, strategy_override: None });
     let handle = reg.clone().spawn_git_fetch_task(None, id, token, "".into(), dst.to_string_lossy().to_string(), None);
 
     // 等待任务完成
