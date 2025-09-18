@@ -289,6 +289,103 @@ P2 拆分为 3 个可验收小阶段，阶段间可独立合入与回滚。
   - 验收：commit→branch→checkout 链条稳定；冲突/不可快进映射为 Protocol。
   - 回滚：分别禁用命令导出。
 
+### P2.1c 实现说明（已完成）
+
+本节记录 `git_branch` / `git_checkout` 的落地细节、命名校验策略两轮增强（v1.7 / v1.8）、测试矩阵与回退指引，延续 P2.1a/b 的结构与分类一致性。
+
+#### 1. 代码落点与结构
+- 模块文件：`src-tauri/src/core/git/default_impl/branch.rs`、`checkout.rs`
+- 任务注册：`spawn_git_branch_task` / `spawn_git_checkout_task`（`core/tasks/registry.rs`）
+- 枚举扩展：`TaskKind::GitBranch { dest, name, checkout, force }`、`TaskKind::GitCheckout { dest, ref_name, create }`
+- Tauri 命令：`git_branch(dest, name, checkout?, force?)`、`git_checkout(dest, ref, create?)`
+- 前端：
+  - API：`startGitBranch` / `startGitCheckout`（`src/api/tasks.ts`）
+  - Store：TaskKind 联合类型扩展（`stores/tasks.ts`）
+  - UI：暂未新增专用面板卡片（后续统一 Git 操作面板再聚合），对现有事件解码无影响。
+- 测试文件：`src-tauri/tests/git_branch_checkout.rs`
+
+#### 2. 行为与语义
+1) git_branch
+   - 创建分支：要求仓库已有至少一个提交（可解析 HEAD）。若无提交 → `Protocol`。
+   - 已存在分支：
+     * `force=false` → `Protocol`（避免隐式覆盖）。
+     * `force=true` → 快进/覆盖引用到当前 HEAD 提交（必须存在有效提交）。
+   - `checkout=true`：在创建/force 成功后立即切换到该分支（等价于后续的 checkout 行为）；若在 force 场景，引用指向更新后的 HEAD 然后再切换。
+   - 分支名需通过 `validate_branch_name`；失败 → `Protocol`。
+2) git_checkout
+   - 已存在本地分支：直接执行 set_head + checkout_head。
+   - 不存在且 `create=true`：需要已有提交；否则 `Protocol`。
+   - 不存在且 `create=false`：`Protocol`。
+   - 仅支持切换（不实现路径/树检出混合模式）。
+
+#### 3. 分支名校验（v1.7 → v1.8 演进）
+统一封装在 `validate_branch_name`：
+- v1.7 基础规则：拒绝 空/全空白、包含空格、末尾 `/` 或 `.`、前导 `-`、包含 `..`、反斜杠、任意控制字符 (c < 0x20)。
+- v1.8 增强：再拒绝 以 `/` 开头、出现 `//`、以 `.lock` 结尾、包含字符 `:` `?` `*` `[` `~` `^` `\\`、包含子串 `@{`。
+- 所有违规统一抛出 `Protocol`，错误消息保持用户可读可修复，不暴露内部实现细节。
+- 设计为后续 tag/remote 名称规则基线，可抽象为未来 `refs.rs` 通用助手。
+
+#### 4. 取消策略
+- 入口快速检查（任务启动时）。
+- 在执行关键副作用前再次检查：创建分支前、force 更新前、`set_head` 前、`checkout_head` 前。
+- 保证取消不会留下半完成状态（要么未创建引用，要么 HEAD 尚未切换）。
+
+#### 5. 错误分类映射
+| 场景 | 分类 | 说明 |
+|------|------|------|
+| 分支已存在且未 force / 分支不存在且未 create / 无提交创建或 force / 名称非法 | Protocol | 输入或上下文逻辑可修复 |
+| 用户取消（任一取消点） | Cancel | 允许 UI 显示“用户终止” |
+| git2 内部错误（引用写入 / checkout 失败 / I/O） | Internal | 不泄漏底层细节 |
+
+#### 6. 进度与事件
+- 与“本地快速命令”策略对齐：仅发送一条完成 progress（percent=100）。
+  - git_branch：`phase = "Branched"` 或（含 checkout）`"BranchedAndCheckedOut"`。
+  - git_checkout：`phase = "CheckedOut"`；若 `create=true` 则 `"CreatedAndCheckedOut"`。
+- 仍产生标准 state 流：`pending → running → {completed|failed|canceled}`；错误时附加 `task://error`。
+
+#### 7. 测试矩阵（后端）
+覆盖 `git_branch_checkout.rs`：
+| 用例类别 | 目标 |
+|----------|------|
+| 创建分支成功 | 基线成功 & phase=Branched |
+| 创建并立即 checkout | phase=BranchedAndCheckedOut |
+| 已存在分支 (no force) | Protocol 冲突 |
+| force 更新分支 | 引用指向最新提交 |
+| force 无提交 | Protocol 拒绝 |
+| 创建分支无提交 | Protocol 拒绝 |
+| checkout 已存在分支 | phase=CheckedOut |
+| checkout 不存在 (no create) | Protocol |
+| checkout create 成功 | phase=CreatedAndCheckedOut |
+| checkout create 无提交 | Protocol |
+| checkout create 已存在（幂等语义校验） | Phase 正确且 HEAD 指向目标 |
+| 取消：branch 在创建/force 前 | Cancel 分类 |
+| 取消：checkout 在 set_head 前 | Cancel 分类 |
+| 名称非法（多组） | Protocol（逐条规则断言） |
+| 名称合法（多组） | 均成功且 phase 符合 |
+| 控制字符 / 特殊序列 `@{` | Protocol |
+
+#### 8. 安全与一致性
+- 不输出绝对路径或敏感引用信息到事件；仅使用用户提供的分支名（已通过校验）。
+- 错误消息保持抽象：不暴露 libgit2 具体 errno。
+- 取消窗口缩小（写引用与切 HEAD 前再次检查）避免部分状态。
+
+#### 9. 回退策略
+- 移除 Tauri 命令导出或在任务注册中屏蔽 `GitBranch` / `GitCheckout` 分支。
+- 删除/忽略测试文件 `git_branch_checkout.rs`（或标记 `#[ignore]`）。
+- 分支名校验可分层回退：只移除 v1.8 增强保持 v1.7，或完全移除校验函数回到最小限制。
+
+#### 10. 复用指引
+- `validate_branch_name` 可复制为 tag/remote 命名校验基线；非法字符/控制字符集合直接复用。
+- 进度 phase 命名模式（动作过去式 + 可选合并语义）为后续 tag (`Tagged` / `AnnotatedTagged`) 提供模板。
+- 取消点布局（副作用前检查）可移植到 tag/remote 修改引用场景。
+
+#### 11. 已知限制 / TODO
+- 未实现基于 upstream/远端跟踪的自动设置（只创建本地引用）。
+- 未实现分离 HEAD / 任意 commit 或 tag 的直接检出支持（当前限制为本地分支 ref）。
+- 未对分支名长度、Unicode 规范化做额外限制（依赖底层接受范围）。
+- 未提供“删除分支”命令；后续若加入需共享校验逻辑。
+- 校验规则当前面向常见非法模式，未完整复刻 Git 内建所有 refspec 规则（可按需继续补充）。
+
 - P2.1d tag + remote(set/add/remove)
   - 范围：`git_tag`（轻量/附注、force）与 `git_remote_*`（set 覆盖、add 要求不存在、remove 要求存在）。
   - 交付：每命令 3 例单测；幂等性断言；远端 URL 校验。
@@ -608,3 +705,48 @@ strategyOverride?: {
     - 测试：新增完整矩阵（成功/空提交拒绝/allowEmpty/作者缺失/作者空字符串/消息裁剪/初始空仓库/取消两路径/注册层预取消）；
     - 安全：不输出敏感路径，作者/消息按需裁剪；
     - 回退：移除命令与 UI 卡片即可回退，不影响已有命令。
+ 
+    - v1.6: 完成 P2.1c (`git_branch` / `git_checkout`):
+     - 后端：实现 `git_branch`（支持 force 覆盖、可选立即 checkout；存在且未 force 冲突 → Protocol；无提交时禁止创建新分支）、`git_checkout`（支持 create 标志创建后切换；不存在且未 create → Protocol；无提交 create → Protocol）；
+     - 进度：两命令均使用单进度事件（`Branched` / `BranchedAndCheckedOut`、`CheckedOut` / `CreatedAndCheckedOut`），percent=100；
+     - 任务注册：新增 `spawn_git_branch_task` / `spawn_git_checkout_task`，按既有本地命令模板发 state/error/progress；
+     - 前端：`tasks.ts` 增加 `startGitBranch` / `startGitCheckout` API，`stores/tasks.ts` 扩展 TaskKind；UI 暂未新增专用卡片（复用后续统一面板规划），保持兼容；
+     - 测试：新增 `tests/git_branch_checkout.rs` 覆盖创建/重复冲突/force 更新/checkout 不存在失败/create 成功/取消；所有后端测试 (31+) 与前端 86 用例全绿；
+     - 错误分类：参数与存在性冲突 → Protocol；取消 → Cancel；底层 git2 失败 → Internal；
+     - 回退：移除 Tauri 命令或任务注册分支即可恢复到未实现状态；测试文件可标记忽略；不影响已交付命令。
+ 
+   - v1.7: P2.1c 增量完善（分支名校验 & 扩展测试）:
+    - 分支名校验：新增 `validate_branch_name`，拒绝空白、空格、结尾 `/` 或 `.`、前导 `-`、包含 `..`、反斜杠或控制字符；全部归类 Protocol；
+    - 语义明确：`force` 更新分支在无任何提交 (HEAD 不可解析) 时返回 Protocol（之前是允许继续尝试的潜在不确定状态）；
+    - 取消增强：在 branch/checkout 设置 HEAD 与 checkout 前再次检测取消标志，降低临界窗口；
+    - 新增测试：
+      * invalid names 列表覆盖；
+      * 无提交创建/force 均拒绝；
+      * checkout 取消路径；
+      * force move 后验证分支引用已指向最新提交；
+    - 回归：后端测试总数增加且全部通过；保持前端用例不变仍全绿；
+    - 回退影响：删除校验函数或恢复旧逻辑即可，不影响其它命令；测试可标记忽略对应新增用例。
+ 
+     - v1.8: P2.1c 第二轮增强（更严格的分支名校验 & 进一步测试覆盖）:
+      - 校验规则提升：`validate_branch_name` 扩展拒绝范围，新增：
+        * 以 `/` 开头；
+        * 含有双斜杠 `//`；
+        * 结尾为 `.lock`（防止与引用锁文件冲突）；
+        * 包含下列任一非法字符：`:` `?` `*` `[` `~` `^` `\\`；
+        * 包含序列 `@{`（与引用语法冲突）；
+        * 任意控制字符 (c < 0x20)；
+        * 维持既有拒绝：空/空白、空格、结尾 `/` 或 `.`、前导 `-`、包含 `..`、反斜杠、前述字符的超集。
+        所有违反 → `Protocol` 分类，消息聚焦可修复性（不暴露内部实现细节）。
+      - 语义保持：无提交（HEAD 不可解析）时禁止创建或 force 更新分支，继续走 `Protocol`，确保引用不指向无效对象。
+      - 取消窗口：保持 v1.7 已加的 HEAD 更新与 checkout 之前的二次取消检查，无新增窗口。
+      - 新增/扩展测试：
+        * `branch_valid_names_succeed_and_phase_emitted`：覆盖多组合法名称并断言最终 progress phase (`Branched` / `BranchedAndCheckedOut`)；
+        * `branch_new_invalid_additional_cases`：覆盖新增非法模式（前导 `/`、双斜杠、`.lock` 结尾、`@{`、非法字符与控制字符等）；
+        * `checkout_create_on_existing_branch_noop_like`：验证在目标分支已存在场景下 create+checkout 的行为与 phase 语义；
+        * `checkout_create_without_commit_rejected`：再次锁定没有任何提交时禁止 create+checkout；
+        * force 移动引用后验证引用指向最新提交（回归性保证）；
+        * 移除测试中未使用的 `Author` import，消除编译器 warning，保持“零 warning”目标。
+      - 稳定性：运行所有后端测试（包含新增用例）全部通过；无额外前端改动需求，TaskKind 与事件契约未变；新增校验仅在非法输入路径生效，对既有合法调用完全向后兼容。
+      - 复用展望：`validate_branch_name` 设计为后续 `git_tag` / `git_remote_*` 的命名规则基线，可在需要时抽象为 `refs.rs` 通用助手；控制字符与特殊序列过滤逻辑可直接迁移。
+      - 回退策略：如出现兼容性问题，可快速恢复到 v1.7（删除新增规则分支或放宽匹配）。测试可通过忽略新增用例回退。
+  - 抽象复用：在后续调整中（同版本后续 patch）已将分支/标签/远端名称校验收敛到 `refname.rs` (`validate_ref_name` + 三个 wrapper)，减少重复逻辑，为即将实现的 tag/remote 命令提供统一入口；回退可单点放宽。
