@@ -139,3 +139,20 @@ export async function startGitCommit(params: { dest: string; message: string; al
   if (authorEmail) args.author_email = authorEmail;
   return invoke<string>("git_commit", args);
 }
+
+// P2.1c: 启动 Git Branch 任务
+export async function startGitBranch(params: { dest: string; name: string; checkout?: boolean; force?: boolean }) {
+  const { dest, name, checkout, force } = params;
+  const args: Record<string, unknown> = { dest, name };
+  if (checkout !== undefined) args.checkout = checkout;
+  if (force !== undefined) args.force = force;
+  return invoke<string>("git_branch", args);
+}
+
+// P2.1c: 启动 Git Checkout 任务
+export async function startGitCheckout(params: { dest: string; reference: string; create?: boolean }) {
+  const { dest, reference, create } = params;
+  const args: Record<string, unknown> = { dest, reference };
+  if (create !== undefined) args.create = create;
+  return invoke<string>("git_checkout", args);
+}

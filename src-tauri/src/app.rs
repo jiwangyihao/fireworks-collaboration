@@ -109,6 +109,25 @@ async fn git_commit(dest: String, message: String, allow_empty: Option<bool>, au
     Ok(id.to_string())
 }
 
+// Git 命令：创建/更新分支（可选立即切换）
+#[tauri::command]
+async fn git_branch(dest: String, name: String, checkout: Option<bool>, force: Option<bool>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+    let checkout_flag = checkout.unwrap_or(false);
+    let force_flag = force.unwrap_or(false);
+    let (id, token) = reg.create(TaskKind::GitBranch { dest: dest.clone(), name: name.clone(), checkout: checkout_flag, force: force_flag });
+    reg.clone().spawn_git_branch_task(Some(app), id, token, dest, name, checkout_flag, force_flag);
+    Ok(id.to_string())
+}
+
+// Git 命令：切换分支（或创建后切换）
+#[tauri::command]
+async fn git_checkout(dest: String, reference: String, create: Option<bool>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+    let create_flag = create.unwrap_or(false);
+    let (id, token) = reg.create(TaskKind::GitCheckout { dest: dest.clone(), reference: reference.clone(), create: create_flag });
+    reg.clone().spawn_git_checkout_task(Some(app), id, token, dest, reference, create_flag);
+    Ok(id.to_string())
+}
+
 // ========== P0.5 http_fake_request ==========
 fn redact_auth_in_headers(mut h: std::collections::HashMap<String, String>, mask: bool) -> std::collections::HashMap<String, String> {
     if !mask { return h; }
@@ -301,7 +320,7 @@ pub fn run(){
         .invoke_handler(tauri::generate_handler![
             greet,start_oauth_server,get_oauth_callback_data,clear_oauth_state,get_system_proxy,
             get_config,set_config,task_list,task_cancel,task_start_sleep,task_snapshot,git_clone,git_fetch,git_push,git_init,git_add,
-            git_commit,
+            git_commit, git_branch, git_checkout,
             http_fake_request
         ]);
     builder = builder.setup(|app| {

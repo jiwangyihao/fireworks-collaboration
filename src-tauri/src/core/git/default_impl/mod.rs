@@ -17,6 +17,7 @@ pub mod branch;
 pub mod checkout;
 pub mod tag;
 pub mod remote;
+pub mod refname;
 
 pub struct DefaultGitService;
 
