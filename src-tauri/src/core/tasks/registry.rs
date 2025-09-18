@@ -608,6 +608,66 @@ impl TaskRegistry {
             match res { Ok(())=> { match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Completed), None=> this.set_state_noemit(&id,TaskState::Completed) } }, Err(e)=> { let cat = super::retry::categorize(&e); if let Some(app_ref)=&app { let err_evt = TaskErrorEvent::from_parts(id, "GitCheckout", cat, format!("{}", e), None); this.emit_error(app_ref,&err_evt);} match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Failed), None=> this.set_state_noemit(&id,TaskState::Failed) } } }
         })
     }
+
+    /// 启动 Git Tag 任务：创建/更新标签
+    pub fn spawn_git_tag_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, dest: String, name: String, message: Option<String>, annotated: bool, force: bool) -> JoinHandle<()> {
+        let this = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Running), None=> this.set_state_noemit(&id,TaskState::Running) }
+            if token.is_cancelled() { if let Some(app_ref)=&app { let err = TaskErrorEvent::from_parts(id, "GitTag", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None); this.emit_error(app_ref,&err);} match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Canceled), None=> this.set_state_noemit(&id,TaskState::Canceled) } return; }
+            let interrupt_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let dest_path = std::path::PathBuf::from(dest.clone());
+            let msg_opt = message.clone();
+            let res: Result<(), GitError> = {
+                let app_for_cb = app.clone();
+                let id_for_cb = id.clone();
+                crate::core::git::default_impl::tag::git_tag(&dest_path, &name, msg_opt.as_deref(), annotated, force, &*interrupt_flag, move |p| {
+                    if let Some(app_ref)=&app_for_cb { let prog = TaskProgressEvent { task_id: id_for_cb, kind: p.kind, phase: p.phase, percent: p.percent, objects: p.objects, bytes: p.bytes, total_hint: p.total_hint, retried_times: None }; emit_all(app_ref, EV_PROGRESS, &prog); }
+                })
+            };
+            if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) { if let Some(app_ref)=&app { let err = TaskErrorEvent::from_parts(id, "GitTag", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None); this.emit_error(app_ref,&err);} match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Canceled), None=> this.set_state_noemit(&id,TaskState::Canceled) } return; }
+            match res { Ok(())=> { match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Completed), None=> this.set_state_noemit(&id,TaskState::Completed) } }, Err(e)=> { let cat = super::retry::categorize(&e); if let Some(app_ref)=&app { let err_evt = TaskErrorEvent::from_parts(id, "GitTag", cat, format!("{}", e), None); this.emit_error(app_ref,&err_evt);} match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Failed), None=> this.set_state_noemit(&id,TaskState::Failed) } } }
+        })
+    }
+
+    pub fn spawn_git_remote_set_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, dest: String, name: String, url: String) -> JoinHandle<()> {
+        let this = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Running), None=> this.set_state_noemit(&id,TaskState::Running) }
+            if token.is_cancelled() { if let Some(app_ref)=&app { let err = TaskErrorEvent::from_parts(id, "GitRemoteSet", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None); this.emit_error(app_ref,&err);} match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Canceled), None=> this.set_state_noemit(&id,TaskState::Canceled) } return; }
+            let interrupt_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let dest_path = std::path::PathBuf::from(dest.clone());
+            let res: Result<(), GitError> = { let app_for_cb = app.clone(); let id_for_cb = id.clone(); crate::core::git::default_impl::remote::git_remote_set(&dest_path, &name, &url, &*interrupt_flag, move |p| { if let Some(app_ref)=&app_for_cb { let prog = TaskProgressEvent { task_id: id_for_cb, kind: p.kind, phase: p.phase, percent: p.percent, objects: p.objects, bytes: p.bytes, total_hint: p.total_hint, retried_times: None }; emit_all(app_ref, EV_PROGRESS, &prog); } }) };
+            if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) { if let Some(app_ref)=&app { let err = TaskErrorEvent::from_parts(id, "GitRemoteSet", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None); this.emit_error(app_ref,&err);} match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Canceled), None=> this.set_state_noemit(&id,TaskState::Canceled) } return; }
+            match res { Ok(())=> { match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Completed), None=> this.set_state_noemit(&id,TaskState::Completed) } }, Err(e)=> { let cat = super::retry::categorize(&e); if let Some(app_ref)=&app { let err_evt = TaskErrorEvent::from_parts(id, "GitRemoteSet", cat, format!("{}", e), None); this.emit_error(app_ref,&err_evt);} match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Failed), None=> this.set_state_noemit(&id,TaskState::Failed) } } }
+        })
+    }
+
+    pub fn spawn_git_remote_add_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, dest: String, name: String, url: String) -> JoinHandle<()> {
+        let this = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Running), None=> this.set_state_noemit(&id,TaskState::Running) }
+            if token.is_cancelled() { if let Some(app_ref)=&app { let err = TaskErrorEvent::from_parts(id, "GitRemoteAdd", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None); this.emit_error(app_ref,&err);} match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Canceled), None=> this.set_state_noemit(&id,TaskState::Canceled) } return; }
+            let interrupt_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let dest_path = std::path::PathBuf::from(dest.clone());
+            let res: Result<(), GitError> = { let app_for_cb = app.clone(); let id_for_cb = id.clone(); crate::core::git::default_impl::remote::git_remote_add(&dest_path, &name, &url, &*interrupt_flag, move |p| { if let Some(app_ref)=&app_for_cb { let prog = TaskProgressEvent { task_id: id_for_cb, kind: p.kind, phase: p.phase, percent: p.percent, objects: p.objects, bytes: p.bytes, total_hint: p.total_hint, retried_times: None }; emit_all(app_ref, EV_PROGRESS, &prog); } }) };
+            if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) { if let Some(app_ref)=&app { let err = TaskErrorEvent::from_parts(id, "GitRemoteAdd", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None); this.emit_error(app_ref,&err);} match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Canceled), None=> this.set_state_noemit(&id,TaskState::Canceled) } return; }
+            match res { Ok(())=> { match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Completed), None=> this.set_state_noemit(&id,TaskState::Completed) } }, Err(e)=> { let cat = super::retry::categorize(&e); if let Some(app_ref)=&app { let err_evt = TaskErrorEvent::from_parts(id, "GitRemoteAdd", cat, format!("{}", e), None); this.emit_error(app_ref,&err_evt);} match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Failed), None=> this.set_state_noemit(&id,TaskState::Failed) } } }
+        })
+    }
+
+    pub fn spawn_git_remote_remove_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, dest: String, name: String) -> JoinHandle<()> {
+        let this = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Running), None=> this.set_state_noemit(&id,TaskState::Running) }
+            if token.is_cancelled() { if let Some(app_ref)=&app { let err = TaskErrorEvent::from_parts(id, "GitRemoteRemove", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None); this.emit_error(app_ref,&err);} match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Canceled), None=> this.set_state_noemit(&id,TaskState::Canceled) } return; }
+            let interrupt_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let dest_path = std::path::PathBuf::from(dest.clone());
+            let res: Result<(), GitError> = { let app_for_cb = app.clone(); let id_for_cb = id.clone(); crate::core::git::default_impl::remote::git_remote_remove(&dest_path, &name, &*interrupt_flag, move |p| { if let Some(app_ref)=&app_for_cb { let prog = TaskProgressEvent { task_id: id_for_cb, kind: p.kind, phase: p.phase, percent: p.percent, objects: p.objects, bytes: p.bytes, total_hint: p.total_hint, retried_times: None }; emit_all(app_ref, EV_PROGRESS, &prog); } }) };
+            if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) { if let Some(app_ref)=&app { let err = TaskErrorEvent::from_parts(id, "GitRemoteRemove", crate::core::git::errors::ErrorCategory::Cancel, "user canceled", None); this.emit_error(app_ref,&err);} match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Canceled), None=> this.set_state_noemit(&id,TaskState::Canceled) } return; }
+            match res { Ok(())=> { match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Completed), None=> this.set_state_noemit(&id,TaskState::Completed) } }, Err(e)=> { let cat = super::retry::categorize(&e); if let Some(app_ref)=&app { let err_evt = TaskErrorEvent::from_parts(id, "GitRemoteRemove", cat, format!("{}", e), None); this.emit_error(app_ref,&err_evt);} match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Failed), None=> this.set_state_noemit(&id,TaskState::Failed) } } }
+        })
+    }
 }
 
 pub type SharedTaskRegistry = Arc<TaskRegistry>;

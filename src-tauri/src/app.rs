@@ -128,6 +128,40 @@ async fn git_checkout(dest: String, reference: String, create: Option<bool>, reg
     Ok(id.to_string())
 }
 
+// Git 命令：创建/更新标签
+#[tauri::command]
+async fn git_tag(dest: String, name: String, message: Option<String>, annotated: Option<bool>, force: Option<bool>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+    let annotated_flag = annotated.unwrap_or(false);
+    let force_flag = force.unwrap_or(false);
+    let (id, token) = reg.create(TaskKind::GitTag { dest: dest.clone(), name: name.clone(), message: message.clone(), annotated: annotated_flag, force: force_flag });
+    reg.clone().spawn_git_tag_task(Some(app), id, token, dest, name, message, annotated_flag, force_flag);
+    Ok(id.to_string())
+}
+
+// Git 命令：设置已有 remote 的 URL
+#[tauri::command]
+async fn git_remote_set(dest: String, name: String, url: String, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitRemoteSet { dest: dest.clone(), name: name.clone(), url: url.clone() });
+    reg.clone().spawn_git_remote_set_task(Some(app), id, token, dest, name, url);
+    Ok(id.to_string())
+}
+
+// Git 命令：添加 remote
+#[tauri::command]
+async fn git_remote_add(dest: String, name: String, url: String, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitRemoteAdd { dest: dest.clone(), name: name.clone(), url: url.clone() });
+    reg.clone().spawn_git_remote_add_task(Some(app), id, token, dest, name, url);
+    Ok(id.to_string())
+}
+
+// Git 命令：移除 remote
+#[tauri::command]
+async fn git_remote_remove(dest: String, name: String, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitRemoteRemove { dest: dest.clone(), name: name.clone() });
+    reg.clone().spawn_git_remote_remove_task(Some(app), id, token, dest, name);
+    Ok(id.to_string())
+}
+
 // ========== P0.5 http_fake_request ==========
 fn redact_auth_in_headers(mut h: std::collections::HashMap<String, String>, mask: bool) -> std::collections::HashMap<String, String> {
     if !mask { return h; }
@@ -320,7 +354,7 @@ pub fn run(){
         .invoke_handler(tauri::generate_handler![
             greet,start_oauth_server,get_oauth_callback_data,clear_oauth_state,get_system_proxy,
             get_config,set_config,task_list,task_cancel,task_start_sleep,task_snapshot,git_clone,git_fetch,git_push,git_init,git_add,
-            git_commit, git_branch, git_checkout,
+            git_commit, git_branch, git_checkout, git_tag, git_remote_set, git_remote_add, git_remote_remove,
             http_fake_request
         ]);
     builder = builder.setup(|app| {
