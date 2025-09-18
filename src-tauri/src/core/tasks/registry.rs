@@ -67,7 +67,7 @@ impl TaskRegistry {
     }
 
     /// 启动 Git Clone 任务（阻塞线程执行），支持取消与基本进度事件
-    pub fn spawn_git_clone_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, repo: String, dest: String) -> JoinHandle<()> {
+    pub fn spawn_git_clone_task_with_opts(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, repo: String, dest: String, depth: Option<serde_json::Value>, filter: Option<String>, strategy_override: Option<serde_json::Value>) -> JoinHandle<()> {
         let this = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
             match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Running), None => this.set_state_noemit(&id, TaskState::Running) }
@@ -89,6 +89,19 @@ impl TaskRegistry {
                 }
                 match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
                 return;
+            }
+
+            // 参数解析（P2.2a 占位：仅校验，不改变行为）
+            let parsed_options_res = crate::core::git::default_impl::opts::parse_depth_filter_opts(depth.clone(), filter.clone(), strategy_override.clone());
+            if let Err(e) = parsed_options_res {
+                // 直接作为 Protocol/错误分类失败
+                if let Some(app_ref) = &app { let err_evt = TaskErrorEvent::from_parts(id, "GitClone", super::retry::categorize(&e), format!("{}", e), None); this.emit_error(app_ref, &err_evt); }
+                match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
+                return;
+            } else {
+                if let Some(opts) = parsed_options_res.ok() {
+                    tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), "git_clone options accepted (placeholder, no effect)");
+                }
             }
 
             let plan = load_retry_plan();
@@ -193,7 +206,7 @@ impl TaskRegistry {
     }
 
     /// 启动 Git Fetch 任务（阻塞线程执行），支持取消与基本进度事件
-    pub fn spawn_git_fetch_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, repo: String, dest: String, preset: Option<String>) -> JoinHandle<()> {
+    pub fn spawn_git_fetch_task_with_opts(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, repo: String, dest: String, preset: Option<String>, depth: Option<serde_json::Value>, filter: Option<String>, strategy_override: Option<serde_json::Value>) -> JoinHandle<()> {
         let this = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
             let _ = &preset; // 目前 git2 路径未使用该预设参数
@@ -212,6 +225,16 @@ impl TaskRegistry {
                 }
                 match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
                 return;
+            }
+
+            // 解析与校验（P2.2a）
+            let parsed_options_res = crate::core::git::default_impl::opts::parse_depth_filter_opts(depth.clone(), filter.clone(), strategy_override.clone());
+            if let Err(e) = parsed_options_res {
+                if let Some(app_ref) = &app { let err_evt = TaskErrorEvent::from_parts(id, "GitFetch", super::retry::categorize(&e), format!("{}", e), None); this.emit_error(app_ref, &err_evt); }
+                match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
+                return;
+            } else if let Ok(opts) = parsed_options_res.as_ref() {
+                tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), "git_fetch options accepted (placeholder, no effect)");
             }
 
             let plan = load_retry_plan();
@@ -315,6 +338,15 @@ impl TaskRegistry {
                 }
             }
         })
+    }
+
+    // Backward compatible wrappers (P2.2a): tests and existing callers without new params
+    pub fn spawn_git_clone_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, repo: String, dest: String) -> JoinHandle<()> {
+        self.spawn_git_clone_task_with_opts(app, id, token, repo, dest, None, None, None)
+    }
+
+    pub fn spawn_git_fetch_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, repo: String, dest: String, preset: Option<String>) -> JoinHandle<()> {
+        self.spawn_git_fetch_task_with_opts(app, id, token, repo, dest, preset, None, None, None)
     }
 
     /// 启动 Git Push 任务（阻塞线程执行），支持取消与阶段事件

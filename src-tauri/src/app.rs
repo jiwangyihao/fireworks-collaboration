@@ -62,17 +62,17 @@ async fn task_start_sleep(ms:u64, reg: State<'_, TaskRegistryState>, app: tauri:
 
 // Git 命令：启动克隆任务
 #[tauri::command]
-async fn git_clone(repo: String, dest: String, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
-    let (id, token) = reg.create(TaskKind::GitClone { repo: repo.clone(), dest: dest.clone() });
-    reg.clone().spawn_git_clone_task(Some(app), id, token, repo, dest);
+async fn git_clone(repo: String, dest: String, depth: Option<serde_json::Value>, filter: Option<String>, strategy_override: Option<serde_json::Value>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitClone { repo: repo.clone(), dest: dest.clone(), depth: depth.clone().and_then(|v| v.as_u64().map(|x| x as u32)), filter: filter.clone(), strategy_override: strategy_override.clone() });
+    reg.clone().spawn_git_clone_task_with_opts(Some(app), id, token, repo, dest, depth, filter, strategy_override);
     Ok(id.to_string())
 }
 
 // Git 命令：启动 Fetch 任务
 #[tauri::command]
-async fn git_fetch(repo: String, dest: String, preset: Option<String>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
-    let (id, token) = reg.create(TaskKind::GitFetch { repo: repo.clone(), dest: dest.clone() });
-    reg.clone().spawn_git_fetch_task(Some(app), id, token, repo, dest, preset);
+async fn git_fetch(repo: String, dest: String, preset: Option<String>, depth: Option<serde_json::Value>, filter: Option<String>, strategy_override: Option<serde_json::Value>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitFetch { repo: repo.clone(), dest: dest.clone(), depth: depth.clone().and_then(|v| v.as_u64().map(|x| x as u32)), filter: filter.clone(), strategy_override: strategy_override.clone() });
+    reg.clone().spawn_git_fetch_task_with_opts(Some(app), id, token, repo, dest, preset, depth, filter, strategy_override);
     Ok(id.to_string())
 }
 

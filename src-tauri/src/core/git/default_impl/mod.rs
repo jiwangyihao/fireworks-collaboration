@@ -18,6 +18,7 @@ pub mod checkout;
 pub mod tag;
 pub mod remote;
 pub mod refname;
+pub mod opts; // P2.2a: depth/filter/strategyOverride parsing placeholder
 
 pub struct DefaultGitService;
 

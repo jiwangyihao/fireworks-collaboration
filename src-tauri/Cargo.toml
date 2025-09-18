@@ -64,6 +64,8 @@ dirs-next = "2"
 [dev-dependencies]
 # 与主运行时一致，测试中使用 current_thread 以减少潜在冲突
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
+tempfile = "3"
+futures = "0.3"
 
 # Windows specific dependencies for registry access
 [target.'cfg(windows)'.dependencies]

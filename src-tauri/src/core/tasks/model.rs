@@ -17,8 +17,8 @@ pub enum TaskState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum TaskKind {
-    GitClone { repo: String, dest: String },
-    GitFetch { repo: String, dest: String },
+    GitClone { repo: String, dest: String, depth: Option<u32>, filter: Option<String>, strategy_override: Option<serde_json::Value> },
+    GitFetch { repo: String, dest: String, depth: Option<u32>, filter: Option<String>, strategy_override: Option<serde_json::Value> },
     GitPush { dest: String, remote: Option<String>, refspecs: Option<Vec<String>>, username: Option<String>, password: Option<String> },
     GitInit { dest: String },
     GitAdd { dest: String, paths: Vec<String> },
