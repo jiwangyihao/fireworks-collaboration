@@ -16,10 +16,12 @@ pub struct ProgressPayload {
 /// Git 服务统一抽象（后续便于从 gix 迁移到 git2）
 pub trait GitService {
     /// Clone 仓库到目标目录（阻塞调用）
+    /// depth: 可选浅克隆深度（P2.2b）。None 表示全量克隆。
     fn clone_blocking<F: FnMut(ProgressPayload)>(
         &self,
         repo: &str,
         dest: &Path,
+        depth: Option<u32>,
         should_interrupt: &std::sync::atomic::AtomicBool,
         on_progress: F,
     ) -> Result<(), crate::core::git::errors::GitError>;

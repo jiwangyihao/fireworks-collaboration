@@ -42,7 +42,7 @@ async fn test_git_clone_invalid_url_early_error() {
         let flag = AtomicBool::new(false);
         let out = tokio::task::spawn_blocking(move || {
             let svc = DefaultGitService::new();
-            svc.clone_blocking("not-a-valid-url!!!", &dest, &flag, |_p| {})
+            svc.clone_blocking("not-a-valid-url!!!", &dest, None, &flag, |_p| {})
         }).await.expect("spawn_blocking join");
         assert!(out.is_err(), "invalid input should error");
         let msg = format!("{}", out.err().unwrap());
@@ -58,7 +58,7 @@ async fn test_git_clone_interrupt_flag_cancels_immediately() {
         let flag = AtomicBool::new(true);
         let out = tokio::task::spawn_blocking(move || {
             let svc = DefaultGitService::new();
-            svc.clone_blocking("https://github.com/rust-lang/log", &dest, &flag, |_p| {})
+            svc.clone_blocking("https://github.com/rust-lang/log", &dest, None, &flag, |_p| {})
         }).await.expect("join");
         assert!(out.is_err(), "interrupt should cause clone to error quickly");
     }).await;
@@ -151,7 +151,7 @@ async fn test_git_clone_relative_path_non_repo_errors_fast() {
         let repo = format!("./fwc-not-a-git-repo-{}", uuid::Uuid::new_v4());
         let out = tokio::task::spawn_blocking(move || {
             let svc = DefaultGitService::new();
-            svc.clone_blocking(&repo, &dest, &flag, |_p| {})
+            svc.clone_blocking(&repo, &dest, None, &flag, |_p| {})
         }).await.expect("spawn_blocking join");
         assert!(out.is_err(), "relative non-repo path should error quickly");
     }).await; assert!(res.is_ok(), "test exceeded timeout window");

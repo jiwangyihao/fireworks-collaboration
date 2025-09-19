@@ -40,7 +40,7 @@ async fn e2e_git_clone_public_repo_when_enabled() {
         let dest_for_thread = dest.clone();
         let out = tokio::task::spawn_blocking(move || {
             let svc = DefaultGitService::new();
-            svc.clone_blocking(&repo, &dest_for_thread, &flag, |_p| {})
+            svc.clone_blocking(&repo, &dest_for_thread, None, &flag, |_p| {})
         }).await.expect("spawn_blocking join");
         assert!(out.is_ok(), "clone should succeed for public repo: {:?}", out.err());
         assert!(dest.join(".git").exists(), "destination should be a git repo");
@@ -64,7 +64,7 @@ async fn e2e_git_fetch_public_repo_when_enabled() {
         let dest_clone = dest.clone();
         let clone_out = tokio::task::spawn_blocking(move || {
             let svc = DefaultGitService::new();
-            svc.clone_blocking(&clone_repo, &dest_clone, &flag1, |_p| {})
+            svc.clone_blocking(&clone_repo, &dest_clone, None, &flag1, |_p| {})
         }).await.expect("spawn_blocking join for clone");
         assert!(clone_out.is_ok(), "pre-clone should succeed before fetch");
 

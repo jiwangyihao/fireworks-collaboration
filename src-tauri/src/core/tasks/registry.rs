@@ -93,6 +93,7 @@ impl TaskRegistry {
 
             // 参数解析（P2.2a 占位：仅校验，不改变行为）
             let parsed_options_res = crate::core::git::default_impl::opts::parse_depth_filter_opts(depth.clone(), filter.clone(), strategy_override.clone());
+            let mut depth_applied: Option<u32> = None;
             if let Err(e) = parsed_options_res {
                 // 直接作为 Protocol/错误分类失败
                 if let Some(app_ref) = &app { let err_evt = TaskErrorEvent::from_parts(id, "GitClone", super::retry::categorize(&e), format!("{}", e), None); this.emit_error(app_ref, &err_evt); }
@@ -100,7 +101,8 @@ impl TaskRegistry {
                 return;
             } else {
                 if let Some(opts) = parsed_options_res.ok() {
-                    tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), "git_clone options accepted (placeholder, no effect)");
+                    depth_applied = opts.depth;
+                    tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), "git_clone options accepted (depth active; filter/strategy still placeholder)");
                 }
             }
 
@@ -133,6 +135,7 @@ impl TaskRegistry {
                         .clone_blocking(
                             repo.as_str(),
                             &dest_path,
+                            depth_applied,
                             &*interrupt_flag,
                             move |p| {
                                 if let Some(app_ref) = &app_for_cb {

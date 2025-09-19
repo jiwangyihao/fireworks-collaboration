@@ -20,6 +20,7 @@ fn clone_reports_initial_negotiating_progress() {
     let _ = service.clone_blocking(
         "https://invalid-host.invalid/repo.git",
         &dest,
+        None,
         &flag,
         |p| {
             if p.phase == "Negotiating" {
@@ -38,6 +39,7 @@ fn clone_cancel_flag_results_in_cancel_error() {
     let out = service.clone_blocking(
         "https://example.com/any.git",
         &dest,
+        None,
         &flag,
         |_p| {},
     );
@@ -55,6 +57,7 @@ fn clone_invalid_local_path_fails_quick() {
     let out = service.clone_blocking(
         repo.to_string_lossy().as_ref(),
         &dest,
+        None,
         &flag,
         |_p| {},
     );
@@ -92,6 +95,7 @@ fn clone_from_local_repo_succeeds_and_completes_with_valid_progress() {
     let out = service.clone_blocking(
         work.to_string_lossy().as_ref(),
         &dest,
+        None,
         &flag,
         |p| {
             last_percent = p.percent;

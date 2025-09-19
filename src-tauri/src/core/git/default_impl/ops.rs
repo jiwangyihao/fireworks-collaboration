@@ -5,7 +5,7 @@ use crate::core::git::transport::maybe_rewrite_https_to_custom;
 use super::super::{errors::{GitError, ErrorCategory}, service::ProgressPayload};
 use super::helpers;
 
-pub fn do_clone<F: FnMut(ProgressPayload)>(repo_url_final: &str, dest: &Path, should_interrupt: &std::sync::atomic::AtomicBool, on_progress: F) -> Result<(), GitError> {
+pub fn do_clone<F: FnMut(ProgressPayload)>(repo_url_final: &str, dest: &Path, depth: Option<u32>, should_interrupt: &std::sync::atomic::AtomicBool, on_progress: F) -> Result<(), GitError> {
     let cb = Arc::new(Mutex::new(on_progress));
 
     let mut callbacks = git2::RemoteCallbacks::new();
@@ -21,6 +21,7 @@ pub fn do_clone<F: FnMut(ProgressPayload)>(repo_url_final: &str, dest: &Path, sh
     });
 
     let mut fo = git2::FetchOptions::new();
+    if let Some(d) = depth { fo.depth(d as i32); }
     fo.remote_callbacks(callbacks);
     fo.download_tags(git2::AutotagOption::Unspecified);
     fo.proxy_options(git2::ProxyOptions::new());

@@ -81,7 +81,7 @@ pub fn parse_depth_filter_opts(
             let as_i64 = if dv.is_number() { dv.as_i64() } else { None };
             match as_i64 {
                 Some(v) if v > 0 => {
-                    if v > u32::MAX as i64 { return Err(GitError::new(ErrorCategory::Protocol, "depth too large")); }
+                    if v > i32::MAX as i64 { return Err(GitError::new(ErrorCategory::Protocol, "depth too large")); }
                     out.depth = Some(v as u32);
                 }
                 Some(v) if v <= 0 => {
@@ -193,10 +193,10 @@ mod tests {
     }
 
     #[test]
-    fn test_max_u32_depth_ok() {
-        let max = u32::MAX as i64;
+    fn test_max_i32_depth_ok() {
+        let max = i32::MAX as i64;
         let opts = parse_depth_filter_opts(Some(json!(max)), None, None).unwrap();
-        assert_eq!(opts.depth, Some(u32::MAX));
+        assert_eq!(opts.depth, Some(i32::MAX as u32));
     }
 
     #[test]

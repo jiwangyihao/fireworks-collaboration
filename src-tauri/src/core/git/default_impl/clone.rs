@@ -6,8 +6,9 @@ use super::super::{errors::GitError, service::ProgressPayload};
 pub fn do_clone<F: FnMut(ProgressPayload)>(
     repo_url_final: &str,
     dest: &Path,
+    depth: Option<u32>,
     should_interrupt: &AtomicBool,
     on_progress: F,
 ) -> Result<(), GitError> {
-    super::ops::do_clone(repo_url_final, dest, should_interrupt, on_progress)
+    super::ops::do_clone(repo_url_final, dest, depth, should_interrupt, on_progress)
 }

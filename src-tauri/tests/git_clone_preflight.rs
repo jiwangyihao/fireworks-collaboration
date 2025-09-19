@@ -15,7 +15,7 @@ fn clone_fails_fast_when_source_path_missing() {
     let dest = std::env::temp_dir().join(format!("fwc-preflight-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dest).unwrap();
     let flag = AtomicBool::new(false);
-    let out = svc.clone_blocking(repo, &dest, &flag, |_p| {});
+    let out = svc.clone_blocking(repo, &dest, None, &flag, |_p| {});
     assert!(out.is_err());
     assert_category(out.err().unwrap(), ErrorCategory::Internal);
 }
@@ -27,7 +27,7 @@ fn clone_fails_fast_on_unsupported_url_scheme() {
     let dest = std::env::temp_dir().join(format!("fwc-preflight-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dest).unwrap();
     let flag = AtomicBool::new(false);
-    let out = svc.clone_blocking(repo, &dest, &flag, |_p| {});
+    let out = svc.clone_blocking(repo, &dest, None, &flag, |_p| {});
     assert!(out.is_err());
     assert_category(out.err().unwrap(), ErrorCategory::Internal);
 }
@@ -39,7 +39,7 @@ fn clone_fails_fast_on_invalid_repo_string() {
     let dest = std::env::temp_dir().join(format!("fwc-preflight-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dest).unwrap();
     let flag = AtomicBool::new(false);
-    let out = svc.clone_blocking(repo, &dest, &flag, |_p| {});
+    let out = svc.clone_blocking(repo, &dest, None, &flag, |_p| {});
     assert!(out.is_err());
     assert_category(out.err().unwrap(), ErrorCategory::Internal);
 }

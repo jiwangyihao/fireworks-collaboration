@@ -22,7 +22,7 @@ fn clone_cancel_quick_returns_cancel() {
     let repo = "https://example.com/owner/repo.git"; // 仅用于通过初步形态校验，不会实际访问网络（立即取消）
     let dest = unique_temp_dir("clone-cancel");
     let flag = AtomicBool::new(true); // 立即取消
-    let out = svc.clone_blocking(repo, &dest, &flag, |_p| {});
+    let out = svc.clone_blocking(repo, &dest, None, &flag, |_p| {});
     assert!(out.is_err());
     assert_category(out.err().unwrap(), ErrorCategory::Cancel);
 }

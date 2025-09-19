@@ -29,6 +29,7 @@ impl GitService for DefaultGitService {
         &self,
         repo: &str,
         dest: &Path,
+        depth: Option<u32>,
         should_interrupt: &AtomicBool,
         mut on_progress: F,
     ) -> Result<(), GitError> {
@@ -80,8 +81,10 @@ impl GitService for DefaultGitService {
             return Err(GitError::new(ErrorCategory::Internal, format!("register custom transport: {}", e.message())));
         }
         let repo_url_final = maybe_rewrite_https_to_custom(&cfg, repo).unwrap_or_else(|| repo.to_string());
+        // 若是本地路径克隆，git2/libgit2 不支持 depth 参数；忽略之以保持兼容（后续可发回退事件）。
+        let effective_depth = if looks_like_path { None } else { depth };
         // Bridge to dedicated module (P2.0). Internals currently delegate to ops.rs.
-        clone::do_clone(repo_url_final.as_str(), dest, should_interrupt, on_progress)
+        clone::do_clone(repo_url_final.as_str(), dest, effective_depth, should_interrupt, on_progress)
     }
 
     fn fetch_blocking<F: FnMut(ProgressPayload)>(
