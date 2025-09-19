@@ -73,7 +73,7 @@ async fn e2e_git_fetch_public_repo_when_enabled() {
         let dest_fetch = dest.clone();
         let fetch_out = tokio::task::spawn_blocking(move || {
             let svc = DefaultGitService::new();
-            svc.fetch_blocking("", &dest_fetch, &flag2, |_p| {})
+            svc.fetch_blocking("", &dest_fetch, None, &flag2, |_p| {})
         }).await.expect("spawn_blocking join for fetch");
         assert!(fetch_out.is_ok(), "fetch should succeed without url");
     }).await;

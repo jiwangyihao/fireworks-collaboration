@@ -133,6 +133,7 @@ fn fetch_cancel_flag_results_in_cancel_error() {
     let out = service.fetch_blocking(
         "", // 使用默认远程
         &target,
+        None,
         &flag,
         |_p| {},
     );
@@ -174,7 +175,7 @@ fn fetch_updates_remote_tracking_refs() {
     // 4) 在目标仓库调用 DefaultGitService::fetch_blocking
     let service = DefaultGitService::new();
     let flag = AtomicBool::new(false);
-    let got = service.fetch_blocking("", &dst, &flag, |_p| {});
+    let got = service.fetch_blocking("", &dst, None, &flag, |_p| {});
     assert!(got.is_ok(), "fetch should succeed");
 
     // 5) 验证远程跟踪分支已更新到源 HEAD

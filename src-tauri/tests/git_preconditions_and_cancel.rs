@@ -33,7 +33,7 @@ fn fetch_missing_git_dir_fails_fast() {
     let dest = unique_temp_dir("fetch-missing-git");
     std::fs::create_dir_all(&dest).unwrap(); // 但不创建 .git
     let flag = AtomicBool::new(false);
-    let out = svc.fetch_blocking("", &dest, &flag, |_p| {});
+    let out = svc.fetch_blocking("", &dest, None, &flag, |_p| {});
     assert!(out.is_err());
     assert_category(out.err().unwrap(), ErrorCategory::Internal);
 }
@@ -48,7 +48,7 @@ fn fetch_cancel_quick_returns_cancel() {
 
     let svc = DefaultGitService::new();
     let flag = AtomicBool::new(true); // 立即取消
-    let out = svc.fetch_blocking("", &repo, &flag, |_p| {});
+    let out = svc.fetch_blocking("", &repo, None, &flag, |_p| {});
     assert!(out.is_err());
     assert_category(out.err().unwrap(), ErrorCategory::Cancel);
 }

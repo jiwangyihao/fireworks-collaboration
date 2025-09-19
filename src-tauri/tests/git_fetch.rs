@@ -33,7 +33,7 @@ async fn test_git_fetch_non_repo_dest_errors_fast() {
         let out = tokio::task::spawn_blocking(move || {
             // repo_url 传空串，等价于 `git fetch` 使用默认远程，但由于 dest 不是仓库，应立刻报错
             let svc = DefaultGitService::new();
-            svc.fetch_blocking("", &dest, &flag, |_p| {})
+            svc.fetch_blocking("", &dest, None, &flag, |_p| {})
         }).await.expect("spawn_blocking join");
         assert!(out.is_err(), "non-repo dest should error quickly");
     }).await;

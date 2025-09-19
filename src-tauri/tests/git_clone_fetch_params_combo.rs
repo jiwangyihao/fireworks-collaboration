@@ -30,9 +30,8 @@ async fn clone_with_depth_and_filter_and_full_strategy_override_placeholder() {
         "tls": {"insecureSkipVerify": false, "skipSanWhitelist": true},
         "retry": {"max": 2, "baseMs": 100, "factor": 1.3, "jitter": false}
     });
-    // Partial filter still placeholder; exclude filter to avoid Protocol failure now that depth is enforced
-    let (id, token) = reg.create(TaskKind::GitClone { repo: origin.clone(), dest: dest.clone(), depth: Some(2), filter: None, strategy_override: Some(strategy.clone()) });
-    let handle = reg.clone().spawn_git_clone_task_with_opts(None, id, token, origin, dest, Some(json!(2)), None, Some(strategy));
+    let (id, token) = reg.create(TaskKind::GitClone { repo: origin.clone(), dest: dest.clone(), depth: Some(2), filter: Some("tree:0".into()), strategy_override: Some(strategy.clone()) });
+    let handle = reg.clone().spawn_git_clone_task_with_opts(None, id, token, origin, dest, Some(json!(2)), Some("tree:0".into()), Some(strategy));
     handle.await.unwrap();
     // 占位阶段，不应因合法组合失败
     if let Some(s)=reg.snapshot(&id){ assert!(!matches!(s.state, TaskState::Failed), "should not fail for valid combo parameters"); }
