@@ -658,6 +658,81 @@ if filter_requested.is_some() {
   - 回滚：禁用 filter 分支；保留 shallow。
 
 - P2.2f 兼容性与矩阵收束
+
+### P2.2f 兼容性与矩阵收束 实现说明（已完成）
+
+本节记录 shallow + partial 参数组合在 P2.2f 阶段的统一抽象、事件契约收束、能力模拟与测试矩阵最终状态，作为后续“真实 partial 能力启用”以及策略覆盖阶段的稳定基线。
+
+#### 1. 目标回顾
+- 收束 `depth` / `filter` 组合与错误/回退语义：确保 clone / fetch 对称。
+- 引入结构化回退事件 `code = partial_filter_fallback`，并避免依赖脆弱的纯文本匹配。
+- 提供能力模拟开关（环境变量）以验证“支持 partial”路径，保证未来接入真实 capability 时无需大幅改动测试。
+- 移除事件中无意义的 `null` 字段（可选字段缺省即不输出）。
+
+#### 2. 代码落点
+| 位置 | 说明 |
+|------|------|
+| `core/tasks/registry.rs` | 新增 `decide_partial_fallback`，集中 clone/fetch 回退判定；读取 `FWC_PARTIAL_FILTER_CAPABLE` 环境变量。|
+| `core/tasks/model.rs` | 为 `TaskErrorEvent.code` / `retried_times` 与 `TaskProgressEvent.retried_times` 添加 `skip_serializing_if`，减少冗余 `null`。|
+| `core/git/default_impl/opts.rs` | 继续负责 `depth/filter/strategyOverride` 解析与 Protocol 级早失败。|
+
+#### 3. 事件模型（本阶段最终）
+| 场景 | 事件 | 说明 |
+|------|------|------|
+| 合法 filter 且 capability 关闭 | `task://error` (category=Protocol, code=partial_filter_fallback, message=fallback=full|shallow) | 非阻断；任务 Completed |
+| 合法 filter 且 capability 开启 | 无回退事件 | 未来真实 partial 切换点 |
+| 非法 filter | `task://error` (category=Protocol, code=nil, message=unsupported filter) + Failed | 解析阶段失败，不进入执行 |
+| 无 filter | 无回退事件 | 行为与 depth-only / 无参数保持一致 |
+
+`retriedTimes` 仅在重试相关错误或进度事件中出现；回退事件永不携带该字段。
+
+#### 4. 能力模拟
+- 环境变量：`FWC_PARTIAL_FILTER_CAPABLE=1` → 视为远端支持 partial；不发送 fallback 事件；仍然保留 depth 行为。
+- 关闭：未设置或不等于 `1` 时按“能力缺失”路径发回退事件（若有合法 filter）。
+- 迁移策略：接入真实 capability 时，仅需在 `decide_partial_fallback` 内替换 env 判断为远端探测逻辑；现有测试可分裂为“模拟”与“真实探测”两组。
+
+#### 5. 矩阵（最终收束）
+| capability | depth | filter | 结果 | 回退事件 | message 片段 | code |
+|------------|-------|--------|------|-----------|--------------|------|
+| off | None | blob:none | Completed | Yes | fallback=full | partial_filter_fallback |
+| off | 1 | tree:0 | Completed | Yes | fallback=shallow (depth retained) | partial_filter_fallback |
+| off | 2 | (invalid) `weird:rule` | Failed | No | unsupported filter | - |
+| off | 3 | - | Completed | No | - | - |
+| on  | None | blob:none | Completed | No | - | - |
+| on  | 1 | tree:0 | Completed | No | - | - |
+| on  | None | (invalid) `bad:filter` | Failed | No | unsupported filter | - |
+
+#### 6. 新增/关键测试文件
+| 文件 | 目的 |
+|------|------|
+| `git_partial_clone_filter_event_code.rs` / `_code_with_depth.rs` | 验证 fallback 事件含 code、不同 message 变体 |
+| `git_partial_fetch_filter_event_code.rs` / `_code_with_depth.rs` | fetch 对称 |
+| `git_partial_clone_filter_event_structure.rs` | 结构字段断言（无 retriedTimes） |
+| `git_partial_fetch_invalid_filter_capable.rs` | capability=1 + invalid filter 不触发回退 |
+| `git_partial_clone_filter_capable.rs` / `git_partial_fetch_filter_capable.rs` | capability=1 时无 fallback |
+
+#### 7. 回退策略
+| 目标 | 操作 | 影响 |
+|------|------|------|
+| 临时关闭 capability 模拟 | 移除 env 变量 | 恢复回退事件，可继续使用现有测试 |
+| 恢复旧实现（无抽象函数） | 内联 `decide_partial_fallback` 逻辑 | 不推荐；失去集中扩展点 |
+| 停用结构化 code | 去除 `code` 字段赋值 | 旧前端仍可依赖 message；测试需调整 |
+
+#### 8. 后续演进占位
+1. 真正 partial enable：在 capability 探测成功路径跳过 fallback，并（可选）追加 `task://progress phase=PartialEnabled`。
+2. 结构化扩展：回退事件可新增 `mode: "full"|"shallow"`，减少前端解析 message 的耦合。
+3. 指标补强：在 partial 生效后尝试新增 `objectsSaved` / `bytesSaved`（可选字段）。
+
+#### 9. 已知限制
+- 当前 capability 仅基于环境变量；未实现远端协商。
+- 未提供 fine-grained（仓库级）能力缓存；统一进程级判定。
+- 未统计对象/字节节省指标（等待真实 partial 启用后验证价值）。
+
+#### 10. 验收结论
+- 所有测试（含新增结构 / capable / invalid + capable）通过。
+- 事件模型稳定且具前向扩展点；回退路径与 capability=on 路径清晰、易于回退。
+- 文档、代码与测试矩阵一致。
+
   - 范围：整合 depth+filter 叠加；不同远端与平台的小样本矩阵；文档示例。
   - 交付：组合参数用例；边界条件（重试类别/取消/非法）覆盖；文档更新。
   - 验收：矩阵用例全绿；不支持路径均回退且提示一致。
@@ -906,6 +981,20 @@ strategyOverride?: {
 - v1: 初版（P2 细化拆解与计划）
 - v1.1: 增加微阶段拆分（P2.1a–P2.1e，P2.2a–P2.2f，P2.3a–P2.3f）与细化 WBS/DoD，支持更小粒度的开发与验收
  - v1.2: 新增 P2.0 “结构对齐与迁移”，提出平级模块化方案，并将实施细节/WBS 与之对齐
+ - v1.14: P2.2f 增补 — 引入环境变量 `FWC_PARTIAL_FILTER_CAPABLE=1` 的能力模拟开关：
+   - 作用：在本地测试场景中模拟远端支持 partial filter；开启时对合法 `filter` 不再发送 `partial_filter_fallback` 回退事件（clone/fetch 对称）。
+   - 实现：`TaskRegistry::decide_partial_fallback` 读取 env；返回 None 表示不触发回退；保持其它逻辑与事件结构不变。
+   - 新增测试：
+     - `git_partial_clone_filter_capable.rs`（capable: filter only + depth+filter 均无 fallback 事件）
+     - `git_partial_fetch_filter_capable.rs`（capable: filter only + depth+filter 均无 fallback 事件）
+   - 矩阵补充：在原“回退”维度新增“capable=1”列，对应回退事件=否；其余完成状态/percent 不变。
+   - 回退策略：移除/忽略环境变量即可恢复原有回退行为；代码层无需修改。
+   - 演进指引：未来接入真实 capability 探测（protocol v2 + filter 支持）时，可替换 env 分支为实际远端判定逻辑，保持测试通过（将 capable 测试切换为注入 mock/probe）。
+  - v1.14.1: 事件结构与边界补充
+    - 为 `TaskErrorEvent` / `TaskProgressEvent` 的可选字段添加 `skip_serializing_if = Option::is_none`，避免输出 `null`，精简事件载荷并匹配结构化测试期望。
+    - 新增结构验证测试：`git_partial_clone_filter_event_structure.rs`，断言 fallback 事件含 `code=partial_filter_fallback`、`category=Protocol`、`message` 含 fallback 片段，且不含 `retriedTimes` 字段。
+    - 新增 capability + invalid filter 边界测试：`git_partial_fetch_invalid_filter_capable.rs` 确认在 capability=1 且 filter 非法时仍走解析失败（Failed，Protocol），不发 fallback 事件。
+    - 规范：回退事件永不携带 `retriedTimes`；若后续需要为 capability 探测失败区分原因，新增 `code` 值但保持现有字段为可选。
  - v1.3: 结构方案调整为“所有 Git 功能平级模块”，包含 clone/fetch/push 拆分为独立文件与渐进迁移步骤
  - v1.4: 完成 P2.1a (`git_init`/`git_add`)：
   - 后端：实现 init 幂等、add 路径校验(含 canonicalize 越界检测)、重复路径去重、绝对路径拒绝、逐路径进度事件 (Staging <path> → Staged)；
