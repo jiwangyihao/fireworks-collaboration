@@ -1121,6 +1121,78 @@ Tauri Command (git_clone)
   - 忽略本地 depth 不抛错：后续 Partial 回退机制引入时需要新增“可选提示”事件时，需要保持“此前不提示”到“新增提示”是向前兼容的 additive 变更。
 
 5) 测试矩阵对应关系（文件 → 保障点）
+
+### P2.2e Partial Fetch (filter for fetch) 实现补充（v1.13）
+
+> 与 P2.2d Clone 占位策略对称：当前阶段未真正启用 partial fetch，仅在用户提供合法 `filter` 时发送一次非阻断回退提示事件（`task://error category=Protocol`），保持任务最终 Completed，并保留 `depth`（若提供）。
+
+#### 1. 代码改动
+- `core/tasks/registry.rs`：在 `spawn_git_fetch_task_with_opts` 中解析 `depth/filter/strategyOverride` 后，若 `filter_requested.is_some()` 发送回退事件：
+  - `partial filter unsupported; fallback=full`（无 depth）
+  - `partial filter unsupported; fallback=shallow (depth retained)`（有 depth）
+- `core/git/default_impl/mod.rs`：`fetch_blocking` 增强，检测远程（包括 remote 名称解析出的 URL）是否指向本地路径时忽略 `depth`，与 clone 的本地路径忽略策略对齐，避免对本地远程应用 depth 触发失败。
+
+#### 2. 行为与回退语义
+| 输入组合 | 行为 | 回退事件 | 说明 |
+|----------|------|----------|------|
+| depth=None, filter=blob:none | 全量 fetch | Protocol 非阻断，`fallback=full` | 与 clone 对称 |
+| depth=1, filter=tree:0 | depth（对非本地远端）保留；本地远端忽略 | Protocol 非阻断，`fallback=shallow (depth retained)` | depth 仍被视为请求，后续真正 partial 可前向兼容 |
+| 无 filter | 正常 fetch | 无 | 不发回退 |
+| 非法 filter | 解析阶段 Failed | 无 | 由 `parse_depth_filter_opts` 返回 `Protocol` |
+
+#### 3. 事件契约
+未新增 progress phase；只在存在 filter 时追加一条 `task://error`（`category=Protocol`）。与 clone 占位保持字符串一致，便于后续结构化（计划 code: `partial_filter_fallback`）。
+
+#### 4. 测试新增
+新增文件（与 clone 对称）：
+| 文件 | 场景 |
+|------|------|
+| `git_partial_fetch_filter_event_only.rs` | 仅 filter 触发 `fallback=full` |
+| `git_partial_fetch_filter_event_with_depth.rs` | depth+filter 触发 `fallback=shallow`（含本地远程 depth 忽略逻辑） |
+| `git_partial_fetch_filter_event_baseline.rs` | 无 filter 不出现 fallback 文本 |
+| `git_partial_fetch_filter_fallback.rs` | 带 filter 仍成功 Completed |
+
+所有新测试 + 既有测试 `cargo test` 全部通过（Windows 本地验证）。
+
+#### 5. 回退策略
+| 目标 | 操作 |
+|------|------|
+| 移除 fetch 回退提示 | 删除/注释 `filter_requested` 分支 |
+| 完全回滚 P2.2e | 同时移除测试与 `mod.rs` 中本地远程 depth 忽略逻辑 |
+
+#### 6. 风险与后续
+- 与 clone 一样仍使用字符串匹配；需尽快结构化（code+mode）。
+- 本地远程忽略 depth 的逻辑与 clone 一致，后续若引入“本地 shallow”需求需重新评估。
+
+#### 7. 变更摘要
+实现 fetch filter 占位回退 + 本地远程 depth 忽略；测试矩阵对称；不破坏既有 API/事件契约。
+
+#### v1.13.1 增量（结构化回退事件）
+- 为 clone / fetch 的 partial filter 回退错误事件新增 `code: "partial_filter_fallback"` 字段（原仅依赖 message 文本）。
+- 现有消息文本（`partial filter unsupported; fallback=...`）保持不变，保证向后兼容；新增测试：
+  - `git_partial_clone_filter_event_code.rs`
+  - `git_partial_fetch_filter_event_code.rs`
+- 回退事件结构示例（clone depth+filter）：
+```json
+{
+  "taskId": "...",
+  "kind": "GitClone",
+  "category": "Protocol",
+  "code": "partial_filter_fallback",
+  "message": "partial filter unsupported; fallback=shallow (depth retained)"
+}
+```
+- 回退事件结构示例（fetch 仅 filter）：
+```json
+{
+  "taskId": "...",
+  "kind": "GitFetch",
+  "category": "Protocol",
+  "code": "partial_filter_fallback",
+  "message": "partial filter unsupported; fallback=full"
+}
+```
+- 前端暂未消费 `code`，后续可基于 `code` 实现稳定提示而无需解析文案。
   | 测试文件 | 保障维度 | 关键断言 |
   |----------|----------|----------|
   | `git_shallow_clone.rs` | 远端浅克隆生效 | `.git/shallow` 存在（depth=1），全量克隆不存在 |
@@ -1128,6 +1200,58 @@ Tauri Command (git_clone)
   | `git_clone_fetch_params_combo.rs` | depth+filter+strategyOverride 组合 | 本地路径时 depth 静默忽略不 Failed |
   | `opts.rs` 单测（max_i32 等） | 上限与类型 | 大值通过 / 超界失败 / 字符串类型拒绝 / 0/负数拒绝 |
   | `git_shallow_invalid_depth.rs` | 非法 depth 解析失败路径 | TaskState=Failed + Protocol 分类（0 / 负数 / > i32::MAX） |
+
+#### v1.13.2 最终补充（测试矩阵收束 & 负向路径完善）
+
+> 目标：完成 P2.2e 的“事件结构化 + 全正/负路径”收束，确保 clone / fetch 在 `filter` 相关所有组合上的行为与事件契约完全对称，并为后续真正 Partial 能力启用提供稳定基线。新增内容全部为文档与测试，不改变运行时逻辑（零风险补丁）。
+
+1. 新增 / 扩展测试文件（fetch / clone 对称）：
+  - `git_partial_clone_filter_event_code_with_depth.rs`：clone `depth + filter` 触发 `code=partial_filter_fallback` 与 `fallback=shallow` 文案。
+  - `git_partial_fetch_filter_event_code_with_depth.rs`：fetch `depth + filter` 对称断言。
+  - `git_partial_fetch_filter_event_no_filter_no_code.rs`：无 `filter` 时确认既无回退文案也无 `code` 字段（防止误报）。
+  - `git_partial_fetch_filter_event_invalid_filter_no_code.rs`：非法 `filter` (`weird:rule`) 直接解析失败 → 任务 `Failed(Protocol)`，且不出现 `partial_filter_fallback` `code`（区分“请求合法但能力缺失”的回退与“参数非法”的拒绝）。
+
+2. 事件契约补充（最终版占位）：
+  | 组合 | clone 行为 | fetch 行为 | 回退事件 (存在/缺失) | `message` 片段 | `code` |
+  |-------|------------|------------|----------------------|---------------|-------|
+  | filter only | 全量 | 全量 | 是 | `fallback=full` | `partial_filter_fallback` |
+  | depth + filter | 浅 (远端) / 全量(本地) | 浅 (远端) / 全量(本地) | 是 | `fallback=shallow (depth retained)` | `partial_filter_fallback` |
+  | no filter, depth 任意 | 依 depth（或忽略本地） | 依 depth（或忽略本地） | 否 | - | - |
+  | invalid filter | 解析阶段失败 | 解析阶段失败 | （失败路径，无回退） | `unsupported filter:` | - |
+
+  注：本地路径 (clone 或 fetch 远程指向本地仓库) 场景中 depth 被静默忽略，其与回退逻辑正交，不触发额外事件（后续若统一提示可新增非阻断 Protocol 事件，不破坏现有测试——Additive 变更）。
+
+3. 解析阶段与回退阶段职责边界：
+  - 解析阶段（`parse_depth_filter_opts`）负责语法/数值合法性 → 非法直接 `Failed(Protocol)`，不发送回退事件；
+  - 回退阶段（任务注册内的占位分支）只针对“语法合法但当前未启用 capability”的请求；未来真正启用 Partial 时：
+    1) 插入 capability 探测；
+    2) 若支持 → 不发送回退事件（或发送一条 info/progress）；
+    3) 若不支持 → 保留现有回退事件（保持向后兼容）。
+
+4. 本地远程 depth 忽略增强（v1.13 同步已纳入 fetch）：
+  - 在 `fetch_blocking` 中对远程 URL 解析出本地路径时与 clone 使用同一判定逻辑（`helpers::is_local_path_candidate`）置 `depth=None`，防止对本地仓库浅拉取导致历史不一致；
+  - 对应 depth+filter 回退测试覆盖本地情形（不会影响回退事件出现与否，仅影响 `fallback` 文案中的模式：仍显示 shallow，因为逻辑基于“用户请求了 depth”这一语义而非实际应用结果 —— 保持与 clone 对称，减少 UI 判定复杂度）。
+
+5. 负向测试价值（保障不回退的情形）：
+  - `no_filter_no_code`：防回退事件/`code`“溢出”，确保 UI 可以“监听 `code` 判断是否需要提示”而不需再解析 message；
+  - `invalid_filter_no_code`：防止“语法错误”与“能力缺失”混淆，后者是补救/提示，前者是直接失败；
+  - 这两个测试使事件消费方能够仅凭 `code` 做精确分类，而不必担心误触发。
+
+6. 演进钩子（未来真正 Partial 启用时）：
+  - 在当前回退分支外包裹 `if !capability_supported { emit_fallback }`；测试里新增“capability stub = true”路径即可；
+  - 引入成功路径专用事件（可选）：`task://progress { phase: "PartialApplied", objectsSaved?, bytesSaved? }`，保证新增字段与事件对现有消费者是 Additive。
+
+7. 风险评估：
+  - 当前补丁仅增加测试与文档：零运行时分支新增；
+  - 回退事件结构（含 `code`）稳定后不建议再变更 message 前缀，避免已有日志解析器误判；
+  - 若未来决定去除 `Protocol` 分类而单独设“Informational”，应在变更时保持兼容旧分类 → 先双发或保留 `Protocol`。
+
+8. 最终状态声明：
+  - P2.2e 现阶段完成度：参数校验 + 回退对称 + 结构化 `code` + 正/负组合测试全覆盖；
+  - 尚未实现：真正的服务端 capability 探测与部分数据裁剪；
+  - 可进入 P2.2f 组合矩阵整合阶段，或直接平行推进 capability 原型（不需再修改现有测试，可追加新测试文件）。
+
+> 结论：P2.2e（Partial Fetch 占位 + 回退）实现已“冻结”，除非引入 capability，后续仅允许 Additive 事件/字段扩展；任何移除或语义收缩需先更新本节矩阵约束与风险分析。
 
 6) 性能与资源占用评估
   - 增量 CPU：一次整数比较与可选路径 exists() 判断，影响可忽略。
