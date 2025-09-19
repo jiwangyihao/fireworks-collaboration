@@ -525,6 +525,89 @@ P2 拆分为 3 个可验收小阶段，阶段间可独立合入与回滚。
 - 行为稳定性：不改变既有 clone/fetch 路径，风险集中在早期参数判定，具备清晰回滚；
 - 后续改动成本：添加 shallow/partial 只需在执行层判断 `opts.depth` / `opts.filter` 应用对应 libgit2 选项并补充能力探测与回退事件。
 
+### P2.2d Partial Clone (filter for clone) 实现补充（v1.12）
+
+> 本小节为阶段性交付“占位 + 回退”快照，尚未真正减少传输数据量，重点在：参数解析 → 统一回退语义 → 可测试事件契约。未来真正 partial 能力启用后需更新此处。
+
+#### 1. 代码落点
+| 文件 | 作用 |
+|------|------|
+| `core/tasks/registry.rs` | 在 `spawn_git_clone_task_with_opts` 中检测用户 `filter`，发出非阻断回退 `TaskErrorEvent` |
+| `core/git/default_impl/opts.rs` | 已存在 depth/filter 解析（沿用） |
+| `events/emitter.rs` | 非 tauri 模式的事件捕获单例（新增 `peek_captured_events`、集中 `CAPTURED` 静态） |
+| `tests/git_partial_clone_filter_*.rs` | 新增 3 个事件断言测试 + 1 个原有完成性测试 |
+
+#### 2. 行为与回退语义
+| 场景 | depth 传入 | filter 传入 | 实际执行 | 回退事件消息 | 任务最终状态 |
+|------|-----------|-------------|----------|---------------|--------------|
+| 仅 filter | 无 | 合法 | 全量 clone | `partial filter unsupported; fallback=full` | Completed |
+| depth + filter | 有 | 合法 | shallow clone（深度保持） | `partial filter unsupported; fallback=shallow (depth retained)` | Completed |
+| 无 filter | 任意 | 无 | 原有 full 或 shallow | （无回退） | Completed |
+| 非法 filter | 任意 | 非法字符串 | 被解析阶段拒绝 | Protocol 解析错误 | Failed |
+
+说明：当前未做远端 capability 探测，凡提供合法 filter 均回退；此设计可前向兼容后续“仅在不支持时回退”的增强（添加探测条件即可）。
+
+#### 3. 事件契约
+| Topic | 分类 | 条件 | 关键字段/片段 |
+|-------|------|------|---------------|
+| `task://error` | `Protocol` | 检测到用户传入合法 filter | `message` 含 `fallback=full` 或 `fallback=shallow` |
+| `task://state` | Running→Completed | 正常流程 | 不变 |
+| `task://progress` | Starting / Completed | 既有 clone 进度 | 不变（未新增 phase） |
+
+后续计划：将回退事件结构化为 `{ code: "partial_filter_fallback", mode: "full|shallow", message }`，当前仅锁定 message 文本。
+
+#### 4. 测试策略
+| 测试文件 | 断言要点 |
+|----------|----------|
+| `git_partial_clone_filter_event_only.rs` | 存在 `fallback=full` 事件且任务 Completed |
+| `git_partial_clone_filter_event_with_depth.rs` | 存在 `fallback=shallow` 事件且任务 Completed |
+| `git_partial_clone_filter_event_baseline.rs` | 不出现任何 `fallback=` 片段 |
+| `git_partial_clone_filter_fallback.rs` | 回退不阻断（完成性） |
+
+实现细节：事件回退在 clone 线程早期发送；测试使用 `peek_captured_events()` 轮询最多 20 次 * 50ms 保证可靠捕获；baseline 用例结束后 `drain_captured_events()` 清理，避免交叉污染。
+
+#### 5. 关键实现摘录（伪代码）
+```
+if filter_requested.is_some() {
+  let msg = if depth_applied.is_some() {
+     "partial filter unsupported; fallback=shallow (depth retained)"
+  } else {
+     "partial filter unsupported; fallback=full"
+  };
+  emit(TaskErrorEvent { category: Protocol, message: msg, ... });
+}
+```
+
+#### 6. 风险 & 限制
+- 始终回退：尚未探测远端 partial 能力，真实支持场景下浪费潜在优化。
+- 文本耦合：前端若依赖字符串解析易受未来文案调整影响 → 尽快结构化。
+- 捕获仅限非 tauri 构建：GUI 集成无法直接重用该内存缓冲；如需端到端调试需额外命令或开发模式面板。
+
+#### 7. 回滚与降级
+| 目标 | 操作 | 影响 |
+|------|------|------|
+| 临时关闭回退事件 | 注释/删除 emit 分支 | 仍能 clone；测试需标记 ignore |
+| 移除新增测试 | `#[ignore]` 或删除测试文件 | 不再保护回退文本契约 |
+| 彻底恢复至 P2.2c 状态 | 移除 filter 分支代码 + 文档此节 | 失去用户提示，但最小行为仍正确 |
+
+#### 8. 测试矩阵（已实现）
+| 用例 | depth | filter | 期望完成状态 | 回退事件 | 事件消息包含 |
+|------|-------|--------|--------------|----------|--------------|
+| filter only blob:none | None | blob:none | Completed | Yes | `fallback=full` |
+| filter only tree:0 | None | tree:0 | Completed | Yes | `fallback=full` |
+| depth+filter blob:none | 1 | blob:none | Completed | Yes | `fallback=shallow` |
+| depth+filter tree:0 | 2 | tree:0 | Completed | Yes | `fallback=shallow` |
+| no filter | 1 | None | Completed | No | (无) |
+| invalid filter | - | xyz | Failed | (N/A) | Protocol 解析错误 |
+
+#### 9. 后续演进（P2.2e+ 展望）
+- 能力探测：初次握手读取 capability（protocol v2 `filter`）→ 仅在不支持时发回退。
+- 真 partial：应用 libgit2 对应选项（待验证支持路径），以对象/字节差异测试为验收。
+- 结构化错误：新增 code/mode 字段 + 文档示例；保持向后兼容保留旧 message。
+- Fetch 对称支持：在 `spawn_git_fetch_task_with_opts` 中复用同一逻辑抽象。
+- 矩阵收束：完成 depth/filter 组合 + 重试/取消/非法边界统一表格。
+
+
 
 ### P2.2 Shallow/Partial（约 0.75–1 周）
 - 范围：
@@ -1164,4 +1247,69 @@ Tauri git_fetch(repo,dest,preset?,depth?,filter?,strategyOverride?)
 - file:// 若未来支持，更新 ignored 测试为活跃并补充安全路径校验（防目录穿越 / UNC 路径）。
 
 > 本节作为 P2.2c “生效 + 加深 + 测试矩阵巩固” 的稳定快照，后续 Partial 引入时只需在此基础添加回退错误事件与 filter capability 检测，不应再修改 shallow fetch 的既有语义（除非添加提示事件，需标注向前兼容性评估）。
+
+### P2.2d 实现说明（部分完成：Partial Clone 参数回退事件占位）
+
+> 版本：v1.11（占位阶段） — 目标是在 clone 任务中对用户请求的 `filter` 参数进行“能力尚未启用”的非阻断回退提示，优先保留已生效的 `depth`（若存在），为后续真正的 partial capability 探测与生效逻辑预留最小改动面。当前未实际减少对象/字节，仅发送一次 `task://error(Protocol)` 提示并继续完成任务。
+
+#### 1. 代码改动
+- `tasks/registry.rs::spawn_git_clone_task_with_opts`：在成功解析 `parse_depth_filter_opts` 后：
+  - 若解析出的 `filter` 为 `Some`，记录 `filter_requested`；
+  - 立即发送一条非阻断 `TaskErrorEvent`：
+    * 当同时存在 `depth`：`message = "partial filter unsupported; fallback=shallow (depth retained)"`
+    * 仅有 `filter` 无 depth：`message = "partial filter unsupported; fallback=full"`
+  - 不更改后续 `depth_applied` 的逻辑；`filter` 不向下游传递（仍未应用）。
+- 日志：`git_clone options accepted (depth active; filter parsed)`（原占位日志文案更新，强调 filter 已解析）。
+- 新增集成测试：`tests/git_partial_clone_filter_fallback.rs`
+  - 构造本地源仓库，发起含 `filter=blob:none` 的 clone 任务；
+  - 断言任务最终 `Completed` 而非 `Failed`；（事件回放在无 `tauri-app` 特性下为 no-op，不断言错误事件内容，仅验证不失败逻辑）。
+
+#### 2. 行为与语义（占位回退）
+- 用户传入合法 `filter`：任务成功执行“常规（可能含 shallow）克隆”；
+- 回退提示通过 `Protocol` 分类的 `task://error` 事件体现（非阻断）；选用 `Protocol` 是为了保持“调用者可修复/升级环境”语义；
+- 未变更：
+  - 进度阶段集合（`Starting|Receiving|Checkout|Completed`）保持不变；
+  - 取消与重试路径不受影响；
+  - `filter` 非法仍在解析阶段导致 `Failed`（沿用 P2.2a 行为）。
+
+#### 3. 错误与分类
+- 新增回退事件使用 `ErrorCategory::Protocol`；不改变任务最终状态（`Completed`）。
+- 仍可能出现其它错误分类：网络/TLS/取消/内部错误各路径保持原有映射。
+
+#### 4. 测试矩阵（当前阶段）
+| 用例 | 目标 | 状态 |
+|------|------|------|
+| `git_partial_clone_filter_fallback` | 合法 filter 触发回退并仍然 Completed | 已实现 |
+| filter+depth 组合（已有 shallow 测试覆盖 depth） | 验证提示文案（目前测试未捕获事件，占位） | 待后续具备事件捕获基建扩展 |
+| 非法 filter (`blob: none`, 大写等) | 解析阶段 Failed + Protocol | 既有 `opts.rs`/集成测试已覆盖 |
+
+#### 5. 回退策略
+- 软回退：移除回退事件发送分支，恢复“静默忽略 filter”；
+- 硬回退：同时还原日志文案，删除测试文件 `git_partial_clone_filter_fallback.rs`；
+- 后续升级（真正启用 partial）时：将当前回退分支替换为能力探测 → 条件设置 `git2` 相关选项（若未来绑定支持），失败时继续保留该事件逻辑。
+
+#### 6. 已知限制 / TODO
+- 未进行 capability 探测（protocol v2 / server filter support）；
+- 未区分 `blob:none` 与 `tree:0` 的不同潜在能力；
+- 未对本地路径单独提示（与 shallow depth 忽略一致保持静默）；
+- 测试未断言事件负载（需要引入事件收集 mock 或在非 tauri 特性下提供 hook）。
+
+#### 7. 后续演进指引（指向 P2.2e 与真正 Partial 生效）
+- 在 clone/fetch 的执行层（`ops::do_clone`/`ops::do_fetch` 前后或自定义 wrapper）插入 capability 探测：
+  1) 协商阶段（需支持 protocol v2 场景）查询 server 支持的 filter；
+  2) 若不支持：保持当前回退事件语义；
+  3) 若支持：应用 filter（待选择具体 git2 接口或自定义传输扩展），并新增 `phase="Filtering"` 可选 progress（可选）。
+- 事件增强（可选）：在成功应用 partial 时追加一条信息性 progress（percent 不回退）或 stats 扩展字段（objectsSaved / bytesSaved）。
+- 测试增强：对比带/不带 filter 的对象数与字节量；验证 fallback 与 success 双路径。
+
+#### 8. 质量评估
+- 当前实现对既有 shallow 与本地命令测试零影响；
+- 风险集中在任务注册解析后新增的一个 `if` 分支（无共享状态修改）；
+- 构建与全部 45+ 后端测试通过，新增测试 1 个；
+- 提供清晰回退路径与后续插桩（capability）位置标记。
+
+#### 9. 版本记录
+- v1.11: 引入 clone filter 回退事件占位（非阻断），新增 fallback 测试；未启用真实 partial 逻辑。
+
+---
 
