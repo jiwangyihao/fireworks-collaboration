@@ -18,6 +18,25 @@ pub fn emit_all<T: Serialize + Clone>(app: &AppHandle, event: &str, payload: &T)
 }
 
 #[cfg(not(feature = "tauri-app"))]
+use once_cell::sync::Lazy;
+#[cfg(not(feature = "tauri-app"))]
+use std::sync::Mutex;
+
+#[cfg(not(feature = "tauri-app"))]
+static CAPTURED: Lazy<Mutex<Vec<(String, String)>>> = Lazy::new(|| Mutex::new(Vec::new()));
+
+#[cfg(not(feature = "tauri-app"))]
 pub fn emit_all<T: Serialize + Clone>(_app: &AppHandle, _event: &str, _payload: &T) {
-    // no-op in core tests
+    let json = serde_json::to_string(_payload).unwrap_or_else(|_| "<serialize-failed>".into());
+    if let Ok(mut v) = CAPTURED.lock() { v.push((_event.to_string(), json)); }
+}
+
+#[cfg(not(feature = "tauri-app"))]
+pub fn drain_captured_events() -> Vec<(String, String)> {
+    if let Ok(mut v) = CAPTURED.lock() { let out = v.clone(); v.clear(); out } else { Vec::new() }
+}
+
+#[cfg(not(feature = "tauri-app"))]
+pub fn peek_captured_events() -> Vec<(String, String)> {
+    if let Ok(v) = CAPTURED.lock() { v.clone() } else { Vec::new() }
 }
