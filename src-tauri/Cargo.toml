@@ -60,12 +60,14 @@ url = "2"
 git2 = { version = "0.19" }
 rand = { version = "0.8" }
 dirs-next = "2"
+once_cell = "1"
 
 [dev-dependencies]
 # 与主运行时一致，测试中使用 current_thread 以减少潜在冲突
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
 tempfile = "3"
 futures = "0.3"
+once_cell = "1"
 
 # Windows specific dependencies for registry access
 [target.'cfg(windows)'.dependencies]

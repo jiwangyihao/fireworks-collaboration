@@ -1023,6 +1023,7 @@ dependencies = [
  "futures",
  "git2",
  "hyper 0.14.32",
+ "once_cell",
  "rand 0.8.5",
  "rustls 0.21.12",
  "serde",
