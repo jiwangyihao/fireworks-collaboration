@@ -91,9 +91,10 @@ impl TaskRegistry {
                 return;
             }
 
-            // 参数解析（P2.2a 占位：仅校验，不改变行为）
+            // 参数解析：depth 已在 P2.2b 生效；filter 在 P2.2d 引入占位（当前不真正启用 partial，进行回退提示）
             let parsed_options_res = crate::core::git::default_impl::opts::parse_depth_filter_opts(depth.clone(), filter.clone(), strategy_override.clone());
             let mut depth_applied: Option<u32> = None;
+            let mut filter_requested: Option<String> = None; // 记录用户请求的 filter（用于回退信息）
             if let Err(e) = parsed_options_res {
                 // 直接作为 Protocol/错误分类失败
                 if let Some(app_ref) = &app { let err_evt = TaskErrorEvent::from_parts(id, "GitClone", super::retry::categorize(&e), format!("{}", e), None); this.emit_error(app_ref, &err_evt); }
@@ -102,7 +103,20 @@ impl TaskRegistry {
             } else {
                 if let Some(opts) = parsed_options_res.ok() {
                     depth_applied = opts.depth;
-                    tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), "git_clone options accepted (depth active; filter/strategy still placeholder)");
+                    if let Some(f) = opts.filter.as_ref() { filter_requested = Some(f.as_str().to_string()); }
+                    tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), "git_clone options accepted (depth active; filter parsed)");
+                    // P2.2d: 当前阶段尚未真正启用 partial clone，若用户请求了 filter，需要发送一次非阻断回退提示。
+                    if filter_requested.is_some() {
+                        if let Some(app_ref) = &app {
+                            let msg = if depth_applied.is_some() {
+                                "partial filter unsupported; fallback=shallow (depth retained)"
+                            } else {
+                                "partial filter unsupported; fallback=full"
+                            };
+                            let warn_evt = TaskErrorEvent::from_parts(id, "GitClone", crate::core::git::errors::ErrorCategory::Protocol, msg, None);
+                            this.emit_error(app_ref, &warn_evt);
+                        }
+                    }
                 }
             }
 
@@ -707,6 +721,8 @@ impl TaskRegistry {
         })
     }
 }
+
+// (test helper for fallback recording was removed in cleanup — fallback currently validated by completion test only)
 
 pub type SharedTaskRegistry = Arc<TaskRegistry>;
 
