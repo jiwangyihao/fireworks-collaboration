@@ -127,7 +127,7 @@ pub struct TaskProgressEvent {
     pub bytes: Option<u64>,
     pub total_hint: Option<u64>,
     /// MP1.4: 可选的重试计数（仅在重试事件中出现）
-    pub retried_times: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub retried_times: Option<u32>,
 }
 
 /// MP1.5: 标准化错误事件负载
@@ -139,10 +139,10 @@ pub struct TaskErrorEvent {
     /// 统一字符串分类：Network|Tls|Verify|Protocol|Proxy|Auth|Cancel|Internal
     pub category: String,
     /// 可选的错误代码（预留，当前为空）
-    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub code: Option<String>,
     pub message: String,
     /// 已重试次数（若有重试逻辑）
-    pub retried_times: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub retried_times: Option<u32>,
 }
 
 impl TaskErrorEvent {

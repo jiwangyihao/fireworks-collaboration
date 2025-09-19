@@ -67,6 +67,20 @@ impl TaskRegistry {
     }
 
     /// 启动 Git Clone 任务（阻塞线程执行），支持取消与基本进度事件
+    /// Decide whether to emit a partial filter fallback event.
+    /// Placeholder capability model: always unsupported for now. Once real capability
+    /// detection is available we plug it in here. Returns the optional (message, shallow_mode)
+    /// where shallow_mode=true means depth retained (depth+filter) and false means full.
+    fn decide_partial_fallback(depth_applied: Option<u32>, filter_requested: Option<&str>) -> Option<(String, bool)> {
+        if filter_requested.is_none() { return None; }
+        // Capability simulation: if env FWC_PARTIAL_FILTER_CAPABLE=1 treat as supported (no fallback event)
+        let capable = std::env::var("FWC_PARTIAL_FILTER_CAPABLE").map(|v| v=="1").unwrap_or(false);
+        if capable { return None; }
+        let shallow = depth_applied.is_some();
+        let msg = if shallow { "partial filter unsupported; fallback=shallow (depth retained)".to_string() } else { "partial filter unsupported; fallback=full".to_string() };
+        Some((msg, shallow))
+    }
+
     pub fn spawn_git_clone_task_with_opts(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, repo: String, dest: String, depth: Option<serde_json::Value>, filter: Option<String>, strategy_override: Option<serde_json::Value>) -> JoinHandle<()> {
         let this = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
@@ -106,22 +120,9 @@ impl TaskRegistry {
                     if let Some(f) = opts.filter.as_ref() { filter_requested = Some(f.as_str().to_string()); }
                     tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), "git_clone options accepted (depth active; filter parsed)");
                     // P2.2d: 当前阶段尚未真正启用 partial clone，若用户请求了 filter，需要发送一次非阻断回退提示。
-                    if filter_requested.is_some() {
+                    if let Some((msg, _shallow)) = Self::decide_partial_fallback(depth_applied, filter_requested.as_deref()) {
                         if let Some(app_ref) = &app {
-                            let msg = if depth_applied.is_some() {
-                                "partial filter unsupported; fallback=shallow (depth retained)"
-                            } else {
-                                "partial filter unsupported; fallback=full"
-                            };
-                            // Structured code field (P2.2d v1.13.1): allow frontend/automation to rely on code instead of brittle message.
-                            let warn_evt = TaskErrorEvent {
-                                task_id: id,
-                                kind: "GitClone".into(),
-                                category: "Protocol".into(),
-                                code: Some("partial_filter_fallback".into()),
-                                message: msg.into(),
-                                retried_times: None,
-                            };
+                            let warn_evt = TaskErrorEvent { task_id: id, kind: "GitClone".into(), category: "Protocol".into(), code: Some("partial_filter_fallback".into()), message: msg, retried_times: None };
                             this.emit_error(app_ref, &warn_evt);
                         }
                     }
@@ -264,18 +265,9 @@ impl TaskRegistry {
                 depth_applied = opts.depth; // P2.2c: depth now effective
                 if let Some(f) = opts.filter.as_ref() { filter_requested = Some(f.as_str().to_string()); }
                 tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), "git_fetch options accepted (depth active; filter parsed)");
-                if filter_requested.is_some() {
-                    // P2.2e Partial Fetch 占位：partial 尚未启用，保持与 clone 对称的回退提示（结构化 code 字段）
+                if let Some((msg, _shallow)) = Self::decide_partial_fallback(depth_applied, filter_requested.as_deref()) {
                     if let Some(app_ref) = &app {
-                        let msg = if depth_applied.is_some() { "partial filter unsupported; fallback=shallow (depth retained)" } else { "partial filter unsupported; fallback=full" };
-                        let warn_evt = TaskErrorEvent {
-                            task_id: id,
-                            kind: "GitFetch".into(),
-                            category: "Protocol".into(),
-                            code: Some("partial_filter_fallback".into()),
-                            message: msg.into(),
-                            retried_times: None,
-                        };
+                        let warn_evt = TaskErrorEvent { task_id: id, kind: "GitFetch".into(), category: "Protocol".into(), code: Some("partial_filter_fallback".into()), message: msg, retried_times: None };
                         this.emit_error(app_ref, &warn_evt);
                     }
                 }
