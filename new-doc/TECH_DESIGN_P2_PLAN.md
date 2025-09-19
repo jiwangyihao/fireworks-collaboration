@@ -857,7 +857,7 @@ strategyOverride?: {
       * invalid names 列表覆盖；
       * 无提交创建/force 均拒绝；
       * checkout 取消路径；
-      * force move 后验证分支引用已指向最新提交；
+      * force 移动引用后验证分支引用已指向最新提交；
     - 回归：后端测试总数增加且全部通过；保持前端用例不变仍全绿；
     - 回退影响：删除校验函数或恢复旧逻辑即可，不影响其它命令；测试可标记忽略对应新增用例。
  
@@ -866,10 +866,7 @@ strategyOverride?: {
         * 以 `/` 开头；
         * 含有双斜杠 `//`；
         * 结尾为 `.lock`（防止与引用锁文件冲突）；
-        * 包含下列任一非法字符：`:` `?` `*` `[` `~` `^` `\\`；
-        * 包含序列 `@{`（与引用语法冲突）；
-        * 任意控制字符 (c < 0x20)；
-        * 维持既有拒绝：空/空白、空格、结尾 `/` 或 `.`、前导 `-`、包含 `..`、反斜杠、前述字符的超集。
+        * 包含下列任一非法字符：`:` `?` `*` `[`~` `^` `\\`、包含子串 `@{`。
         所有违反 → `Protocol` 分类，消息聚焦可修复性（不暴露内部实现细节）。
       - 语义保持：无提交（HEAD 不可解析）时禁止创建或 force 更新分支，继续走 `Protocol`，确保引用不指向无效对象。
       - 取消窗口：保持 v1.7 已加的 HEAD 更新与 checkout 之前的二次取消检查，无新增窗口。
@@ -916,4 +913,136 @@ strategyOverride?: {
       * 同时传递 depth+filter+完整 strategyOverride 不失败；
       * 非对象 strategyOverride 类型当前被视为占位忽略（状态非 Failed），测试锁定现状并留注释；
     - 目的：锁定解析稳定性与未来行为调整安全窗，一旦后续 P2.2b/c 引入实际 shallow/partial 行为，可直接替换/补充期望断言；
-    - 风险缓解：排除大小写/空白/数字越界/结构类型错误导致未定义行为的可能。 
+    - 风险缓解：排除大小写/空白/数字越界/结构类型错误导致未定义行为的可能性。
+
+### P2.2b 实现说明（已完成）
+
+本节补充 Shallow Clone（`depth` for clone）生效的实现快照：
+
+1. 代码改动
+   - 扩展 `GitService::clone_blocking` 签名新增 `depth: Option<u32>`；调用侧统一传 `None` 维持向后兼容。
+   - 在任务注册 (`spawn_git_clone_task_with_opts`) 成功解析后将 `depth_applied` 下传服务层；
+   - `ops.rs` 中通过 `fo.depth(d as i32)` 设置浅克隆；checkout 进度保持原样；
+   - 本地路径（绝对/相对/含反斜杠判定）不支持浅克隆，静默忽略 depth（后续 partial 回退统一化前不额外发事件）。
+   - depth 上限改为 `i32::MAX`；超出返回 `Protocol(depth too large)`；对应测试从 `test_max_u32_depth_ok` 调整为 `test_max_i32_depth_ok`。
+   - `filter` / `strategyOverride` 仍占位，仅记录日志：`depth active; filter/strategy still placeholder`。
+
+2. 事件与兼容性
+   - 事件模型未变；阶段仍为 `Starting|Receiving|Checkout|Completed`；
+   - 忽略本地路径 depth 不追加 `task://error`（后续可统一为非阻断提示）。
+
+3. 测试
+   - 后端 `cargo test` 全绿（45+ 用例）。
+   - 新增 `tests/git_shallow_clone.rs`：
+     * `shallow_clone_depth_one_creates_shallow_file` 验证公网 depth=1 存在 `.git/shallow`（CI 或 `FWC_E2E_DISABLE` 下跳过）。
+     * `full_clone_no_depth_has_no_shallow_file` 验证全量克隆通常无 shallow 文件（存在仅告警）。
+   - 新增测试：`tests/git_shallow_local_ignore.rs` 构造三次提交的本地仓库，使用 `depth=1` 克隆：
+     * 断言未生成 `.git/shallow`；
+     * 提交计数 >=3，证明未被裁剪。
+   - 目的：锁定“本地路径静默回退”语义，避免后续浅克隆实现误对本地仓库生效导致历史截断。
+   - 组合参数测试本地路径（`git_clone_fetch_params_combo.rs`）仍通过，depth 被正确忽略。
+
+4. 回退策略
+   - 软回退：在 `mod.rs` 将传入 depth 直接置为 `None`。
+   - 硬回退：还原 trait 签名并删除 `fo.depth()` 调用；更新所有调用与测试。
+
+5. 已知限制 / TODO
+   - 未实现 fetch depth（计划 P2.2c）。
+   - 未发送“忽略 depth”回退提示事件。
+   - 未统计对象/字节节省指标（P2.2f 评估是否新增）。
+   - 与未来 `--single-branch` 等组合尚未覆盖。
+
+6. 安全与性能
+   - 减少对象协商，不引入敏感信息；
+   - 手动验证公开小仓库对象与字节下降（未转化为事件字段）。
+
+7. 变更摘要
+   - Trait 扩展 + 执行层 depth 应用；
+   - 上限校验改为 `i32::MAX`；
+   - 本地路径静默回退；
+   - 新增浅克隆测试；
+   - 文档与 changelog 待补充版本号（合并时编写）。
+  - 新增非法 depth 集成测试 `git_shallow_invalid_depth.rs`：
+    * depth=0 → 解析失败（Failed/Protocol）
+    * depth<0 → 解析失败（Failed/Protocol）
+    * depth > i32::MAX → 解析失败（Failed/Protocol, message 包含 "depth too large"）
+    目的：锁定输入校验与分类为 Protocol，防止后续 fetch depth 接入时出现不一致的错误分类。
+
+#### P2.2b 详细实现补充（扩展说明）
+
+本补充段面向后续维护者，提供比“变更摘要”更细粒度的技术视图，以支撑 P2.2c（Shallow Fetch）与 P2.2d/e（Partial Clone/Fetch）迭代时的可预测演进与回退。
+
+1) 调用链 / 数据流（Clone 启动 → 浅克隆生效）
+```
+Tauri Command (git_clone) 
+  → TaskRegistry.spawn_git_clone_task_with_opts(... depth_json, filter, strategy_override)
+   → parse_depth_filter_opts(depth_json, filter, strategy_override)  // P2.2a 占位解析（含上限 i32::MAX 检查）
+    → 返回 GitDepthFilterOpts { depth_applied, filter: None, strategy_override }
+   → 创建任务 & 进入执行闭包：DefaultGitService.clone_blocking(repo, dest, depth_applied)
+    → default_impl/mod.rs::clone_blocking
+      * 检测 repo 是否为本地路径（Path::new(repo).exists() || 具有本地盘符/相对形式）
+      * 本地则 effective_depth = None（静默忽略）；否则传递 Some(depth)
+      → clone::do_clone(url, dest, effective_depth, ...)
+       → ops::do_clone(repo_url_final, dest, depth_opt, progress_bridge, cancel_token)
+         * 构建 FetchOptions fo; 若 depth_opt=Some(d) → fo.depth(d as i32)
+         * RepoBuilder (不再尝试使用 depth，避免误导) + remote callbacks + fo 进行下载
+         * 进度回调映射 → task://progress (Starting | Receiving | Checkout | Completed)
+```
+
+2) 本地路径判定逻辑（忽略 shallow 的条件）
+  - 规则：若输入 repo 字符串能被解释为**本地现有目录** 或 **合法的相对/绝对文件系统路径** 则视为本地；不进行 URL scheme 解析。
+  - 忽略策略：直接将 depth 置 None；不发回退事件（未来 Partial 能力统一化后可追加非阻断提示）。
+  - 原因：Git 本地“克隆”本质是拷贝 + 硬链接/对象复用，不受服务器侧 `upload-pack` 协商；强行设置 depth 会带来与预期不一致的截断风险（libgit2 对本地路径 depth 不生效 / 语义模糊）。
+
+3) 验证与错误路径
+  - 非法 depth 在“解析阶段”即失败（TaskState=Failed，ErrorCategory=Protocol）——不会进入任何网络/IO 操作。
+  - 合法 depth 但本地路径：被忽略；后续行为等价“全量克隆”，因此测试通过提交数量与 `.git/shallow` 文件缺失来断言忽略生效。
+  - 合法 depth + 远端：设置 fo.depth；若远端正常响应则创建 `.git/shallow` 文件。
+  - P2.2b 不新增新的错误分类；任何浅克隆的网络失败仍沿用既有 Network/Tls/Verify/Proxy/Auth/Internal 分类逻辑。
+
+4) 关键内部契约（需保持以避免后续回归）
+  - Trait `GitService::clone_blocking` 的参数顺序与新增 `depth` 置于尾部，保持后续扩展（例如 future: single_branch）时的二次变化最小化。
+  - 进度阶段集合保持不变：UI / 测试仅依赖固定枚举文字；浅克隆不会引入新的阶段并且不改变阶段顺序（避免前端 diff 逻辑破裂）。
+  - 忽略本地 depth 不抛错：后续 Partial 回退机制引入时需要新增“可选提示”事件时，需要保持“此前不提示”到“新增提示”是向前兼容的 additive 变更。
+
+5) 测试矩阵对应关系（文件 → 保障点）
+  | 测试文件 | 保障维度 | 关键断言 |
+  |----------|----------|----------|
+  | `git_shallow_clone.rs` | 远端浅克隆生效 | `.git/shallow` 存在（depth=1），全量克隆不存在 |
+  | `git_shallow_local_ignore.rs` | 本地路径忽略 | 无 `.git/shallow` 且 commit ≥3 |
+  | `git_clone_fetch_params_combo.rs` | depth+filter+strategyOverride 组合 | 本地路径时 depth 静默忽略不 Failed |
+  | `opts.rs` 单测（max_i32 等） | 上限与类型 | 大值通过 / 超界失败 / 字符串类型拒绝 / 0/负数拒绝 |
+  | `git_shallow_invalid_depth.rs` | 非法 depth 解析失败路径 | TaskState=Failed + Protocol 分类（0 / 负数 / > i32::MAX） |
+
+6) 性能与资源占用评估
+  - 增量 CPU：一次整数比较与可选路径 exists() 判断，影响可忽略。
+  - 内存：未引入额外缓存结构；集成测试表面浅克隆对象数下降但未在事件中统计，该指标延后到 P2.2f 决策。
+  - 未来若需 emit 省略统计（objects_saved / bytes_saved）可在 progress 的 `Completed` 阶段追加扩展字段或独立 `task://progress`（需保持前端容忍性）。
+
+7) 回退&前向扩展钩子
+  - 回退点 A（软）：`mod.rs` 强制传 `None` 给 clone::do_clone → 立即失效 shallow。
+  - 回退点 B（硬）：移除 trait 新参数 + 调整所有调用者 + 删除 fo.depth 分支。
+  - 扩展钩子：在 `ops::do_clone` 内部保留 `fo` 构造点，可在 P2.2d 添加 `fo.download_tags(...)` 或其它 partial 相关设置；或插入 capability 探测逻辑（protocol v2 negotiation）。
+
+8) 风险与缓解（专属于 P2.2b 的子集）
+  | 风险 | 场景 | 缓解 |
+  |------|------|------|
+  | 本地误当远端 | 用户传入看似 URL 但本地目录名含冒号 | 目前使用文件系统存在性优先判定 → 即便误判只会走全量克隆（安全） |
+  | 远端不支持 depth | 罕见老旧服务 | libgit2 会回退全量；后续可检测 absence of .git/shallow 并提示 |
+  | 超大 depth 近似全量 | 用户输入接近 i32::MAX | 允许；行为与全量无差异；不特殊处理 |
+
+9) 对 P2.2c（Shallow Fetch）的直接可复用点
+  - `parse_depth_filter_opts` 输出结构无需调整；fetch 路径仅需在 `ops::do_fetch`（或对应新模块）对 `fo.depth()` 进行同样应用；
+  - 本地路径 fetch depth 是否忽略：建议与 clone 保持一致（在本地仓库上执行浅 fetch 没有语义价值且易混淆）。
+  - 需新增：已有浅克隆仓库追加 fetch depth=1 时的“增量限制”测试（不可拉取超出深度的旧提交）。
+
+10) 未来演进占位（Partial / Capability）
+  - 入口点：在设置 `fo.depth()` 前后插入能力探测（LS advertised capabilities）→ 若 filter 请求失败可先降级 depth-only；
+  - 事件变更策略：新增非阻断 `task://error`（Protocol + message="partial unsupported; fallback=shallow"）保持 additive。
+
+11) 维护建议
+  - 保持 `.git/shallow` 文件存在性检查逻辑仅用于测试，不在生产逻辑依赖（避免平台差异导致行为分叉）；
+  - 避免在后续补丁直接复用 RepoBuilder.depth（libgit2 版本差异会产生迷惑）；统一通过 FetchOptions 入口。
+
+> 若未来需要把“本地忽略 depth”行为改为发出提示事件，请在变更前回看本节第 4 点契约，确保 UI 兼容性（新增错误事件不会导致现有逻辑误判为失败）。
+

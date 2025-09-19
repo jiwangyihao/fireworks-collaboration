@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.2.0-P2.2b (2025-09-19)
+
+P2.2b: Shallow Clone (`depth` for `git_clone`) 实现：
+- 新增：`git_clone` 支持可选 `depth`（浅克隆），通过参数解析后在执行层设置 `FetchOptions.depth`；
+- 本地路径克隆不支持浅克隆，自动忽略 depth（静默回退，无事件扰动）；
+- 解析上限由 `u32::MAX` 调整为 `i32::MAX` 以匹配 git2 接口，超出返回 `Protocol(depth too large)`；
+- Trait 变更：`GitService::clone_blocking` 新增 `depth: Option<u32>`；所有调用点已更新传 `None`；
+- 过滤器 / 策略（`filter` / `strategyOverride`）仍为占位解析，不改变行为；
+- 新增测试：`tests/git_shallow_clone.rs`（公网深度=1 验证 `.git/shallow` 存在；全量克隆无 shallow 文件）；
+- 新增测试：`tests/git_shallow_local_ignore.rs` 验证本地路径克隆即使传入 depth=1 仍获得完整历史且无 `.git/shallow`（静默回退保障）；
+- 新增测试：`tests/git_shallow_invalid_depth.rs` 验证 depth=0、负值、超出 i32::MAX 均被解析阶段拒绝（任务 Failed，错误分类 Protocol）；
+- 组合参数测试保持通过（本地路径上 depth 被忽略不失败）；
+- 前端无需改动（TaskKind 已包含可选字段，事件未变）。
+
+回退：在 `DefaultGitService` 强制忽略 depth 即可软回退；移除 trait 参数与 `fo.depth()` 调用可硬回退。
+
+已知限制：尚未实现 fetch depth / partial filter / 节省指标；不支持为本地路径发回退事件（后续 partial 路径统一）。
+
 ## v0.1.1-MP0.4 (2025-09-14)
 
 完成 MP0.4：从 gitoxide/gix 完整迁移到 git2-rs，并清理旧实现
