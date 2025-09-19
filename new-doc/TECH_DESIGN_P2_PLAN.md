@@ -968,6 +968,38 @@ strategyOverride?: {
     * depth > i32::MAX → 解析失败（Failed/Protocol, message 包含 "depth too large"）
     目的：锁定输入校验与分类为 Protocol，防止后续 fetch depth 接入时出现不一致的错误分类。
 
+  - v1.10: 完成 P2.2c（Shallow Fetch depth for fetch 生效）：
+    - 服务层：`GitService::fetch_blocking` 扩展 `depth: Option<u32>` 参数（与 clone 对齐），保持向后兼容（旧调用经适配添加 `None`）。
+    - 实现：在 `default_impl::ops::do_fetch` 中对传入的 `depth` 调用 `fo.depth(d as i32)`；当 `repo_url` 指向本地路径（或空串使用已配置远程且本地路径不适用）进行静默忽略策略保持一致性（本地 fetch depth 无意义），记录日志。
+    - 任务注册：`spawn_git_fetch_task_with_opts` 解析占位结果后将 `opts.depth` 赋值给 `depth_applied` 并传递给 service（之前仅记录日志）。
+    - 日志变化：`git_fetch options accepted (depth active; filter/strategy placeholder)` 用于区分 P2.2a 占位阶段。
+    - 测试：
+      * 新增 `git_shallow_fetch.rs`（公网 E2E，可跳过）：针对已克隆仓库执行 depth=1 fetch；若 `.git/shallow` 生成则断言非空，否则给出 warn（容忍不同远端行为）；
+      * 新增 `git_shallow_fetch_local_ignore.rs`：对本地路径 fetch depth=1 静默忽略，不生成 `.git/shallow`；
+      * 更新所有使用 `fetch_blocking` 的测试引入 `None` depth 参数；
+      * 确保取消/前置条件/重试路径未受影响（`git_fetch` 任务测试全部通过 45+ 后端用例新增 2 文件后仍全绿）。
+    - 兼容性：旧前端与 Tauri 命令调用无需修改；TaskKind 早已包含 `depth` 字段，无新增序列化变动；事件阶段集合保持 `Starting|Fetching|Receiving|Completed` 不变。
+    - 回退策略：将 service 实现中传入的 `depth` 强制置为 `None` 或还原 trait 签名；测试可保留（本地忽略语义仍满足）。
+    - 已知限制：未对“从全量仓库转为浅仓库”做强制裁剪（libgit2 行为与远端支持决定 shallow 文件是否出现），未追加回退提示事件；`filter` 仍占位准备 P2.2d。
+  - v1.10.1: P2.2c 增强（深度加深 + fetch 参数校验补充 + 辅助函数抽取）:
+    - 抽象：新增 `helpers::is_local_path_candidate`，统一 clone/fetch 本地路径判定逻辑（减少重复 & 回退集中）。
+    - 测试：
+      * `git_shallow_fetch_deepen.rs`：本地源 5 提交，浅克隆 depth=1 后依次 fetch depth=2/4，验证提交数量单调不减（加深语义）。
+      * `git_shallow_fetch_invalid_depth.rs`：覆盖 fetch 任务 `depth=0 / 负数 / > i32::MAX` 失败路径，与 clone 非法 depth 行为保持一致（Protocol + Failed）。
+    - 一致性：clone 与 fetch 对本地路径的 depth 忽略策略通过公共助手保证；减少未来 Partial/Filter 接入时分叉风险。
+    - 未改动：仍未对“已全量仓库再 shallow fetch”添加提示事件；保留后续 Partial 阶段统一处理回退/提示的窗口。
+    - 回退：删除/还原 helper 并直接内联旧逻辑即可；测试可选忽略 deepen/invalid fetch 相关文件。
+  - v1.10.2: P2.2c 进一步测试充实：
+    - 新增测试：
+      * `git_shallow_fetch_deepen.rs`（已存在，加深语义继续稳定）
+      * `git_shallow_fetch_invalid_depth.rs`（fetch 非法 depth）
+      * `git_shallow_file_url_deepen.rs`（file:// 方案骨架，当前标记 `#[ignore]` 因实现不支持 file://，为未来扩展保留）
+    - 补充保障：
+      * smaller depth fetch 不会回退历史（在 file URL 测试与本地 deepen 测试中覆盖）；
+      * full fetch (depth=None) 之后提交数非递减；
+    - 决策：明确当前阶段不支持 `file://` scheme（clone 阶段校验直接拒绝），因此测试以 ignored 形式存在，不影响主线稳定；
+    - 质量：全部活跃测试通过，新增 ignored 测试提供未来支持入口。
+
 #### P2.2b 详细实现补充（扩展说明）
 
 本补充段面向后续维护者，提供比“变更摘要”更细粒度的技术视图，以支撑 P2.2c（Shallow Fetch）与 P2.2d/e（Partial Clone/Fetch）迭代时的可预测演进与回退。
@@ -1045,4 +1077,91 @@ Tauri Command (git_clone)
   - 避免在后续补丁直接复用 RepoBuilder.depth（libgit2 版本差异会产生迷惑）；统一通过 FetchOptions 入口。
 
 > 若未来需要把“本地忽略 depth”行为改为发出提示事件，请在变更前回看本节第 4 点契约，确保 UI 兼容性（新增错误事件不会导致现有逻辑误判为失败）。
+
+### P2.2c 实现说明（已完成）
+
+本节归档 Shallow Fetch（`depth` for fetch）正式生效及其两轮增强（v1.10 / v1.10.1 / v1.10.2）的设计与实现快照，衔接 P2.2b（Shallow Clone）。
+
+#### 1. 代码改动概览
+- Trait 扩展：`GitService::fetch_blocking(&self, repo: &str, dest: &str, preset: Option<...>, depth: Option<u32>)`（新增 `depth`，向后兼容旧调用—统一由调用点补 `None`）。
+- 任务注册：`spawn_git_fetch_task_with_opts` 在解析（沿用 `parse_depth_filter_opts`）后提取 `opts.depth` → `depth_applied` 并传入 service。
+- 执行层：`default_impl::ops::do_fetch` 在构建 `FetchOptions fo` 时：`if let Some(d) = depth { fo.depth(d as i32); }`。
+- 本地路径判定：复用抽取后的 `helpers::is_local_path_candidate`（v1.10.1 引入）——若判定为本地仓库或本地路径目标，`depth` 静默忽略并记录日志（与 clone 对齐）。
+- 日志：区分占位阶段 → 生效阶段：`git_fetch options accepted (depth active; filter/strategy placeholder)`。
+
+#### 2. 数据流（Fetch 启动 → 浅拉取）
+```
+Tauri git_fetch(repo,dest,preset?,depth?,filter?,strategyOverride?)
+  → TaskRegistry.spawn_git_fetch_task_with_opts(...)
+    → parse_depth_filter_opts(...)  // 验证 depth/filter/strategyOverride
+    → depth_applied = opts.depth
+    → DefaultGitService.fetch_blocking(repo, dest, preset, depth_applied)
+      → default_impl/mod.rs::fetch_blocking
+        * if is_local_path_candidate(repo) ⇒ effective_depth=None
+        * else effective_depth=depth_applied
+        → fetch::do_fetch(..., effective_depth, ...)
+          → ops::do_fetch(..., Some(d)) ⇒ fo.depth(d as i32)
+          → 进度回调 → task://progress (Starting | Fetching | Receiving | Completed)
+```
+
+#### 3. 语义与行为
+- 深度生效条件：远端（非本地路径）且解析阶段通过；否则保持全量 fetch。
+- 本地路径忽略：无 `.git/shallow` 生成；提交数量不被裁剪（测试通过多次 fetch 与 commit 数断言）。
+- 加深（deepen）：后续 fetch 传入更大 depth（例如初始 1 → 2 → 4）允许提交可见范围单调扩大，未强制重新生成 `.git/shallow` 时也以提交数增加为准。
+- 更小 depth：传入低于当前已拥有可见高度的 depth 不会“收缩历史”——保持提交集不减（测试覆盖）。
+
+#### 4. 非法输入与错误分类
+- 与 clone 一致：
+  * depth=0 / 负数 / > i32::MAX → 解析阶段 `Protocol` 错误（Task Failed），不进入 fetch。
+  * 其它参数（filter / strategyOverride）仍处于占位解析阶段，不影响 shallow fetch。
+- 分类保持：`Protocol`（输入问题）/ `Cancel` / `Internal|Network|Tls|Auth|Verify`（底层已有逻辑）。
+
+#### 5. 测试矩阵（新增/更新）
+| 文件 | 目标 | 关键断言 |
+|------|------|---------|
+| `git_shallow_fetch.rs` | 远端浅拉取基础 | depth=1 任务成功；若远端支持则出现 `.git/shallow`（不强制，缺失记录 warn） |
+| `git_shallow_fetch_local_ignore.rs` | 本地路径忽略 | 无 `.git/shallow`；提交数不被裁剪 |
+| `git_shallow_fetch_deepen.rs` | 多次 deepen | depth 递增后提交数单调不减（1→2→4），更小 depth 不回退 |
+| `git_shallow_fetch_invalid_depth.rs` | 参数非法路径 | 0/负/超上限 => Failed + Protocol（消息包含原因） |
+| `git_shallow_file_url_deepen.rs` (`#[ignore]`) | file:// 占位 | 当前不支持 file://；忽略以保留未来实现入口 |
+| 受影响旧测试 | 统一新增 fetch `depth=None` 参数 | 不破坏既有行为与断言 |
+
+#### 6. 抽象与复用
+- `helpers::is_local_path_candidate` 统一 clone/fetch 本地判断，降低后续 Partial 回退分叉。
+- `parse_depth_filter_opts` 复用：无额外重复解析逻辑。
+- deepen 语义测试为后续 Partial（filter）叠加时验证“深度可扩张 + 过滤不破坏已拥有提交”提供基线。
+
+#### 7. 回退策略
+- 软回退：在 `fetch_blocking` 内丢弃传入 depth（置 None），测试仍可通过（忽略语义成立）。
+- 硬回退：还原 trait 签名 + 删除 `fo.depth(...)`；移除/忽略 shallow fetch 专属测试（deepen / invalid depth）。
+- 按阶段回退：可仅移除 deepen 测试保持单次浅拉取（若远端兼容性问题）。
+
+#### 8. 已知限制 / TODO
+- 不会向“已全量仓库”强制裁剪（无历史截断逻辑）。
+- 尚未发出“忽略 depth（本地路径）”的非阻断提示事件（计划与 Partial 回退一起统一补齐）。
+- 未统计对象/字节节省指标；P2.2f 评估是否加入。
+- 未处理“从全量转 shallow”显式 downgrade；依赖远端协商（libgit2 行为）。
+- file:// scheme 暂不支持（测试 ignored）。
+
+#### 9. 性能与影响评估
+- 额外分支：一次本地路径判定 + Option 检查，CPU 开销可忽略。
+- 网络优化：在支持的远端对象协商减少，实际节省未注入事件（避免协议差异噪音）。
+- 线程/任务模型未改动；重试逻辑（Retry v1）不修改 depth 参数（幂等）。
+
+#### 10. 未来衔接（P2.2d/e Partial）
+- Capability 探测插入点：`ops::do_fetch` 在设置 `fo.depth` 后，可添加 partial capability 判断（若 filter 请求失败 → fallback+非阻断错误事件）。
+- 回退事件模型：将在 partial 阶段引入 `task://error(Protocol, message="partial unsupported; fallback=shallow|full")`，本节保持兼容窗口。
+- 深度与过滤组合：测试需新增“先 shallow 再 partial”与“partial 后 deepen”交叉矩阵（当前 deepen 测试即其子集基线）。
+
+#### 11. 变更与版本标记
+- v1.10：基础 shallow fetch 生效（trait 扩展 + fo.depth 应用 + 测试 `git_shallow_fetch.rs` / 本地忽略）。
+- v1.10.1：抽取 `is_local_path_candidate` + deepen 测试 + fetch 非法 depth 测试补齐（与 clone 校验对齐）。
+- v1.10.2：进一步测试充实（更小 depth 不收缩 / full fetch 语义 / ignored file:// 骨架）。
+
+#### 12. 维护建议
+- 保持忽略本地 depth 的静默语义直至 Partial 回退事件统一引入，避免事件模型提前破坏前端“错误==失败”假设。
+- deepen 测试若因远端差异（罕见）不稳定，可本地先行锁定固定测试源仓，后续引入可配置测试仓库镜像。
+- file:// 若未来支持，更新 ignored 测试为活跃并补充安全路径校验（防目录穿越 / UNC 路径）。
+
+> 本节作为 P2.2c “生效 + 加深 + 测试矩阵巩固” 的稳定快照，后续 Partial 引入时只需在此基础添加回退错误事件与 filter capability 检测，不应再修改 shallow fetch 的既有语义（除非添加提示事件，需标注向前兼容性评估）。
 
