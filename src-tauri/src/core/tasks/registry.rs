@@ -113,7 +113,15 @@ impl TaskRegistry {
                             } else {
                                 "partial filter unsupported; fallback=full"
                             };
-                            let warn_evt = TaskErrorEvent::from_parts(id, "GitClone", crate::core::git::errors::ErrorCategory::Protocol, msg, None);
+                            // Structured code field (P2.2d v1.13.1): allow frontend/automation to rely on code instead of brittle message.
+                            let warn_evt = TaskErrorEvent {
+                                task_id: id,
+                                kind: "GitClone".into(),
+                                category: "Protocol".into(),
+                                code: Some("partial_filter_fallback".into()),
+                                message: msg.into(),
+                                retried_times: None,
+                            };
                             this.emit_error(app_ref, &warn_evt);
                         }
                     }
@@ -244,16 +252,33 @@ impl TaskRegistry {
                 return;
             }
 
-            // 解析与校验（P2.2a）
+            // 解析与校验（P2.2a+c）；P2.2e：若用户请求 filter（partial fetch 尚未真正启用）发送非阻断回退事件
             let parsed_options_res = crate::core::git::default_impl::opts::parse_depth_filter_opts(depth.clone(), filter.clone(), strategy_override.clone());
             let mut depth_applied: Option<u32> = None;
+            let mut filter_requested: Option<String> = None;
             if let Err(e) = parsed_options_res {
                 if let Some(app_ref) = &app { let err_evt = TaskErrorEvent::from_parts(id, "GitFetch", super::retry::categorize(&e), format!("{}", e), None); this.emit_error(app_ref, &err_evt); }
                 match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
                 return;
             } else if let Ok(opts) = parsed_options_res.as_ref() {
                 depth_applied = opts.depth; // P2.2c: depth now effective
-                tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), "git_fetch options accepted (depth active; filter/strategy placeholder)");
+                if let Some(f) = opts.filter.as_ref() { filter_requested = Some(f.as_str().to_string()); }
+                tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), "git_fetch options accepted (depth active; filter parsed)");
+                if filter_requested.is_some() {
+                    // P2.2e Partial Fetch 占位：partial 尚未启用，保持与 clone 对称的回退提示（结构化 code 字段）
+                    if let Some(app_ref) = &app {
+                        let msg = if depth_applied.is_some() { "partial filter unsupported; fallback=shallow (depth retained)" } else { "partial filter unsupported; fallback=full" };
+                        let warn_evt = TaskErrorEvent {
+                            task_id: id,
+                            kind: "GitFetch".into(),
+                            category: "Protocol".into(),
+                            code: Some("partial_filter_fallback".into()),
+                            message: msg.into(),
+                            retried_times: None,
+                        };
+                        this.emit_error(app_ref, &warn_evt);
+                    }
+                }
             }
 
             let plan = load_retry_plan();

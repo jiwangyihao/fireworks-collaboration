@@ -108,8 +108,21 @@ impl GitService for DefaultGitService {
         // Bridge to dedicated module (P2.0). Internals currently delegate to ops.rs.
         // 若 repo_url 为空表示使用已配置远程；depth 在本地 fetch 上仍可生效（libgit2 支持针对远端协商）。
         // 本地路径（通过 repo_url 指向本地目录且非空）不应应用 depth（与 clone 行为一致），避免误解含义。
-        let looks_like_local = if repo_url_trimmed.is_empty() { false } else { helpers::is_local_path_candidate(repo_url_trimmed) };
-        let effective_depth = if looks_like_local { None } else { depth };
+        let looks_like_local_input = if repo_url_trimmed.is_empty() { false } else { helpers::is_local_path_candidate(repo_url_trimmed) };
+        // 如果输入不是显式本地路径，也可能通过 remote 名称指向本地路径（例如 origin -> C:/path）。尝试解析远程 URL。
+        let mut looks_like_local_remote = false;
+        if depth.is_some() { // 仅在需要时执行开销
+            if let Ok(repo) = git2::Repository::open(dest) {
+                // 优先使用 repo_url_trimmed 作为远程名；为空则尝试 origin
+                let candidate_name = if repo_url_trimmed.is_empty() { "origin" } else { repo_url_trimmed };
+                if let Ok(r) = repo.find_remote(candidate_name) {
+                    if let Some(u) = r.url() {
+                        if helpers::is_local_path_candidate(u) { looks_like_local_remote = true; }
+                    }
+                }
+            }
+        }
+        let effective_depth = if looks_like_local_input || looks_like_local_remote { None } else { depth };
         fetch::do_fetch(repo_url, dest, effective_depth, &cfg, should_interrupt, on_progress)
     }
 
