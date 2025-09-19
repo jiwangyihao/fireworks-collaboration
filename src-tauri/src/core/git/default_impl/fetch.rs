@@ -7,9 +7,10 @@ use super::super::service::ProgressPayload;
 pub fn do_fetch<F: FnMut(ProgressPayload)>(
     repo_url: &str,
     dest: &Path,
+    depth: Option<u32>,
     cfg: &crate::core::config::model::AppConfig,
     should_interrupt: &AtomicBool,
     on_progress: F,
 ) -> Result<(), GitError> {
-    super::ops::do_fetch(repo_url, dest, cfg, should_interrupt, on_progress)
+    super::ops::do_fetch(repo_url, dest, depth, cfg, should_interrupt, on_progress)
 }

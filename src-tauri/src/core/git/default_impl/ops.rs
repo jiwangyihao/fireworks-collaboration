@@ -45,7 +45,7 @@ pub fn do_clone<F: FnMut(ProgressPayload)>(repo_url_final: &str, dest: &Path, de
     }
 }
 
-pub fn do_fetch<F: FnMut(ProgressPayload)>(repo_url:&str, dest:&Path, cfg:&crate::core::config::model::AppConfig, should_interrupt:&std::sync::atomic::AtomicBool, on_progress:F) -> Result<(), GitError> {
+pub fn do_fetch<F: FnMut(ProgressPayload)>(repo_url:&str, dest:&Path, depth: Option<u32>, cfg:&crate::core::config::model::AppConfig, should_interrupt:&std::sync::atomic::AtomicBool, on_progress:F) -> Result<(), GitError> {
     let repo = match git2::Repository::open(dest) { Ok(r)=>r, Err(e)=> return Err(GitError::new(helpers::map_git2_error(&e), format!("open repo: {}", e))) };
     let cb = Arc::new(Mutex::new(on_progress));
 
@@ -62,6 +62,7 @@ pub fn do_fetch<F: FnMut(ProgressPayload)>(repo_url:&str, dest:&Path, cfg:&crate
     });
 
     let mut fo = git2::FetchOptions::new();
+    if let Some(d) = depth { fo.depth(d as i32); }
     fo.remote_callbacks(callbacks);
     fo.download_tags(git2::AutotagOption::Unspecified);
     fo.update_fetchhead(true);

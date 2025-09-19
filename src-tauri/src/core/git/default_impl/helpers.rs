@@ -47,3 +47,17 @@ pub fn total_hint(total:u64) -> Option<u64> { if total>0 { Some(total) } else { 
 pub fn push_phase_event<F: FnMut(ProgressPayload)>(cb: &Arc<Mutex<F>>, phase: &str, percent: u32) {
     if let Ok(mut f) = cb.lock() { (*f)(ProgressPayload { task_id: uuid::Uuid::nil(), kind: "GitPush".into(), phase: phase.into(), percent, objects: None, bytes: None, total_hint: None }); }
 }
+
+/// 统一判定输入字符串是否“看起来像本地路径”（而不是远端 URL）。
+/// 规则：
+/// - 绝对路径
+/// - 以 ./ 或 ../ 开头
+/// - 包含反斜杠（Windows 常见）
+/// - 不包含 :// 但存在文件系统实体（存在的目录或文件）
+pub fn is_local_path_candidate(s: &str) -> bool {
+    if s.is_empty() { return false; }
+    let p = std::path::Path::new(s);
+    if p.is_absolute() || s.starts_with("./") || s.starts_with("../") || s.contains('\\') { return true; }
+    if !s.contains("://") && p.exists() { return true; }
+    false
+}

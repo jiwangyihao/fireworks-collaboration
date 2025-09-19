@@ -232,12 +232,14 @@ impl TaskRegistry {
 
             // 解析与校验（P2.2a）
             let parsed_options_res = crate::core::git::default_impl::opts::parse_depth_filter_opts(depth.clone(), filter.clone(), strategy_override.clone());
+            let mut depth_applied: Option<u32> = None;
             if let Err(e) = parsed_options_res {
                 if let Some(app_ref) = &app { let err_evt = TaskErrorEvent::from_parts(id, "GitFetch", super::retry::categorize(&e), format!("{}", e), None); this.emit_error(app_ref, &err_evt); }
                 match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
                 return;
             } else if let Ok(opts) = parsed_options_res.as_ref() {
-                tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), "git_fetch options accepted (placeholder, no effect)");
+                depth_applied = opts.depth; // P2.2c: depth now effective
+                tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), "git_fetch options accepted (depth active; filter/strategy placeholder)");
             }
 
             let plan = load_retry_plan();
@@ -274,6 +276,7 @@ impl TaskRegistry {
                         .fetch_blocking(
                             repo.as_str(),
                             &dest_path,
+                            depth_applied,
                             &*interrupt_flag,
                             move |p| {
                                 if let Some(app_ref) = &app_for_cb {

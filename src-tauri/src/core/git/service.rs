@@ -27,10 +27,13 @@ pub trait GitService {
     ) -> Result<(), crate::core::git::errors::GitError>;
 
     /// Fetch 已有仓库（可选传入远程名或 URL），阻塞调用
+    /// Fetch 已有仓库（可选传入远程名或 URL），阻塞调用
+    /// depth: 可选浅拉取深度（P2.2c）。None 表示全量 fetch。
     fn fetch_blocking<F: FnMut(ProgressPayload)>(
         &self,
         repo_url: &str,
         dest: &Path,
+        depth: Option<u32>,
         should_interrupt: &std::sync::atomic::AtomicBool,
         on_progress: F,
     ) -> Result<(), crate::core::git::errors::GitError>;

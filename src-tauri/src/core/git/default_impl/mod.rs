@@ -38,13 +38,7 @@ impl GitService for DefaultGitService {
         // 若 repo 看起来是本地路径，则进行快速存在性校验，避免阻塞在底层 clone 过程
         // 判定规则：绝对路径，或以 ./ ../ 开头，或包含反斜杠（Windows 常见），统一按路径处理
         let repo_trim = repo.trim();
-        let looks_like_path = {
-            let p = std::path::Path::new(repo_trim);
-            p.is_absolute()
-                || repo_trim.starts_with("./")
-                || repo_trim.starts_with("../")
-                || repo_trim.contains('\\')
-        };
+        let looks_like_path = helpers::is_local_path_candidate(repo_trim);
         if looks_like_path {
             let p = std::path::Path::new(repo_trim);
             if !p.exists() {
@@ -91,6 +85,7 @@ impl GitService for DefaultGitService {
         &self,
         repo_url: &str,
         dest: &Path,
+        depth: Option<u32>,
         should_interrupt: &AtomicBool,
         mut on_progress: F,
     ) -> Result<(), GitError> {
@@ -111,7 +106,11 @@ impl GitService for DefaultGitService {
             return Err(GitError::new(ErrorCategory::Internal, format!("register custom transport: {}", e.message())));
         }
         // Bridge to dedicated module (P2.0). Internals currently delegate to ops.rs.
-        fetch::do_fetch(repo_url, dest, &cfg, should_interrupt, on_progress)
+        // 若 repo_url 为空表示使用已配置远程；depth 在本地 fetch 上仍可生效（libgit2 支持针对远端协商）。
+        // 本地路径（通过 repo_url 指向本地目录且非空）不应应用 depth（与 clone 行为一致），避免误解含义。
+        let looks_like_local = if repo_url_trimmed.is_empty() { false } else { helpers::is_local_path_candidate(repo_url_trimmed) };
+        let effective_depth = if looks_like_local { None } else { depth };
+        fetch::do_fetch(repo_url, dest, effective_depth, &cfg, should_interrupt, on_progress)
     }
 
     fn push_blocking<F: FnMut(ProgressPayload)>(
