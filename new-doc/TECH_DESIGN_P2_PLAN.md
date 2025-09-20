@@ -558,6 +558,21 @@ Added: per-task Retry strategy override application (max/baseMs/factor/jitter) w
 
 ---
 ### P2.3 任务级策略覆盖路线图（约 0.5–0.75 周）
+> 补充：本节后追加的 P2.3d TLS 实现摘要（快速阅读版），详尽内容见本文后续 "P2.3d 任务级 TLS 策略覆盖实现说明" 章节。
+
+#### P2.3d TLS 实现摘要（快速版）
+| 维度 | 内容 |
+|------|------|
+| 目标 | 为 clone/fetch/push 提供 per-task `strategyOverride.tls`（仅 `insecureSkipVerify` / `skipSanWhitelist` 布尔覆盖），不触及全局 `san_whitelist`，改变值时发一次提示事件。 |
+| 关键函数 | `TaskRegistry::apply_tls_override(kind,id,global,tls_override)` 返回 `(insecure, skipSan, changed)`；不修改 `global`。 |
+| 集成点 | 三个任务 spawn 解析 override 后按顺序应用：HTTP → TLS → Retry（顺序只影响日志展示，无逻辑耦合）。 |
+| 事件 | `task://error`，`category=Protocol`，`code=tls_strategy_override_applied`，`message="tls override applied: insecureSkipVerify=<bool> skipSanWhitelist=<bool>"`，单任务最多一次。 |
+| 安全护栏 | 不允许任务级覆盖 `san_whitelist`；仅两布尔开关；全局对象不可变；空对象 / 未知字段忽略并 warn。 |
+| 测试矩阵摘要 | clone insecure=true；clone unchanged；fetch skipSan=true；push 双开关；push 仅 insecure；并行组合 (http+tls+retry / tls-only / unchanged)；mixed (insecure + tls 空 + tls 未知 + skipSan)；单元：所有合并分支 & 全局未变。 |
+| 回退 | 删除事件发射分支 → 仅日志；移除函数调用 → 停用 TLS 覆盖；删除函数与测试 → 完全回退。 |
+| 幂等/并发 | `changed` 判定一次；多任务并发互不影响；值未变不发事件。 |
+| Changelog | Added: per-task TLS strategy override (insecureSkipVerify/skipSanWhitelist) with informative event `tls_strategy_override_applied`. |
+
 - 范围：
   - 命令入参新增 `strategyOverride`（安全子集）：
     - `http?: { followRedirects?: boolean; maxRedirects?: number }`
@@ -576,6 +591,7 @@ Added: per-task Retry strategy override application (max/baseMs/factor/jitter) w
   - 临时禁用覆盖解析，回到全局配置。
 
 #### P2.3 微阶段（可独立验收）
+（编号校正说明：原文档初稿中 Retry 与 TLS 子阶段编号存在对调；现统一采用 a=模型解析, b=HTTP, c=Retry, d=TLS, e=护栏, f=文档。此前“P2.3c 应用于 TLS” 描述已在后续实现中落地为 P2.3d，本节已同步更正。）
 
 - P2.3a 模型与解析
   - 范围：扩展配置模型与命令入参结构；兼容 snake_case/camelCase；忽略未知字段并告警。
@@ -589,17 +605,17 @@ Added: per-task Retry strategy override application (max/baseMs/factor/jitter) w
   - 验收：行为只影响本任务；事件与错误不变。
   - 回滚：移除 HTTP 覆盖应用，保留解析。
 
-- P2.3c 应用于 TLS（insecureSkipVerify/skipSanWhitelist）
-  - 范围：任务内浅合并 TLS 两个布尔开关；记录护栏日志。
-  - 交付：开/关策略的用例；与自适应 TLS 路径兼容。
-  - 验收：仅当前任务受影响；日志脱敏。
-  - 回滚：移除 TLS 覆盖应用。
-
-- P2.3d 应用于 Retry（max/baseMs/factor/jitter）
+- P2.3c 应用于 Retry（max/baseMs/factor/jitter）
   - 范围：任务内覆盖 Retry v1 计划；Push 的“上传前可重试”约束保持。
   - 交付：可重试类别下的重试次数/退避生效；不可重试类别不变。
   - 验收：事件中可选 retriedTimes 正确；不改变参数组合与阶段语义。
   - 回滚：移除 Retry 覆盖应用。
+
+- P2.3d 应用于 TLS（insecureSkipVerify/skipSanWhitelist）
+  - 范围：任务内浅合并 TLS 两个布尔开关；记录护栏日志（当前阶段仅日志+事件，不改变真实验证逻辑）。
+  - 交付：开/关策略用例；并发任务隔离；事件仅在 changed 时一次。
+  - 验收：多任务并行事件幂等；不修改全局 san_whitelist；日志脱敏。
+  - 回滚：移除 TLS 覆盖应用或事件分支。
 
 - P2.3e 护栏与互斥
   - 范围：代理模式（未来 P5）下强制 Real SNI 的护栏与一次性 `Proxy` 提示事件；越权字段告警。
@@ -612,3 +628,85 @@ Added: per-task Retry strategy override application (max/baseMs/factor/jitter) w
   - 交付：README/技术文档更新；用例脚本。
   - 验收：跟随示例可复现差异化策略执行；CI 文档检查通过。
   - 回滚：保留代码实现，回退文档。
+
+### P2.3d 任务级 TLS 策略覆盖实现说明（已完成）
+
+本阶段在已落地的 HTTP (`http_strategy_override_applied`) 与 Retry (`retry_strategy_override_applied`) 覆盖基础上，引入 `strategyOverride.tls`（`insecureSkipVerify` / `skipSanWhitelist`） 的任务级浅合并与一次性提示事件：`tls_strategy_override_applied`。
+
+#### 1. 目标与范围
+- 仅允许两个布尔开关的按任务覆盖；不允许覆盖 `san_whitelist` 列表（保持全局安全基线）。
+- 覆盖后仅影响该任务生命周期内的“有效 TLS 行为标志”（当前阶段尚未真正接入底层 TLS 逻辑，作为占位与观测），并发任务互不干扰。
+- 当且仅当至少一个值与全局配置不同，发送一次非致命提示事件（`category=Protocol`，`code=tls_strategy_override_applied`）。
+- 未变化不发事件；解析错误仍走现有 Protocol 失败路径，不发送 override 事件。
+
+#### 2. 合并规则
+| 步骤 | 描述 |
+|------|------|
+| 基线 | 复制 `AppConfig::default().tls`（后续阶段可替换为运行时加载配置） |
+| 覆盖 insecureSkipVerify | 提供且不同则替换，`changed=true` |
+| 覆盖 skipSanWhitelist | 提供且不同则替换，`changed=true` |
+| 不可覆盖 | `san_whitelist` 永远保持全局（安全基线） |
+| 事件 | `changed=true` 时发送一次 `tls_strategy_override_applied` |
+
+#### 3. 代码落点
+- 函数：`TaskRegistry::apply_tls_override(kind, id, global_cfg, tls_override)` → `(insecure_skip_verify, skip_san_whitelist, changed)`；放置于 `registry.rs` 与 HTTP/Retry 同级。
+- 集成：在 `spawn_git_clone_task_with_opts` / `spawn_git_fetch_task_with_opts` / `spawn_git_push_task` 中解析 `strategy_override` 后调用，位置紧随 HTTP 覆盖之前或之后（当前实现：HTTP→TLS→Retry，一次性顺序，不影响逻辑）。
+- 日志：`tracing target="strategy" ... "tls override applied"`，包含 taskKind 与 taskId。
+- 任务 options 接受日志：扩展 clone/fetch(push) 的 `tracing::info!(strategy_tls_insecure=?, strategy_tls_skip_san=?)` 字段。
+
+#### 4. 事件结构
+```json
+{
+  "taskId": "<uuid>",
+  "kind": "GitClone|GitFetch|GitPush",
+  "category": "Protocol",
+  "code": "tls_strategy_override_applied",
+  "message": "tls override applied: insecureSkipVerify=<bool> skipSanWhitelist=<bool>",
+  "retriedTimes": null
+}
+```
+
+#### 5. 测试矩阵
+测试文件：`git_tls_override_event.rs`
+| 用例 | 说明 |
+|------|------|
+| clone insecureSkipVerify=true | 触发事件一次 |
+| clone unchanged (false/false) | 不触发事件 |
+| fetch skipSanWhitelist=true | 触发事件一次 |
+| push insecure=true+skipSan=true | 触发事件一次 |
+| push insecure=true (only) | 触发事件一次（新增 `git_tls_push_insecure_only.rs`） |
+| 并行 clone (http+tls+retry / tls-only / unchanged) | 各任务事件计数分别 1 / 1 / 0（`git_strategy_override_tls_combo.rs`） |
+| mixed clone(insecure) + fetch(tls空对象) + fetch(tls含未知字段) + push(skipSan) | 仅 clone / push 触发，空对象与未知字段不触发（`git_strategy_override_tls_mixed.rs`） |
+| apply_tls_override 单元：无覆盖/单字段/双字段/不变/全变/全局未变 | 覆盖全部合并分支与不变幂等（`tls_override_tests_new`） |
+
+（未添加“无效值”测试：布尔解析错误会在上层 serde 层直接失败并归类为 Protocol，与 HTTP/Retry 行为一致。）
+
+#### 6. 幂等与并发
+- 每任务仅在解析阶段调用一次 `apply_tls_override`；`changed` 判定为 true 时发事件一次；后续重试循环不会再次发射（与 HTTP/Retry 逻辑一致）。
+- 不修改全局配置对象；不同任务可独立覆盖不同组合值互不影响。
+
+#### 7. 回退策略
+| 操作 | 效果 |
+|------|------|
+| 删除事件发射分支 | 保留合并与日志，不再对前端显示提示 |
+| 移除 `apply_tls_override` 调用 | 回到“仅解析不应用”状态（保持模型兼容） |
+| 移除函数与测试文件 | 完全回退 TLS 覆盖实现（保留 HTTP/Retry） |
+
+#### 8. 安全与限制
+- 不允许任务级改变 SAN 白名单列表，避免规避域名验证策略；未来若需调试能力，可在受控构建引入显式危险开关。
+- 未实际改变底层证书验证逻辑（后续引入自定义传输/TLS 层时再接入）。
+- 若将来代理模式护栏（P2.3e/P5）要求强制 Real SNI，可在此基础添加：`insecureSkipVerify=true` 时附加二次提示。
+
+#### 9. Changelog 建议追加
+```
+Added: per-task TLS strategy override application (insecureSkipVerify/skipSanWhitelist) with informative event `tls_strategy_override_applied`.
+```
+
+#### 10. 现状结论
+- 函数与事件已落地；测试矩阵全部通过；与既有 HTTP/Retry 覆盖事件并存，无字段冲突；前端无需新增订阅。
+
+#### 11. 测试增强补充（本次追加）
+- 新增单元测试模块：`tls_override_tests_new`（覆盖无覆盖/单字段变化/双字段变化/值不变）。
+- 新增并发/组合集成测试：`git_strategy_override_tls_combo.rs`（并行 3 个 clone 任务分别 http+tls+retry 全变 / tls-only / 全部不变，验证事件幂等与互不串扰）。
+- 原 `git_tls_override_event.rs` 继续保留基础串行路径；组合测试验证并行下事件次数精确为 1。
+- 所有新增测试总计 +6（单元 5 + 集成 1）均通过；全套测试总数提升，未引入 flakiness（在 Windows 环境 <1s 对应单元模块执行）。
