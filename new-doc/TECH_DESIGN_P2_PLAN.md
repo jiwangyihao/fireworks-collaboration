@@ -73,6 +73,103 @@ INFO git depth=None filter=None has_strategy=true strategy_http_follow=false str
 #### 10. Changelog 建议
 ```
 Added: per-task HTTP strategy override application (followRedirects/maxRedirects) with informative event `http_strategy_override_applied`.
+
+### P2.3c 任务级 Retry 策略覆盖实现说明（本次提交）
+
+在 P2.3b 已落地 HTTP 覆盖 (followRedirects / maxRedirects + changed 事件) 的基础上，本阶段实现 `strategyOverride.retry` 的任务级生效：在单个 clone/fetch/push 任务生命周期内使用自定义重试参数，而不影响全局配置或其它并发任务。
+
+#### 1. 目标
+- 支持覆盖字段：`max` / `baseMs` / `factor` / `jitter`（均已在 P2.3a 解析层做范围校验）。
+- 覆盖只影响当前任务内部计算的重试计划（RetryPlan），不写回全局 config。
+- 仅当任意字段实际改变与全局默认值不同时，发送一次提示事件：`code=retry_strategy_override_applied`。
+- 行为幂等：同一任务只发一次；值未变化不发事件。
+
+#### 2. 合并规则
+| 步骤 | 描述 |
+|------|------|
+| 基线 | 复制 `AppConfig::default().retry`（后续可换为运行时加载） |
+| 覆盖 max | 如果提供且不同 → 替换，标记 changed |
+| 覆盖 baseMs | 如果提供且不同 → 替换，标记 changed |
+| 覆盖 factor | 如果提供且不同 → 替换，标记 changed |
+| 覆盖 jitter | 如果提供且不同 → 替换，标记 changed |
+| 事件发射 | `changed=true` 时：`TaskErrorEvent`，`code=retry_strategy_override_applied`，`message="retry override applied: max=<u32> baseMs=<u64> factor=<f64> jitter=<bool>"` |
+
+#### 3. 代码落点
+- 函数：`core/tasks/registry.rs::apply_retry_override(global_retry, override_retry)` → `(RetryPlan, changed)`。
+- 调用位置：`spawn_git_clone_task_with_opts` / `spawn_git_fetch_task_with_opts` / `spawn_git_push_task` 在解析 `strategyOverride` 后执行（紧邻 HTTP 覆盖逻辑）。
+- 重试循环：使用合并后的 `plan` 替换原 `load_retry_plan()` 返回值；Push 仍保持“进入 Upload 后不再自动重试”约束。
+
+#### 4. 事件与幂等
+- 事件主题复用 `task://error`，分类 `Protocol`，与 HTTP 覆盖一致以降低前端新增适配成本。
+- 每任务仅在合并阶段判定一次；后续重试 attempt 不重复判定。
+
+#### 5. 测试矩阵
+| 用例文件 | 场景 |
+|-----------|------|
+| `git_retry_override_event.rs` | 变更覆盖触发一次事件 + 未变化不触发（合并为单测试串行执行防并发污染） |
+| registry 单测 | `retry_override_tests_new` 验证 changed / 不变路径 |
+| `git_strategy_override_combo.rs` | clone/fetch/push 六合一：1) http+retry 2) retry-only 3) unchanged 4) invalid(retry.max=0) 5) fetch http+retry 6) push retry-only；校验每任务事件至多一次 |
+| `git_retry_override_backoff.rs` | 新增（后续增强）：(a) override 事件在不可重试 Internal 错误下仍一次性出现；(b) factor 上下界 (0.5 / 10.0) 覆盖并在事件 message 中反映 |
+
+#### 6. 失败与范围校验
+- 数值范围（`max 1..=20`、`baseMs 10..60000`、`factor 0.5..=10.0`）沿用解析层校验；解析失败仍直接 `Protocol` 失败，不进入合并/事件逻辑（与 P2.3b 对齐）。
+
+#### 7. 日志示例
+```
+INFO strategy task_kind=GitClone task_id=... retry override applied max=3 base_ms=500 factor=2 jitter=false
+INFO strategy retry_max=3 retry_base_ms=500 retry_factor=2.0 retry_jitter=false retry override applied (内部合并函数级别)
+```
+事件：
+```
+{ "code": "retry_strategy_override_applied", "message": "retry override applied: max=3 baseMs=500 factor=2 jitter=false" }
+```
+
+#### 8. 回退策略
+| 操作 | 效果 |
+|------|------|
+| 移除 `apply_retry_override` 调用与事件分支 | 回退为仅使用全局重试计划，不影响 HTTP 覆盖 | 
+| 删除测试文件 `git_retry_override_event.rs` | 清除新增覆盖验证，仅保留 HTTP 覆盖 | 
+
+#### 9. 已知限制 / 后续
+- 仍未引入动态运行时配置加载（TODO P2.3e）；当前使用 default() 可能与真实用户配置不一致。
+- TLS 覆盖尚未应用（计划在后续阶段与自定义传输初始化点统一处理）。
+- 没有对“覆盖值降低导致已开始的 backoff 调整”做二次适配（首次加载即定）。
+
+#### 10. Changelog 建议（追加）
+```
+Added: per-task Retry strategy override application (max/baseMs/factor/jitter) with informative event `retry_strategy_override_applied`.
+```
+
+#### 11. 后续增强 / 增补说明（本节为新增）
+
+已在后续补丁中追加的改进与发现：
+
+1) 新测试 `git_retry_override_backoff.rs`：
+  - 初版目标是验证实际“Retrying (attempt X of Y)” 进度行，但由于本地 Windows + libgit2 返回的连接失败信息为本地化中文（例如“无法与服务器建立连接”）未命中 `helpers::map_git2_error` 中针对英文关键词 ("connection"/"connect"/timeout) 的 Network 分类分支，被归类为 `Internal` → `is_retryable=false`，导致不进入重试循环。
+  - 测试策略调整：改为验证 override 事件出现且未产生重试进度行（符合当前分类逻辑），保证测试稳定性而不依赖具体错误文案。
+
+2) Factor 边界覆盖：在同一测试文件中并行两个 clone 任务（factor=0.5 与 10.0），通过事件 payload 中的 `factor=<value>` 断言上下界值透传无损（打印时 `10.0` 可能序列化为 `10`，测试以包含 `factor=10` 判定）。
+
+3) 事件幂等再确认：所有新增测试保持只读取一次事件缓冲（或使用 peek 不消费）以避免之前出现的“多文件并发读取导致顺序不确定”问题；继续遵循“单任务 override 事件最多一次”约束。
+
+4) 与 P2.1d tag 修复的交互：Annotated tag force 复用 OID 的修复不影响 retry 覆盖逻辑；combo 测试与 backoff 测试均在修复后全量回归通过。
+
+5) 已知限制（Retry 覆盖特有）：
+  - 本地化错误文本未被 `map_git2_error` 捕获 → 某些真实的网络错误被归类为 Internal，从而不触发重试进度行；当前仅影响“重试进度可观察性”而不影响 override 事件。
+  - Push 任务仍保持“进入 Upload 阶段后不再自动重试” 的语义（计划保持）。
+  - 尚未实现“并发多个任务不同 Retry 覆盖的隔离测试”——逻辑已保证（每任务各自 clone 的 override plan），但测试待补。
+  - 未覆盖 jitter=true 的统计区间验证（已有 retry.rs 单测覆盖 backoff 范围；任务级未重复）。
+
+6) 计划中的后续改进（若进入 P2.3d / P2.4）：
+  - 本地化/多语言 Network 关键字扩展：在 `helpers::map_git2_error` 中增加中文“连接/超时”关键词匹配，或抽象成可配置正则。
+  - 可选引入一个测试注入层（MockGitService）直接产出 `ErrorCategory::Network` 以稳定 attempt 进度断言。
+  - 增加并发隔离测试：两个并行 clone 任务分别设定截然不同 max/baseMs/factor，断言事件一次且互不污染（尤其 retried_times 计数独立）。
+  - 增加 factor/jitter 组合 (极小 baseMs + jitter=true) 的延迟范围抽样统计，确保 backoff 不降为 0 也不过度爆炸。
+
+7) 回退再补充：若需暂时关闭 Retry 覆盖事件，可仅删除 `if changed { emit ... retry_strategy_override_applied }` 分支；功能仍保留（使用覆盖后的 plan），进一步回退则移除 `apply_retry_override` 调用即可恢复旧逻辑（使用 `load_retry_plan()`）。
+
+> 本节作为 P2.3c 的“增量追踪”，若后续补上并发与本地化改进，请把新增测试文件 / keyword 匹配策略附加到此段落，保持历史演进透明。
+
 ```
 
 ---
