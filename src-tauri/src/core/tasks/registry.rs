@@ -114,6 +114,24 @@ impl TaskRegistry {
         (plan, changed)
     }
 
+    /// Merge TLS strategy overrides (P2.3d).
+    /// Rules:
+    /// 1. Start from global tls config (san_whitelist is NOT overridden per-task for safety; only boolean toggles allowed).
+    /// 2. If insecure_skip_verify provided and different -> replace.
+    /// 3. If skip_san_whitelist provided and different -> replace.
+    /// 4. Return (insecure_skip_verify, skip_san_whitelist, changed_flag). Caller may emit informational event code=tls_strategy_override_applied when changed.
+    pub(crate) fn apply_tls_override(kind:&str, id:&Uuid, global:&AppConfig, override_tls: Option<&crate::core::git::default_impl::opts::StrategyTlsOverride>) -> (bool, bool, bool) {
+        let mut insecure = global.tls.insecure_skip_verify;
+        let mut skip_san = global.tls.skip_san_whitelist;
+        let mut changed = false;
+        if let Some(o) = override_tls {
+            if let Some(v) = o.insecure_skip_verify { if v != insecure { insecure = v; changed = true; } }
+            if let Some(v) = o.skip_san_whitelist { if v != skip_san { skip_san = v; changed = true; } }
+        }
+        if changed { tracing::info!(target="strategy", task_kind=%kind, task_id=%id, insecure_skip_verify=%insecure, skip_san_whitelist=%skip_san, "tls override applied"); }
+        (insecure, skip_san, changed)
+    }
+
     
 
     pub fn spawn_git_clone_task_with_opts(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, repo: String, dest: String, depth: Option<serde_json::Value>, filter: Option<String>, strategy_override: Option<serde_json::Value>) -> JoinHandle<()> {
@@ -149,6 +167,8 @@ impl TaskRegistry {
             let mut effective_max_redirects: u8 = global_cfg.http.max_redirects;
             let mut retry_plan: super::retry::RetryPlan = global_cfg.retry.clone().into();
             let mut depth_applied: Option<u32> = None;
+            let mut effective_insecure_skip_verify: bool = global_cfg.tls.insecure_skip_verify;
+            let mut effective_skip_san_whitelist: bool = global_cfg.tls.skip_san_whitelist;
             let mut filter_requested: Option<String> = None; // 记录用户请求的 filter（用于回退信息）
             if let Err(e) = parsed_options_res {
                 // 直接作为 Protocol/错误分类失败
@@ -164,12 +184,17 @@ impl TaskRegistry {
                         effective_follow_redirects = f; effective_max_redirects = m;
                         if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} }
                     }
+                    if let Some(tls_over) = opts.strategy_override.as_ref().and_then(|s| s.tls.as_ref()) {
+                        let (ins, skip, changed) = Self::apply_tls_override("GitClone", &id, &global_cfg, Some(tls_over));
+                        effective_insecure_skip_verify = ins; effective_skip_san_whitelist = skip;
+                        if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("tls_strategy_override_applied".into()), message: format!("tls override applied: insecureSkipVerify={} skipSanWhitelist={}", ins, skip), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                    }
                     if let Some(retry_over) = opts.strategy_override.as_ref().and_then(|s| s.retry.as_ref()) {
                         let (plan, changed) = Self::apply_retry_override(&global_cfg.retry, Some(retry_over));
                         retry_plan = plan;
                         if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("retry_strategy_override_applied".into()), message: format!("retry override applied: max={} baseMs={} factor={} jitter={}", retry_plan.max, retry_plan.base_ms, retry_plan.factor, retry_plan.jitter), retried_times:None }; this.emit_error(app_ref,&evt);} }
                     }
-                    tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), strategy_http_follow=?effective_follow_redirects, strategy_http_max_redirects=?effective_max_redirects, "git_clone options accepted (depth/filter/strategy parsed)");
+                    tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), strategy_http_follow=?effective_follow_redirects, strategy_http_max_redirects=?effective_max_redirects, strategy_tls_insecure=?effective_insecure_skip_verify, strategy_tls_skip_san=?effective_skip_san_whitelist, "git_clone options accepted (depth/filter/strategy parsed)");
                     // P2.2d: 当前阶段尚未真正启用 partial clone，若用户请求了 filter，需要发送一次非阻断回退提示。
                     if let Some((msg, _shallow)) = Self::decide_partial_fallback(depth_applied, filter_requested.as_deref()) {
                         if let Some(app_ref) = &app {
@@ -312,6 +337,8 @@ impl TaskRegistry {
             let mut effective_max_redirects: u8 = global_cfg.http.max_redirects;
             let mut retry_plan: super::retry::RetryPlan = global_cfg.retry.clone().into();
             let mut depth_applied: Option<u32> = None;
+            let mut effective_insecure_skip_verify: bool = global_cfg.tls.insecure_skip_verify;
+            let mut effective_skip_san_whitelist: bool = global_cfg.tls.skip_san_whitelist;
             let mut filter_requested: Option<String> = None;
             if let Err(e) = parsed_options_res {
                 if let Some(app_ref) = &app { let err_evt = TaskErrorEvent::from_parts(id, "GitFetch", super::retry::categorize(&e), format!("{}", e), None); this.emit_error(app_ref, &err_evt); }
@@ -325,12 +352,17 @@ impl TaskRegistry {
                     effective_follow_redirects = f; effective_max_redirects = m;
                     if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} }
                 }
+                if let Some(tls_over) = opts.strategy_override.as_ref().and_then(|s| s.tls.as_ref()) {
+                    let (ins, skip, changed) = Self::apply_tls_override("GitFetch", &id, &global_cfg, Some(tls_over));
+                    effective_insecure_skip_verify = ins; effective_skip_san_whitelist = skip;
+                    if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("tls_strategy_override_applied".into()), message: format!("tls override applied: insecureSkipVerify={} skipSanWhitelist={}", ins, skip), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                }
                 if let Some(retry_over) = opts.strategy_override.as_ref().and_then(|s| s.retry.as_ref()) {
                     let (plan, changed) = Self::apply_retry_override(&global_cfg.retry, Some(retry_over));
                     retry_plan = plan;
                     if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("retry_strategy_override_applied".into()), message: format!("retry override applied: max={} baseMs={} factor={} jitter={}", retry_plan.max, retry_plan.base_ms, retry_plan.factor, retry_plan.jitter), retried_times:None }; this.emit_error(app_ref,&evt);} }
                 }
-                tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), strategy_http_follow=?effective_follow_redirects, strategy_http_max_redirects=?effective_max_redirects, "git_fetch options accepted (depth/filter/strategy parsed)");
+                tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), strategy_http_follow=?effective_follow_redirects, strategy_http_max_redirects=?effective_max_redirects, strategy_tls_insecure=?effective_insecure_skip_verify, strategy_tls_skip_san=?effective_skip_san_whitelist, "git_fetch options accepted (depth/filter/strategy parsed)");
                 if let Some((msg, _shallow)) = Self::decide_partial_fallback(depth_applied, filter_requested.as_deref()) {
                     if let Some(app_ref) = &app {
                         let warn_evt = TaskErrorEvent { task_id: id, kind: "GitFetch".into(), category: "Protocol".into(), code: Some("partial_filter_fallback".into()), message: msg, retried_times: None };
@@ -476,6 +508,8 @@ impl TaskRegistry {
             let mut effective_follow_redirects = None;
             let mut effective_max_redirects = None;
             let mut retry_plan: Option<super::retry::RetryPlan> = None;
+            let mut effective_insecure_skip_verify: Option<bool> = None;
+            let mut effective_skip_san_whitelist: Option<bool> = None;
             if let Some(raw) = strategy_override.clone() {
                 use crate::core::git::default_impl::opts::parse_strategy_override;
                 match parse_strategy_override(Some(raw)) {
@@ -493,14 +527,20 @@ impl TaskRegistry {
                                 effective_max_redirects = Some(m);
                                 if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} }
                             }
+                            if let Some(tls_over) = parsed.tls.as_ref() {
+                                let (ins, skip, changed) = Self::apply_tls_override("GitPush", &id, &global_cfg, Some(tls_over));
+                                effective_insecure_skip_verify = Some(ins);
+                                effective_skip_san_whitelist = Some(skip);
+                                if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("tls_strategy_override_applied".into()), message: format!("tls override applied: insecureSkipVerify={} skipSanWhitelist={}", ins, skip), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                            }
                             if let Some(retry_over) = parsed.retry.as_ref() {
                                 let (plan, changed) = Self::apply_retry_override(&global_cfg.retry, Some(retry_over));
                                 retry_plan = Some(plan.clone());
                                 if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("retry_strategy_override_applied".into()), message: format!("retry override applied: max={} baseMs={} factor={} jitter={}", plan.max, plan.base_ms, plan.factor, plan.jitter), retried_times:None }; this.emit_error(app_ref,&evt);} }
                             }
-                            tracing::info!(target="strategy", kind="push", has_override=true, http_follow=?effective_follow_redirects, http_max_redirects=?effective_max_redirects, strategy_override_valid=true, "strategyOverride accepted for push (parse+http apply)");
+                            tracing::info!(target="strategy", kind="push", has_override=true, http_follow=?effective_follow_redirects, http_max_redirects=?effective_max_redirects, tls_insecure=?effective_insecure_skip_verify, tls_skip_san=?effective_skip_san_whitelist, strategy_override_valid=true, "strategyOverride accepted for push (parse+http/tls apply)");
                         } else {
-                            tracing::info!(target="strategy", kind="push", has_override=true, http_follow=?effective_follow_redirects, http_max_redirects=?effective_max_redirects, strategy_override_valid=true, "strategyOverride accepted for push (empty object)");
+                            tracing::info!(target="strategy", kind="push", has_override=true, http_follow=?effective_follow_redirects, http_max_redirects=?effective_max_redirects, tls_insecure=?effective_insecure_skip_verify, tls_skip_san=?effective_skip_san_whitelist, strategy_override_valid=true, "strategyOverride accepted for push (empty object)");
                         }
                     }
                 }
@@ -946,5 +986,70 @@ mod retry_override_tests_new {
         assert_eq!(plan.base_ms, 500);
         assert_eq!(plan.factor, 2.0);
         assert!(!plan.jitter);
+    }
+}
+
+#[cfg(test)]
+mod tls_override_tests_new {
+    use super::*;
+    use crate::core::git::default_impl::opts::StrategyTlsOverride;
+
+    #[test]
+    fn no_tls_override() {
+        let global = AppConfig::default();
+        let (ins, skip, changed) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, None);
+        assert_eq!(ins, global.tls.insecure_skip_verify);
+        assert_eq!(skip, global.tls.skip_san_whitelist);
+        assert!(!changed);
+    }
+
+    #[test]
+    fn override_insecure_only() {
+        let global = AppConfig::default();
+        let over = StrategyTlsOverride { insecure_skip_verify: Some(!global.tls.insecure_skip_verify), skip_san_whitelist: None };
+        let (ins, skip, changed) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
+        assert_eq!(ins, !global.tls.insecure_skip_verify);
+        assert_eq!(skip, global.tls.skip_san_whitelist);
+        assert!(changed);
+    }
+
+    #[test]
+    fn override_skip_san_only() {
+        let global = AppConfig::default();
+        let over = StrategyTlsOverride { insecure_skip_verify: None, skip_san_whitelist: Some(!global.tls.skip_san_whitelist) };
+        let (ins, skip, changed) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
+        assert_eq!(ins, global.tls.insecure_skip_verify);
+        assert_eq!(skip, !global.tls.skip_san_whitelist);
+        assert!(changed);
+    }
+
+    #[test]
+    fn override_both_same_as_global() {
+        let global = AppConfig::default();
+        let over = StrategyTlsOverride { insecure_skip_verify: Some(global.tls.insecure_skip_verify), skip_san_whitelist: Some(global.tls.skip_san_whitelist) };
+        let (_ins, _skip, changed) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
+        assert!(!changed, "no change when values equal global");
+    }
+
+    #[test]
+    fn override_both_changed() {
+        let mut global = AppConfig::default();
+        // ensure starting values are known defaults: insecure=false skip=false
+        global.tls.insecure_skip_verify = false;
+        global.tls.skip_san_whitelist = false;
+        let over = StrategyTlsOverride { insecure_skip_verify: Some(true), skip_san_whitelist: Some(true) };
+        let (ins, skip, changed) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
+        assert!(changed);
+        assert!(ins && skip);
+    }
+
+    #[test]
+    fn global_config_not_mutated() {
+        let global = AppConfig::default();
+        let over = StrategyTlsOverride { insecure_skip_verify: Some(true), skip_san_whitelist: Some(true) };
+        let _ = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
+        // global should remain defaults (false/false)
+        assert!(!global.tls.insecure_skip_verify);
+        assert!(!global.tls.skip_san_whitelist);
     }
 }
