@@ -60,30 +60,51 @@ pub struct GitDepthFilterOpts {
     pub filter: Option<PartialFilter>,
     /// Parsed strategy override (P2.3a: parse only, application in later phases)
     pub strategy_override: Option<StrategyOverrideInput>,
+    /// P2.3e: ignored top-level keys (unknown)
+    pub ignored_top_level: Vec<String>,
+    /// P2.3e: ignored nested keys (section.key)
+    pub ignored_nested: Vec<(String,String)>,
 }
 
 impl GitDepthFilterOpts {
-    pub fn empty() -> Self { Self { depth: None, filter: None, strategy_override: None } }
+    pub fn empty() -> Self { Self { depth: None, filter: None, strategy_override: None, ignored_top_level: vec![], ignored_nested: vec![] } }
+}
+
+/// Result for strategy override parse including ignored (unknown) field names (P2.3e)。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StrategyOverrideParseResult {
+    pub parsed: Option<StrategyOverrideInput>,
+    /// Unknown top-level keys
+    pub ignored_top_level: Vec<String>,
+    /// Unknown nested keys grouped by section name (http/tls/retry)
+    pub ignored_nested: Vec<(String, String)>, // (section, key)
+}
+
+impl StrategyOverrideParseResult {
+    pub fn is_empty(&self) -> bool { self.ignored_top_level.is_empty() && self.ignored_nested.is_empty() }
 }
 
 /// Internal helper: parse only the strategyOverride JSON value with unknown field detection.
-pub fn parse_strategy_override(strategy_override: Option<serde_json::Value>) -> Result<Option<StrategyOverrideInput>, GitError> {
+/// Now returns a structured result包含被忽略字段列表，供任务层决定是否发事件。
+pub fn parse_strategy_override(strategy_override: Option<serde_json::Value>) -> Result<StrategyOverrideParseResult, GitError> {
     if let Some(raw) = strategy_override {
-        if raw.is_null() { return Ok(None); }
+        if raw.is_null() { return Ok(StrategyOverrideParseResult::default()); }
         if !raw.is_object() { return Err(GitError::new(ErrorCategory::Protocol, "invalid strategyOverride: not an object")); }
         let obj = raw.as_object().unwrap();
         let top_keys: Vec<String> = obj.keys().cloned().collect();
         let parsed: StrategyOverrideInput = serde_json::from_value(raw.clone())
             .map_err(|e| GitError::new(ErrorCategory::Protocol, format!("invalid strategyOverride: {}", e)))?;
+        let mut res = StrategyOverrideParseResult { parsed: Some(parsed), ignored_top_level: vec![], ignored_nested: vec![] };
         // detect unknown top-level keys
         for k in &top_keys {
-            if k != "http" && k != "tls" && k != "retry" { tracing::warn!(target="strategy", key=%k, "unknown top-level strategyOverride key ignored"); }
+            if k != "http" && k != "tls" && k != "retry" { tracing::warn!(target="strategy", key=%k, "unknown top-level strategyOverride key ignored"); res.ignored_top_level.push(k.clone()); }
         }
         // detect unknown nested keys (best-effort; ignore errors)
         if let Some(http) = obj.get("http").and_then(|v| v.as_object()) {
             for k in http.keys() {
                 if !matches!(k.as_str(), "followRedirects"|"follow_redirects"|"maxRedirects"|"max_redirects") {
                     tracing::warn!(target="strategy", section="http", key=%k, "unknown http override field ignored");
+                    res.ignored_nested.push(("http".into(), k.clone()));
                 }
             }
         }
@@ -91,6 +112,7 @@ pub fn parse_strategy_override(strategy_override: Option<serde_json::Value>) -> 
             for k in tls.keys() {
                 if !matches!(k.as_str(), "insecureSkipVerify"|"skipSanWhitelist"|"insecure_skip_verify"|"skip_san_whitelist") {
                     tracing::warn!(target="strategy", section="tls", key=%k, "unknown tls override field ignored");
+                    res.ignored_nested.push(("tls".into(), k.clone()));
                 }
             }
         }
@@ -98,22 +120,23 @@ pub fn parse_strategy_override(strategy_override: Option<serde_json::Value>) -> 
             for k in retry.keys() {
                 if !matches!(k.as_str(), "max"|"baseMs"|"factor"|"jitter"|"base_ms") {
                     tracing::warn!(target="strategy", section="retry", key=%k, "unknown retry override field ignored");
+                    res.ignored_nested.push(("retry".into(), k.clone()));
                 }
             }
         }
 
         // value/range validation (P2.3a enhancement)
-        if let Some(http) = &parsed.http {
+        if let Some(http) = &res.parsed.as_ref().unwrap().http {
             if let Some(max_r) = http.max_redirects { if max_r > 20 { return Err(GitError::new(ErrorCategory::Protocol, "http.maxRedirects too large (max 20)")); } }
         }
-        if let Some(retry) = &parsed.retry {
+        if let Some(retry) = &res.parsed.as_ref().unwrap().retry {
             if let Some(m) = retry.max { if m == 0 || m > 20 { return Err(GitError::new(ErrorCategory::Protocol, "retry.max must be 1..=20")); } }
             if let Some(base) = retry.base_ms { if base < 10 || base > 60_000 { return Err(GitError::new(ErrorCategory::Protocol, "retry.baseMs out of range (10..60000)")); } }
             if let Some(f) = retry.factor { if !(0.5..=10.0).contains(&f) { return Err(GitError::new(ErrorCategory::Protocol, "retry.factor out of range (0.5..=10.0)")); } }
         }
-        return Ok(Some(parsed));
+        return Ok(res);
     }
-    Ok(None)
+    Ok(StrategyOverrideParseResult::default())
 }
 
 /// Parse and validate depth/filter/strategyOverride portion. Returns Protocol errors for invalid values.
@@ -151,7 +174,10 @@ pub fn parse_depth_filter_opts(
     }
 
     // strategyOverride parsing (with warnings)
-    out.strategy_override = parse_strategy_override(strategy_override)?;
+    let parsed_res = parse_strategy_override(strategy_override)?;
+    out.strategy_override = parsed_res.parsed; // ignored 字段由上层选择性处理 (P2.3e)
+    out.ignored_top_level = parsed_res.ignored_top_level;
+    out.ignored_nested = parsed_res.ignored_nested;
 
     Ok(out)
 }

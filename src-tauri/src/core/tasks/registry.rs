@@ -83,16 +83,19 @@ impl TaskRegistry {
     /// 2. If override.follow_redirects is Some -> replace.
     /// 3. If override.max_redirects is Some -> clamp to [0, 20] (parse layer already restricted upper bound) and replace.
     /// 4. Log once if any value actually changed, include task kind & id for traceability.
-    pub(crate) fn apply_http_override(kind: &str, id: &Uuid, global: &AppConfig, override_http: Option<&crate::core::git::default_impl::opts::StrategyHttpOverride>) -> (bool, u8, bool) {
+    pub(crate) fn apply_http_override(kind: &str, id: &Uuid, global: &AppConfig, override_http: Option<&crate::core::git::default_impl::opts::StrategyHttpOverride>) -> (bool, u8, bool, Option<String>) {
         let mut follow = global.http.follow_redirects;
         let mut max_r = global.http.max_redirects;
         let mut changed = false;
+        let mut conflict: Option<String> = None;
         if let Some(o) = override_http {
             if let Some(f) = o.follow_redirects { if f != follow { follow = f; changed = true; } }
             if let Some(m) = o.max_redirects { let m_clamped = (m.min(20)) as u8; if m_clamped != max_r { max_r = m_clamped; changed = true; } }
+            // 冲突规则：follow=false 且 max_redirects>0 归一化为 max=0
+            if follow == false && max_r > 0 { conflict = Some(format!("followRedirects=false => force maxRedirects=0 (was {})", max_r)); if max_r != 0 { max_r = 0; /* 归一化 */ changed = true; } }
         }
         if changed { tracing::info!(target="strategy", task_kind=%kind, task_id=%id, follow_redirects=%follow, max_redirects=%max_r, "http override applied"); }
-        (follow, max_r, changed)
+        (follow, max_r, changed, conflict)
     }
 
     /// Merge Retry strategy overrides (P2.3c).
@@ -120,16 +123,20 @@ impl TaskRegistry {
     /// 2. If insecure_skip_verify provided and different -> replace.
     /// 3. If skip_san_whitelist provided and different -> replace.
     /// 4. Return (insecure_skip_verify, skip_san_whitelist, changed_flag). Caller may emit informational event code=tls_strategy_override_applied when changed.
-    pub(crate) fn apply_tls_override(kind:&str, id:&Uuid, global:&AppConfig, override_tls: Option<&crate::core::git::default_impl::opts::StrategyTlsOverride>) -> (bool, bool, bool) {
+    pub(crate) fn apply_tls_override(kind:&str, id:&Uuid, global:&AppConfig, override_tls: Option<&crate::core::git::default_impl::opts::StrategyTlsOverride>) -> (bool, bool, bool, Option<String>) {
         let mut insecure = global.tls.insecure_skip_verify;
         let mut skip_san = global.tls.skip_san_whitelist;
         let mut changed = false;
+        let mut conflict: Option<String> = None;
         if let Some(o) = override_tls {
             if let Some(v) = o.insecure_skip_verify { if v != insecure { insecure = v; changed = true; } }
             if let Some(v) = o.skip_san_whitelist { if v != skip_san { skip_san = v; changed = true; } }
+            // 冲突规则：insecure=true 时跳过 SAN 白名单意义弱化，规范化 skipSanWhitelist=false
+            if insecure && skip_san { conflict = Some("insecureSkipVerify=true normalizes skipSanWhitelist=false".to_string()); if skip_san { skip_san = false; changed = true; }
+            }
         }
         if changed { tracing::info!(target="strategy", task_kind=%kind, task_id=%id, insecure_skip_verify=%insecure, skip_san_whitelist=%skip_san, "tls override applied"); }
-        (insecure, skip_san, changed)
+        (insecure, skip_san, changed, conflict)
     }
 
     
@@ -177,17 +184,31 @@ impl TaskRegistry {
                 return;
             } else {
                 if let Some(opts) = parsed_options_res.ok() {
+                    // P2.3e: emit ignored fields informational event (once) if any unknown keys present
+                    if let Some(app_ref)=&app { if !opts.ignored_top_level.is_empty() || !opts.ignored_nested.is_empty() {
+                        let mut parts: Vec<String> = vec![];
+                        if !opts.ignored_top_level.is_empty() { parts.push(format!("top=[{}]", opts.ignored_top_level.join("/"))); }
+                        if !opts.ignored_nested.is_empty() {
+                            let flat: Vec<String> = opts.ignored_nested.iter().map(|(s,k)| format!("{}.{k}", s)).collect();
+                            parts.push(format!("sections=[{}]", flat.join("/")));
+                        }
+                        let msg = format!("strategy override ignored unknown fields: {}", parts.join(" "));
+                        let evt = TaskErrorEvent { task_id:id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("strategy_override_ignored_fields".into()), message: msg, retried_times:None };
+                        this.emit_error(app_ref,&evt);
+                    }}
                     depth_applied = opts.depth;
                     if let Some(f) = opts.filter.as_ref() { filter_requested = Some(f.as_str().to_string()); }
                     if let Some(http_over) = opts.strategy_override.as_ref().and_then(|s| s.http.as_ref()) {
-                        let (f, m, changed) = Self::apply_http_override("GitClone", &id, &global_cfg, Some(http_over));
+                        let (f, m, changed, conflict) = Self::apply_http_override("GitClone", &id, &global_cfg, Some(http_over));
                         effective_follow_redirects = f; effective_max_redirects = m;
                         if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                        if let Some(msg) = conflict { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("strategy_override_conflict".into()), message: format!("http conflict: {}", msg), retried_times:None }; this.emit_error(app_ref,&evt);} }
                     }
                     if let Some(tls_over) = opts.strategy_override.as_ref().and_then(|s| s.tls.as_ref()) {
-                        let (ins, skip, changed) = Self::apply_tls_override("GitClone", &id, &global_cfg, Some(tls_over));
+                        let (ins, skip, changed, conflict) = Self::apply_tls_override("GitClone", &id, &global_cfg, Some(tls_over));
                         effective_insecure_skip_verify = ins; effective_skip_san_whitelist = skip;
                         if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("tls_strategy_override_applied".into()), message: format!("tls override applied: insecureSkipVerify={} skipSanWhitelist={}", ins, skip), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                        if let Some(msg)=conflict { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("strategy_override_conflict".into()), message: format!("tls conflict: {}", msg), retried_times:None }; this.emit_error(app_ref,&evt);} }
                     }
                     if let Some(retry_over) = opts.strategy_override.as_ref().and_then(|s| s.retry.as_ref()) {
                         let (plan, changed) = Self::apply_retry_override(&global_cfg.retry, Some(retry_over));
@@ -345,17 +366,27 @@ impl TaskRegistry {
                 match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
                 return;
             } else if let Ok(opts) = parsed_options_res.as_ref() {
+                if let Some(app_ref)=&app { if !opts.ignored_top_level.is_empty() || !opts.ignored_nested.is_empty() {
+                    let mut parts: Vec<String> = vec![];
+                    if !opts.ignored_top_level.is_empty() { parts.push(format!("top=[{}]", opts.ignored_top_level.join("/"))); }
+                    if !opts.ignored_nested.is_empty() { let flat: Vec<String> = opts.ignored_nested.iter().map(|(s,k)| format!("{}.{k}", s)).collect(); parts.push(format!("sections=[{}]", flat.join("/"))); }
+                    let msg = format!("strategy override ignored unknown fields: {}", parts.join(" "));
+                    let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("strategy_override_ignored_fields".into()), message: msg, retried_times:None };
+                    this.emit_error(app_ref,&evt);
+                }}
                 depth_applied = opts.depth; // P2.2c: depth now effective
                 if let Some(f) = opts.filter.as_ref() { filter_requested = Some(f.as_str().to_string()); }
                 if let Some(http_over) = opts.strategy_override.as_ref().and_then(|s| s.http.as_ref()) {
-                    let (f, m, changed) = Self::apply_http_override("GitFetch", &id, &global_cfg, Some(http_over));
+                    let (f, m, changed, conflict) = Self::apply_http_override("GitFetch", &id, &global_cfg, Some(http_over));
                     effective_follow_redirects = f; effective_max_redirects = m;
                     if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                    if let Some(msg)=conflict { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("strategy_override_conflict".into()), message: format!("http conflict: {}", msg), retried_times:None }; this.emit_error(app_ref,&evt);} }
                 }
                 if let Some(tls_over) = opts.strategy_override.as_ref().and_then(|s| s.tls.as_ref()) {
-                    let (ins, skip, changed) = Self::apply_tls_override("GitFetch", &id, &global_cfg, Some(tls_over));
+                    let (ins, skip, changed, conflict) = Self::apply_tls_override("GitFetch", &id, &global_cfg, Some(tls_over));
                     effective_insecure_skip_verify = ins; effective_skip_san_whitelist = skip;
                     if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("tls_strategy_override_applied".into()), message: format!("tls override applied: insecureSkipVerify={} skipSanWhitelist={}", ins, skip), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                    if let Some(msg)=conflict { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("strategy_override_conflict".into()), message: format!("tls conflict: {}", msg), retried_times:None }; this.emit_error(app_ref,&evt);} }
                 }
                 if let Some(retry_over) = opts.strategy_override.as_ref().and_then(|s| s.retry.as_ref()) {
                     let (plan, changed) = Self::apply_retry_override(&global_cfg.retry, Some(retry_over));
@@ -518,20 +549,31 @@ impl TaskRegistry {
                     match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
                     return;
                 }
-                    Ok(parsed_opt) => {
-                        if let Some(parsed) = parsed_opt {
+                    Ok(parsed_res) => {
+                        // P2.3e ignored fields event
+                        if let Some(app_ref)=&app { if !parsed_res.ignored_top_level.is_empty() || !parsed_res.ignored_nested.is_empty() {
+                            let mut parts: Vec<String> = vec![];
+                            if !parsed_res.ignored_top_level.is_empty() { parts.push(format!("top=[{}]", parsed_res.ignored_top_level.join("/"))); }
+                            if !parsed_res.ignored_nested.is_empty() { let flat: Vec<String> = parsed_res.ignored_nested.iter().map(|(s,k)| format!("{}.{k}", s)).collect(); parts.push(format!("sections=[{}]", flat.join("/"))); }
+                            let msg = format!("strategy override ignored unknown fields: {}", parts.join(" "));
+                            let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("strategy_override_ignored_fields".into()), message: msg, retried_times:None };
+                            this.emit_error(app_ref,&evt);
+                        }}
+                        if let Some(parsed) = parsed_res.parsed {
                             let global_cfg = crate::core::config::model::AppConfig::default();
                             if let Some(http_over) = parsed.http.as_ref() {
-                                let (f,m,changed) = Self::apply_http_override("GitPush", &id, &global_cfg, Some(http_over));
+                                let (f,m,changed, conflict) = Self::apply_http_override("GitPush", &id, &global_cfg, Some(http_over));
                                 effective_follow_redirects = Some(f);
                                 effective_max_redirects = Some(m);
                                 if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                                if let Some(msg)=conflict { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("strategy_override_conflict".into()), message: format!("http conflict: {}", msg), retried_times:None }; this.emit_error(app_ref,&evt);} }
                             }
                             if let Some(tls_over) = parsed.tls.as_ref() {
-                                let (ins, skip, changed) = Self::apply_tls_override("GitPush", &id, &global_cfg, Some(tls_over));
+                                let (ins, skip, changed, conflict) = Self::apply_tls_override("GitPush", &id, &global_cfg, Some(tls_over));
                                 effective_insecure_skip_verify = Some(ins);
                                 effective_skip_san_whitelist = Some(skip);
                                 if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("tls_strategy_override_applied".into()), message: format!("tls override applied: insecureSkipVerify={} skipSanWhitelist={}", ins, skip), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                                if let Some(msg)=conflict { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("strategy_override_conflict".into()), message: format!("tls conflict: {}", msg), retried_times:None }; this.emit_error(app_ref,&evt);} }
                             }
                             if let Some(retry_over) = parsed.retry.as_ref() {
                                 let (plan, changed) = Self::apply_retry_override(&global_cfg.retry, Some(retry_over));
@@ -936,7 +978,7 @@ mod http_override_tests_new {
     #[test]
     fn no_override() {
         let global = AppConfig::default();
-        let (f,m,changed) = TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, None);
+    let (f,m,changed,_conflict) = TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, None);
         assert_eq!(f, global.http.follow_redirects);
         assert_eq!(m, global.http.max_redirects);
         assert!(!changed);
@@ -945,16 +987,22 @@ mod http_override_tests_new {
     fn override_changes() {
         let global = AppConfig::default();
         let over = StrategyHttpOverride { follow_redirects: Some(!global.http.follow_redirects), max_redirects: Some(3), ..Default::default() };
-        let (f,m,changed) = TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, Some(&over));
+        let (f,m,changed,conflict) = TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, Some(&over));
         assert_eq!(f, !global.http.follow_redirects);
-        assert_eq!(m, 3);
+        if f == false { // conflict path: follow=false & max>0 -> normalized 0
+            assert_eq!(m, 0, "max should normalize to 0 when follow=false");
+            assert!(conflict.is_some(), "conflict message expected");
+        } else {
+            assert_eq!(m, 3);
+            assert!(conflict.is_none());
+        }
         assert!(changed);
     }
     #[test]
     fn clamp_applies() {
         let global = AppConfig::default();
         let over = StrategyHttpOverride { follow_redirects: None, max_redirects: Some(99), ..Default::default() };
-        let (_f,m,changed) = TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, Some(&over));
+    let (_f,m,changed,_conflict) = TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, Some(&over));
         assert_eq!(m, 20);
         assert!(changed);
     }
@@ -997,7 +1045,7 @@ mod tls_override_tests_new {
     #[test]
     fn no_tls_override() {
         let global = AppConfig::default();
-        let (ins, skip, changed) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, None);
+    let (ins, skip, changed,_conflict) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, None);
         assert_eq!(ins, global.tls.insecure_skip_verify);
         assert_eq!(skip, global.tls.skip_san_whitelist);
         assert!(!changed);
@@ -1007,7 +1055,7 @@ mod tls_override_tests_new {
     fn override_insecure_only() {
         let global = AppConfig::default();
         let over = StrategyTlsOverride { insecure_skip_verify: Some(!global.tls.insecure_skip_verify), skip_san_whitelist: None };
-        let (ins, skip, changed) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
+    let (ins, skip, changed,_conflict) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
         assert_eq!(ins, !global.tls.insecure_skip_verify);
         assert_eq!(skip, global.tls.skip_san_whitelist);
         assert!(changed);
@@ -1017,7 +1065,7 @@ mod tls_override_tests_new {
     fn override_skip_san_only() {
         let global = AppConfig::default();
         let over = StrategyTlsOverride { insecure_skip_verify: None, skip_san_whitelist: Some(!global.tls.skip_san_whitelist) };
-        let (ins, skip, changed) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
+    let (ins, skip, changed,_conflict) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
         assert_eq!(ins, global.tls.insecure_skip_verify);
         assert_eq!(skip, !global.tls.skip_san_whitelist);
         assert!(changed);
@@ -1027,7 +1075,7 @@ mod tls_override_tests_new {
     fn override_both_same_as_global() {
         let global = AppConfig::default();
         let over = StrategyTlsOverride { insecure_skip_verify: Some(global.tls.insecure_skip_verify), skip_san_whitelist: Some(global.tls.skip_san_whitelist) };
-        let (_ins, _skip, changed) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
+    let (_ins, _skip, changed,_conflict) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
         assert!(!changed, "no change when values equal global");
     }
 
@@ -1038,9 +1086,12 @@ mod tls_override_tests_new {
         global.tls.insecure_skip_verify = false;
         global.tls.skip_san_whitelist = false;
         let over = StrategyTlsOverride { insecure_skip_verify: Some(true), skip_san_whitelist: Some(true) };
-        let (ins, skip, changed) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
+        let (ins, skip, changed, conflict) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
         assert!(changed);
-        assert!(ins && skip);
+        assert!(ins);
+        // skip should be normalized to false when insecure=true
+        assert!(!skip, "skipSanWhitelist expected normalized to false");
+        assert!(conflict.is_some(), "tls conflict expected");
     }
 
     #[test]
