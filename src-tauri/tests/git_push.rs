@@ -109,8 +109,8 @@ async fn registry_push_local_completes() {
     run_in(&work, &["commit", "-m", "c1"]);
 
     let reg = std::sync::Arc::new(TaskRegistry::new());
-    let (id, token) = reg.create(fireworks_collaboration_lib::core::tasks::model::TaskKind::GitPush { dest: work.to_string_lossy().to_string(), remote: Some("origin".into()), refspecs: Some(vec!["refs/heads/master:refs/heads/master".into()]), username: None, password: None });
-    let handle = reg.spawn_git_push_task(None, id, token, work.to_string_lossy().to_string(), Some("origin".into()), Some(vec!["refs/heads/master:refs/heads/master".into()]), None, None);
+    let (id, token) = reg.create(fireworks_collaboration_lib::core::tasks::model::TaskKind::GitPush { dest: work.to_string_lossy().to_string(), remote: Some("origin".into()), refspecs: Some(vec!["refs/heads/master:refs/heads/master".into()]), username: None, password: None, strategy_override: None });
+    let handle = reg.spawn_git_push_task(None, id, token, work.to_string_lossy().to_string(), Some("origin".into()), Some(vec!["refs/heads/master:refs/heads/master".into()]), None, None, None);
 
     // 简单等待完成（最多 3s）
     let start = std::time::Instant::now();
@@ -149,9 +149,9 @@ async fn registry_push_cancel_before_start_results_canceled() {
         run_in(&work, &["commit", "-m", "c1"]);
 
         let reg = std::sync::Arc::new(TaskRegistry::new());
-        let (id, token) = reg.create(fireworks_collaboration_lib::core::tasks::model::TaskKind::GitPush { dest: work.to_string_lossy().to_string(), remote: Some("origin".into()), refspecs: Some(vec!["refs/heads/master:refs/heads/master".into()]), username: None, password: None });
+    let (id, token) = reg.create(fireworks_collaboration_lib::core::tasks::model::TaskKind::GitPush { dest: work.to_string_lossy().to_string(), remote: Some("origin".into()), refspecs: Some(vec!["refs/heads/master:refs/heads/master".into()]), username: None, password: None, strategy_override: None });
         token.cancel();
-        let handle = reg.spawn_git_push_task(None, id, token, work.to_string_lossy().to_string(), Some("origin".into()), Some(vec!["refs/heads/master:refs/heads/master".into()]), None, None);
+    let handle = reg.spawn_git_push_task(None, id, token, work.to_string_lossy().to_string(), Some("origin".into()), Some(vec!["refs/heads/master:refs/heads/master".into()]), None, None, None);
         // 等待取消状态
         let start = std::time::Instant::now();
         loop {

@@ -38,7 +38,7 @@ async fn clone_with_depth_and_filter_and_full_strategy_override_placeholder() {
 }
 
 #[tokio::test]
-async fn clone_with_invalid_strategy_override_type_currently_ignored() {
+async fn clone_with_invalid_strategy_override_type_fails_protocol() {
     let reg = Arc::new(TaskRegistry::new());
     let origin = init_local_repo();
     let dest = std::env::temp_dir().join(format!("fwc-clone-bad-override-{}", uuid::Uuid::new_v4())).to_string_lossy().to_string();
@@ -47,6 +47,6 @@ async fn clone_with_invalid_strategy_override_type_currently_ignored() {
     let (id, token) = reg.create(TaskKind::GitClone { repo: origin.clone(), dest: dest.clone(), depth: None, filter: None, strategy_override: None });
     let handle = reg.clone().spawn_git_clone_task_with_opts(None, id, token, origin, dest, None, None, Some(bad));
     handle.await.unwrap();
-    // 当前实现：非对象 strategyOverride 解析失败可能在内部被忽略或未导致任务状态 Failed（占位阶段允许未来行为调整）。
-    if let Some(s)=reg.snapshot(&id){ assert!(!matches!(s.state, TaskState::Failed), "unexpected failure for invalid strategyOverride type placeholder"); }
+    // P2.3a: 非对象 strategyOverride 解析应直接 Protocol 失败
+    if let Some(s)=reg.snapshot(&id){ assert!(matches!(s.state, TaskState::Failed), "should fail for invalid (non-object) strategyOverride"); }
 }
