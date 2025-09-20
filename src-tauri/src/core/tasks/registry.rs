@@ -95,6 +95,25 @@ impl TaskRegistry {
         (follow, max_r, changed)
     }
 
+    /// Merge Retry strategy overrides (P2.3c).
+    /// Rules:
+    /// 1. Start with global retry config (loaded via config loader earlier by caller or default()).
+    /// 2. Each provided field (max/base_ms/factor/jitter) replaces the corresponding value.
+    /// 3. Validation (range) 已在 parse 阶段完成 (opts.rs)；此处只做简单 copy。
+    /// 4. Return (RetryPlan, changed_flag). If changed=true caller may emit informational event with code=retry_strategy_override_applied.
+    pub(crate) fn apply_retry_override(global: &crate::core::config::model::RetryCfg, override_retry: Option<&crate::core::git::default_impl::opts::StrategyRetryOverride>) -> (super::retry::RetryPlan, bool) {
+        let mut plan: super::retry::RetryPlan = global.clone().into();
+        let mut changed = false;
+        if let Some(o) = override_retry {
+            if let Some(m) = o.max { if m != plan.max { plan.max = m; changed = true; } }
+            if let Some(b) = o.base_ms { if b as u64 != plan.base_ms { plan.base_ms = b as u64; changed = true; } }
+            if let Some(f) = o.factor { if (f as f64) != plan.factor { plan.factor = f as f64; changed = true; } }
+            if let Some(j) = o.jitter { if j != plan.jitter { plan.jitter = j; changed = true; } }
+        }
+        if changed { tracing::info!(target="strategy", retry_max=plan.max, retry_base_ms=plan.base_ms, retry_factor=plan.factor, retry_jitter=plan.jitter, "retry override applied"); }
+        (plan, changed)
+    }
+
     
 
     pub fn spawn_git_clone_task_with_opts(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, repo: String, dest: String, depth: Option<serde_json::Value>, filter: Option<String>, strategy_override: Option<serde_json::Value>) -> JoinHandle<()> {
@@ -128,6 +147,7 @@ impl TaskRegistry {
             let global_cfg = crate::core::config::model::AppConfig::default(); // TODO(P2.3e): inject real runtime config if needed
             let mut effective_follow_redirects: bool = global_cfg.http.follow_redirects;
             let mut effective_max_redirects: u8 = global_cfg.http.max_redirects;
+            let mut retry_plan: super::retry::RetryPlan = global_cfg.retry.clone().into();
             let mut depth_applied: Option<u32> = None;
             let mut filter_requested: Option<String> = None; // 记录用户请求的 filter（用于回退信息）
             if let Err(e) = parsed_options_res {
@@ -144,6 +164,11 @@ impl TaskRegistry {
                         effective_follow_redirects = f; effective_max_redirects = m;
                         if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} }
                     }
+                    if let Some(retry_over) = opts.strategy_override.as_ref().and_then(|s| s.retry.as_ref()) {
+                        let (plan, changed) = Self::apply_retry_override(&global_cfg.retry, Some(retry_over));
+                        retry_plan = plan;
+                        if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("retry_strategy_override_applied".into()), message: format!("retry override applied: max={} baseMs={} factor={} jitter={}", retry_plan.max, retry_plan.base_ms, retry_plan.factor, retry_plan.jitter), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                    }
                     tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), strategy_http_follow=?effective_follow_redirects, strategy_http_max_redirects=?effective_max_redirects, "git_clone options accepted (depth/filter/strategy parsed)");
                     // P2.2d: 当前阶段尚未真正启用 partial clone，若用户请求了 filter，需要发送一次非阻断回退提示。
                     if let Some((msg, _shallow)) = Self::decide_partial_fallback(depth_applied, filter_requested.as_deref()) {
@@ -155,7 +180,8 @@ impl TaskRegistry {
                 }
             }
 
-            let plan = load_retry_plan();
+            // Use per-task retry plan (may be overridden)
+            let plan = retry_plan.clone();
             let mut attempt: u32 = 0;
             loop {
                 if token.is_cancelled() { match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }; break; }
@@ -284,6 +310,7 @@ impl TaskRegistry {
             let global_cfg = crate::core::config::model::AppConfig::default();
             let mut effective_follow_redirects: bool = global_cfg.http.follow_redirects;
             let mut effective_max_redirects: u8 = global_cfg.http.max_redirects;
+            let mut retry_plan: super::retry::RetryPlan = global_cfg.retry.clone().into();
             let mut depth_applied: Option<u32> = None;
             let mut filter_requested: Option<String> = None;
             if let Err(e) = parsed_options_res {
@@ -298,6 +325,11 @@ impl TaskRegistry {
                     effective_follow_redirects = f; effective_max_redirects = m;
                     if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} }
                 }
+                if let Some(retry_over) = opts.strategy_override.as_ref().and_then(|s| s.retry.as_ref()) {
+                    let (plan, changed) = Self::apply_retry_override(&global_cfg.retry, Some(retry_over));
+                    retry_plan = plan;
+                    if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("retry_strategy_override_applied".into()), message: format!("retry override applied: max={} baseMs={} factor={} jitter={}", retry_plan.max, retry_plan.base_ms, retry_plan.factor, retry_plan.jitter), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                }
                 tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), strategy_http_follow=?effective_follow_redirects, strategy_http_max_redirects=?effective_max_redirects, "git_fetch options accepted (depth/filter/strategy parsed)");
                 if let Some((msg, _shallow)) = Self::decide_partial_fallback(depth_applied, filter_requested.as_deref()) {
                     if let Some(app_ref) = &app {
@@ -307,7 +339,7 @@ impl TaskRegistry {
                 }
             }
 
-            let plan = load_retry_plan();
+            let plan = retry_plan.clone();
             let mut attempt: u32 = 0;
             loop {
                 if token.is_cancelled() {
@@ -443,6 +475,7 @@ impl TaskRegistry {
             // P2.3a: parse strategyOverride early (depth/filter not applicable for push). If invalid => Protocol Fail.
             let mut effective_follow_redirects = None;
             let mut effective_max_redirects = None;
+            let mut retry_plan: Option<super::retry::RetryPlan> = None;
             if let Some(raw) = strategy_override.clone() {
                 use crate::core::git::default_impl::opts::parse_strategy_override;
                 match parse_strategy_override(Some(raw)) {
@@ -460,6 +493,11 @@ impl TaskRegistry {
                                 effective_max_redirects = Some(m);
                                 if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} }
                             }
+                            if let Some(retry_over) = parsed.retry.as_ref() {
+                                let (plan, changed) = Self::apply_retry_override(&global_cfg.retry, Some(retry_over));
+                                retry_plan = Some(plan.clone());
+                                if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("retry_strategy_override_applied".into()), message: format!("retry override applied: max={} baseMs={} factor={} jitter={}", plan.max, plan.base_ms, plan.factor, plan.jitter), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                            }
                             tracing::info!(target="strategy", kind="push", has_override=true, http_follow=?effective_follow_redirects, http_max_redirects=?effective_max_redirects, strategy_override_valid=true, "strategyOverride accepted for push (parse+http apply)");
                         } else {
                             tracing::info!(target="strategy", kind="push", has_override=true, http_follow=?effective_follow_redirects, http_max_redirects=?effective_max_redirects, strategy_override_valid=true, "strategyOverride accepted for push (empty object)");
@@ -468,7 +506,7 @@ impl TaskRegistry {
                 }
             }
 
-            let plan = load_retry_plan();
+            let plan = retry_plan.unwrap_or_else(|| load_retry_plan());
             let mut attempt: u32 = 0;
             // 用于检测是否进入上传阶段（进入后不再自动重试）
             let upload_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -879,5 +917,34 @@ mod http_override_tests_new {
         let (_f,m,changed) = TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, Some(&over));
         assert_eq!(m, 20);
         assert!(changed);
+    }
+}
+
+#[cfg(test)]
+mod retry_override_tests_new {
+    use super::*;
+    use crate::core::config::model::RetryCfg;
+    use crate::core::git::default_impl::opts::StrategyRetryOverride;
+
+    #[test]
+    fn no_retry_override() {
+        let global = RetryCfg::default();
+        let (plan, changed) = TaskRegistry::apply_retry_override(&global, None);
+        assert_eq!(plan.max, global.max);
+        assert_eq!(plan.base_ms, global.base_ms);
+        assert!(!changed);
+    }
+
+    #[test]
+    fn retry_override_changes() {
+        let mut global = RetryCfg::default();
+        global.max = 6; // default
+        let over = StrategyRetryOverride { max: Some(3), base_ms: Some(500), factor: Some(2.0), jitter: Some(false) };
+        let (plan, changed) = TaskRegistry::apply_retry_override(&global, Some(&over));
+        assert!(changed);
+        assert_eq!(plan.max, 3);
+        assert_eq!(plan.base_ms, 500);
+        assert_eq!(plan.factor, 2.0);
+        assert!(!plan.jitter);
     }
 }
