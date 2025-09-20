@@ -794,6 +794,88 @@ if filter_requested.is_some() {
   - 验收：跟随示例可复现差异化策略执行；CI 文档检查通过。
   - 回滚：保留代码实现，回退文档。
 
+### P2.3a 实现说明（已完成）
+
+本节记录已交付的 P2.3a“任务级策略覆盖（strategyOverride）模型与解析”落地，实现现状将作为后续 P2.3b～P2.3e 应用层覆盖的稳定基线。
+
+#### 1. 目标与范围
+- 为现有 Git 任务（clone / fetch / push，当前新增 push 解析）提供任务级可选 `strategyOverride` 解析占位；
+- 支持 http/tls/retry 三个子段的受限白名单字段，兼容 camelCase 与 snake_case alias；
+- 对字段值做基础范围校验（防止后续真正应用时出现极端/错误配置）；
+- 对未知字段发出结构化 warn（不失败），为用户调参与前端调试提供可见性；
+- 不在本阶段改变任何真实 HTTP/TLS/Retry 行为（纯解析+校验+日志）。
+
+#### 2. 代码落点
+| 位置 | 变更 | 说明 |
+|------|------|------|
+| `core/git/default_impl/opts.rs` | `parse_strategy_override` 新增 | 独立函数：结构化反序列化 + 未知键 warn + 范围校验；被 clone/fetch 及 push 调用 |
+| `core/git/default_impl/opts.rs` | `GitDepthFilterOpts` 保持 | 继续承载 `strategy_override` 字段；clone/fetch 复用 |
+| `core/tasks/model.rs` | `TaskKind::GitPush { strategy_override: Option<Value>, .. }` | 为 push 任务加入可选原始 JSON 占位（注册层早期解析）|
+| `core/tasks/registry.rs` | `spawn_git_push_task` 更新 | 在任务线程启动前调用 `parse_strategy_override`，失败即 Protocol 终止 |
+| `app.rs` | Tauri 命令 `git_push` 扩展参数 | 新增 `strategy_override: Option<Value>` 末尾追加，保持旧调用兼容 |
+| `src/api/tasks.ts` | `startGitPush` | 前端透传 `strategyOverride`（支持嵌套对象）到 Tauri invoke |
+| 日志 | `tracing::info/warn` | 成功解析时记录 `has_strategy` & `strategy_override_valid=true`；未知键使用 target=`strategy` 的 warn |
+
+#### 3. 解析与校验逻辑
+结构：
+```
+strategyOverride := {
+  http?:  { followRedirects?: bool, maxRedirects?: u32 (<=20) },
+  tls?:   { insecureSkipVerify?: bool, skipSanWhitelist?: bool },
+  retry?: { max?: u32 (1..=20), baseMs?: u32 (10..=60000), factor?: f32 (0.5..=10.0), jitter?: bool }
+}
+```
+规则：
+- 若整体为 null → 视为未提供；
+- 若非对象（数组/数字/字符串）→ 立即 `Protocol` 错误：`invalid strategyOverride: not an object`；
+- 反序列化使用 `serde` + `rename_all=camelCase` + alias 字段；
+- 未知顶层键 / 子键：不阻断，逐个 warn（便于调试拼写错误）；
+- 校验顺序：HTTP → Retry（遇首个违反立即返回错误，不承诺稳定顺序；测试允许多候选）；
+- 通过后返回 `StrategyOverrideInput`（空对象解析为全部 None）。
+
+#### 4. 错误分类与日志
+- 分类：所有输入结构/范围违规 → `ErrorCategory::Protocol`；
+- 任务生命周期：在 push / clone / fetch 任务正式执行前（网络操作前）失败，可保证无副作用；
+- 日志：
+  - 成功：`info` 级记录 depth/filter/has_strategy/strategy_override_valid；
+  - 未知字段：`warn` 级（target="strategy"，含 section=http|tls|retry & key）；
+  - 失败：由注册层捕获并发送 Failed 事件（标准格式）。
+
+#### 5. 测试矩阵（已覆盖）
+| 类别 | 用例要点 | 期望 | 覆盖文件 |
+|------|----------|------|----------|
+| 结构成功 | http/tls/retry 单独 + 组合 + 空对象 | 解析成功 | `opts.rs` 单测 + `strategy_override_push.rs` |
+| 非对象 | 数组 `[1,2,3]` | Protocol 失败 | `opts.rs` 单测 |
+| 未知字段 | 顶层 + 各子对象混入 AAA/BBB/CCC | 解析成功 + warn | `opts.rs` 单测 |
+| Range 上界 | maxRedirects=20 / retry.max=20 / baseMs=60000 / factor=0.5 & 10.0 | 成功 | `opts.rs` 单测 |
+| Range 下界非法 | retry.max=0 / baseMs=5 / factor=0.1 | Protocol | `opts.rs` 单测 |
+| 上界非法 | maxRedirects=999 / factor=20.0 | Protocol | `opts.rs` 单测 |
+| 多违规混合 | retry.max=0 & factor=99 & http.maxRedirects=999 | 返回其中一个（顺序非约束） | `opts.rs` 单测（容忍多分支） |
+| 空/仅未知 | `{}` / `{ "foo": { "bar": 1 } }` | 解析成功（各节 None） | `opts.rs` 单测 |
+| 集成（Push）成功 | 含合法 strategyOverride 启动 push | 任务 Completed | `strategy_override_push.rs` |
+| 集成（Push）失败 | 非对象或越界值 | 任务 Failed (Protocol) | `strategy_override_invalid_integration.rs` |
+| 集成（边界空/未知） | 空对象 / 仅未知键 | 任务 Completed | `strategy_override_empty_unknown_integration.rs` |
+
+#### 6. 回退策略
+| 目标 | 操作 | 影响 |
+|------|------|------|
+| 临时关闭解析 | 在 registry 中跳过 `parse_strategy_override` 调用 | 保留字段传参但被忽略；无错误产生 |
+| 完全移除 | 删 `opts.rs` 中解析函数 + TaskKind 字段 + Tauri 参数 | 恢复到 P2.2 状态；需同步删除相关测试 |
+| 降级到“静默” | 移除 warn 日志但保留解析 | 降低用户可见性，不建议持久 |
+
+#### 7. 已知限制 / 后续衔接
+- 尚未真正应用覆盖到 http/tls/retry 执行路径（P2.3b～P2.3d）；
+- 未提供按字段“继续其余合法字段”模式（遇首个违规即整体失败，简化实现）；
+- 未对字段间语义冲突（未来代理 + insecureSkipVerify）做护栏（计划于 P2.3e）；
+- 未输出结构化告警事件（仅日志），后续如需前端显式展示可补充 task://error (non-blocking) 形式。
+
+#### 8. 验收结论
+- 单元 + 集成测试全部通过；
+- 推进 push 任务解析与 clone/fetch 统一；
+- 日志具备可观测性（成功/未知字段/失败路径）；
+- 具备清晰回退与后续演进路线，无对现有行为的破坏。
+
+
 
 ## 2. 技术方案拆解（P2 视角）
 
