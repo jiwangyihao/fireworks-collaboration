@@ -118,7 +118,7 @@ impl TaskRegistry {
                 if let Some(opts) = parsed_options_res.ok() {
                     depth_applied = opts.depth;
                     if let Some(f) = opts.filter.as_ref() { filter_requested = Some(f.as_str().to_string()); }
-                    tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), "git_clone options accepted (depth active; filter parsed)");
+                    tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), strategy_override_valid=?opts.strategy_override.is_some(), "git_clone options accepted (depth/filter/strategy parsed)");
                     // P2.2d: 当前阶段尚未真正启用 partial clone，若用户请求了 filter，需要发送一次非阻断回退提示。
                     if let Some((msg, _shallow)) = Self::decide_partial_fallback(depth_applied, filter_requested.as_deref()) {
                         if let Some(app_ref) = &app {
@@ -264,7 +264,7 @@ impl TaskRegistry {
             } else if let Ok(opts) = parsed_options_res.as_ref() {
                 depth_applied = opts.depth; // P2.2c: depth now effective
                 if let Some(f) = opts.filter.as_ref() { filter_requested = Some(f.as_str().to_string()); }
-                tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), "git_fetch options accepted (depth active; filter parsed)");
+                tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), strategy_override_valid=?opts.strategy_override.is_some(), "git_fetch options accepted (depth/filter/strategy parsed)");
                 if let Some((msg, _shallow)) = Self::decide_partial_fallback(depth_applied, filter_requested.as_deref()) {
                     if let Some(app_ref) = &app {
                         let warn_evt = TaskErrorEvent { task_id: id, kind: "GitFetch".into(), category: "Protocol".into(), code: Some("partial_filter_fallback".into()), message: msg, retried_times: None };
@@ -387,7 +387,7 @@ impl TaskRegistry {
     }
 
     /// 启动 Git Push 任务（阻塞线程执行），支持取消与阶段事件
-    pub fn spawn_git_push_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, dest: String, remote: Option<String>, refspecs: Option<Vec<String>>, username: Option<String>, password: Option<String>) -> JoinHandle<()> {
+    pub fn spawn_git_push_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, dest: String, remote: Option<String>, refspecs: Option<Vec<String>>, username: Option<String>, password: Option<String>, strategy_override: Option<serde_json::Value>) -> JoinHandle<()> {
         let this = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
             match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Running), None => this.set_state_noemit(&id, TaskState::Running) }
@@ -404,6 +404,18 @@ impl TaskRegistry {
                 }
                 match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Canceled), None => this.set_state_noemit(&id, TaskState::Canceled) }
                 return;
+            }
+
+            // P2.3a: parse strategyOverride early (depth/filter not applicable for push). If invalid => Protocol Fail.
+            if let Some(raw) = strategy_override.clone() {
+                use crate::core::git::default_impl::opts::parse_strategy_override;
+                if let Err(e) = parse_strategy_override(Some(raw)) {
+                    if let Some(app_ref) = &app { let err_evt = TaskErrorEvent::from_parts(id, "GitPush", super::retry::categorize(&e), format!("{}", e), None); this.emit_error(app_ref, &err_evt); }
+                    match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
+                    return;
+                } else {
+                    tracing::info!(target="strategy", kind="push", has_override=true, strategy_override_valid=true, "strategyOverride accepted for push (parse only)");
+                }
             }
 
             let plan = load_retry_plan();

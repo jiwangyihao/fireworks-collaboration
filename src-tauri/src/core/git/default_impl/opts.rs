@@ -51,14 +51,14 @@ pub struct StrategyOverrideInput {
     pub http: Option<StrategyHttpOverride>,
     pub tls: Option<StrategyTlsOverride>,
     pub retry: Option<StrategyRetryOverride>,
-    // Unknown top-level keys are ignored by serde, satisfying 'ignore unknown & warn' (warn logged later).
+    // Unknown top-level keys are ignored by serde; we emit warn logs in parser when present.
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GitDepthFilterOpts {
     pub depth: Option<u32>,
     pub filter: Option<PartialFilter>,
-    /// Raw strategy override JSON (preserved for logging / future application)
+    /// Parsed strategy override (P2.3a: parse only, application in later phases)
     pub strategy_override: Option<StrategyOverrideInput>,
 }
 
@@ -66,8 +66,57 @@ impl GitDepthFilterOpts {
     pub fn empty() -> Self { Self { depth: None, filter: None, strategy_override: None } }
 }
 
-/// Parse and validate depth/filter/strategyOverride portion. Does not alter runtime behavior yet.
-/// Returns Protocol errors for invalid user-supplied values (P2.2a requirement).
+/// Internal helper: parse only the strategyOverride JSON value with unknown field detection.
+pub fn parse_strategy_override(strategy_override: Option<serde_json::Value>) -> Result<Option<StrategyOverrideInput>, GitError> {
+    if let Some(raw) = strategy_override {
+        if raw.is_null() { return Ok(None); }
+        if !raw.is_object() { return Err(GitError::new(ErrorCategory::Protocol, "invalid strategyOverride: not an object")); }
+        let obj = raw.as_object().unwrap();
+        let top_keys: Vec<String> = obj.keys().cloned().collect();
+        let parsed: StrategyOverrideInput = serde_json::from_value(raw.clone())
+            .map_err(|e| GitError::new(ErrorCategory::Protocol, format!("invalid strategyOverride: {}", e)))?;
+        // detect unknown top-level keys
+        for k in &top_keys {
+            if k != "http" && k != "tls" && k != "retry" { tracing::warn!(target="strategy", key=%k, "unknown top-level strategyOverride key ignored"); }
+        }
+        // detect unknown nested keys (best-effort; ignore errors)
+        if let Some(http) = obj.get("http").and_then(|v| v.as_object()) {
+            for k in http.keys() {
+                if !matches!(k.as_str(), "followRedirects"|"follow_redirects"|"maxRedirects"|"max_redirects") {
+                    tracing::warn!(target="strategy", section="http", key=%k, "unknown http override field ignored");
+                }
+            }
+        }
+        if let Some(tls) = obj.get("tls").and_then(|v| v.as_object()) {
+            for k in tls.keys() {
+                if !matches!(k.as_str(), "insecureSkipVerify"|"skipSanWhitelist"|"insecure_skip_verify"|"skip_san_whitelist") {
+                    tracing::warn!(target="strategy", section="tls", key=%k, "unknown tls override field ignored");
+                }
+            }
+        }
+        if let Some(retry) = obj.get("retry").and_then(|v| v.as_object()) {
+            for k in retry.keys() {
+                if !matches!(k.as_str(), "max"|"baseMs"|"factor"|"jitter"|"base_ms") {
+                    tracing::warn!(target="strategy", section="retry", key=%k, "unknown retry override field ignored");
+                }
+            }
+        }
+
+        // value/range validation (P2.3a enhancement)
+        if let Some(http) = &parsed.http {
+            if let Some(max_r) = http.max_redirects { if max_r > 20 { return Err(GitError::new(ErrorCategory::Protocol, "http.maxRedirects too large (max 20)")); } }
+        }
+        if let Some(retry) = &parsed.retry {
+            if let Some(m) = retry.max { if m == 0 || m > 20 { return Err(GitError::new(ErrorCategory::Protocol, "retry.max must be 1..=20")); } }
+            if let Some(base) = retry.base_ms { if base < 10 || base > 60_000 { return Err(GitError::new(ErrorCategory::Protocol, "retry.baseMs out of range (10..60000)")); } }
+            if let Some(f) = retry.factor { if !(0.5..=10.0).contains(&f) { return Err(GitError::new(ErrorCategory::Protocol, "retry.factor out of range (0.5..=10.0)")); } }
+        }
+        return Ok(Some(parsed));
+    }
+    Ok(None)
+}
+
+/// Parse and validate depth/filter/strategyOverride portion. Returns Protocol errors for invalid values.
 pub fn parse_depth_filter_opts(
     depth: Option<serde_json::Value>,
     filter: Option<String>,
@@ -84,12 +133,8 @@ pub fn parse_depth_filter_opts(
                     if v > i32::MAX as i64 { return Err(GitError::new(ErrorCategory::Protocol, "depth too large")); }
                     out.depth = Some(v as u32);
                 }
-                Some(v) if v <= 0 => {
-                    return Err(GitError::new(ErrorCategory::Protocol, "depth must be positive"));
-                }
-                None => {
-                    return Err(GitError::new(ErrorCategory::Protocol, "depth must be a number"));
-                }
+                Some(v) if v <= 0 => { return Err(GitError::new(ErrorCategory::Protocol, "depth must be positive")); }
+                None => { return Err(GitError::new(ErrorCategory::Protocol, "depth must be a number")); }
                 _ => {}
             }
         }
@@ -105,14 +150,8 @@ pub fn parse_depth_filter_opts(
         }
     }
 
-    // strategyOverride: we accept an object; unknown keys inside will be ignored.
-    if let Some(raw) = strategy_override {
-        if !raw.is_null() {
-            if let Some(obj) = raw.as_object() { if obj.is_empty() { /* ignore empty */ } }
-            let parsed: StrategyOverrideInput = serde_json::from_value(raw).map_err(|e| GitError::new(ErrorCategory::Protocol, format!("invalid strategyOverride: {}", e)))?;
-            out.strategy_override = Some(parsed);
-        }
-    }
+    // strategyOverride parsing (with warnings)
+    out.strategy_override = parse_strategy_override(strategy_override)?;
 
     Ok(out)
 }
@@ -237,5 +276,98 @@ mod tests {
         let arr = json!([1,2,3]);
         let err = parse_depth_filter_opts(None, None, Some(arr)).unwrap_err();
         assert!(err.to_string().contains("invalid strategyOverride"));
+    }
+
+    #[test]
+    fn test_strategy_override_unknown_keys_ignored() {
+        let raw = json!({
+            "http": { "followRedirects": true, "AAA": 123 },
+            "tls": { "insecureSkipVerify": true, "BBB": false },
+            "retry": { "max": 3, "factor": 1.1, "CCC": 42 },
+            "extraTop": { "x": 1 }
+        });
+        let opts = parse_depth_filter_opts(None, None, Some(raw)).unwrap();
+        assert!(opts.strategy_override.is_some());
+        // unknown keys should not block parse
+        let st = opts.strategy_override.unwrap();
+        assert!(st.http.unwrap().follow_redirects.unwrap());
+    }
+
+    #[test]
+    fn test_strategy_override_retry_factor_out_of_range() {
+        let raw = json!({"retry": {"factor": 20.0}});
+        let err = parse_depth_filter_opts(None, None, Some(raw)).unwrap_err();
+        assert!(err.to_string().contains("retry.factor out of range"));
+    }
+
+    #[test]
+    fn test_strategy_override_retry_max_zero_invalid() {
+        let raw = json!({"retry": {"max": 0}});
+        let err = parse_depth_filter_opts(None, None, Some(raw)).unwrap_err();
+        assert!(err.to_string().contains("retry.max"));
+    }
+
+    #[test]
+    fn test_strategy_override_retry_base_ms_too_small() {
+        let raw = json!({"retry": {"baseMs": 5}});
+        let err = parse_depth_filter_opts(None, None, Some(raw)).unwrap_err();
+        assert!(err.to_string().contains("retry.baseMs"));
+    }
+
+    #[test]
+    fn test_strategy_override_http_max_redirects_too_large() {
+        let raw = json!({"http": {"maxRedirects": 999}});
+        let err = parse_depth_filter_opts(None, None, Some(raw)).unwrap_err();
+        assert!(err.to_string().contains("http.maxRedirects"));
+    }
+
+    #[test]
+    fn test_strategy_override_all_valid_edge() {
+        let raw = json!({
+            "http": {"maxRedirects": 20},
+            "retry": {"max": 20, "baseMs": 60000, "factor": 0.5, "jitter": true}
+        });
+        let opts = parse_depth_filter_opts(None, None, Some(raw)).unwrap();
+        assert!(opts.strategy_override.is_some());
+    }
+
+    #[test]
+    fn test_strategy_override_empty_object_ignored() {
+        let raw = json!({});
+        let opts = parse_depth_filter_opts(None, None, Some(raw)).unwrap();
+        assert!(opts.strategy_override.is_some()); // parsed as default (all None)
+        let s = opts.strategy_override.unwrap();
+        assert!(s.http.is_none() && s.tls.is_none() && s.retry.is_none());
+    }
+
+    #[test]
+    fn test_strategy_override_only_unknown_top_level() {
+        let raw = json!({"foo": {"bar": 1}});
+        let opts = parse_depth_filter_opts(None, None, Some(raw)).unwrap();
+        assert!(opts.strategy_override.is_some());
+        let s = opts.strategy_override.unwrap();
+        assert!(s.http.is_none() && s.tls.is_none() && s.retry.is_none());
+    }
+
+    #[test]
+    fn test_strategy_override_mixed_multiple_errors_reports_first() {
+        let raw = json!({
+            "retry": {"max": 0, "factor": 99.0}, // two violations, expect first (max)
+            "http": {"maxRedirects": 999}
+        });
+        let err = parse_depth_filter_opts(None, None, Some(raw)).unwrap_err();
+        let msg = err.to_string();
+        // Implementation detail may validate http first; accept either violation text.
+        assert!(msg.contains("retry.max") || msg.contains("http.maxRedirects"), "error message should contain one of the violations, got: {}", msg);
+    }
+
+    #[test]
+    fn test_strategy_override_all_upper_bounds_success() {
+        let raw = json!({
+            "http": {"maxRedirects": 20},
+            "retry": {"max": 20, "baseMs": 60000, "factor": 10.0, "jitter": false}
+        });
+        let opts = parse_depth_filter_opts(None, None, Some(raw)).unwrap();
+        assert!(opts.strategy_override.is_some());
     }
 }

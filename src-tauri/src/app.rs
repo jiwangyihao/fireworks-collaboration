@@ -78,9 +78,9 @@ async fn git_fetch(repo: String, dest: String, preset: Option<String>, depth: Op
 
 // Git 命令：启动 Push 任务（HTTPS 基础）
 #[tauri::command]
-async fn git_push(dest: String, remote: Option<String>, refspecs: Option<Vec<String>>, username: Option<String>, password: Option<String>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
-    let (id, token) = reg.create(TaskKind::GitPush { dest: dest.clone(), remote: remote.clone(), refspecs: refspecs.clone(), username: username.clone(), password: password.clone() });
-    reg.clone().spawn_git_push_task(Some(app), id, token, dest, remote, refspecs, username, password);
+async fn git_push(dest: String, remote: Option<String>, refspecs: Option<Vec<String>>, username: Option<String>, password: Option<String>, strategy_override: Option<serde_json::Value>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitPush { dest: dest.clone(), remote: remote.clone(), refspecs: refspecs.clone(), username: username.clone(), password: password.clone(), strategy_override: strategy_override.clone() });
+    reg.clone().spawn_git_push_task(Some(app), id, token, dest, remote, refspecs, username, password, strategy_override);
     Ok(id.to_string())
 }
 

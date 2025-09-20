@@ -19,7 +19,7 @@ pub enum TaskState {
 pub enum TaskKind {
     GitClone { repo: String, dest: String, depth: Option<u32>, filter: Option<String>, strategy_override: Option<serde_json::Value> },
     GitFetch { repo: String, dest: String, depth: Option<u32>, filter: Option<String>, strategy_override: Option<serde_json::Value> },
-    GitPush { dest: String, remote: Option<String>, refspecs: Option<Vec<String>>, username: Option<String>, password: Option<String> },
+    GitPush { dest: String, remote: Option<String>, refspecs: Option<Vec<String>>, username: Option<String>, password: Option<String>, strategy_override: Option<serde_json::Value> },
     GitInit { dest: String },
     GitAdd { dest: String, paths: Vec<String> },
     GitCommit { dest: String, message: String, allow_empty: bool, author_name: Option<String>, author_email: Option<String> },
