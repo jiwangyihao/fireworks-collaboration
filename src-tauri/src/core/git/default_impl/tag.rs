@@ -60,10 +60,28 @@ pub fn git_tag<F: FnMut(ProgressPayload)>(
         if !trimmed_end.is_empty() {
             msg = format!("{}\n", trimmed_end);
         }
-        // Create annotated tag object (force handled by libgit2 create call with force flag)
-        repo.tag(tag_name, target_commit.as_object(), &sig, &msg, force)
-            .map_err(|e| GitError::new(ErrorCategory::Internal, format!("create annotated tag: {}", e.message())))?;
-        let phase = if existing_ref.is_some() && force { "AnnotatedRetagged" } else { "AnnotatedTagged" };
+        // 若是 force 且已有引用，尝试复用：比较现有 tag 对象内容（目标 commit、消息、tagger）一致则不创建新对象
+        let mut reused = false;
+        if force {
+            if let Some(existing) = existing_ref.as_ref() {
+                if let Ok(obj) = existing.peel(git2::ObjectType::Tag) {
+                    if let Ok(old_tag) = obj.into_tag() {
+                        let same_target = old_tag.target_id() == target_commit.id();
+                        let same_msg = old_tag.message().map(|m| m == msg).unwrap_or(false);
+                        let same_tagger = old_tag.tagger().map(|t| t == sig).unwrap_or(false);
+                        if same_target && same_msg && same_tagger {
+                            // 复用：不创建新对象，只维持引用（引用已指向该对象）
+                            reused = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !reused {
+            repo.tag(tag_name, target_commit.as_object(), &sig, &msg, force)
+                .map_err(|e| GitError::new(ErrorCategory::Internal, format!("create annotated tag: {}", e.message())))?;
+        }
+        let phase = if existing_ref.is_some() && force { if reused { "AnnotatedRetagged" } else { "AnnotatedRetagged" } } else { "AnnotatedTagged" };
         on_progress(ProgressPayload { task_id: uuid::Uuid::nil(), kind: "GitTag".into(), phase: phase.into(), percent: 100, objects: None, bytes: None, total_hint: None });
     } else {
         // Lightweight: just create/update reference
