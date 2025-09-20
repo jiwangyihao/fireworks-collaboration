@@ -6,6 +6,7 @@ use crate::events::emitter::{emit_all, AppHandle};
 use super::model::{TaskMeta, TaskKind, TaskState, TaskSnapshot, TaskStateEvent, TaskProgressEvent, TaskErrorEvent};
 use super::retry::{load_retry_plan, backoff_delay_ms, is_retryable, categorize};
 use crate::core::git::errors::GitError;
+use crate::core::config::model::AppConfig;
 
 const EV_STATE: &str = "task://state";
 const EV_PROGRESS: &str = "task://progress";
@@ -28,22 +29,16 @@ impl TaskRegistry {
     }
 
     pub fn list(&self) -> Vec<TaskSnapshot> { self.inner.lock().unwrap().values().map(TaskSnapshot::from).collect() }
-
     pub fn snapshot(&self, id: &Uuid) -> Option<TaskSnapshot> { self.inner.lock().unwrap().get(id).map(TaskSnapshot::from) }
-
     pub fn cancel(&self, id: &Uuid) -> bool { self.inner.lock().unwrap().get(id).map(|m| { m.cancel_token.cancel(); true }).unwrap_or(false) }
 
     fn with_meta<F: FnOnce(&mut TaskMeta)>(&self, id: &Uuid, f: F) -> Option<TaskMeta> {
         let mut guard = self.inner.lock().unwrap();
         if let Some(m) = guard.get_mut(id) { f(m); Some(m.clone()) } else { None }
     }
-
     fn emit_state(&self, app:&AppHandle, id:&Uuid) { if let Some(m) = self.inner.lock().unwrap().get(id) { let evt = TaskStateEvent::new(m); emit_all(app, EV_STATE, &evt); } }
-
     fn set_state_emit(&self, app:&AppHandle, id:&Uuid, s:TaskState){ if self.with_meta(id, |m| m.state = s).is_some(){ self.emit_state(app, id);} }
-
     fn set_state_noemit(&self, id:&Uuid, s:TaskState){ let _ = self.with_meta(id, |m| m.state = s); }
-
     fn emit_error(&self, app:&AppHandle, evt:&TaskErrorEvent) { emit_all(app, EV_ERROR, evt); }
 
     pub fn spawn_sleep_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, total_ms: u64) -> JoinHandle<()> {
@@ -81,6 +76,27 @@ impl TaskRegistry {
         Some((msg, shallow))
     }
 
+    /// Merge HTTP strategy overrides (P2.3b). The override model is parsed earlier (parse_stage == clone/fetch depth/filter parsing, or push parse).
+    /// We pass in the global AppConfig (cloned) and return (effective_follow_redirects, effective_max_redirects).
+    /// Rules:
+    /// 1. Start with global config values.
+    /// 2. If override.follow_redirects is Some -> replace.
+    /// 3. If override.max_redirects is Some -> clamp to [0, 20] (parse layer already restricted upper bound) and replace.
+    /// 4. Log once if any value actually changed, include task kind & id for traceability.
+    pub(crate) fn apply_http_override(kind: &str, id: &Uuid, global: &AppConfig, override_http: Option<&crate::core::git::default_impl::opts::StrategyHttpOverride>) -> (bool, u8, bool) {
+        let mut follow = global.http.follow_redirects;
+        let mut max_r = global.http.max_redirects;
+        let mut changed = false;
+        if let Some(o) = override_http {
+            if let Some(f) = o.follow_redirects { if f != follow { follow = f; changed = true; } }
+            if let Some(m) = o.max_redirects { let m_clamped = (m.min(20)) as u8; if m_clamped != max_r { max_r = m_clamped; changed = true; } }
+        }
+        if changed { tracing::info!(target="strategy", task_kind=%kind, task_id=%id, follow_redirects=%follow, max_redirects=%max_r, "http override applied"); }
+        (follow, max_r, changed)
+    }
+
+    
+
     pub fn spawn_git_clone_task_with_opts(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, repo: String, dest: String, depth: Option<serde_json::Value>, filter: Option<String>, strategy_override: Option<serde_json::Value>) -> JoinHandle<()> {
         let this = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
@@ -107,6 +123,11 @@ impl TaskRegistry {
 
             // 参数解析：depth 已在 P2.2b 生效；filter 在 P2.2d 引入占位（当前不真正启用 partial，进行回退提示）
             let parsed_options_res = crate::core::git::default_impl::opts::parse_depth_filter_opts(depth.clone(), filter.clone(), strategy_override.clone());
+            // For strategyOverride.http application we need the global config; currently AppConfig is only available in tauri command layer.
+            // P2.3b: we don't mutate global config; overrides are per-task ephemeral. For clone/fetch we only log effective values.
+            let global_cfg = crate::core::config::model::AppConfig::default(); // TODO(P2.3e): inject real runtime config if needed
+            let mut effective_follow_redirects: bool = global_cfg.http.follow_redirects;
+            let mut effective_max_redirects: u8 = global_cfg.http.max_redirects;
             let mut depth_applied: Option<u32> = None;
             let mut filter_requested: Option<String> = None; // 记录用户请求的 filter（用于回退信息）
             if let Err(e) = parsed_options_res {
@@ -118,7 +139,12 @@ impl TaskRegistry {
                 if let Some(opts) = parsed_options_res.ok() {
                     depth_applied = opts.depth;
                     if let Some(f) = opts.filter.as_ref() { filter_requested = Some(f.as_str().to_string()); }
-                    tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), strategy_override_valid=?opts.strategy_override.is_some(), "git_clone options accepted (depth/filter/strategy parsed)");
+                    if let Some(http_over) = opts.strategy_override.as_ref().and_then(|s| s.http.as_ref()) {
+                        let (f, m, changed) = Self::apply_http_override("GitClone", &id, &global_cfg, Some(http_over));
+                        effective_follow_redirects = f; effective_max_redirects = m;
+                        if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                    }
+                    tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), strategy_http_follow=?effective_follow_redirects, strategy_http_max_redirects=?effective_max_redirects, "git_clone options accepted (depth/filter/strategy parsed)");
                     // P2.2d: 当前阶段尚未真正启用 partial clone，若用户请求了 filter，需要发送一次非阻断回退提示。
                     if let Some((msg, _shallow)) = Self::decide_partial_fallback(depth_applied, filter_requested.as_deref()) {
                         if let Some(app_ref) = &app {
@@ -255,6 +281,9 @@ impl TaskRegistry {
 
             // 解析与校验（P2.2a+c）；P2.2e：若用户请求 filter（partial fetch 尚未真正启用）发送非阻断回退事件
             let parsed_options_res = crate::core::git::default_impl::opts::parse_depth_filter_opts(depth.clone(), filter.clone(), strategy_override.clone());
+            let global_cfg = crate::core::config::model::AppConfig::default();
+            let mut effective_follow_redirects: bool = global_cfg.http.follow_redirects;
+            let mut effective_max_redirects: u8 = global_cfg.http.max_redirects;
             let mut depth_applied: Option<u32> = None;
             let mut filter_requested: Option<String> = None;
             if let Err(e) = parsed_options_res {
@@ -264,7 +293,12 @@ impl TaskRegistry {
             } else if let Ok(opts) = parsed_options_res.as_ref() {
                 depth_applied = opts.depth; // P2.2c: depth now effective
                 if let Some(f) = opts.filter.as_ref() { filter_requested = Some(f.as_str().to_string()); }
-                tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), strategy_override_valid=?opts.strategy_override.is_some(), "git_fetch options accepted (depth/filter/strategy parsed)");
+                if let Some(http_over) = opts.strategy_override.as_ref().and_then(|s| s.http.as_ref()) {
+                    let (f, m, changed) = Self::apply_http_override("GitFetch", &id, &global_cfg, Some(http_over));
+                    effective_follow_redirects = f; effective_max_redirects = m;
+                    if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                }
+                tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), strategy_http_follow=?effective_follow_redirects, strategy_http_max_redirects=?effective_max_redirects, "git_fetch options accepted (depth/filter/strategy parsed)");
                 if let Some((msg, _shallow)) = Self::decide_partial_fallback(depth_applied, filter_requested.as_deref()) {
                     if let Some(app_ref) = &app {
                         let warn_evt = TaskErrorEvent { task_id: id, kind: "GitFetch".into(), category: "Protocol".into(), code: Some("partial_filter_fallback".into()), message: msg, retried_times: None };
@@ -407,14 +441,30 @@ impl TaskRegistry {
             }
 
             // P2.3a: parse strategyOverride early (depth/filter not applicable for push). If invalid => Protocol Fail.
+            let mut effective_follow_redirects = None;
+            let mut effective_max_redirects = None;
             if let Some(raw) = strategy_override.clone() {
                 use crate::core::git::default_impl::opts::parse_strategy_override;
-                if let Err(e) = parse_strategy_override(Some(raw)) {
+                match parse_strategy_override(Some(raw)) {
+                    Err(e) => {
                     if let Some(app_ref) = &app { let err_evt = TaskErrorEvent::from_parts(id, "GitPush", super::retry::categorize(&e), format!("{}", e), None); this.emit_error(app_ref, &err_evt); }
                     match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
                     return;
-                } else {
-                    tracing::info!(target="strategy", kind="push", has_override=true, strategy_override_valid=true, "strategyOverride accepted for push (parse only)");
+                }
+                    Ok(parsed_opt) => {
+                        if let Some(parsed) = parsed_opt {
+                            let global_cfg = crate::core::config::model::AppConfig::default();
+                            if let Some(http_over) = parsed.http.as_ref() {
+                                let (f,m,changed) = Self::apply_http_override("GitPush", &id, &global_cfg, Some(http_over));
+                                effective_follow_redirects = Some(f);
+                                effective_max_redirects = Some(m);
+                                if changed { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                            }
+                            tracing::info!(target="strategy", kind="push", has_override=true, http_follow=?effective_follow_redirects, http_max_redirects=?effective_max_redirects, strategy_override_valid=true, "strategyOverride accepted for push (parse+http apply)");
+                        } else {
+                            tracing::info!(target="strategy", kind="push", has_override=true, http_follow=?effective_follow_redirects, http_max_redirects=?effective_max_redirects, strategy_override_valid=true, "strategyOverride accepted for push (empty object)");
+                        }
+                    }
                 }
             }
 
@@ -798,5 +848,36 @@ mod tests {
         token.cancel();
         let canceled = wait_for_state(&reg, id, TaskState::Canceled, 1000).await; assert!(canceled, "should cancel");
         handle.await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod http_override_tests_new {
+    use super::*;
+    use crate::core::git::default_impl::opts::StrategyHttpOverride;
+    #[test]
+    fn no_override() {
+        let global = AppConfig::default();
+        let (f,m,changed) = TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, None);
+        assert_eq!(f, global.http.follow_redirects);
+        assert_eq!(m, global.http.max_redirects);
+        assert!(!changed);
+    }
+    #[test]
+    fn override_changes() {
+        let global = AppConfig::default();
+        let over = StrategyHttpOverride { follow_redirects: Some(!global.http.follow_redirects), max_redirects: Some(3), ..Default::default() };
+        let (f,m,changed) = TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, Some(&over));
+        assert_eq!(f, !global.http.follow_redirects);
+        assert_eq!(m, 3);
+        assert!(changed);
+    }
+    #[test]
+    fn clamp_applies() {
+        let global = AppConfig::default();
+        let over = StrategyHttpOverride { follow_redirects: None, max_redirects: Some(99), ..Default::default() };
+        let (_f,m,changed) = TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, Some(&over));
+        assert_eq!(m, 20);
+        assert!(changed);
     }
 }
