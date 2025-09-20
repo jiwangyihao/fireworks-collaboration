@@ -110,13 +110,19 @@ export async function startGitPush(params: {
   refspecs?: string[];
   username?: string;
   password?: string;
+  strategyOverride?: {
+    http?: { followRedirects?: boolean; maxRedirects?: number };
+    tls?: { insecureSkipVerify?: boolean; skipSanWhitelist?: boolean };
+    retry?: { max?: number; baseMs?: number; factor?: number; jitter?: boolean };
+  };
 }) {
-  const { dest, remote, refspecs, username, password } = params;
+  const { dest, remote, refspecs, username, password, strategyOverride } = params;
   const args: Record<string, unknown> = { dest };
   if (remote) args.remote = remote;
   if (refspecs && refspecs.length > 0) args.refspecs = refspecs;
   if (username) args.username = username;
   if (password) args.password = password;
+  if (strategyOverride) args.strategy_override = strategyOverride; // snake_case for Tauri invoke
   return invoke<string>("git_push", args);
 }
 
