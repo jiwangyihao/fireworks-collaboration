@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased (P2.3e)
+
+新增：任务级策略覆盖护栏与冲突规范化
+- Added: per-task strategy override ignored fields event `strategy_override_ignored_fields` （解析阶段收集未知顶层与分节字段并一次性提示，不阻断任务）。
+- Added: conflict normalization + event `strategy_override_conflict`：
+  - HTTP: followRedirects=false 且 maxRedirects>0 → 规范化 maxRedirects=0；
+  - TLS: insecureSkipVerify=true 且 skipSanWhitelist=true → 规范化 skipSanWhitelist=false；
+  - 规范化后若最终值与全局不同仍会伴随 `*_strategy_override_applied`；若相同仅发 conflict。
+- 测试：新增 `git_strategy_override_guard_ignored.rs`、`git_strategy_override_conflict_{http,tls,combo,no_conflict}.rs` 及 Registry 单元测试更新；全量 `cargo test` + 前端 `pnpm test` 通过。
+- 文档：`new-doc/TECH_DESIGN_P2_PLAN.md` 已补充冲突规范化与事件顺序、回退策略、测试矩阵。
+
+回退：删除 conflict emit 分支可静默规范化；进一步删除规范化逻辑回到仅忽略字段阶段；移除 ignored emit 分支回退为仅日志。
+
 ## v0.2.0-P2.2b (2025-09-19)
 
 P2.2b: Shallow Clone (`depth` for `git_clone`) 实现：

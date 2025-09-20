@@ -556,6 +556,110 @@ Added: per-task Retry strategy override application (max/baseMs/factor/jitter) w
 
 ```
 
+### P2.3e 任务级策略覆盖护栏（忽略字段 + 冲突规范化）实现说明（已完成）
+
+本阶段统一交付两类护栏能力：
+1) 未知/越权字段收集与一次性提示（ignored fields）。
+2) 冲突/互斥字段自动规范化与冲突事件提示（conflict normalization）。
+
+目标：在不阻断任务的前提下提升策略覆盖可观测性，确保进入底层网络/TLS 实现前的参数组合自洽，可快速定位调用方配置问题，并保持易回退。
+
+#### 1. 功能范围
+- 适用任务：`GitClone` / `GitFetch` / `GitPush`。
+- 覆盖对象：`strategyOverride` 顶层与 `http` / `tls` / `retry` 子对象。
+- 护栏事件：
+  - 忽略字段：`strategy_override_ignored_fields`
+  - 冲突规范化：`strategy_override_conflict`
+  - 已有应用事件：`http|retry|tls_strategy_override_applied`（仅值真实改变时）
+
+#### 2. 忽略字段（Ignored Fields）
+- 解析时收集：
+  - 顶层未知键 → `ignored_top_level`
+  - 分节未知键（记录为 `section.key`，如 `http.foo`）→ `ignored_nested`
+- 若任一集合非空 ⇒ 发射一次事件：
+```
+code: strategy_override_ignored_fields
+category: Protocol
+message: strategy override ignored unknown fields: top=[a/b] sections=[http.x/tls.y]
+```
+- 幂等：任务仅解析一次；事件至多一次；与其它事件并存。
+
+#### 3. 冲突规范化（Conflict Normalization）
+当前支持规则：
+| 类别 | 条件 | 规范化 | 说明 |
+|------|------|--------|------|
+| HTTP | followRedirects=false 且 maxRedirects>0 | maxRedirects=0 | 否则语义悖论（禁止跟随却限制次数>0） |
+| TLS  | insecureSkipVerify=true 且 skipSanWhitelist=true | skipSanWhitelist=false | 放宽验证已跳过完全验证，名单开关无意义 |
+
+检测到冲突 ⇒ 修改局部值后再进入后续逻辑，并发射冲突事件：
+```
+code: strategy_override_conflict
+message 示例: http conflict: followRedirects=false => force maxRedirects=0 (was 3)
+```
+每个冲突规则独立事件（当前实现至多 2 条）；可未来聚合。
+
+`changed` 语义：仅比较“最终规范化后值” 与全局默认；因此：
+- 若用户提供冲突组合导致规范化后仍与默认不同 → 同时出现 `*_applied` 与 `strategy_override_conflict`。
+- 若规范化后回到默认 → 仅出现冲突事件，不出现 applied。
+
+#### 4. 事件顺序与并发
+同一任务内顺序：
+1. `*_strategy_override_applied`（HTTP / TLS / Retry 各自独立，按应用顺序）
+2. `strategy_override_conflict`（按检测顺序 HTTP→TLS）
+3. `strategy_override_ignored_fields`
+
+并发任务互不影响：各自解析与事件缓冲独立，已在组合测试中验证。
+
+#### 5. 代码落点与数据结构
+- `opts.rs`: `StrategyOverrideParseResult { parsed, ignored_top_level, ignored_nested }` 返回额外集合。
+- `GitDepthFilterOpts`: 承载忽略字段集合以便 clone/fetch 路径复用。
+- `registry.rs`:
+  - `apply_http_override` / `apply_tls_override` 签名扩展返回 `(values..., changed, conflict: Option<String>)`。
+  - 任务 spawn 流程：解析 → HTTP 应用 → TLS 应用 → Retry 应用 → emit applied → emit conflict(s) → emit ignored。
+
+#### 6. 测试矩阵（合并后）
+| 类别 | 文件 | 关注点 |
+|------|------|--------|
+| 忽略字段 | `git_strategy_override_guard_ignored.rs` | 有/无未知字段事件一次性行为 |
+| HTTP 冲突 | `git_strategy_override_conflict_http.rs` | follow=false + max>0 规范化 & 冲突事件 |
+| TLS 冲突 | `git_strategy_override_conflict_tls.rs` | insecure=true + skipSan=true 规范化 & 冲突事件 |
+| 组合冲突+忽略 | `git_strategy_override_conflict_combo.rs` | HTTP+TLS 冲突 + ignored 同时出现次数准确 |
+| 无冲突路径 | `git_strategy_override_no_conflict.rs` | 合法组合无 conflict/ignored；仅必要 applied |
+| 回归（已存在） | HTTP/TLS/Retry 各 applied 测试 | 未因护栏改变原有触发条件 |
+| 单元（registry） | 覆盖函数测试 | changed / conflict 分支与规范化正确 |
+
+全部测试（后端 + 前端）绿：冲突/忽略新增后无 flakiness。
+
+#### 7. 回退策略
+| 目标 | 操作 | 副作用 |
+|------|------|--------|
+| 仅关闭冲突事件 | 移除 conflict emit 分支 | 仍执行规范化（静默） |
+| 关闭规范化 | 移除冲突检测与局部值调整 | 可能向后传播矛盾组合（后续实现需自保） |
+| 仅关闭忽略字段事件 | 移除 ignored emit 分支 | 日志仍可定位未知字段 |
+| 完全回退护栏 | 恢复旧函数签名 + 移除结构字段与测试 | 回归到仅应用策略，无可观测护栏 |
+
+#### 8. 安全与观测
+- 事件仅暴露键名与简单布尔/数字差异，不携带敏感值（证书、Token 等未包含）。
+- 冲突信息包含原值（`was X`）辅助调试；未记录完整原始 JSON，避免过度噪声。
+- 统一 `category=Protocol`，前端无需新增分类通道。
+
+#### 9. 已知限制 / 后续展望
+- 冲突规则为硬编码列表：未来新增策略字段需同步扩展或抽象规则表。
+- 目前将 HTTP/TLS 冲突分别发事件；若冲突种类增多可聚合为单条结构化 payload。
+- 未对 retry 与其它策略之间潜在耦合（例如极端 backoff 与禁用 redirect 组合）做跨域冲突检测。
+- 未提供“dry-run diff” 汇总事件（可后续新增 summary 事件减少多条提示）。
+
+#### 10. Changelog 与完成度
+```
+Added: per-task strategy override guard (ignored fields) + conflict normalization with events `strategy_override_ignored_fields` & `strategy_override_conflict` (HTTP follow=false => maxRedirects=0; TLS insecureSkipVerify=true => skipSanWhitelist=false).
+```
+完成度：功能、生效路径、事件、测试、文档与回退策略全部落地。
+
+#### 11. 结论
+护栏体系（忽略字段 + 冲突规范化）显著提升策略覆盖的透明性与安全性，不改变既有任务核心语义，具备细粒度回退开关，风险低、收益高，可作为后续引入更多策略字段的基础模板。
+
+
+
 ---
 ### P2.3 任务级策略覆盖路线图（约 0.5–0.75 周）
 > 补充：本节后追加的 P2.3d TLS 实现摘要（快速阅读版），详尽内容见本文后续 "P2.3d 任务级 TLS 策略覆盖实现说明" 章节。
