@@ -5,7 +5,7 @@ use crate::core::git::transport::{ensure_registered, maybe_rewrite_https_to_cust
 
 use super::{errors::{GitError, ErrorCategory}, service::{GitService, ProgressPayload}};
 
-mod helpers;
+pub mod helpers; // made public for test visibility of map_git2_error (i18n classification)
 mod ops;
 pub mod clone;
 pub mod fetch;

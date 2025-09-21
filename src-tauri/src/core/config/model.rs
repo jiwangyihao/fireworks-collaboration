@@ -37,6 +37,9 @@ pub struct AppConfig {
     pub tls: TlsCfg,
     pub logging: LoggingCfg,
     #[serde(default)] pub retry: RetryCfg,
+    /// 是否支持 partial filter（服务端 capability 已验证）。默认为 false；
+    /// 可通过环境变量 `FWC_PARTIAL_FILTER_SUPPORTED=1` 在运行时覆盖（仅影响 fallback 行为，不启用真正 partial 传输）。
+    #[serde(default)] pub partial_filter_supported: bool,
 }
 
 fn default_true() -> bool { true }
@@ -94,6 +97,7 @@ impl Default for AppConfig {
             tls: TlsCfg { san_whitelist: default_san_whitelist(), insecure_skip_verify: false, skip_san_whitelist: false },
             logging: LoggingCfg { auth_header_masked: default_true(), log_level: default_log_level() },
             retry: RetryCfg::default(),
+            partial_filter_supported: false,
         }
     }
 }
@@ -141,6 +145,7 @@ mod tests {
     assert!(s.contains("\"baseMs\""));
     assert!(s.contains("\"factor\""));
     assert!(s.contains("\"jitter\""));
+    assert!(s.contains("\"partialFilterSupported\""));
     }
 
     #[test]

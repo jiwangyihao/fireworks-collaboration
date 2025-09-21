@@ -27,7 +27,10 @@ pub fn map_git2_error(e: &git2::Error) -> ErrorCategory {
     use git2::ErrorClass as C;
     if e.code() == git2::ErrorCode::User { return ErrorCategory::Cancel; }
     let msg = e.message().to_ascii_lowercase();
-    if msg.contains("timed out") || msg.contains("timeout") || msg.contains("connection") || msg.contains("connect") || matches!(e.class(), C::Net) { return ErrorCategory::Network; }
+    // 增补中文网络关键字："连接"/"无法"/"超时"/"失败" 与常见英文保持并列
+    if msg.contains("timed out") || msg.contains("timeout") || msg.contains("connection") || msg.contains("connect")
+        || msg.contains("连接") || msg.contains("超时") || msg.contains("无法 连接") || msg.contains("失败")
+        || matches!(e.class(), C::Net) { return ErrorCategory::Network; }
     if msg.contains("ssl") || msg.contains("tls") { return ErrorCategory::Tls; }
     if msg.contains("certificate") || msg.contains("x509") { return ErrorCategory::Verify; }
     if msg.contains("401") || msg.contains("403") || msg.contains("auth")
