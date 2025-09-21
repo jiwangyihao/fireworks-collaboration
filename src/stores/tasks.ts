@@ -21,7 +21,7 @@ export const useTasksStore = defineStore("tasks", {
     // 进度按任务聚合，percent: 0-100，可选 objects/bytes
     progressById: {} as Record<string, { percent: number; phase?: string; objects?: number; bytes?: number; total_hint?: number }>,
     // MP1.5: 记录最近一次错误（标准化 error 事件）
-  lastErrorById: {} as Record<string, { category: string; message: string; retriedTimes?: number }>,
+    lastErrorById: {} as Record<string, { category: string; message: string; retriedTimes?: number; code?: string }>,
   }),
   actions: {
     upsert(task: TaskItem) {
@@ -44,9 +44,11 @@ export const useTasksStore = defineStore("tasks", {
         total_hint: total_hint ?? prev.total_hint,
       };
     },
-    setLastError(taskId: string, err: { category: string; message: string; retried_times?: number; retriedTimes?: number }) {
+    setLastError(taskId: string, err: { category: string; message: string; retried_times?: number; retriedTimes?: number; code?: string }) {
       const retriedTimes = (err as any).retriedTimes ?? (err as any).retried_times;
-      this.lastErrorById[taskId] = { category: err.category, message: err.message, retriedTimes };
+      const code = (err as any).code;
+      const prev = this.lastErrorById[taskId];
+      this.lastErrorById[taskId] = { category: err.category, message: err.message, retriedTimes: retriedTimes ?? prev?.retriedTimes, code };
     },
   },
 });

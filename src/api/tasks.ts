@@ -60,6 +60,7 @@ export async function initTaskEvents() {
         // 同时提供 camelCase 便于内部归一
         // @ts-ignore allow extra field for compatibility
         retriedTimes: rt,
+        code: p.code,
       });
       // 也写入全局日志，便于提示
       const prefix = p.kind ? `${p.kind}` : "Task";
@@ -87,14 +88,41 @@ export async function cancelTask(id: string) {
 }
 
 // P0.6：启动 Git Clone 任务，返回 taskId
-export async function startGitClone(repo: string, dest: string) {
-  return invoke<string>("git_clone", { repo, dest });
+export interface StrategyOverride {
+  http?: { followRedirects?: boolean; maxRedirects?: number };
+  tls?: { insecureSkipVerify?: boolean; skipSanWhitelist?: boolean };
+  retry?: { max?: number; baseMs?: number; factor?: number; jitter?: boolean };
+  // 未来可扩展其它子集（保持前端宽松，后端忽略未知并触发护栏事件）
+}
+
+export async function startGitClone(repo: string, dest: string, opts?: { depth?: number; filter?: string; strategyOverride?: StrategyOverride }) {
+  const args: Record<string, unknown> = { repo, dest };
+  if (opts) {
+    if (opts.depth !== undefined) args.depth = opts.depth;
+    if (opts.filter !== undefined) args.filter = opts.filter;
+    if (opts.strategyOverride) args.strategy_override = opts.strategyOverride; // snake_case for backend
+  }
+  return invoke<string>("git_clone", args);
 }
 
 // P1.1：启动 Git Fetch 任务，返回 taskId
-export async function startGitFetch(repo: string, dest: string, preset?: "remote" | "branches" | "branches+tags" | "tags") {
+export async function startGitFetch(
+  repo: string,
+  dest: string,
+  options?: { preset?: "remote" | "branches" | "branches+tags" | "tags"; depth?: number; filter?: string; strategyOverride?: StrategyOverride } |
+    ("remote" | "branches" | "branches+tags" | "tags"),
+) {
   const args: Record<string, unknown> = { repo, dest };
-  if (preset && preset !== "remote") args.preset = preset;
+  // 兼容旧签名：第三参数若是字符串则视为 preset
+  if (typeof options === "string") {
+    if (options !== "remote") args.preset = options;
+  } else if (options) {
+    const { preset, depth, filter, strategyOverride } = options;
+    if (preset && preset !== "remote") args.preset = preset;
+    if (depth !== undefined) args.depth = depth;
+    if (filter !== undefined) args.filter = filter;
+    if (strategyOverride) args.strategy_override = strategyOverride;
+  }
   return invoke<string>("git_fetch", args);
 }
 
@@ -110,11 +138,7 @@ export async function startGitPush(params: {
   refspecs?: string[];
   username?: string;
   password?: string;
-  strategyOverride?: {
-    http?: { followRedirects?: boolean; maxRedirects?: number };
-    tls?: { insecureSkipVerify?: boolean; skipSanWhitelist?: boolean };
-    retry?: { max?: number; baseMs?: number; factor?: number; jitter?: boolean };
-  };
+  strategyOverride?: StrategyOverride;
 }) {
   const { dest, remote, refspecs, username, password, strategyOverride } = params;
   const args: Record<string, unknown> = { dest };
