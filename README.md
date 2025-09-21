@@ -118,3 +118,32 @@ await startGitClone('https://github.com/org/repo.git', 'D:/work/repo', {
 
 回退策略：删除事件分支（仅日志）或移除对应 `apply_*_override` 调用即可恢复旧行为。
 
+### 🔧 环境变量 (P2 新增)
+
+| 变量 | 值 | 作用 | 默认 |
+|------|----|------|------|
+| `FWC_PARTIAL_FILTER_SUPPORTED` | `1`/其它 | 声明运行环境支持 Git partial clone filter；为 `1` 时不触发回退提示事件 | 未设置=不支持 |
+| `FWC_STRATEGY_APPLIED_EVENTS` | `0` / 其它 | 是否发送独立 `*_strategy_override_applied` 信息事件；为 `0` 时仅保留 summary 汇总 | 未设置=发送 |
+
+### 🧾 汇总事件：`strategy_override_summary`
+
+为减少前端多事件聚合的复杂度，Clone/Fetch/Push 在解析与应用策略覆盖后会发送一次聚合事件（仍走 `task://error` 通道，`category=Protocol` 信息级）：
+
+`code = strategy_override_summary`，`message` 字段是一个 JSON 字符串，示例：
+
+```jsonc
+{
+	"taskId": "<uuid>",
+	"kind": "GitClone",
+	"code": "strategy_override_summary",
+	"category": "Protocol",
+	"message": "{\n  \"taskId\":\"<uuid>\",\n  \"kind\":\"GitClone\",\n  \"http\":{\"follow\":true,\"maxRedirects\":3},\n  \"retry\":{\"max\":5,\"baseMs\":200,\"factor\":1.5,\"jitter\":0.1},\n  \"tls\":{\"insecureSkipVerify\":false,\"skipSanWhitelist\":false},\n  \"appliedCodes\":[\"http_strategy_override_applied\",\"retry_strategy_override_applied\"],\n  \"filterRequested\": false\n}"
+}
+```
+
+前端可：
+1. 监听一次 summary 即得所有最终生效值；
+2. 若 `FWC_STRATEGY_APPLIED_EVENTS=0`，独立 applied 事件不会出现，但 `appliedCodes` 仍列出；
+3. 可用 `appliedCodes` 列表判断 UI 上是否需要高亮“有改写”。
+
+

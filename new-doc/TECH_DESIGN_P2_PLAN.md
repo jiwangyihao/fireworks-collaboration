@@ -1,902 +1,826 @@
-# P2 阶段细化路线图与开发计划（本地 Git 操作 + Shallow/Partial + 任务级策略覆盖）
+# P2 阶段技术设计文档
 
-> 本文在 MP0/MP1 基线（git2-rs 已落地、Push + 自定义 smart subtransport(A) 灰度 + Retry v1 + 事件增强）之上，规划并拆解 P2 的交付目标、阶段划分与工程化实施细节，保持前端命令/事件/任务模型不变、可回退且测试完备。
+## 1. 概述
 
----
+本文基于 MP0/MP1 已完成能力（git2-rs 基线、本地仓库操作初始集、Push、自定义 smart subtransport(A) 灰度、Retry v1、事件分类增强）继续扩展至 P2：完善本地 Git 常用操作、浅/部分克隆与策略覆盖（HTTP / TLS / Retry），并引入可观测护栏与环境 gating。目标是在不破坏现有前端任务/事件协议的前提下新增可选字段与信息型事件，保持严格回退路径与充分测试覆盖。
 
-## 0. 目标、范围与成功标准
+### 目标
+1. 本地 Git 常用操作：覆盖 init / add / commit / branch / checkout / tag / remote(set-url/add/remove)，统一事件与错误分类。
+2. Shallow / Partial：为 clone / fetch 提供 depth 与 filter 输入，远端或环境不支持时按“最近原则”明确回退并给出结构化提示。
+3. 任务级策略覆盖：允许通过 strategyOverride 对 http / tls / retry 子集进行按任务浅合并，提供可观测 applied / conflict / ignored / summary 事件与可控 gating。
+4. 兼容性：保持既有前端命令、事件管道与 Store 结构不破坏；新增字段全部可选，输入格式兼容 snake_case 与 camelCase。
 
-- 目标
-  - 本地 Git 常用操作：提供 init/add/commit/branch/checkout/tag/remote(set-url/add/remove) 等命令，统一事件/错误分类。
-  - Shallow/Partial：clone/fetch 支持 `depth`（浅克隆/浅拉取）与 `filter`（部分克隆，如 `blob:none`）；在远端/环境不支持时平滑回退并清晰提示。
-  - 任务级策略覆盖：允许在任务级通过 `strategyOverride` 覆盖 `http/tls/retry` 的安全子集，浅合并全局配置；互斥/越权项有护栏与告警。
-  - 兼容：保持既有命令/事件/前端 UI 与 Store 结构兼容；新增字段均为可选，输入端容忍 snake_case/camelCase。
-- 范围
-  - 后端：git2-rs 实现的本地 Git 操作；clone/fetch 的 `depth/filter` 选项与回退；任务级策略覆盖（http/tls/retry 子集）。
-  - 前端：命令入参扩展与事件订阅无需破坏性改动；可选增强展示（如“最近错误”已在 MP1.5 落地）。
-- 不做（P2）
-  - 代理能力与自动降级（P5）；
-  - IP 优选与 IP 池（P4）；
-  - 凭证安全存储（P6）；
-  - LFS（P7）与指标面板（P8）；
-  - SSH、系统 git 兜底。
-- 成功标准（验收）
-  - 单测/集成测试全绿；
-  - 本地 Git 操作可在 Windows 上稳定运行（跨平台保持构建通过）；
-  - depth/filter 在支持的远端上有效；远端不支持时按“最近原则”回退并给出 `Protocol` 类提示；
-  - 任务级策略覆盖能生效、越权与互斥有护栏；
-  - 与 MP1 的事件/错误分类保持一致，无敏感信息泄漏。
+### 范围
+- 后端：git2-rs 实现的本地仓库与引用操作；clone/fetch 的 depth 与 filter 决策、fallback、能力检测与 gating；按任务策略覆盖（HTTP/TLS/Retry）。
+- 前端：命令入参扩展与事件展示，不强制 UI 结构变更；可选增强（最近错误、策略事件分层）。
 
-### P2.1b 实现说明（已完成）
+### 不在本阶段
+- 代理与自动降级（计划更后阶段）。
+- IP 优选与 IP 池。
+- 凭证安全存储。
+- LFS 与指标面板。
+- SSH 及系统 git 回退路径。
 
-本节记录 `git_commit` 的落地细节、测试矩阵与与 P2.1a 复用点，作为后续 branch/checkout 等命令的模板。与设计初衷保持“最小必要进度事件 + 标准错误分类”一致。
+### 成功标准
+1. 全量单元与集成测试通过（Windows 作为关键运行环境保持稳定）。
+2. 本地 Git 操作在 Windows 上无路径大小写与换行差异导致的失败。
+3. depth / filter 在受支持远端生效；不支持路径触发明确 Protocol 类回退事件且仍成功执行主要任务。
+4. 任务级策略覆盖可生效；越权与互斥组合被规范化或忽略并以事件反馈。
+5. 错误分类与 MP1 既有分类保持一致，无敏感信息泄漏。
+
+
+## 2. 详细路线图
+
+### P2.0 基线巩固与准备
+目标：在进入增量功能（commit/branch 等）前，确保 MP1 基线的稳定性与可扩展性，为后续阶段提供一致的任务注册、事件分类与测试支撑。
+范围：
+- 统一 TaskRegistry 任务生命周期：pending→running→completed/failed/canceled。
+- 标准错误分类枚举与映射（Protocol/Network/Internal/Cancel），建立测试夹具。
+- 事件通道约定：state / progress / error 复用；error 支持 code 字段（信息型或致命）。
+- 初始化本地仓库操作最小集合：init / add。
+- 引入跨平台（Windows 重点）测试运行脚本与临时仓库夹具工具。
+交付物：
+- 任务注册统一入口与取消原子标志。
+- 错误分类辅助函数与单元测试。
+- 初始测试夹具（创建临时仓库、写入文件、生成提交作者信息）。
+- README/设计文档补充基线事件与分类表。
+验收标准：
+- 全量测试（至少含 init / add / 基础失败路径）稳定通过。
+- 事件与状态顺序确定性，无竞态 flakiness。
+- Windows 环境运行通过（CI 或本地）无路径大小写/换行差异导致失败。
+回退策略：
+- 如后续阶段出现行为变更冲突，可单独还原新增 init/add 实现与分类辅助；其余阶段使用的公共结构保持兼容。
+风险与缓解：
+- 风险：错误分类过早绑定具体字串 → 后续难扩展；缓解：集中匹配函数表驱动，可增量添加关键字。
+- 风险：事件 code 扩展超前；缓解：约定信息型事件必须 category=Protocol 且不改变任务最终状态。
+
+ 
+### P2.1a 本地操作扩展引导（init/add 基础与测试框架固化）
+目标：在基线之上补齐最常用的初始仓库操作，为后续 commit/branch 等操作提供已验证的输入上下文与测试复用点。
+范围：
+- git init：创建空仓库（含 .git 目录存在性校验、重复初始化幂等处理日志）。
+- git add：添加/更新工作区文件到 index（不含 rename / 权限位特殊处理）。
+- 统一工作区写入与断言工具：封装写文件、改动文件、读取 HEAD/Index 状态函数。
+- 增补进度与事件最小策略：本地快速操作仅在结束时发送一次 progress (percent=100)。
+交付物：
+- TaskKind 扩展：GitInit / GitAdd。
+- 对应 Tauri 命令与前端 API 调用包装。
+- 后端测试：初始化成功 / 重复初始化 / 添加单文件 / 添加多文件 / 空 add 不产生提交。
+- 前端测试：触发任务、接收完成事件、错误路径（在非空路径上 init 仍成功幂等）。
+验收标准：
+- GitInit 幂等：二次执行不失败且事件结果可区分第一次与后续。
+- GitAdd 对已存在文件修改后再次 add 仍成功，索引状态与工作区内容一致。
+- 取消路径：开始前取消能即时终止；执行中文件枚举阶段取消不留下部分索引写入。
+回退策略：
+- 移除 TaskKind 分支与命令导出即可恢复到 P2.0 基线；测试夹具继续复用。
+风险与缓解：
+- 大量/大文件性能：暂限制测试规模，后续性能阶段再优化。
+- Windows 行尾差异：通过二进制写入与基于 index 元数据断言规避换行差异。
+
+### P2.1b Commit 能力与模板化规范
+目标：引入提交（commit）操作，形成后续分支/标签等引用修改类操作的结构化模板（校验→副作用→单进度事件→错误分类）。
+范围：
+- git commit（支持 allowEmpty、可选作者覆盖）。
+- 统一空提交判断逻辑：比较当前 index tree 与 HEAD tree 或首提场景 index 是否为空。
+- 任务模型扩展：TaskKind GitCommit；前端 API 和 Store 类型更新。
+- 事件：仅最终 progress（phase=Committed）。
+交付物：
+- GitCommit 任务注册与实现文件。
+- 测试：成功提交、空提交拒绝/允许、作者覆盖、消息裁剪、多次重复提交、取消两阶段、输入错误分类。
+- 文档：提交参数与错误分类增补。
+验收标准：
+- allowEmpty=false 时空提交必然返回 Protocol 分类错误；allowEmpty=true 可成功生成提交。
+- 作者覆盖需同时提供非空 name 与 email；缺任一字段失败且不产生提交对象。
+- 取消路径不产生部分提交（无孤立对象影响 HEAD）。
+回退策略：
+- 移除 GitCommit TaskKind 与命令导出；测试标记忽略；其余阶段不受影响。
+风险与缓解：
+- 多平台本地用户 signature 不一致：允许显式作者覆盖保持可重复性。
+- 空白消息处理：trim 后再校验，避免多余空格导致意外拒绝。
+
+### P2.1c Branch 与 Checkout 引用管理
+目标：支持创建分支与检出，形成对引用(ref) 修改的可控模板（名称校验、force 覆盖、安全取消点与单进度事件）。
+范围：
+- git branch：创建分支、可选 force 更新引用、可选创建后立即 checkout。
+- git checkout：检出现有分支或在 create=true 时基于当前 HEAD 创建并检出。
+- 分支命名校验规则两阶段增强（基础非法字符 → 追加更严格模式）。
+- 取消点：写引用与切换 HEAD 前再次检查。
+交付物：
+- TaskKind 扩展：GitBranch / GitCheckout。
+- 分支命名校验函数与测试（合法/非法用例集合）。
+- 集成测试：创建、force 覆盖、已存在冲突、checkout 不存在、create+checkout、取消、非法名称、幂等检出。
+验收标准：
+- 非 force 创建已存在分支返回 Protocol 错误；force 创建正确更新指向。
+- checkout create 在无 HEAD（无提交）场景失败（Protocol）。
+- 所有非法名称均返回 Protocol 分类且未写入引用。
+回退策略：
+- 移除 TaskKind 与命令导出；保留命名校验函数供后续 tag 引用。
+风险与缓解：
+- 名称规则可能不足覆盖全部 git 约束：以迭代增强策略，通过集中测试列表便捷扩展。
+- 并发写引用冲突：当前单进程内序列化操作，后续才考虑并发锁定。
+
+### P2.1d Tag 与 Remote 管理
+目标：补齐标签与远程管理操作，完成本地引用与远程配置的最小闭环，为后续 shallow/partial 与策略覆盖提供可复用引用状态前置条件。
+范围：
+- git tag：轻量与附注标签创建、force 覆盖、消息规范化（换行统一、尾部空行折叠）。
+- git remote：add / set-url / remove，URL 基础合法性校验与幂等行为。
+- 进度 phase 细化：Tagged / AnnotatedTagged / Retagged / AnnotatedRetagged / RemoteAdded / RemoteSet / RemoteRemoved。
+- URL 校验策略：原始含空白直接拒绝；支持 http/https、scp-like、无空格本地路径；其余 Protocol 错误。
+交付物：
+- TaskKind 扩展：GitTag / GitRemoteAdd / GitRemoteSet / GitRemoteRemove。
+- 标签命名与 remote 命名校验（可复用分支规则部分或独立最小集）。
+- 测试：标签首次/重复非 force/force 相同内容 OID 稳定、附注缺消息失败、非法 URL、多次 set 同 URL 幂等、remove 不存在失败、取消点、安全回退。
+验收标准：
+- force 覆盖区分首次与覆盖 phase，且同内容 force 不产生新对象（Annotated）。
+- URL 含换行/制表符全部拒绝。
+- 删除不存在远程返回 Protocol 分类，无副作用。
+回退策略：
+- 移除 TaskKind 与命令导出即可，不影响之前 branch/commit 功能。
+风险与缓解：
+- 附注消息规范化差异：通过测试固定 CRLF→LF 与尾部裁剪规则，避免跨平台差异。
+- URL 判定过宽：后续可按需补充白名单 scheme 或引入更严 parser。
+
+### P2.2a Shallow Clone 初始 Depth 支持
+目标：在 clone/fetch 中引入 depth 最小可行实现（仅浅度，不含 filter），建立后续 partial/fallback 判定与组合策略基线。
+范围：
+- 入参扩展：`depth?: number`（>0 整数）。
+- 仅 clone / fetch 解析与应用；push 无影响。
+- depth 透传 git2 clone/fetch 选项；不改变现有 progress/事件模型。
+- 记录浅克隆与 deepen 日志（首次 shallow / 追加 depth 增大）。
+交付物：
+- 解析与范围校验。
+- CloneOpts / FetchOpts 结构扩展。
+- 测试：clone depth=1；后续 fetch depth=2 deepen；非法 depth（0/负/非数）Protocol；完整仓库 fetch depth 不破坏历史。
+验收标准：
+- 合法 depth 成功且存在 `.git/shallow`。
+- deepen 后提交数增加且不超真实历史。
+- 非法 depth 均 Protocol，未产生残留半成品仓库。
+回退策略：
+- 去除 depth 字段解析与传递即可回退为完整克隆；相关测试忽略或删除。
+风险与缓解：
+- 远端差异：断言最小集合（存在 shallow 文件 + 至少 1 提交）。
+- 与后续 filter 交互复杂：预抽象判定结构（DepthOnly/Full），降低将来 partial 接入的改动面。
+
+### P2.2b Partial Clone Filter 解析与初始回退逻辑
+目标：解析并接入 `filter`（部分克隆，如 `blob:none`）最小路径，在尚未真正下沉对象裁剪的前提下建立回退与决策骨架（与 depth 并存），确保后续引入真实过滤与环境 gating 时无需大量重构。
+范围：
+- 入参扩展：`filter?: string`；支持集合（首批：`blob:none`、`tree:0`），超出集合返回 Protocol。
+- 构建 `DepthFilterDecision`：`Full | DepthOnly | FilterOnly | DepthAndFilter(planned) | FallbackShallow | FallbackFull`。
+- 当前阶段不读取远端 advertised capabilities；不做真实过滤下载，仅记录决策并允许任务继续。
+- 提前预留 fallback 事件 code 名称（本阶段不发射，下一阶段启用）。
+- 与 depth 共存：当同时提供 depth+filter 时置标记（下一阶段实现联合策略）。
+交付物：
+- filter 字段解析与校验函数。
+- 决策函数 `decide_depth_filter(depth, filter)` 返回枚举。
+- 测试：
+  - 仅 filter（受支持值）→ FilterOnly 决策。
+  - depth+filter → 暂返回 DepthOnly 并标注联合待实现（决策枚举区分）。
+  - 不支持 filter 值 → Protocol。
+  - 空字符串 / 仅空白 → Protocol。
+  - 仅 depth → DepthOnly；均缺省 → Full。
+验收标准：
+- 所有受支持 filter 值解析成功，错误值全部分类为 Protocol。
+- 决策枚举覆盖上述六条路径（本阶段不发射相关事件）。
+- 无新增事件；现有 clone/fetch 成功率不下降；测试全绿。
+回退策略：
+- 移除 filter 解析与决策函数；depth 逻辑保持；测试删除或忽略 filter 相关用例。
+风险与缓解：
+- 风险：后续启用真实过滤需要补充对象裁剪 → 通过分阶段保留 FilterOnly 判定与集中测试降低侵入。
+- 风险：过早暴露联合深度+过滤语义 → 使用枚举 planned variant 隔离，未对外宣称事件或状态改变。
+
+### P2.2c Partial/Depth 联合策略与回退事件
+目标：完善 depth 与 filter 同时提供时的联合决策及真实回退事件发射，向前端明确告知在当前阶段 filter 尚未生效或被降级，从而为后续真正部分对象裁剪实现提供稳定事件契约。
+范围：
+- 扩展 `DepthFilterDecision`：实现 `DepthAndFilter` 分支语义；当 filter 支持标记缺失或尚未启用时根据输入组合判定降级：
+  - depth+filter → 若环境/远端不支持 filter ⇒ `FallbackShallow`（保留 depth）
+  - 仅 filter 且不支持 ⇒ `FallbackFull`
+- 引入信息型回退事件：`code=partial_filter_fallback`，`message` 包含 `requestedDepth`, `requestedFilter`, `decision`。
+- 事件分类仍为 `Protocol`，不改变任务最终状态；单任务至多一次。
+- clone / fetch 两类任务均支持；push 无影响。
+- 与现有 HTTP/Retry/TLS 策略事件并存，顺序：策略 applied/conflict/ignored 之后、strategy summary 之前（若存在）。
+交付物：
+- 决策实现与单元测试（覆盖所有输入组合：无输入 / 仅 depth / 仅 filter 支持 / 仅 filter 不支持 / depth+filter 支持 / depth+filter 不支持）。
+- 事件发射逻辑与序列测试（验证事件出现次数与顺序）。
+- 集成测试：
+  - clone depth+filter（远端不支持 filter 模拟）→ fallback shallow 事件。
+  - clone 仅 filter （不支持）→ fallback full 事件。
+  - fetch deepen + filter（不支持）→ fallback shallow 且 deepen 生效（提交数增加）。
+  - 支持场景模拟（通过注入测试钩子）→ 无 fallback 事件。
+验收标准：
+- 不支持 filter 的两类降级路径均触发单一 fallback 事件，字段准确。
+- 支持场景不触发 fallback；决策枚举与测试断言一致。
+- fallback 不影响任务成功、进度与已有策略事件（无丢失或乱序）。
+回退策略：
+- 移除事件发射与降级分支（恢复到 P2.2b 的 FilterOnly/DepthOnly 判定）；测试相应忽略。
+风险与缓解：
+- 风险：事件顺序与后续 summary 事件潜在竞态 → 通过顺序测试锁定“fallback 先于 summary”。
+- 风险：模拟“支持 filter” 钩子与未来真实 capability 检测差异 → 统一抽象 `PartialCapabilityProvider` 接口，后续替换实现即可。
+
+### P2.2d Partial 能力检测与环境 Gating
+目标：引入对运行环境与远端是否支持 partial filter 的能力探测与可控 gating（环境变量 + 探测缓存），使 fallback 决策从“静态假设不支持”升级为“基于真实能力与显式开关”。
+范围：
+- 环境变量 `FWC_PARTIAL_FILTER_SUPPORTED`：未设或=0 表示本进程声明不支持 filter，=1 表示允许尝试；解析为布尔 gating。
+- 远端能力探测：首次 clone/fetch（有 filter 请求）时执行最小探测（当前阶段以模拟钩子替代，后续可扩展 ls-remote 或 version 协议特征）。
+- 引入缓存：按 remote URL 级别存储探测结果（进程内 HashMap），避免重复探测。
+- 决策更新：仅当 gating=true 且探测=支持 时才进入 FilterOnly / DepthAndFilter；否则沿用 fallback 流程。
+- 日志：记录 gating 值、探测结果、最终决策；支持调试标记 `strategy.partial.capability`。
+交付物：
+- `PartialCapabilityProvider` 实现（含 env 读取、缓存、测试注入）。
+- 决策函数扩展以调用 provider。
+- 测试：
+  - gating=0 + filter → FallbackFull/FallbackShallow（与 depth 组合）且无探测调用。
+  - gating=1 + provider 返回不支持 → fallback 事件仍触发（单次探测）。
+  - gating=1 + provider 支持 → 不触发 fallback，决策进入 FilterOnly / DepthAndFilter。
+  - 缓存命中：两次同 URL filter 请求仅一次探测（计数断言）。
+  - 不同 URL 独立探测。
+验收标准：
+- 探测在需要时恰好调用一次并缓存；禁用 gating 完全绕过探测。
+- 支持路径无 fallback 事件；不支持路径有且仅一条 fallback 事件。
+- 环境变量非法值（非 0/1）按 0 处理并记录警告日志。
+回退策略：
+- 移除 capability provider 调用，恢复到 P2.2c 静态逻辑；保留结构方便再开启。
+风险与缓解：
+- 风险：未来真实探测耗时增加初次任务延迟 → 允许异步预热（后续阶段）。
+- 风险：缓存污染（不同远端同域名差异）→ 缓存 key 使用规范化完整 URL（scheme+host+path）。
+
+### P2.2e Shallow/Partial 鲁棒性与回归测试强化
+目标：在基础与能力检测落地后，补齐边界条件、错误路径与并行场景测试，降低后续引入真实对象裁剪与网络差异时的回归风险。
+范围：
+- 增补多次 deepen：depth 逐步 1→2→4 验证历史递增且不重复 fallback 事件。
+- filter 不支持场景下并行多个 clone（含不同 depth）仅各自一次 fallback，互不污染。
+- 本地已完整仓库 + 再传 depth/filter：决策保持 Full，不产生 fallback。
+- 非法 filter 与非法 depth 组合输入：优先报告第一个解析错误（明确顺序规则）。
+- 软跳过外网依赖：公共仓库网络波动时标记 soft-skip 而非失败。
+- 日志字段稳定性测试：抽取 depth/filter/fallback 关键信息匹配正则（防回归改名）。
+交付物：
+- 新测试文件：`git_shallow_partial_multi_deepen.rs`、`git_partial_parallel_fallback.rs`、`git_shallow_full_repo_noop.rs`、`git_partial_invalid_combo.rs`。
+- 日志断言辅助：新增 `assert_log_contains_once` 针对策略模块。
+- 文档更新：补充“多次 deepen 与并行” 注意事项。
+验收标准：
+- 多次 deepen 后提交数量单调递增且 `.git/shallow` 存在。
+- 并行 fallback 事件计数 = 任务数；无重复。
+- 完整仓库路径无 shallow 文件创建。
+- 非法组合明确返回第一错误（测试锁定顺序）。
+回退策略：
+- 删除新增测试与日志断言，不影响核心功能；其余阶段保持可用。
+风险与缓解：
+- 风险：并行测试偶发顺序差异 → 仅断言计数与集合，不依赖顺序。
+- 风险：外网依赖不稳定 → 使用软跳过策略与本地仓库镜像兜底（可选）。
+
+### P2.2f 文档同步与前端参数透传完善
+目标：将已实现的 shallow/partial（depth/filter/回退决策/gating）能力在前端与文档中完整揭示，确保调用方具备明确使用示例、事件解释与回退含义；为后续策略覆盖章节的 summary/gating 逻辑提供一致呈现模式。
+范围：
+- 前端 API：`startGitClone` / `startGitFetch` 参数说明补充 depth/filter；示例组合（仅 depth、depth+filter、filter-only）。
+- UI：Git 面板展示 depth/filter 可选输入（暂文本框/数字输入，不做高级校验）。
+- Store：记录 fallback 事件（code=partial_filter_fallback）并与策略类 informational 事件统一展示层次。
+- 文档：
+  - README 新增 Depth/Partial 使用章节与事件示例 JSON。
+  - 技术设计（本文）收束 P2.2 阶段，列出全部决策枚举及其触发条件表。
+  - Changelog 条目：Added shallow/partial clone (depth + filter parsing with fallback events and capability gating)。
+- 测试：
+  - 前端集成：发起多种组合任务并断言事件 code 渲染与顺序。
+  - 文档链接校验（可选脚本，确保 README anchors 存在）。
+验收标准：
+- 所有前端调用示例与当前实现一致，无未实现条目。
+- 事件展示顺序：策略 applied/conflict/ignored → partial fallback → strategy summary（若存在）。
+- 决策表与实现一致（测试比对枚举名称）。
+回退策略：
+- 移除前端 depth/filter UI 与 README 段落；功能仍可由脚本调用（不破坏后端）。
+风险与缓解：
+- 风险：文档与实现漂移 → 在 CI 添加“决策枚举快照”比对（后续阶段）。
+- 风险：前端同时出现多类 informational 事件顺序不稳定 → 在任务启动端集中排序发送（当前已通过顺序约定测试锁定）。
+
+### P2.3a 任务级策略覆盖模型与解析
+目标：为后续 HTTP / Retry / TLS 策略按任务覆盖奠定统一数据结构、解析与校验基础，保证新增字段最小侵入现有命令与事件协议。
+范围：
+- 扩展任务输入结构：`strategyOverride`（可选，对 clone/fetch/push 生效）。
+- 支持字段：
+  - http.followRedirects:boolean, http.maxRedirects:number
+  - retry.max:number, retry.baseMs:number, retry.factor:number, retry.jitter:boolean
+  - tls.insecureSkipVerify:boolean, tls.skipSanWhitelist:boolean
+- 解析兼容：camelCase 与 snake_case；未知字段收集（不立即发事件，在后续护栏阶段使用）。
+- 校验：数值与范围（maxRedirects<=20, retry.max 1..20, baseMs 10..60000, factor 0.5..10, jitter bool）。
+- 不产生任何新事件；仅日志（level=debug/info）记录解析结果与忽略字段集合。
+交付物：
+- 数据模型：Rust 结构体 + serde 自定义反序列化（双命名支持）。
+- 解析辅助：`parse_strategy_override(json)` 返回 (parsed, ignored_top, ignored_nested, errors)。
+- 测试：
+  - 合法组合全字段。
+  - 单字段缺失与可选为空对象 {}。
+  - 大小写混用（follow_redirects / followRedirects）。
+  - 越界值：maxRedirects=21、factor=0.4/10.1、baseMs=5、retry.max=0 → Protocol。
+  - 未知字段：顶层 foo、http.xxx、retry.zz → ignored 集合记录。
+  - 空对象与未提供语义等价（后续阶段逻辑一致）。
+验收标准：
+- 所有合法输入成功解析且无副作用；非法输入分类为 Protocol。
+- 忽略字段不影响任务继续；错误与忽略互斥（遇到错误直接失败，不再下发覆盖）。
+- 旧调用（不带 strategyOverride）行为不变（回归测试通过）。
+回退策略：
+- 移除解析模块与结构体，同时删除相关测试；命令仍接受旧参数集合。
+风险与缓解：
+- 风险：后续字段扩展频繁修改 serde 标签 → 通过集中 `strategy_override.rs` 文件隔离并加快审查。
+- 风险：未知字段静默丢失影响可观测 → 后续护栏阶段引入 ignored 事件补足。
+
+### P2.3b 任务级 HTTP 策略覆盖
+目标：基于已解析的 strategyOverride，按任务应用 HTTP followRedirects / maxRedirects 覆盖并在生效时提供可观测事件（单次），不变更底层实际网络行为（预留后续接入）。
+范围：
+- 合并规则：仅当提供字段且与全局默认不同才变更；maxRedirects 上限 clamp=20。
+- 事件：`code=http_strategy_override_applied`（category=Protocol），changed=true 时任务生命周期内发送一次。
+- 不改变 retry/TLS 或 clone/fetch/push 核心执行；仅在任务 spawn 前阶段合并。
+- 复用错误事件通道，不新增主题。
+交付物：
+- `apply_http_override` 函数（返回 follow, max, changed）。
+- 事件发射逻辑与单元测试（clamp / changed 判定）。
+- 集成测试：改变/不变/仅一字段改变/非法 max/多任务并发 idempotent。
+验收标准：
+- 仅当至少一项值改变发送一次事件；不重复。
+- 非法参数（>20 或类型错误）Protocol 失败且不发送事件。
+- 其它策略字段未受影响；前端兼容（无新增解析分支）。
+回退策略：
+- 移除 changed 分支事件发射；保留合并逻辑；或完全移除函数调用恢复默认行为。
+风险与缓解：
+- 风险：future 网络栈接入导致语义差异 → 事件 message 保持抽象仅含最终 follow/max。
+- 风险：多策略先后顺序潜在竞态 → 以固定顺序 HTTP→Retry→TLS（后续章节插入）并在测试锁定事件序列。
+
+### P2.3c 任务级 Retry 策略覆盖
+目标：为 clone/fetch/push 提供按任务自定义退避计划（max/baseMs/factor/jitter），在保持全局配置不变的同时提升单任务弹性与可观测性。
+范围：
+- 合并规则：仅当任一字段与全局不同才视为 changed；解析层已校验范围。
+- 生成独立 `RetryPlan`（不写回全局）。
+- 事件：`code=retry_strategy_override_applied`（Protocol），changed=true 时单次发射。
+- 与 HTTP 覆盖并列，顺序：HTTP → Retry → TLS。
+- 不改变现有重试分类与上限语义（不可重试错误不进入循环）。
+交付物：
+- `apply_retry_override` 函数与单元测试（changed 判定 / 不变路径）。
+- 集成测试：变更/不变/仅一字段变更/边界 factor=0.5 & 10 / jitter=true 透传。
+- 组合测试：与 HTTP 同时 changed 仍各发一次事件，次数不超过 1。
+验收标准：
+- 事件在 changed 时恰好一次；不变路径无事件。
+- 生成的计划仅影响当前任务；并发任务计划互不干扰（测试比对不同 max/baseMs）。
+- 不可重试错误路径仍不会触发 attempt 重试进度，但 override 事件可出现。
+回退策略：
+- 移除事件发射或函数调用；其余逻辑保持；完全回退删除函数与测试。
+风险与缓解：
+- 风险：本地化错误文本导致分类 Internal 而非 Network 进而少重试 → 后续 i18n 分类扩展缓解。
+- 风险：极端 factor/ baseMs 组合导致过长等待 → 范围校验与单测锁定上限。
+
+### P2.3d 任务级 TLS 策略覆盖
+目标：允许单任务在不改动全局配置的情况下放宽或保持默认 TLS 校验（insecureSkipVerify / skipSanWhitelist），提升调试灵活性并提供最小事件通知。
+范围：
+- 两个布尔字段覆盖；不允许覆盖 san_whitelist 列表。
+- 合并顺序：HTTP → Retry → TLS（或最终定序 HTTP→Retry→TLS，保持测试一致）。
+- 事件：`code=tls_strategy_override_applied`，changed=true 时一次。
+- 与后续冲突规范化兼容：若出现互斥组合（后续阶段定义）可被规范化并仍视为 changed。
+交付物：
+- `apply_tls_override` 函数 + 单元测试（无覆盖/单字段/双字段/不变）。
+- 集成测试：clone/fetch/push 各覆盖一次 + unchanged 路径。
+- 事件顺序测试：确保在护栏/summary 之前。
+验收标准：
+- 不修改全局 TLS 配置；并发任务隔离。
+- 只有有效变化发送事件；未变化无事件。
+- 与前两策略事件并存且顺序确定。
+回退策略：
+- 移除事件发射或函数调用；保留解析模型；或完全删除函数与测试回退。
+风险与缓解：
+- 风险：后续真正 TLS 传输接入会改变风险面 → 事件语义保持通用（仅陈述最终布尔值）。
+- 风险：误用导致绕过校验 → 默认值安全，覆盖需显式传入且受文档提示约束。
+
+### P2.3e 策略覆盖护栏（ignored/conflict 事件）
+目标：在不阻断任务的前提下提供未知字段与互斥组合的可观测提示，保障策略配置可调试性与未来新增字段演进空间。
+范围：
+- 忽略字段事件：`strategy_override_ignored_fields`，包含 top 与 sections 两集合（一次）。
+- 冲突事件：`strategy_override_conflict`，当前规则：HTTP follow=false & max>0；TLS insecureSkipVerify=true & skipSanWhitelist=true。
+- 规范化：冲突发生时自动调整值（max=0 / skipSanWhitelist=false），可能触发 applied + conflict 双事件。
+- 事件顺序：applied* → conflict* → ignored → summary（后续阶段）。
+交付物：
+- 解析结果返回 ignored 集合；合并函数返回 conflict 描述。
+- 事件发射逻辑与单元测试（含多冲突、多未知字段）。
+- 集成测试：冲突仅 HTTP / 仅 TLS / 双冲突 + ignored / 无冲突 / 仅 ignored。
+验收标准：
+- 每任务 ignored 事件至多一次；冲突事件数量 = 触发规则数。
+- 规范化后值参与 changed 判定：若回到全局默认则只发 conflict 不发 applied。
+- 顺序测试稳定通过。
+回退策略：
+- 移除 conflict emit 保留规范化；或移除规范化恢复原值（高风险）；或全部移除回到仅 applied。
+风险与缓解：
+- 风险：规则集合增加导致事件噪声上升 → 未来可聚合为 summary payload。
+- 风险：忽略字段误写难定位 → 事件 message 保留字段列表与分组区分。
+
+### P2.3f 策略覆盖汇总事件与前端集成收束
+目标：通过 summary 汇总事件与事件 gating 完成策略覆盖可观测闭环，并在前端提供统一展示及代码/回退文档化，标记策略覆盖阶段完成。
+范围：
+- Summary 事件：`code=strategy_override_summary`，包含最终 http/retry/tls 值、appliedCodes、filterRequested。
+- 独立 applied 事件 gating：`FWC_STRATEGY_APPLIED_EVENTS=0` 时抑制 http/retry/tls *_applied，summary 仍发送。
+- retriedTimes 合并策略：信息型事件不降低已记录重试次数。
+- 前端：存储与 UI 统一分类（信息提示 vs 失败）；兼容旧 API（不传 strategyOverride）。
+- 文档：README + 设计文档补充事件代码矩阵与回退表；Changelog 追加条目。
+交付物：
+- emit_strategy_summary 实现 + 顺序测试（applied/conflict/ignored → summary）。
+- gating 判断函数与测试（开关两态）。
+- 前端事件存储逻辑与测试（顺序 / gating / retriedTimes 保留）。
+验收标准：
+- gating=1 时 applied + summary；gating=0 时仅 summary 且 appliedCodes 保留差异列表。
+- 所有信息事件不改变任务最终状态；失败语义与前版本一致。
+- 回退矩阵清晰（禁用 summary / 禁用 gating / 单策略回退）。
+回退策略：
+- 删除 summary emit → 依赖独立 applied 事件；或同时开启 gating=1 保持信息完整。
+风险与缓解：
+- 风险：事件洪水（多策略）→ 用户多字段 override 仍至多 3 条 applied + 1 summary + 可选 conflict/ignored 上限有限。
+- 风险：前端排序波动 → 发送顺序测试锁定并在前端按 timestamp 排序兜底。
+
+## 3. 实现说明（按阶段）
+
+### P2.1b Commit 实现说明
+本节记录 git_commit 的落地细节、测试矩阵与与 P2.1a 复用点，作为后续 branch/checkout 等命令的模板，保持“最小必要进度事件 + 标准错误分类”原则。
 
 #### 1. 代码落点与结构
 - 模块文件：`src-tauri/src/core/git/default_impl/commit.rs`
-- 任务接入：`spawn_git_commit_task`（位于 `core/tasks/registry.rs`）
-- 任务类型：`TaskKind::GitCommit { dest, message, allow_empty, author_name, author_email }`
+- 任务接入：`spawn_git_commit_task`（`core/tasks/registry.rs`）
+- 枚举：`TaskKind::GitCommit { dest, message, allow_empty, author_name, author_email }`
 - Tauri 命令：`git_commit(dest, message, allow_empty?, author_name?, author_email?)`
-- 前端：
-  - API：`startGitCommit` (`src/api/tasks.ts`)，兼容 snake_case（`allow_empty` 等）输入
-  - Store：TaskKind union 扩展 `GitCommit`
-  - UI：`GitPanel.vue` 新增 “本地提交（Commit）” 卡片（消息、作者、allowEmpty 勾选）
-  - 测试：`views/__tests__/git-panel.test.ts` 新增 Commit 交互用例
+- 前端：API `startGitCommit` (`src/api/tasks.ts`)；Store 扩展 TaskKind；UI `GitPanel.vue` 提交卡片；测试 `views/__tests__/git-panel.test.ts`。
 
-#### 2. 行为与语义
-1) 必要校验顺序：
-  - 取消检查（should_interrupt 原子标志）
-  - 目标目录含 `.git`，否则 `Protocol`
-  - 提交消息 `trim()` 后非空，否则 `Protocol`
-2) 空提交判定：
-  - 读取 index 写树：`write_tree()`
-  - 若存在 HEAD：比较 HEAD tree id 与当前 tree id 相等 ⇒ 无变更
-  - 若无 HEAD（首次提交）：index 为空 ⇒ 无变更
-  - `allowEmpty=false` 且无变更 ⇒ `Protocol` 错误；`allowEmpty=true` 则继续
-3) 作者签名：
-  - 未显式提供 → `repo.signature()`（遵循本地 git 配置）
-  - 显式提供需同时具备非空 name & email；任一缺失/空白 ⇒ `Protocol`
-4) 提交：`repo.commit("HEAD", &sig, &sig, message_trimmed, &tree, parents)`；单亲或零亲（首次）
-5) 进度事件：仅发送一条最终 progress（phase=`Committed`, percent=100），符合“本地快速命令只需一次 progress”策略；状态事件仍由任务注册表管理。
+#### 2. 行为流程
+1) 取消检查 → 仓库存在（含 .git） → 消息 trim 非空 → 空提交判定 → 作者签名组装 → 执行 commit → 发最终 progress。
+2) 空提交判定：写 tree；有 HEAD 则比较 tree id；无 HEAD 则 index 为空即“无变更”。
+3) 作者：显式覆盖需 name+email 均非空，否则 Protocol；未提供使用 `repo.signature()`。
+4) 进度事件：仅一条（phase=Committed, percent=100）。
 
 #### 3. 取消策略
-- 多阶段检查：入口校验 / 写 index 前 / 创建 commit 前。
-- 任务注册层：若任务启动前已取消（token.cancel()），立即发 Cancel 状态（新增测试覆盖）。
-- 一致性：取消永远不产生部分写入（提交在取消前尚未调用 commit）。
-
-#### 4. 错误分类映射
-| 场景 | 分类 | 说明 |
-|------|------|------|
-| 目录非仓库 / 消息空 / 空提交被拒 / 作者缺字段 | Protocol | 可修正输入 |
-| 用户取消 (token / 原子标志) | Cancel | 与 MP1 分类一致 |
-| I/O / git2 内部错误 (index 写入 / commit) | Internal | 不泄漏底层细节 |
-
-#### 5. 测试矩阵（新增与扩展）
-后端 Rust：
-| 用例 | 目标 | 结果 |
-|------|------|------|
-| 成功提交（有变更） | 基线成功 | 通过 |
-| 二次无变更提交拒绝 | 空提交拒绝 | 通过 |
-| allowEmpty 强制空提交 | 空提交允许 | 通过 |
-| 初始空仓库空提交拒绝 / 允许 | 首次提交边界 | 通过 |
-| 自定义作者成功 | 作者签名 | 通过 |
-| 作者缺失 email | 校验错误 | 通过 |
-| 作者空字符串 | 校验错误 | 通过 |
-| 空消息（空白字符） | 校验错误 | 通过 |
-| 消息裁剪（前后空白+换行） | 语义正确 | 通过 |
-| 原子标志取消（进入前） | Cancel | 通过 |
-| 任务注册预取消（token 先 cancel） | Cancel 分支 | 通过 |
-
-前端：
-- Commit 按钮交互触发 API；TaskKind / 事件仍复用既有逻辑（无需新增解析代码）。
-
-#### 6. 安全与脱敏
-- 未输出绝对路径或作者邮箱到进度事件；日志使用标准 tracing，可后续统一做敏感字段过滤。
-- 提交消息直接写入对象；客户端传入内容已在分类错误中不含系统路径。
-
-#### 7. 性能与扩展性
-- 单次提交路径：CPU/I/O 极短；不额外拆分多 progress；后续若支持大索引增量统计可再拓展 objects/bytes 指标。
-
-#### 8. 回退策略
-- 禁用 Tauri `git_commit` 命令或移除 TaskKind 分支即可回退；UI 卡片独立可条件隐藏；测试文件可标记 `#[ignore]`。
-
-#### 9. 复用指引
-- 空提交检测 / 作者校验逻辑可在后续 tag (annotated) / amend（若实现）复用。
-- 错误分类与取消模板与 init/add 对齐，保证前端无需新增分支。
-
-#### 10. 已知限制 / TODO
-- 未提供 amend / multi-parent (merge) 支持（后续 branch/merge 流程再引入）。
-- 未暴露 GPG / 签名提交；后续需要可在签名构造层扩展。
-- 未加入提交消息规范（如 Conventional Commit 校验），留给上层进行富校验。
-
----
-
-- P2.1c branch + checkout
-  - 范围：`git_branch`（force/是否立即 checkout）与 `git_checkout`（create 可选）。
-  - 交付：成功/已存在/不存在 分支用例；checkout 失败/取消覆盖。
-  - 验收：commit→branch→checkout 链条稳定；冲突/不可快进映射为 Protocol。
-  - 回滚：分别禁用命令导出。
-
-### P2.1c 实现说明（已完成）
-
-本节记录 `git_branch` / `git_checkout` 的落地细节、命名校验策略两轮增强（v1.7 / v1.8）、测试矩阵与回退指引，延续 P2.1a/b 的结构与分类一致性。
-
-#### 1. 代码落点与结构
-- 模块文件：`src-tauri/src/core/git/default_impl/branch.rs`、`checkout.rs`
-- 任务注册：`spawn_git_branch_task` / `spawn_git_checkout_task`（`core/tasks/registry.rs`）
-- 枚举扩展：`TaskKind::GitBranch { dest, name, checkout, force }`、`TaskKind::GitCheckout { dest, ref_name, create }`
-- Tauri 命令：`git_branch(dest, name, checkout?, force?)`、`git_checkout(dest, ref, create?)`
-- 前端：
-  - API：`startGitBranch` / `startGitCheckout`（`src/api/tasks.ts`）
-  - Store：TaskKind 联合类型扩展（`stores/tasks.ts`）
-  - UI：暂未新增专用面板卡片（后续统一 Git 操作面板再聚合），对现有事件解码无影响。
-- 测试文件：`src-tauri/tests/git_branch_checkout.rs`
-
-#### 2. 行为与语义
-1) git_branch
-   - 创建分支：要求仓库已有至少一个提交（可解析 HEAD）。若无提交 → `Protocol`。
-   - 已存在分支：
-     * `force=false` → `Protocol`（避免隐式覆盖）。
-     * `force=true` → 快进/覆盖引用到当前 HEAD 提交（必须存在有效提交）。
-   - `checkout=true`：在创建/force 成功后立即切换到该分支（等价于后续的 checkout 行为）；若在 force 场景，引用指向更新后的 HEAD 然后再切换。
-   - 分支名需通过 `validate_branch_name`；失败 → `Protocol`。
-2) git_checkout
-   - 已存在本地分支：直接执行 set_head + checkout_head。
-   - 不存在且 `create=true`：需要已有提交；否则 `Protocol`。
-   - 不存在且 `create=false`：`Protocol`。
-   - 仅支持切换（不实现路径/树检出混合模式）。
-
-#### 3. 分支名校验（v1.7 → v1.8 演进）
-统一封装在 `validate_branch_name`：
-- v1.7 基础规则：拒绝 空/全空白、包含空格、末尾 `/` 或 `.`、前导 `-`、包含 `..`、反斜杠、任意控制字符 (c < 0x20)。
-- v1.8 增强：再拒绝 以 `/` 开头、出现 `//`、以 `.lock` 结尾、包含字符 `:` `?` `*` `[` `~` `^` `\\`、包含子串 `@{`。
-- 所有违规统一抛出 `Protocol`，错误消息保持用户可读可修复，不暴露内部实现细节。
-- 设计为后续 tag/remote 名称规则基线，可抽象为未来 `refs.rs` 通用助手。
-
-#### 4. 取消策略
-- 入口快速检查（任务启动时）。
-- 在执行关键副作用前再次检查：创建分支前、force 更新前、`set_head` 前、`checkout_head` 前。
-- 确保取消不会留下半完成状态（要么未创建引用，要么 HEAD 尚未切换）。
-
-#### 5. 错误分类映射
-| 场景 | 分类 | 说明 |
-|------|------|------|
-| 分支已存在且未 force / 分支不存在且未 create / 无提交创建或 force / 名称非法 | Protocol | 输入或上下文逻辑可修复 |
-| 用户取消（任一取消点） | Cancel | 允许 UI 显示“用户终止” |
-| git2 内部错误（引用写入 / checkout 失败 / I/O） | Internal | 不泄漏底层细节 |
-
-#### 6. 进度与事件
-- 与“本地快速命令”策略对齐：仅发送一条完成 progress（percent=100）。
-  - git_branch：`phase = "Branched"` 或（含 checkout）`"BranchedAndCheckedOut"`。
-  - git_checkout：`phase = "CheckedOut"`；若 `create=true` 则 `"CreatedAndCheckedOut"`。
-- 仍产生标准 state 流：`pending → running → {completed|failed|canceled}`；错误时附加 `task://error`。
-
-#### 7. 测试矩阵（后端）
-覆盖 `git_branch_checkout.rs`：
-| 用例类别 | 目标 |
-|----------|------|
-| 创建分支成功 | 基线成功 & phase=Branched |
-| 创建并立即 checkout | phase=BranchedAndCheckedOut |
-| 已存在分支 (no force) | Protocol 冲突 |
-| force 更新分支 | 引用指向最新提交 |
-| force 无提交 | Protocol 拒绝 |
-| 创建分支无提交 | Protocol 拒绝 |
-| checkout 已存在分支 | phase=CheckedOut |
-| checkout 不存在 (no create) | Protocol |
-| checkout create 成功 | phase=CreatedAndCheckedOut |
-| checkout create 无提交 | Protocol |
-| checkout create 已存在（幂等语义校验） | Phase 正确且 HEAD 指向目标 |
-| 取消：branch 在创建/force 前 | Cancel 分类 |
-| 取消：checkout 在 set_head 前 | Cancel 分类 |
-| 名称非法（多组） | Protocol（逐条规则断言） |
-| 名称合法（多组） | 均成功且 phase 符合 |
-| 控制字符 / 特殊序列 `@{` | Protocol |
-
-#### 8. 安全与一致性
-- 不输出绝对路径或敏感引用信息到事件；仅使用用户提供的分支名（已通过校验）。
-- 错误消息保持抽象：不暴露 libgit2 具体 errno。
-- 取消窗口缩小（写引用与切 HEAD 前再次检查）避免部分状态。
-
-#### 9. 回退策略
-- 移除 Tauri 命令导出或在任务注册中屏蔽 `GitBranch` / `GitCheckout` 分支。
-- 删除/忽略测试文件 `git_branch_checkout.rs`（或标记 `#[ignore]`）。
-- 分支名校验可分层回退：只移除 v1.8 增强保持 v1.7，或完全移除校验函数回到最小限制。
-
-#### 10. 复用指引
-- `validate_branch_name` 可复制为 tag/remote 命名校验基线；非法字符/控制字符集合直接复用。
-- 进度 phase 命名模式（动作过去式 + 可选合并语义）为后续 tag (`Tagged` / `AnnotatedTagged`) 提供模板。
-- 取消点布局（副作用前检查）可移植到 tag/remote 修改引用场景。
-
-#### 11. 已知限制 / TODO
-- 未实现基于 upstream/远端跟踪的自动设置（只创建本地引用）。
-- 未实现分离 HEAD / 任意 commit 或 tag 的直接检出支持（当前限制为本地分支 ref）。
-- 未对分支名长度、Unicode 规范化做额外限制（依赖底层接受范围）。
-- 未提供“删除分支”命令；后续若加入需共享校验逻辑。
-- 校验规则当前面向常见非法模式，未完整复刻 Git 内建所有 refspec 规则（可按需继续补充）。
-
-- P2.1d tag + remote(set/add/remove)
-  - 范围：`git_tag`（轻量/附注、force）与 `git_remote_*`（set 覆盖、add 要求不存在、remove 要求存在）。
-  - 交付：每命令 3 例单测；幂等性断言；远端 URL 校验。
-  - 验收：全链路演示 init→add→commit→branch→checkout→tag→remote_set/add/remove。
-  - 回滚：按命令粒度禁用导出。
-
-### P2.1d 实现说明（已完成）
-
-详述 `git_tag` 与 `git_remote_{add,set,remove}` 的实现、增强与测试覆盖。
-
-#### 1. 代码落点
-- 源文件：`core/git/default_impl/tag.rs`、`core/git/default_impl/remote.rs`
-- Registry：新增 `spawn_git_tag_task` / `spawn_git_remote_{add,set,remove}_task`
-- TaskKind：`GitTag | GitRemoteAdd | GitRemoteSet | GitRemoteRemove`
-- 前端：`api/tasks.ts` & `stores/tasks.ts` 扩展，UI 使用通用任务面板展示 phase。
-
-#### 2. Tag 行为
-- 支持轻量 & 附注：`annotated` 标志控制；附注要求非空 `message`。
-- Force：
-  - 轻量：更新 `refs/tags/<name>` 指向当前 HEAD。
-  - 附注：创建新 tag 对象并更新引用；若内容（提交+消息+签名）未变则 OID 相同。
-- Phase：`Tagged` / `AnnotatedTagged`（首次） 与 `Retagged` / `AnnotatedRetagged`（force 覆盖）。
-- 消息规范化：CRLF 与孤立 CR → `\n`；尾部多余空白/空行裁剪成单一结尾换行；内部空行保持。
-- 校验：`validate_tag_name`；仓库存在 & 有 HEAD commit；附注消息非空。
-- 取消点：入口、解析 HEAD 后、写引用/创建对象前。
-
-#### 3. Remote 行为
-- add：远程不存在 → 创建；phase `RemoteAdded`。
-- set：远程存在 → 更新 URL（同 URL 幂等成功）；phase `RemoteSet`。
-- remove：远程存在 → 删除；phase `RemoteRemoved`。
-- URL 校验（顺序严格）：
-  1) 原始字符串含空白（space/tab/newline/carriage return）立即拒绝；
-  2) trim 后为空拒绝；
-  3) 允许 http/https、scp-like、无空格本地路径；
-  4) 其它 scheme 或解析失败 → Protocol。
-- 命名校验：`validate_remote_name`。
-- 取消点：入口与副作用前。
+- 入口、写 tree 前、commit 前多点检查；任务预取消（启动前 token 已取消）直接进入 Cancel 状态；保证不产生部分提交对象。
 
 #### 4. 错误分类
-| 类别 | 条件示例 |
-|------|---------|
-| Protocol | 非仓库、无提交、名称非法、tag 已存在(非 force)、附注缺消息、URL 含空白/非法 scheme、add 重复、set/ remove 不存在、空白 URL |
-| Cancel   | 取消标志触发（入口或副作用前） |
-| Internal | 打开仓库失败 / 写引用失败 / 创建 tag 对象失败 / 设置远程失败 |
-
-#### 5. 测试覆盖
-文件：`git_tag_remote.rs` + `git_tag_remote_extra.rs`
-- Tag：轻量/附注创建、重复非 force 拒绝、force OID 变化与不变路径、缺消息拒绝、非法名、无提交拒绝、取消、CRLF 规范化、尾部空行折叠、内部空行保留、轻量 force 同 HEAD OID 不变、附注 force 同消息 OID 不变。
-- Remote：add/set/remove 成功链路、add 重复、set 不存在、remove 不存在、set 幂等、取消、URL 含空格/换行/制表符拒绝、本地路径成功、空白 URL 拒绝。
-
-#### 6. 关键差异点
-- Phase 粒度区分 Retagged* 提升可观测性（无需 OID 差异推断）。
-- URL 校验在 trim 前执行，防止通过尾随换行/空格绕过。
-- Annotated force 同内容保持同 OID 行为由测试锁定，避免误判“总是新对象”。
-
-#### 7. 取消与原子性
-- 多取消断点防止部分写入（引用写前检查）。
-- Remote 操作保证失败不留下半状态（git2 原子语义 + 显式检查）。
-
-#### 8. 回退策略
-- 移除 Tauri 命令导出或在任务注册中屏蔽 `GitTag` / `GitRemoteAdd` / `GitRemoteSet` / `GitRemoteRemove` 分支。
-- 删除/忽略测试文件 `git_tag_remote.rs`（或标记 `#[ignore]`）。
-- 分支名校验可分层回退：只移除 v1.8 增强保持 v1.7，或完全移除校验函数回到最小限制。
-
-#### 9. 复用指引
-- 错误分类与取消模板与 init/add 对齐，保证前端无需新增分支。
-- 进度 phase 命名模式（动作过去式 + 可选合并语义）为后续 tag (`Tagged` / `AnnotatedTagged`) 提供模板。
-- 取消点布局（副作用前检查）可移植到 tag/remote 修改引用场景。
-
-#### 10. 已知限制 / TODO
-- 未实现基于 upstream/远端跟踪的自动设置（只创建本地引用）。
-- 未实现分离 HEAD / 任意 commit 或 tag 的直接检出支持（当前限制为本地分支 ref）。
-- 未对分支名长度、Unicode 规范化做额外限制（依赖底层接受范围）。
-- 未提供“删除分支”命令；后续若加入需共享校验逻辑。
-- 校验规则当前面向常见非法模式，未完整复刻 Git 内建所有 refspec 规则（可按需继续补充）。
-
-- P2.1d tag + remote(set/add/remove)
-  - 范围：`git_tag`（轻量/附注、force）与 `git_remote_*`（set 覆盖、add 要求不存在、remove 要求存在）。
-  - 交付：每命令 3 例单测；幂等性断言；远端 URL 校验。
-  - 验收：全链路演示 init→add→commit→branch→checkout→tag→remote_set/add/remove。
-  - 回滚：按命令粒度禁用导出。
-
-# TECH_DESIGN_P2_PLAN 补充：P2.3b（二阶段）HTTP 策略覆盖事件与 changed flag
-
-> 本补充文件与主文档 `TECH_DESIGN_P2_PLAN.md` 中的 “P2.3b 实现说明（已完成）” 章节配套，聚焦第二阶段新增的事件、幂等与测试强化。若后续将 TLS / Retry 覆盖一并应用，可在此文件继续增补相似章节，主文档保持概要。
-
-## 1. 目标概述
-- 在 clone / fetch / push 任务解析 `strategyOverride` 后应用 HTTP 子集（followRedirects, maxRedirects）。
-- 新增 changed 判定：仅当有效值与全局不同才算“应用”。
-- 通过结构化 TaskErrorEvent（code=`http_strategy_override_applied`）发射一次非致命提示，提升前端可观测性而不引入新事件主题。
-- 保持零破坏：未改变底层 HTTP 行为（后续阶段再实际接入网络层）。
-
-## 2. 合并与事件逻辑
-```rust
-// registry.rs
-let (f, m, changed) = apply_http_override("GitClone", &id, &global_cfg, opts.strategy_override.as_ref().and_then(|s| s.http.as_ref()));
-if changed {
-    if let Some(app_ref)=&app {
-        let evt = TaskErrorEvent { task_id:id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None };
-        this.emit_error(app_ref,&evt);
-    }
-}
-```
-
-规则回顾：
-| 步骤 | 说明 |
+| 场景 | 分类 |
 |------|------|
-| 基线 | 复制 `AppConfig::default().http` 值（后续换成运行时配置） |
-| 覆盖 | 若提供 followRedirects / maxRedirects 且不同则替换并标记 changed=true；maxRedirects clamp ≤ 20 |
-| 发射 | changed=true 时，仅一次事件（spawn 时） |
-| 日志 | tracing target="strategy" 同步 info 行（含 follow/max） |
+| 非仓库 / 空消息 / 空提交被拒 / 作者字段缺失 | Protocol |
+| 用户取消 | Cancel |
+| 底层 git2 / I/O 失败 | Internal |
 
-## 3. 事件结构
-```json
-{
-  "taskId": "<uuid>",
-  "kind": "GitClone|GitFetch|GitPush",
-  "category": "Protocol",
-  "code": "http_strategy_override_applied",
-  "message": "http override applied: follow=<bool> max=<u8>",
-  "retriedTimes": null
-}
-```
-选择原因：
-- 复用错误通道（前端已统一消费）；
-- 与 partial_filter_fallback 一致，形成“协议提示”类别；
-- 避免新增主题造成前端监听扩散。
+#### 5. 测试矩阵（后端）
+成功提交 / 二次无变更拒绝 / allowEmpty 空提交成功 / 首次仓库空提交拒绝与允许 / 自定义作者 / 作者缺失或空字符串失败 / 空白消息失败 / 消息裁剪 / 原子标志取消 / 任务注册预取消。
 
-## 4. 测试矩阵（新增）
-| 文件 | 断言要点 |
-|------|----------|
-| `git_http_override_event.rs` | 覆盖值改变 → 存在事件（包含 code 与 taskId） |
-| `git_http_override_no_event.rs` | 覆盖值与默认相同 → 不存在事件 |
-| `git_http_override_idempotent.rs` | 单任务事件次数恰为 1 |
-| registry 内部单测 | clamp / changed 判定逻辑 |
+#### 6. 前端测试
+交互触发提交后捕获完成事件；无新增解析分支（沿用既有事件管道）。
 
-实现细节：
-- 测试需传入 `Some(AppHandle)`（非 tauri feature 下为空占位 struct）才能捕获事件。
-- 使用 `peek_captured_events()` 收集全部事件再过滤 code。
+#### 7. 安全
+事件不包含绝对路径或邮箱；日志使用标准 tracing；消息未做敏感过滤（由调用方控制输入）。
 
-## 5. 幂等与回退
-| 场景 | 行为 |
+#### 8. 性能
+操作本地对象极短；无需多 progress；后续大索引统计可扩展对象与字节指标。
+
+#### 9. 回退
+移除命令导出或屏蔽 TaskKind；测试 `#[ignore]`；UI 卡片可条件隐藏。
+
+#### 10. 复用
+空提交检测 / 作者校验逻辑供 tag annotated 与未来 amend 复用；错误分类模式与 init/add 一致减少前端分支。
+
+#### 11. 已知限制
+不支持 amend、多父提交、GPG 签名、消息规范（Conventional Commit）校验；后续阶段按需添加。
+
+### P2.1c Branch 与 Checkout 实现说明
+记录 git_branch / git_checkout 落地细节、命名校验两轮增强、测试矩阵与回退指引。
+
+#### 1. 代码落点与结构
+- 模块：`core/git/default_impl/branch.rs`、`checkout.rs`
+- Registry：`spawn_git_branch_task` / `spawn_git_checkout_task`
+- 枚举：`TaskKind::GitBranch { dest, name, checkout, force }`、`TaskKind::GitCheckout { dest, ref_name, create }`
+- 命令：`git_branch(dest,name,checkout?,force?)`、`git_checkout(dest,ref,create?)`
+- 前端：API `startGitBranch` / `startGitCheckout`；Store 扩展；测试 `git_branch_checkout.rs`。
+
+#### 2. 行为语义
+branch：需已有提交；已存在分支 force=false ⇒ Protocol；force=true 覆盖引用；checkout=true 则创建后立即切换。
+checkout：存在则切换；不存在且 create=true 且有提交则创建+切换；其它为 Protocol。
+
+#### 3. 分支名校验
+`validate_branch_name`：v1.7 基础非法字符与控制字符；v1.8 增强（前导/尾部/双斜杠/.lock/特殊符号/`@{` 等）；全部非法统一 Protocol。
+
+#### 4. 取消策略
+关键副作用（创建引用、force 更新、set_head、checkout_head）前检查；入口预取消直接 Cancel；确保无半完成状态。
+
+#### 5. 错误分类
+| 场景 | 分类 |
 |------|------|
-| 重复调用 apply（当前不会发生） | 若未来出现，需在上层调用点防抖；现阶段单次调用保证幂等 |
-| 回退需求 | 删除 `if changed { emit ... }` 分支和 3 个测试文件即可；合并逻辑保留 |
+| 已存在且未 force / 不存在且未 create / 无提交创建或 force / 名称非法 | Protocol |
+| 用户取消 | Cancel |
+| 引用写入 / checkout 失败 | Internal |
 
-## 6. 风险评估
-- 只读 → 局部变量；无共享状态写入；
-- 事件数量受限（最多 1/任务），前端无性能压力；
-- 若未来引入真实 redirect 行为，需确认 follow=false 与 max>0 的组合语义（可能追加提示）。
+#### 6. 进度与事件
+单一 progress：`Branched` / `BranchedAndCheckedOut` / `CheckedOut` / `CreatedAndCheckedOut`；标准 state 流；无额外信息事件。
 
-## 7. 后续扩展建议
-1. 注入真实运行时配置（替换默认值）并支持热加载。
-2. 扩展 TLS / Retry 应用：沿用 `*_strategy_override_applied` code 规范。
-3. 前端 UI 增加“提示”标签区分致命 vs 信息事件。
-4. 统一策略事件聚合：在任务详情面板聚合展示一次性策略差异摘要。
+#### 7. 测试矩阵
+创建 / 创建+checkout / 已存在冲突 / force 更新 / force 无提交 / 无提交创建失败 / checkout 成功 / checkout 不存在 / checkout create 成功 / create 无提交失败 / create 已存在幂等 / 取消多断点 / 非法名称集合 / 合法名称集合 / 控制字符与 `@{`。
 
-## 8. Changelog 建议条目
-```
-Added: per-task HTTP strategy override application + informative event `http_strategy_override_applied` (emitted once when override changes followRedirects/maxRedirects).
-```
+#### 8. 安全
+不暴露绝对路径；错误消息抽象；多点取消减少部分状态。
 
-## 9. 现状结论
-- 覆盖逻辑与事件已落地并通过 3 个集成 + 1 组单元测试；
-- 后端、前端全部测试通过；
-- 回退与后续拓展路径清晰。
+#### 9. 回退
+屏蔽命令或移除 TaskKind；测试忽略；可回退仅 v1.8 校验保持 v1.7。
 
----
+#### 10. 复用
+命名校验逻辑可供 tag/remote；进度 phase 命名模板可复用；副作用前取消模式可移植。
 
-Registry：新增 `spawn_git_tag_task` / `spawn_git_remote_{add,set,remove}_task`
+#### 11. 已知限制
+未实现 upstream 追踪、任意 commit/tag 检出、删除分支、Unicode 进一步规范、全部 refspec 规则。
 
----
+### P2.1d Tag 与 Remote 实现说明
+详述 git_tag 与 git_remote_{add,set,remove} 的实现、测试与回退策略。
 
-### P2.3b 任务级 HTTP 策略覆盖实现说明（已完成）
+#### 1. 代码落点
+- 模块：`core/git/default_impl/tag.rs`、`core/git/default_impl/remote.rs`
+- Registry：`spawn_git_tag_task` / `spawn_git_remote_{add,set,remove}_task`
+- 枚举：`GitTag | GitRemoteAdd | GitRemoteSet | GitRemoteRemove`
+- 前端：`api/tasks.ts` + `stores/tasks.ts` 展示 phase（通用任务面板）。
 
-本阶段为“任务级策略覆盖”初步落地的 HTTP 子集（followRedirects / maxRedirects）实现，拆分为两个小步：
+#### 2. Tag 行为
+- 轻量与附注：`annotated` 控制；附注需非空 message。
+- force：轻量直接更新引用；附注创建新 tag 对象（内容完全相同 OID 不变）。
+- Phase：`Tagged` / `AnnotatedTagged`；force 覆盖：`Retagged` / `AnnotatedRetagged`。
+- 消息规范化：CRLF / CR → LF；裁剪尾部多余空行与空白；内部空行保留。
+- 校验：`validate_tag_name`；需存在 HEAD commit；附注消息非空。
 
-1. 第一阶段（解析+合并+日志）：完成 `strategyOverride` JSON 的结构解析、值范围校验（`maxRedirects <= 20`）、合并全局配置并记录有效值日志。仅在 clone/fetch/push 任务 spawn 时解析，不改变底层网络行为。
-2. 第二阶段（事件+changed flag）：引入 `apply_http_override()` 返回 `changed`；当且仅当覆盖导致实际值变更时发出结构化提示事件（非致命）：`TaskErrorEvent.code = http_strategy_override_applied`。
+#### 3. Remote 行为
+- add：不存在则创建（phase=RemoteAdded），存在返回 Protocol。
+- set：存在则更新 URL（同 URL 幂等成功 phase=RemoteSet），不存在 Protocol。
+- remove：存在删除（phase=RemoteRemoved），不存在 Protocol。
+- URL 校验顺序：含空白立即拒绝 → trim 结果非空 → 允许 http/https、scp-like、本地无空格路径 → 其它 Protocol。
+- 命名：`validate_remote_name`（与分支/标签命名规则基线复用部分类似策略）。
 
-#### 1. 目标与约束
-- 精准、最小：只允许显式列出的安全字段；未列出的字段忽略（有 warn 日志）。
-- 幂等：单任务生命周期内事件只发一次；无变化不发。
-- 零破坏：前端无需新增监听，复用既有 `task://error` 流（与 partial_filter_fallback 一致）。
-- 可回退：删除事件分支即可回退为“仅日志”模式；保留解析与合并逻辑。
+#### 4. 取消策略
+入口、解析 HEAD、写引用/创建对象前多次检查，保证无半写引用或悬挂 tag 对象。
 
-#### 2. 合并规则
-| 步骤 | 描述 |
+#### 5. 错误分类
+| 场景 | 分类 |
 |------|------|
-| 基线 | 复制 `AppConfig::default().http`（后续接入运行时配置） |
-| 覆盖 followRedirects | 若提供且不同 → 替换并标记 `changed=true` |
-| 覆盖 maxRedirects | 若提供且不同 → clamp(≤20) 后替换并标记 `changed=true` |
-| 事件发射 | `changed=true` 时构造 `TaskErrorEvent`，`category=Protocol`，`code=http_strategy_override_applied`，`message="http override applied: follow=<bool> max=<u8>"` |
+| 非仓库 / 无提交 (tag) / 名称非法 / tag 已存在且非 force / 附注缺消息 / URL 含空白或非法 / add 重复 / set/remove 不存在 / 空白 URL | Protocol |
+| 用户取消 | Cancel |
+| 写引用 / 创建 tag 对象 / 设置远程 失败 | Internal |
 
-#### 3. 代码落点
-- 函数：`core/tasks/registry.rs::apply_http_override(kind, id, global_cfg, http_override)` → `(follow, max, changed)`。
-- 调用位置：`spawn_git_clone_task_with_opts` / `spawn_git_fetch_task_with_opts` / `spawn_git_push_task` 解析参数后。
-- 事件：仅在 `changed` 时 `emit_all(app_ref, EV_ERROR, &TaskErrorEvent { code: Some("http_strategy_override_applied"), .. })`。
+#### 6. 测试矩阵
+Tag：轻量首次 / 附注首次 / 重复非 force 拒绝 / force OID 不变与变化 / 缺消息失败 / 非法名 / 无提交失败 / 取消 / CRLF 规范化 / 尾部空行折叠。
+Remote：add/set/remove 成功链路 / add 重复 / set 不存在 / remove 不存在 / set 幂等 / 取消 / 含空格换行或制表符 URL 拒绝 / 本地路径成功 / 空白 URL 拒绝。
 
-#### 4. 事件选择策略
-备选方案对比：
-| 方案 | 优点 | 缺点 | 决策 |
-|------|------|------|------|
-| 新增 `task://strategy` | 语义清晰 | 前端需新增通道解析 | 否 |
-| 使用 progress | 统一事件流 | 语义割裂（非阶段进度） | 否 |
-| 复用 error + code | 复用 UI/Store、与其他“协议提示”一致 | 名称上包含 error 需前端样式区分 | 采用 |
+#### 7. 差异化与可观测性
+区分 Retagged / AnnotatedRetagged 提升可观测粒度；URL 校验在 trim 前进行防绕过；附注同内容 force 保持 OID 不变（测试锁定）。
 
-#### 5. 测试矩阵（最终）
-| 用例文件 | 任务 | 覆盖点 |
-|-----------|------|--------|
-| `git_http_override_event.rs` | Clone | follow+max 改变触发事件 |
-| `git_http_override_no_event.rs` | Clone | 覆盖值与默认相同抑制 |
-| `git_http_override_idempotent.rs` | Clone | 单任务事件一次 |
-| `git_http_override_clone_only_follow.rs` | Clone | 仅 follow 改变触发 |
-| `git_http_override_invalid_max_no_event.rs` | Clone | 解析失败（>20）无事件 |
-| `git_http_override_fetch_event_only_max.rs` | Fetch | 仅 max 改变触发 |
-| `git_http_override_push_follow_change.rs` | Push | 仅 follow 改变触发 |
-| registry 内部单测 | N/A | clamp / changed 逻辑验证 |
+#### 8. 取消与原子性
+多取消断点 + git2 原子更新确保失败不留下半引用；远程操作成功/失败全或无。
 
-#### 6. 幂等 & 失败路径
-- 事件发射点唯一：任务启动解析阶段；后续重试不再重新解析覆盖（设计保持简单）。
-- 解析错误（结构非法 / maxRedirects>20）直接 Protocol 失败，不触发 override 事件。
+#### 9. 回退
+屏蔽相关 TaskKind 或命令导出；忽略/删除 `git_tag_remote*.rs` 测试；可选择性保留命名校验辅助供后续引用。
 
-#### 7. 日志示例
+#### 10. 复用
+错误分类 / 取消模板与 init/add/commit/branch 一致；Phase 过去式命名为后续扩展（如 delete）提供模式；消息规范化策略可复用至未来注释对象。
+
+#### 11. 已知限制
+未实现 upstream 远端跟踪设置；未支持检出任意 tag 直接工作副本；未实现标签删除；未做 Unicode 归一化；命名校验未完全复刻所有 refspec 规则。
+
+### P2.3b HTTP 策略覆盖实现说明
+聚焦任务级 HTTP 策略覆盖（followRedirects / maxRedirects）双阶段实现：第一阶段仅解析+合并并记录日志，第二阶段增加 changed 判定与结构化事件。仅影响单个 clone/fetch/push 任务，不修改全局配置。
+
+#### 1. 代码落点
+- 解析与应用：`core/tasks/registry.rs::apply_http_override(kind, id, global_http, override_http)`
+- 调用：`spawn_git_{clone,fetch,push}_task*_with_opts` 在参数解析和 shallow/partial 判定之后、真正 git 操作之前
+- 事件发射：同文件内 changed 后 `emit_all(... TaskErrorEvent { code=http_strategy_override_applied })`
+
+#### 2. 覆盖字段与约束
+- 允许字段：`followRedirects: bool`，`maxRedirects: u8 (≤20)`
+- 未出现字段保持全局基线；未知字段忽略并记录 info 日志（不失败）
+- `maxRedirects` 超过 20 或类型不符 → 解析阶段 `Protocol` 失败（不进入合并）
+- 失败不写入任何任务局部 HTTP 状态，直接终止任务启动流程
+
+#### 3. 合并与 changed 逻辑
+1. 基线拷贝：`let mut eff = global_http.clone()`（未来可替换为运行时配置）
+2. 若提供 followRedirects 且与 eff 不同：更新并 `changed=true`
+3. 若提供 maxRedirects 且与 eff 不同：clamp(≤20) 后更新并 `changed=true`
+4. 返回 `(eff.follow, eff.max_redirects, changed)`
+5. 仅当 changed 为 true 发出事件；未变不发（满足幂等与低噪声）
+
+#### 4. 事件语义
+- 通道：沿用 `task://error`（信息提示类，与 partial_filter_fallback 同通道，前端无需新增订阅）
+- category：`Protocol`（统一归类为“协议/输入相关提示”）
+- code：`http_strategy_override_applied`
+- message：简要包含最终 follow 与 max 值（便于日志 grep）
+- 单任务生命周期只可能发射 0 或 1 次（一次性解析点）
+
+#### 5. 幂等与安全
+- 解析与应用在任务 spawn 期间执行一次；后续重试（内部网络重试）不再重新计算覆盖
+- 解析失败直接终止任务，无部分覆盖状态残留
+- 不写全局静态配置，任务结束即失效，避免串扰并发任务
+
+#### 6. 测试矩阵（核心用例）
+- follow 与 max 同时改变 → 发事件
+- 仅 follow 改变 → 发事件；仅 max 改变 → 发事件
+- 覆盖值与默认完全相同 → 不发事件
+- 同任务多次内部重试（模拟） → 事件只出现一次
+- maxRedirects 越界（>20）→ Protocol 失败不发事件
+- fetch / push 任务各自触发 follow 或 max 改变路径
+
+#### 7. 回退策略
+- 仅移除 `if changed { emit ... }` 代码块 → 回到“仅解析+日志”模式
+- 或整体删除 `apply_http_override` 调用与测试文件（其余任务逻辑不受影响）
+
+#### 8. 复用与扩展
+- changed 判定/事件模式在后续 Retry / TLS 扩展中复用（保持统一 code 命名 `<area>_strategy_override_applied`）
+- 单点应用函数便于组合 summary 汇总事件（后续阶段新增）
+
+#### 9. 已知限制
+- 未真正驱动底层 HTTP 客户端（当前 redirect 行为保持基线）
+- 未提示 follow=false 且 max>0 的潜在语义冲突（等待真实网络层接入时再细化）
+- 仅限两个字段；其它策略（Retry/TLS）在后续阶段实现
+
+#### 10. 示例日志
 ```
 INFO strategy task_kind=GitClone task_id=... follow_redirects=false max_redirects=3 http override applied
-INFO git depth=None filter=None has_strategy=true strategy_http_follow=false strategy_http_max_redirects=3 git_clone options accepted (depth/filter/strategy parsed)
 ```
 
-#### 8. 回退策略
-| 操作 | 效果 |
-|------|------|
-| 移除 `if changed { emit ... }` | 回到仅日志 & 合并值仍可用于后续阶段 |
-| 删除新测试 | 只保留解析行为验证 |
-| 保留函数不用 | 易于再次开启（低成本开关） |
+#### 11. Changelog 建议
+Added: per-task HTTP strategy override (followRedirects/maxRedirects) with informative event `http_strategy_override_applied`.
 
-#### 9. 已知限制 / 后续
-- 未实际影响 HTTP 重定向行为（等待自定义 HTTP 客户端接入）。
-- 未接入动态全局配置与热加载；后续需覆盖“全局已非默认”差异测试。
-- 未处理 `follow=false` 且 `maxRedirects>0` 的语义提示（可在真正应用阶段补充二级提示）。
+### P2.3c Retry 策略覆盖实现说明
+为 clone/fetch/push 任务引入局部 Retry 参数覆盖（max/baseMs/factor/jitter），不写回全局配置；仅在任一值相对全局默认发生变更时发出一次 `retry_strategy_override_applied` 事件。
 
-#### 10. Changelog 建议
-```
-Added: per-task HTTP strategy override application (followRedirects/maxRedirects) with informative event `http_strategy_override_applied`.
+#### 1. 代码落点
+- 应用函数：`core/tasks/registry.rs::apply_retry_override(global_retry, override_retry)` → `(RetryPlan, changed)`
+- 调用：`spawn_git_{clone,fetch,push}_task_with_opts` 解析 strategyOverride 后、HTTP/TLS 应用之后
+- 事件：`TaskErrorEvent code=retry_strategy_override_applied`（仅 changed）
 
-### P2.3c 任务级 Retry 策略覆盖实现说明（本次提交）
+#### 2. 合并逻辑
+1. 基线拷贝：`let mut plan = AppConfig::default().retry`（未来可热替换）
+2. 逐字段（max/baseMs/factor/jitter）若提供且不同 → 覆盖并 `changed=true`
+3. 返回覆盖后 RetryPlan 与 changed；未变不发事件
 
-在 P2.3b 已落地 HTTP 覆盖 (followRedirects / maxRedirects + changed 事件) 的基础上，本阶段实现 `strategyOverride.retry` 的任务级生效：在单个 clone/fetch/push 任务生命周期内使用自定义重试参数，而不影响全局配置或其它并发任务。
+#### 3. 约束与校验
+- 数值合法性（`max 1..=20`, `baseMs 10..60000`, `factor 0.5..=10.0`）在解析阶段完成；解析失败直接 Protocol 终止
+- 覆盖仅影响当前任务内部 backoff 计算；不影响其它并发任务
+- Push 仍保持进入上传阶段后不再自动重试的既有语义
 
-#### 1. 目标
-- 支持覆盖字段：`max` / `baseMs` / `factor` / `jitter`（均已在 P2.3a 解析层做范围校验）。
-- 覆盖只影响当前任务内部计算的重试计划（RetryPlan），不写回全局 config。
-- 仅当任意字段实际改变与全局默认值不同时，发送一次提示事件：`code=retry_strategy_override_applied`。
-- 行为幂等：同一任务只发一次；值未变化不发事件。
+#### 4. 幂等与可观测性
+- 单任务仅在 spawn 阶段判定一次；后续 attempt 不重复计算
+- 事件通道复用 `task://error`，category=Protocol，与 HTTP 一致减少前端分支
 
-#### 2. 合并规则
-| 步骤 | 描述 |
-|------|------|
-| 基线 | 复制 `AppConfig::default().retry`（后续可换为运行时加载） |
-| 覆盖 max | 如果提供且不同 → 替换，标记 changed |
-| 覆盖 baseMs | 如果提供且不同 → 替换，标记 changed |
-| 覆盖 factor | 如果提供且不同 → 替换，标记 changed |
-| 覆盖 jitter | 如果提供且不同 → 替换，标记 changed |
-| 事件发射 | `changed=true` 时：`TaskErrorEvent`，`code=retry_strategy_override_applied`，`message="retry override applied: max=<u32> baseMs=<u64> factor=<f64> jitter=<bool>"` |
+#### 5. 测试要点
+- 覆盖值改变 → 事件一次；值与默认相同 → 无事件
+- http+retry 组合任务：各自事件至多一次
+- 重试循环（若分类为 retryable）不再重复发射 override 事件
+- 越界或无效值（max=0 等）→ 解析阶段 Protocol 失败，无事件
+- Backoff 边界（factor=0.5 / 10.0）事件消息包含对应因子
 
-#### 3. 代码落点
-- 函数：`core/tasks/registry.rs::apply_retry_override(global_retry, override_retry)` → `(RetryPlan, changed)`。
-- 调用位置：`spawn_git_clone_task_with_opts` / `spawn_git_fetch_task_with_opts` / `spawn_git_push_task` 在解析 `strategyOverride` 后执行（紧邻 HTTP 覆盖逻辑）。
-- 重试循环：使用合并后的 `plan` 替换原 `load_retry_plan()` 返回值；Push 仍保持“进入 Upload 后不再自动重试”约束。
+#### 6. 回退策略
+- 删除事件分支：逻辑仍覆盖但静默（仅日志）
+- 删除 `apply_retry_override` 调用：完全回到全局计划
 
-#### 4. 事件与幂等
-- 事件主题复用 `task://error`，分类 `Protocol`，与 HTTP 覆盖一致以降低前端新增适配成本。
-- 每任务仅在合并阶段判定一次；后续重试 attempt 不重复判定。
+#### 7. 已知限制
+- 未引入动态运行时配置加载；默认值差异无法测试
+- 中文本地化网络错误分类可能导致少量 retryable 场景被视为 Internal（不影响 override 事件）
+- 未对 jitter=true 的统计分布在任务级重复验证（核心在单元测试覆盖）
 
-#### 5. 测试矩阵
-| 用例文件 | 场景 |
-|-----------|------|
-| `git_retry_override_event.rs` | 变更覆盖触发一次事件 + 未变化不触发（合并为单测试串行执行防并发污染） |
-| registry 单测 | `retry_override_tests_new` 验证 changed / 不变路径 |
-| `git_strategy_override_combo.rs` | clone/fetch/push 六合一：1) http+retry 2) retry-only 3) unchanged 4) invalid(retry.max=0) 5) fetch http+retry 6) push retry-only；校验每任务事件至多一次 |
-| `git_retry_override_backoff.rs` | 新增（后续增强）：(a) override 事件在不可重试 Internal 错误下仍一次性出现；(b) factor 上下界 (0.5 / 10.0) 覆盖并在事件 message 中反映 |
+#### 8. 示例
+事件：`{"code":"retry_strategy_override_applied","message":"retry override applied: max=3 baseMs=500 factor=2 jitter=false"}`
+日志：`INFO strategy task_kind=GitClone task_id=... retry override applied max=3 base_ms=500 factor=2 jitter=false`
 
-#### 6. 失败与范围校验
-- 数值范围（`max 1..=20`、`baseMs 10..60000`、`factor 0.5..=10.0`）沿用解析层校验；解析失败仍直接 `Protocol` 失败，不进入合并/事件逻辑（与 P2.3b 对齐）。
+#### 9. Changelog 建议
+Added: per-task Retry strategy override (max/baseMs/factor/jitter) with informative event `retry_strategy_override_applied`.
 
-#### 7. 日志示例
-```
-INFO strategy task_kind=GitClone task_id=... retry override applied max=3 base_ms=500 factor=2 jitter=false
-INFO strategy retry_max=3 retry_base_ms=500 retry_factor=2.0 retry_jitter=false retry override applied (内部合并函数级别)
-```
-事件：
-```
-{ "code": "retry_strategy_override_applied", "message": "retry override applied: max=3 baseMs=500 factor=2 jitter=false" }
-```
+### P2.3d TLS 策略覆盖实现说明
+在已有 HTTP 与 Retry 覆盖基础上，为任务级引入 `insecureSkipVerify` 与 `skipSanWhitelist` 两个布尔开关的浅覆盖；仅当任一值与全局不同（或规范化后不同）时发送一次 `tls_strategy_override_applied` 事件。
 
-#### 8. 回退策略
-| 操作 | 效果 |
-|------|------|
-| 移除 `apply_retry_override` 调用与事件分支 | 回退为仅使用全局重试计划，不影响 HTTP 覆盖 | 
-| 删除测试文件 `git_retry_override_event.rs` | 清除新增覆盖验证，仅保留 HTTP 覆盖 | 
+#### 1. 代码落点
+- 函数：`apply_tls_override(kind, id, global_tls, tls_override)` → `(insecure, skip_san, changed)`
+- 调用：`spawn_git_{clone,fetch,push}_task_with_opts` 中 HTTP 后、Retry 前（顺序固定：HTTP→TLS→Retry）
+- 日志：`tracing target=strategy` 记录最终布尔值；事件复用 `task://error`
 
-#### 9. 已知限制 / 后续
-- 仍未引入动态运行时配置加载（TODO P2.3e）；当前使用 default() 可能与真实用户配置不一致。
-- TLS 覆盖尚未应用（计划在后续阶段与自定义传输初始化点统一处理）。
-- 没有对“覆盖值降低导致已开始的 backoff 调整”做二次适配（首次加载即定）。
+#### 2. 合并与规范化
+1. 基线：`let mut eff = AppConfig::default().tls`
+2. 若提供 insecureSkipVerify 且不同 → 覆盖并标记 changed
+3. 若提供 skipSanWhitelist 且不同 → 覆盖并标记 changed
+4. 规范化（冲突预处理，与护栏阶段保持一致逻辑来源）：若 `insecure=true && skipSan=true` → 强制 `skipSan=false`（仍视为 changed）
+5. 不允许任务级覆盖 `san_whitelist` 列表（安全基线）
+6. 返回最终值与 changed；仅 changed 时发事件
 
-#### 10. Changelog 建议（追加）
-```
-Added: per-task Retry strategy override application (max/baseMs/factor/jitter) with informative event `retry_strategy_override_applied`.
-```
+#### 3. 事件
+- code：`tls_strategy_override_applied`
+- category：`Protocol`
+- message：`tls override applied: insecureSkipVerify=<bool> skipSanWhitelist=<bool>`
+- 单任务最多一次；未改变不发；规范化导致值变化也算 changed
 
-#### 11. 后续增强 / 增补说明（本节为新增）
+#### 4. 测试要点
+- insecure 仅改变 / skipSan 仅改变 / 双字段改变 → 各触发一次
+- 未变化路径（false/false）不触发
+- 不同任务并行（http+tls+retry / tls-only / unchanged）事件计数互不影响
+- 规范化场景：insecure=true + skipSan=true → 仍只发一次 applied（冲突事件在护栏 P2.3e，TLS 自身不重复描述）
+- 单元：全部分支（无覆盖/单字段/双字段/规范化/不变）
 
-已在后续补丁中追加的改进与发现：
+#### 5. 回退策略
+- 删除事件分支：保留覆盖与日志
+- 删除 `apply_tls_override` 调用：任务恢复使用全局 TLS 标志（仍保留 HTTP/Retry）
+- 移除函数与测试：完全撤销 TLS 覆盖
 
-1) 新测试 `git_retry_override_backoff.rs`：
-  - 初版目标是验证实际“Retrying (attempt X of Y)” 进度行，但由于本地 Windows + libgit2 返回的连接失败信息为本地化中文（例如“无法与服务器建立连接”）未命中 `helpers::map_git2_error` 中针对英文关键词 ("connection"/"connect"/timeout) 的 Network 分类分支，被归类为 `Internal` → `is_retryable=false`，导致不进入重试循环。
-  - 测试策略调整：改为验证 override 事件出现且未产生重试进度行（符合当前分类逻辑），保证测试稳定性而不依赖具体错误文案。
+#### 6. 已知限制
+- 尚未接入真实 TLS 验证层；两个开关当前仅作为后续自定义传输接入的参数
+- 不支持任务级动态修改 SAN 白名单；调试需求需另行设计安全开关
 
-2) Factor 边界覆盖：在同一测试文件中并行两个 clone 任务（factor=0.5 与 10.0），通过事件 payload 中的 `factor=<value>` 断言上下界值透传无损（打印时 `10.0` 可能序列化为 `10`，测试以包含 `factor=10` 判定）。
+#### 7. 示例
+事件：`{"code":"tls_strategy_override_applied","message":"tls override applied: insecureSkipVerify=true skipSanWhitelist=false"}`
+日志：`INFO strategy task_kind=GitFetch task_id=... tls override applied insecure=true skip_san=false`
 
-3) 事件幂等再确认：所有新增测试保持只读取一次事件缓冲（或使用 peek 不消费）以避免之前出现的“多文件并发读取导致顺序不确定”问题；继续遵循“单任务 override 事件最多一次”约束。
+#### 8. Changelog 建议
+Added: per-task TLS strategy override application (insecureSkipVerify/skipSanWhitelist) with informative event `tls_strategy_override_applied`.
 
-4) 与 P2.1d tag 修复的交互：Annotated tag force 复用 OID 的修复不影响 retry 覆盖逻辑；combo 测试与 backoff 测试均在修复后全量回归通过。
-
-5) 已知限制（Retry 覆盖特有）：
-  - 本地化错误文本未被 `map_git2_error` 捕获 → 某些真实的网络错误被归类为 Internal，从而不触发重试进度行；当前仅影响“重试进度可观察性”而不影响 override 事件。
-  - Push 任务仍保持“进入 Upload 阶段后不再自动重试” 的语义（计划保持）。
-  - 尚未实现“并发多个任务不同 Retry 覆盖的隔离测试”——逻辑已保证（每任务各自 clone 的 override plan），但测试待补。
-  - 未覆盖 jitter=true 的统计区间验证（已有 retry.rs 单测覆盖 backoff 范围；任务级未重复）。
-
-6) 计划中的后续改进（若进入 P2.3d / P2.4）：
-  - 本地化/多语言 Network 关键字扩展：在 `helpers::map_git2_error` 中增加中文“连接/超时”关键词匹配，或抽象成可配置正则。
-  - 可选引入一个测试注入层（MockGitService）直接产出 `ErrorCategory::Network` 以稳定 attempt 进度断言。
-  - 增加并发隔离测试：两个并行 clone 任务分别设定截然不同 max/baseMs/factor，断言事件一次且互不污染（尤其 retried_times 计数独立）。
-  - 增加 factor/jitter 组合 (极小 baseMs + jitter=true) 的延迟范围抽样统计，确保 backoff 不降为 0 也不过度爆炸。
-
-7) 回退再补充：若需暂时关闭 Retry 覆盖事件，可仅删除 `if changed { emit ... retry_strategy_override_applied }` 分支；功能仍保留（使用覆盖后的 plan），进一步回退则移除 `apply_retry_override` 调用即可恢复旧逻辑（使用 `load_retry_plan()`）。
-
-> 本节作为 P2.3c 的“增量追踪”，若后续补上并发与本地化改进，请把新增测试文件 / keyword 匹配策略附加到此段落，保持历史演进透明。
-
-```
-
-### P2.3e 任务级策略覆盖护栏（忽略字段 + 冲突规范化）实现说明（已完成）
-
-本阶段统一交付两类护栏能力：
-1) 未知/越权字段收集与一次性提示（ignored fields）。
-2) 冲突/互斥字段自动规范化与冲突事件提示（conflict normalization）。
-
-目标：在不阻断任务的前提下提升策略覆盖可观测性，确保进入底层网络/TLS 实现前的参数组合自洽，可快速定位调用方配置问题，并保持易回退。
+### P2.3e 策略覆盖护栏实现说明（忽略字段 + 冲突规范化）
+提供两类非阻断护栏：1) 未知字段收集并一次性提示；2) 冲突组合规范化并发冲突事件，确保任务级策略覆盖透明且自洽。
 
 #### 1. 功能范围
-- 适用任务：`GitClone` / `GitFetch` / `GitPush`。
-- 覆盖对象：`strategyOverride` 顶层与 `http` / `tls` / `retry` 子对象。
-- 护栏事件：
-  - 忽略字段：`strategy_override_ignored_fields`
-  - 冲突规范化：`strategy_override_conflict`
-  - 已有应用事件：`http|retry|tls_strategy_override_applied`（仅值真实改变时）
+- 任务：Clone / Fetch / Push
+- 作用对象：`strategyOverride` 顶层 + 子对象 http / tls / retry
+- 新增事件：`strategy_override_ignored_fields`、`strategy_override_conflict`；沿用已有 `*_strategy_override_applied`
 
-#### 2. 忽略字段（Ignored Fields）
-- 解析时收集：
-  - 顶层未知键 → `ignored_top_level`
-  - 分节未知键（记录为 `section.key`，如 `http.foo`）→ `ignored_nested`
-- 若任一集合非空 ⇒ 发射一次事件：
-```
-code: strategy_override_ignored_fields
-category: Protocol
-message: strategy override ignored unknown fields: top=[a/b] sections=[http.x/tls.y]
-```
-- 幂等：任务仅解析一次；事件至多一次；与其它事件并存。
+#### 2. 逻辑
+1. 解析阶段：收集未知顶层键与子节未知键（记录为 `section.key`）。
+2. 冲突检测：
+  - HTTP：followRedirects=false 且 maxRedirects>0 → 规范化 maxRedirects=0
+  - TLS：insecureSkipVerify=true 且 skipSanWhitelist=true → 规范化 skipSanWhitelist=false
+3. 规范化后继续后续覆盖；冲突各生成一条事件（最多 2 条）。
+4. 忽略字段：若集合非空，生成一次 `strategy_override_ignored_fields` 事件，列出 top 与 sections。
+5. changed 判定：基于规范化后最终值与全局比较（导致“规范化回到默认”时仅发 conflict，不发 applied）。
 
-#### 3. 冲突规范化（Conflict Normalization）
-当前支持规则：
-| 类别 | 条件 | 规范化 | 说明 |
-|------|------|--------|------|
-| HTTP | followRedirects=false 且 maxRedirects>0 | maxRedirects=0 | 否则语义悖论（禁止跟随却限制次数>0） |
-| TLS  | insecureSkipVerify=true 且 skipSanWhitelist=true | skipSanWhitelist=false | 放宽验证已跳过完全验证，名单开关无意义 |
+#### 3. 事件顺序（单任务）
+applied(HTTP→TLS→Retry) → conflict(HTTP→TLS) → ignored（若有）
 
-检测到冲突 ⇒ 修改局部值后再进入后续逻辑，并发射冲突事件：
-```
-code: strategy_override_conflict
-message 示例: http conflict: followRedirects=false => force maxRedirects=0 (was 3)
-```
-每个冲突规则独立事件（当前实现至多 2 条）；可未来聚合。
+#### 4. 代码落点
+- 解析返回结构扩展：`StrategyOverrideParseResult { parsed, ignored_top_level, ignored_nested }`
+- 应用函数扩展返回 conflict 描述（Option<String>）
+- Spawn 流程：解析 → HTTP 应用 → TLS 应用 → Retry 应用 → emit applied* → emit conflict* → emit ignored
 
-`changed` 语义：仅比较“最终规范化后值” 与全局默认；因此：
-- 若用户提供冲突组合导致规范化后仍与默认不同 → 同时出现 `*_applied` 与 `strategy_override_conflict`。
-- 若规范化后回到默认 → 仅出现冲突事件，不出现 applied。
+#### 5. 测试要点
+- 忽略字段：含/不含未知键事件出现 0/1 次
+- HTTP 冲突：follow=false + max>0 → 事件 + max 归零
+- TLS 冲突：insecure=true + skipSan=true → 事件 + skipSan=false
+- 组合：HTTP+TLS 同时冲突 + 忽略字段并存（计数精确）
+- 无冲突合法路径：仅必要 applied 事件
+- 单元：changed / conflict / 忽略各分支
 
-#### 4. 事件顺序与并发
-同一任务内顺序：
-1. `*_strategy_override_applied`（HTTP / TLS / Retry 各自独立，按应用顺序）
-2. `strategy_override_conflict`（按检测顺序 HTTP→TLS）
-3. `strategy_override_ignored_fields`
+#### 6. 回退策略
+- 仅关冲突事件：移除 conflict emit（保留规范化）
+- 关规范化：移除规则逻辑（可能传播矛盾组合）
+- 仅关忽略字段事件：移除 ignored emit（日志仍可见）
+- 全回退：移除扩展字段与 emit 分支，函数签名恢复
 
-并发任务互不影响：各自解析与事件缓冲独立，已在组合测试中验证。
+#### 7. 安全与限制
+- 事件不含敏感数据，仅字段名与少量布尔/数字
+- 规则为硬编码列表；新增策略字段需扩展规则表与测试
+- 未跨域检测 Retry 与其他策略组合
 
-#### 5. 代码落点与数据结构
-- `opts.rs`: `StrategyOverrideParseResult { parsed, ignored_top_level, ignored_nested }` 返回额外集合。
-- `GitDepthFilterOpts`: 承载忽略字段集合以便 clone/fetch 路径复用。
-- `registry.rs`:
-  - `apply_http_override` / `apply_tls_override` 签名扩展返回 `(values..., changed, conflict: Option<String>)`。
-  - 任务 spawn 流程：解析 → HTTP 应用 → TLS 应用 → Retry 应用 → emit applied → emit conflict(s) → emit ignored。
+#### 8. Changelog 建议
+Added: per-task strategy override guard (ignored fields + conflict normalization) with events `strategy_override_ignored_fields` & `strategy_override_conflict`.
 
-#### 6. 测试矩阵（合并后）
-| 类别 | 文件 | 关注点 |
-|------|------|--------|
-| 忽略字段 | `git_strategy_override_guard_ignored.rs` | 有/无未知字段事件一次性行为 |
-| HTTP 冲突 | `git_strategy_override_conflict_http.rs` | follow=false + max>0 规范化 & 冲突事件 |
-| TLS 冲突 | `git_strategy_override_conflict_tls.rs` | insecure=true + skipSan=true 规范化 & 冲突事件 |
-| 组合冲突+忽略 | `git_strategy_override_conflict_combo.rs` | HTTP+TLS 冲突 + ignored 同时出现次数准确 |
-| 无冲突路径 | `git_strategy_override_no_conflict.rs` | 合法组合无 conflict/ignored；仅必要 applied |
-| 回归（已存在） | HTTP/TLS/Retry 各 applied 测试 | 未因护栏改变原有触发条件 |
-| 单元（registry） | 覆盖函数测试 | changed / conflict 分支与规范化正确 |
+### P2.3f 策略覆盖前端与文档支持实现说明
+为策略覆盖闭环补齐前端透传、事件存储、示例文档与回退矩阵，确保调用方可稳定使用 HTTP/TLS/Retry + 护栏全套能力。
 
-全部测试（后端 + 前端）绿：冲突/忽略新增后无 flakiness。
+#### 1. 范围
+- 前端 API：`startGitClone/Fetch/Push` 支持 `strategyOverride`（与 depth/filter 并存）
+- 公共类型：`StrategyOverride`（http|tls|retry 子对象）
+- Store：错误事件存储新增 code 保留；信息型策略事件不覆盖已有 retriedTimes
+- 测试：事件顺序、组合、兼容旧 fetch 签名、参数排列、retriedTimes 保留
+- 文档：README + 设计文档事件代码表 & 示例更新
 
-#### 7. 回退策略
-| 目标 | 操作 | 副作用 |
-|------|------|--------|
-| 仅关闭冲突事件 | 移除 conflict emit 分支 | 仍执行规范化（静默） |
-| 关闭规范化 | 移除冲突检测与局部值调整 | 可能向后传播矛盾组合（后续实现需自保） |
-| 仅关闭忽略字段事件 | 移除 ignored emit 分支 | 日志仍可定位未知字段 |
-| 完全回退护栏 | 恢复旧函数签名 + 移除结构字段与测试 | 回归到仅应用策略，无可观测护栏 |
+#### 2. 事件代码矩阵（最终）
+`http_strategy_override_applied` / `tls_strategy_override_applied` / `retry_strategy_override_applied` / `strategy_override_conflict` / `strategy_override_ignored_fields`（顺序：applied* → conflict → ignored）
 
-#### 8. 安全与观测
-- 事件仅暴露键名与简单布尔/数字差异，不携带敏感值（证书、Token 等未包含）。
-- 冲突信息包含原值（`was X`）辅助调试；未记录完整原始 JSON，避免过度噪声。
-- 统一 `category=Protocol`，前端无需新增分类通道。
+#### 3. retriedTimes 语义
+信息事件缺少 retriedTimes 不清零；仅更大值提升，保持重试进度可观测连续性
 
-#### 9. 已知限制 / 后续展望
-- 冲突规则为硬编码列表：未来新增策略字段需同步扩展或抽象规则表。
-- 目前将 HTTP/TLS 冲突分别发事件；若冲突种类增多可聚合为单条结构化 payload。
-- 未对 retry 与其它策略之间潜在耦合（例如极端 backoff 与禁用 redirect 组合）做跨域冲突检测。
-- 未提供“dry-run diff” 汇总事件（可后续新增 summary 事件减少多条提示）。
+#### 4. 兼容性
+- 旧 `startGitFetch(repo, remote)` 签名仍接受；对象式新签名分支自动判定
+- 空 `{}` override 与缺省语义等价（不触发任何策略事件）
+- credentials / depth+filter 与 override 任意组合已测试
 
-#### 10. Changelog 与完成度
-```
-Added: per-task strategy override guard (ignored fields) + conflict normalization with events `strategy_override_ignored_fields` & `strategy_override_conflict` (HTTP follow=false => maxRedirects=0; TLS insecureSkipVerify=true => skipSanWhitelist=false).
-```
-完成度：功能、生效路径、事件、测试、文档与回退策略全部落地。
-
-#### 11. 结论
-护栏体系（忽略字段 + 冲突规范化）显著提升策略覆盖的透明性与安全性，不改变既有任务核心语义，具备细粒度回退开关，风险低、收益高，可作为后续引入更多策略字段的基础模板。
-
-
-
----
-### P2.3 任务级策略覆盖路线图（约 0.5–0.75 周）
-> 补充：本节后追加的 P2.3d TLS 实现摘要（快速阅读版），详尽内容见本文后续 "P2.3d 任务级 TLS 策略覆盖实现说明" 章节。
-
-#### P2.3d TLS 实现摘要（快速版）
-| 维度 | 内容 |
-|------|------|
-| 目标 | 为 clone/fetch/push 提供 per-task `strategyOverride.tls`（仅 `insecureSkipVerify` / `skipSanWhitelist` 布尔覆盖），不触及全局 `san_whitelist`，改变值时发一次提示事件。 |
-| 关键函数 | `TaskRegistry::apply_tls_override(kind,id,global,tls_override)` 返回 `(insecure, skipSan, changed)`；不修改 `global`。 |
-| 集成点 | 三个任务 spawn 解析 override 后按顺序应用：HTTP → TLS → Retry（顺序只影响日志展示，无逻辑耦合）。 |
-| 事件 | `task://error`，`category=Protocol`，`code=tls_strategy_override_applied`，`message="tls override applied: insecureSkipVerify=<bool> skipSanWhitelist=<bool>"`，单任务最多一次。 |
-| 安全护栏 | 不允许任务级覆盖 `san_whitelist`；仅两布尔开关；全局对象不可变；空对象 / 未知字段忽略并 warn。 |
-| 测试矩阵摘要 | clone insecure=true；clone unchanged；fetch skipSan=true；push 双开关；push 仅 insecure；并行组合 (http+tls+retry / tls-only / unchanged)；mixed (insecure + tls 空 + tls 未知 + skipSan)；单元：所有合并分支 & 全局未变。 |
-| 回退 | 删除事件发射分支 → 仅日志；移除函数调用 → 停用 TLS 覆盖；删除函数与测试 → 完全回退。 |
-| 幂等/并发 | `changed` 判定一次；多任务并发互不影响；值未变不发事件。 |
-| Changelog | Added: per-task TLS strategy override (insecureSkipVerify/skipSanWhitelist) with informative event `tls_strategy_override_applied`. |
-
-- 范围：
-  - 命令入参新增 `strategyOverride`（安全子集）：
-    - `http?: { followRedirects?: boolean; maxRedirects?: number }`
-    - `tls?: { insecureSkipVerify?: boolean; skipSanWhitelist?: boolean }`
-    - `retry?: { max?: number; baseMs?: number; factor?: number; jitter?: boolean }`
-  - 合并语义：浅合并全局配置；非法字段忽略并记录告警。
-  - 护栏：若处于代理模式（未来 P5），强制 Real SNI 并追加一次 `Proxy` 类提示（不阻断）。
-- 交付：
-  - 模型/解析/合并实现；
-  - 单测覆盖浅合并/越权字段忽略与告警；
-  - 与 clone/fetch/push 贯通（不改变其行为约定）。
-- 验收：
-  - 覆盖用例通过；运行期修改不影响其他任务；
-  - 事件/错误分类保持一致。
-- 回滚：
-  - 临时禁用覆盖解析，回到全局配置。
-
-#### P2.3 微阶段（可独立验收）
-（编号校正说明：原文档初稿中 Retry 与 TLS 子阶段编号存在对调；现统一采用 a=模型解析, b=HTTP, c=Retry, d=TLS, e=护栏, f=文档。此前“P2.3c 应用于 TLS” 描述已在后续实现中落地为 P2.3d，本节已同步更正。）
-
-- P2.3a 模型与解析
-  - 范围：扩展配置模型与命令入参结构；兼容 snake_case/camelCase；忽略未知字段并告警。
-  - 交付：解析与校验单测；无行为变更（尚未应用）。
-  - 验收：现有命令不受影响；非法键被忽略且有告警。
-  - 回滚：移除解析与模型扩展。
-
-- P2.3b 应用于 HTTP（followRedirects/maxRedirects）
-  - 范围：任务内浅合并覆盖 HTTP 策略；仅允许声明字段。
-  - 交付：覆盖生效用例（不同任务不同策略）；并发任务互不干扰。
-  - 验收：行为只影响本任务；事件与错误不变。
-  - 回滚：移除 HTTP 覆盖应用，保留解析。
-
-- P2.3c 应用于 Retry（max/baseMs/factor/jitter）
-  - 范围：任务内覆盖 Retry v1 计划；Push 的“上传前可重试”约束保持。
-  - 交付：可重试类别下的重试次数/退避生效；不可重试类别不变。
-  - 验收：事件中可选 retriedTimes 正确；不改变参数组合与阶段语义。
-  - 回滚：移除 Retry 覆盖应用。
-
-- P2.3d 应用于 TLS（insecureSkipVerify/skipSanWhitelist）
-  - 范围：任务内浅合并 TLS 两个布尔开关；记录护栏日志（当前阶段仅日志+事件，不改变真实验证逻辑）。
-  - 交付：开/关策略用例；并发任务隔离；事件仅在 changed 时一次。
-  - 验收：多任务并行事件幂等；不修改全局 san_whitelist；日志脱敏。
-  - 回滚：移除 TLS 覆盖应用或事件分支。
-
-- P2.3e 护栏与互斥
-  - 范围：代理模式（未来 P5）下强制 Real SNI 的护栏与一次性 `Proxy` 提示事件；越权字段告警。
-  - 交付：护栏单测；日志与事件检查。
-  - 验收：互斥时覆盖被忽略且有提示；不阻断任务。
-  - 回滚：关闭护栏逻辑（保留日志）。
-
-- P2.3f 文档与示例
-  - 范围：完善 strategyOverride 示例与前端参数传递说明；
-  - 交付：README/技术文档更新；用例脚本。
-  - 验收：跟随示例可复现差异化策略执行；CI 文档检查通过。
-  - 回滚：保留代码实现，回退文档。
-
-### P2.3d 任务级 TLS 策略覆盖实现说明（已完成）
-
-本阶段在已落地的 HTTP (`http_strategy_override_applied`) 与 Retry (`retry_strategy_override_applied`) 覆盖基础上，引入 `strategyOverride.tls`（`insecureSkipVerify` / `skipSanWhitelist`） 的任务级浅合并与一次性提示事件：`tls_strategy_override_applied`。
-
-#### 1. 目标与范围
-- 仅允许两个布尔开关的按任务覆盖；不允许覆盖 `san_whitelist` 列表（保持全局安全基线）。
-- 覆盖后仅影响该任务生命周期内的“有效 TLS 行为标志”（当前阶段尚未真正接入底层 TLS 逻辑，作为占位与观测），并发任务互不干扰。
-- 当且仅当至少一个值与全局配置不同，发送一次非致命提示事件（`category=Protocol`，`code=tls_strategy_override_applied`）。
-- 未变化不发事件；解析错误仍走现有 Protocol 失败路径，不发送 override 事件。
-
-#### 2. 合并规则
-| 步骤 | 描述 |
-|------|------|
-| 基线 | 复制 `AppConfig::default().tls`（后续阶段可替换为运行时加载配置） |
-| 覆盖 insecureSkipVerify | 提供且不同则替换，`changed=true` |
-| 覆盖 skipSanWhitelist | 提供且不同则替换，`changed=true` |
-| 不可覆盖 | `san_whitelist` 永远保持全局（安全基线） |
-| 事件 | `changed=true` 时发送一次 `tls_strategy_override_applied` |
-
-#### 3. 代码落点
-- 函数：`TaskRegistry::apply_tls_override(kind, id, global_cfg, tls_override)` → `(insecure_skip_verify, skip_san_whitelist, changed)`；放置于 `registry.rs` 与 HTTP/Retry 同级。
-- 集成：在 `spawn_git_clone_task_with_opts` / `spawn_git_fetch_task_with_opts` / `spawn_git_push_task` 中解析 `strategy_override` 后调用，位置紧随 HTTP 覆盖之前或之后（当前实现：HTTP→TLS→Retry，一次性顺序，不影响逻辑）。
-- 日志：`tracing target="strategy" ... "tls override applied"`，包含 taskKind 与 taskId。
-- 任务 options 接受日志：扩展 clone/fetch(push) 的 `tracing::info!(strategy_tls_insecure=?, strategy_tls_skip_san=?)` 字段。
-
-#### 4. 事件结构
-```json
-{
-  "taskId": "<uuid>",
-  "kind": "GitClone|GitFetch|GitPush",
-  "category": "Protocol",
-  "code": "tls_strategy_override_applied",
-  "message": "tls override applied: insecureSkipVerify=<bool> skipSanWhitelist=<bool>",
-  "retriedTimes": null
-}
-```
-
-#### 5. 测试矩阵
-测试文件：`git_tls_override_event.rs`
-| 用例 | 说明 |
-|------|------|
-| clone insecureSkipVerify=true | 触发事件一次 |
-| clone unchanged (false/false) | 不触发事件 |
-| fetch skipSanWhitelist=true | 触发事件一次 |
-| push insecure=true+skipSan=true | 触发事件一次 |
-| push insecure=true (only) | 触发事件一次（新增 `git_tls_push_insecure_only.rs`） |
-| 并行 clone (http+tls+retry / tls-only / unchanged) | 各任务事件计数分别 1 / 1 / 0（`git_strategy_override_tls_combo.rs`） |
-| mixed clone(insecure) + fetch(tls空对象) + fetch(tls含未知字段) + push(skipSan) | 仅 clone / push 触发，空对象与未知字段不触发（`git_strategy_override_tls_mixed.rs`） |
-| apply_tls_override 单元：无覆盖/单字段/双字段/不变/全变/全局未变 | 覆盖全部合并分支与不变幂等（`tls_override_tests_new`） |
-
-（未添加“无效值”测试：布尔解析错误会在上层 serde 层直接失败并归类为 Protocol，与 HTTP/Retry 行为一致。）
-
-#### 6. 幂等与并发
-- 每任务仅在解析阶段调用一次 `apply_tls_override`；`changed` 判定为 true 时发事件一次；后续重试循环不会再次发射（与 HTTP/Retry 逻辑一致）。
-- 不修改全局配置对象；不同任务可独立覆盖不同组合值互不影响。
-
-#### 7. 回退策略
-| 操作 | 效果 |
-|------|------|
-| 删除事件发射分支 | 保留合并与日志，不再对前端显示提示 |
-| 移除 `apply_tls_override` 调用 | 回到“仅解析不应用”状态（保持模型兼容） |
-| 移除函数与测试文件 | 完全回退 TLS 覆盖实现（保留 HTTP/Retry） |
-
-#### 8. 安全与限制
-- 不允许任务级改变 SAN 白名单列表，避免规避域名验证策略；未来若需调试能力，可在受控构建引入显式危险开关。
-- 未实际改变底层证书验证逻辑（后续引入自定义传输/TLS 层时再接入）。
-- 若将来代理模式护栏（P2.3e/P5）要求强制 Real SNI，可在此基础添加：`insecureSkipVerify=true` 时附加二次提示。
-
-#### 9. Changelog 建议追加
-```
-Added: per-task TLS strategy override application (insecureSkipVerify/skipSanWhitelist) with informative event `tls_strategy_override_applied`.
-```
-
-#### 10. 现状结论
-- 函数与事件已落地；测试矩阵全部通过；与既有 HTTP/Retry 覆盖事件并存，无字段冲突；前端无需新增订阅。
-
-#### 11. 测试增强补充（本次追加）
-- 新增单元测试模块：`tls_override_tests_new`（覆盖无覆盖/单字段变化/双字段变化/值不变）。
-- 新增并发/组合集成测试：`git_strategy_override_tls_combo.rs`（并行 3 个 clone 任务分别 http+tls+retry 全变 / tls-only / 全部不变，验证事件幂等与互不串扰）。
-- 原 `git_tls_override_event.rs` 继续保留基础串行路径；组合测试验证并行下事件次数精确为 1。
-- 所有新增测试总计 +6（单元 5 + 集成 1）均通过；全套测试总数提升，未引入 flakiness（在 Windows 环境 <1s 对应单元模块执行）。
-
-### P2.3f 任务级策略覆盖文档与前端支持（本次完成）
-
-> 本章节为最终收束：在既有解析 / 应用 / 护栏与事件完成后，补齐前端 API 透传、事件 code 存储与文档示例。
-
-#### 1. 交付内容
-- 前端 API：`startGitClone` / `startGitFetch` / `startGitPush` 支持 `strategyOverride`（与可选 depth/filter）。
-- 公共类型：`StrategyOverride`（http/tls/retry 三子集）。
-- Store：`lastErrorById` 增加 `code` 字段；用于区分 informational 提示与真正失败（后续可在 UI 过滤分类）。
-- 新前端测试：`strategy-override.events.test.ts` 覆盖 applied/conflict/ignored 事件 code 记录。
-- README：新增使用示例与事件代码表；本设计文档追加总结章节。
-
-#### 2. 事件代码（最终矩阵）
-| code | 触发条件 | 幂等 | 分类 |
-|------|----------|------|------|
-| http_strategy_override_applied | follow/max 至少一项与全局不同 | 单任务一次 | Protocol |
-| tls_strategy_override_applied | insecure/skipSan 至少一项不同 | 单任务一次 | Protocol |
-| retry_strategy_override_applied | 任一重试参数不同 | 单任务一次 | Protocol |
-| strategy_override_conflict | 互斥组合被规范化（HTTP 或 TLS） | 规则数上限（≤2） | Protocol |
-| strategy_override_ignored_fields | 出现未知字段（顶层或子节） | 单任务一次 | Protocol |
-
-顺序：applied → conflict → ignored；三类 applied 互不排斥；conflict/ignored 可与任意 applied 并存。
-
-#### 3. 回退策略归档
-| 目标 | 操作 | 保留影响 |
-|------|------|----------|
-| 关闭 informational 事件 | 移除 emit 分支 | 覆盖仍生效 |
-| 关闭单类覆盖 | 移除对应 apply_* 调用 | 其它仍可用 |
-| 关闭冲突规范化 | 移除冲突检测修改 | 可能传播矛盾组合 |
+#### 5. 回退矩阵
+| 目标 | 操作 | 影响 |
+|------|------|------|
+| 关闭信息事件 | 移除 emit 分支 | 覆盖仍生效 | 
+| 关闭单策略 | 移除对应 apply_* 调用 | 其它不受影响 |
+| 关闭冲突规范化 | 移除规则 | 可能传播矛盾值 |
 | 关闭忽略字段事件 | 移除 ignored emit | 日志仍可定位 |
-| 全量回退 | 移除解析与全部 apply | 恢复全局配置行为 |
+| 全量回退 | 移除解析与全部 apply | 恢复仅全局配置 |
 
-#### 4. 不变性
-- 所有新增参数可选；旧调用无改动。
-- 事件通道未增加；仅附加 code 字段。
-- Informational 事件不改变任务 state，失败语义不变。
+#### 6. 测试要点（增量）
+- 顺序：applied→conflict→ignored（无逆序）
+- 幂等：单任务每类 applied ≤1，conflict ≤规则数，ignored ≤1
+- retriedTimes 保留：信息事件不降低数值
+- 旧 fetch 签名兼容：与新签名结果一致
 
-#### 5. 风险与验证
-- 仅前端透传与显示层改动；核心判定逻辑早期阶段已由后端测试矩阵覆盖。
-- 新增单测验证 code 存储，降低回归风险。
+#### 7. 安全
+事件不含敏感凭证；策略字段仅布尔与数字
 
-#### 6. 结论
-P2.3f 标记完成；策略覆盖功能对调用方“自描述”闭环形成。后续增加新策略字段可沿用相同模式（解析→应用→事件→文档补充）。
+#### 8. 已知限制
+- 新增策略字段需同步扩展前端类型与事件代码表
+- 未提供统一单条 diff 以替换多事件（summary 另述）
 
-#### 7. 兼容性与调用护栏（补充合并）
-本阶段在不破坏既有调用的基础上引入多项兼容与容错：
-- 旧版 `startGitFetch(repoPath, remote)` （第二参数为远端名字符串） 仍受支持；新版对象式签名 `startGitFetch({ repo, remote, depth, filter, strategyOverride })` 检测到第二参数为字符串时回退旧路径（测试：`git.fetch.compat.test.ts`）。
-- `preset=remote` 省略时不显式传入（测试：`git.fetch.remote-omit.test.ts`），确保参数最小化与后端期望一致。
-- 空对象 `strategyOverride: {}` 会被透传（测试：clone 空 override 用例），不会触发任何 applied/conflict/ignored 事件，保证“显式声明为空” 与 “未提供” 语义相同。
-- “仅 override” / “credentials+override 组合” / “override + depth/filter 组合” 等多种排列均已在前端 API 测试中覆盖（文件：`git.api.test.ts` 中组合场景 + push credentials+override）。
-- 未知字段与互斥组合在后端被护栏事件捕获，不影响任务主流程（参见 P2.3e 章节），前端无需额外分支。
+#### 9. Changelog 建议
+Docs: added StrategyOverride usage examples and event code reference; Frontend: support per-task strategy overrides with stored codes and retry progress preservation.
 
-#### 8. retriedTimes 语义完善
-为避免信息型（informational）策略事件覆盖真实重试进度导致的 `retriedTimes` 可观测性下降，Store 合并逻辑采用“保留与提升”策略：
-- 若新到达的 `task://error` 事件缺失 `retriedTimes` 字段，则沿用先前已记录的数值。
-- 若携带 `retriedTimes` 且值更大，则更新（提升）；更小则忽略，防止回退。
-相关测试：`tasks.error.retried-preserve.test.ts` 覆盖“信息事件不清空” 与 “更大值提升” 两条路径。此语义确保：
-1) 策略 applied/conflict/ignored 等信息提示不会让界面回退到“未重试”状态；
-2) 后续真实重试（若分类为可重试）仍可正确累进展示。
+#### 10. 结论
+前端与文档支持完成，策略覆盖闭环；后续新增策略按统一模板迭代即可。
 
-#### 9. 测试矩阵增量汇总（P2.3f 相对 P2.3e）
-前端新增 / 扩展测试类别：
-- 事件 code 存储与顺序：`strategy-override.events.test.ts`、`tasks.strategy-order.test.ts`、`tasks.strategy-multi-applied.test.ts`。
-- 兼容性：`git.fetch.compat.test.ts`、`git.fetch.remote-omit.test.ts`。
-- 参数组合：`git.api.test.ts` 扩展（empty override / override-only / http+tls+retry / retry-only / credentials+override / depth+filter+override 交叉）。
-- retriedTimes 逻辑：`tasks.error.retried-preserve.test.ts`。
-
-后端（Rust）在原有 HTTP/TLS/Retry/护栏测试基础上无需新增代码路径，因此本阶段未再添加新的后端文件；但通过前端集成测试间接验证：
-- 事件幂等（单任务 applied* ≤1，冲突规则 ≤2，ignored ≤1）。
-- 冲突与规范化不影响 applied 触发条件（normalized 后仍差异则双事件）。
-- 旧 fetch 签名路径与新签名路径行为一致（仅参数封装差异）。
-
-总体当前统计（参考最近一次全量运行）：
-- 前端测试：≈108 用例（新增/扩展用例集中在策略事件与 API 兼容面）。
-- 后端测试：≈66 用例（含策略覆盖、护栏、git 基础命令）。
-
-#### 10. 质量与回归护栏
-本阶段引入的文档与测试强化了以下不变量（由测试锁定）：
-- 调用兼容：旧 fetch 签名不抛异常；空 override 与缺省等价；remote preset 省略不改变行为。
-- 事件顺序：applied → conflict → ignored；无逆序交叉。（顺序测试确保新增逻辑插入点固定）。
-- 幂等：单任务每类 applied 事件至多一次；信息事件不会降低 retriedTimes；冲突事件数量受规则集大小约束。
-- 安全：策略事件仅承载布尔/数字差异，不含敏感凭证或路径；凭证 + override 组合不泄露凭证到事件 payload。
-- 回退：任一覆盖或事件类别可通过移除对应 emit/调用点有界撤销，不需要迁移或清理存量数据。
-
-风险评估：剩余主要风险集中在未来新增策略字段时的规则扩展一致性；当前通过事件 code 矩阵与回退策略（章节 3 与 7）形成明确边界。建议后续新增字段时：先增补矩阵 & 护栏测试，再接入前端透传，保持与 P2.3f 模式一致。
-
+#### 9. 结论
+护栏提升策略可观测性与安全，零中断、幂等、低成本回退，为后续策略扩展提供模板。

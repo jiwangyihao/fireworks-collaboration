@@ -1,33 +1,54 @@
 # Changelog
 
-## Unreleased (P2.3f)
+## Unreleased (P2)
 
-新增：任务级策略覆盖前端与文档补全 (P2.3f)
-- Added: 前端 `StrategyOverride` 类型与 `startGitClone/startGitFetch/startGitPush` 的 `strategyOverride` 透传（含 depth/filter 支持）。
-- Added: Store `lastErrorById` 记录 `code` 字段，用于区分 informational 覆盖事件（applied/conflict/ignored）。
-- Added: 前端事件监听现已向 store 传递后端 `task://error` 的 `code`（之前仅保存 category/message）。
-- Added: `startGitFetch` 保留旧签名字符串第三参（preset）兼容，同时支持对象参数扩展 depth/filter/strategyOverride。
-- Changed: informational 覆盖事件（applied/conflict/ignored）不再清空已有 `retriedTimes`，若未提供该字段则沿用之前的重试计数，避免丢失上下文。
-- Added: README “P2.3 任务级策略覆盖” 使用说明与事件代码表。
-- Added: 设计文档新增 P2.3f 总结章节，汇总最终事件矩阵与回退策略。
-- Added: 前端测试 `strategy-override.events.test.ts` 覆盖 code 存储。
+### Added
+- `strategy_override_summary` 聚合事件（Clone / Fetch / Push）提供 http/retry/tls 最终值、`appliedCodes`、`filterRequested`。
+- 任务级策略覆盖扩展：TLS (`insecureSkipVerify` / `skipSanWhitelist`) 与 Retry (`max/baseMs/factor/jitter`) 字段。
+- 环境变量：
+  - `FWC_STRATEGY_APPLIED_EVENTS`（=0 关闭独立 *_strategy_override_applied 事件，仅用 summary）。
+  - `FWC_PARTIAL_FILTER_SUPPORTED`（=1 视为支持 partial filter，不触发回退事件）。
+- 事件：
+  - `strategy_override_conflict`（HTTP & TLS 冲突归一化提示）。
+  - `strategy_override_ignored_fields`（汇总未知顶层与分节字段）。
+  - `partial_filter_fallback`（不支持 partial 时的 shallow/full 回退提示）。
+  - `*_strategy_override_applied`（http/tls/retry 变更；可被 gating 抑制）。
+- i18n：网络错误分类增加中文关键字（连接被拒绝/解析失败/超时 等）。
 
-整合：与已存在的 `*_strategy_override_applied` / `strategy_override_conflict` / `strategy_override_ignored_fields` 事件保持兼容，无破坏性变更。
+### Changed
+- 独立 `*_strategy_override_applied` 事件受 `FWC_STRATEGY_APPLIED_EVENTS` 控制；关闭时仍在 summary.appliedCodes 中呈现差异。
+- Push 任务策略覆盖逻辑与 Clone/Fetch 对齐（变更总被计入 `appliedCodes`，独立事件按 gating）。
+- Informational 覆盖事件不再清空 `retriedTimes`（保持先前重试上下文）。
 
-回退：删除 README 与文档新增段落 + 移除前端 strategyOverride 透传即回退为 P2.3e 行为。
+### Tests
+- 新增：Clone / Fetch / Push summary & gating 正负用例；TLS summary & conflict；ignored fields；partial capability（capable / fallback）；retry/http 事件精确匹配；gating off 行为；冲突组合 (http/tls/combo)。
+- 新增/改造文件示例：`strategy_override_summary.rs`、`git_strategy_override_summary_fetch_push.rs`、`git_strategy_override_tls_summary.rs`、`git_strategy_override_conflict_{http,tls,combo,no_conflict}.rs`、`git_strategy_override_guard_ignored.rs`、partial capability 相关测试等。
+- 对公网依赖 shallow/partial 测试加入软跳过（失败输出标记不失败）。
 
-## P2.3e
+### Docs
+- README：新增环境变量、summary 事件结构与使用建议。
+- `new-doc/TECH_DESIGN_P2_PLAN.md`：补充 P2.3c~P2.3g 综合章节（gating / partial / i18n / 回退矩阵 / summary schema）。
 
-新增：任务级策略覆盖护栏与冲突规范化
-- Added: per-task strategy override ignored fields event `strategy_override_ignored_fields` （解析阶段收集未知顶层与分节字段并一次性提示，不阻断任务）。
-- Added: conflict normalization + event `strategy_override_conflict`：
-  - HTTP: followRedirects=false 且 maxRedirects>0 → 规范化 maxRedirects=0；
-  - TLS: insecureSkipVerify=true 且 skipSanWhitelist=true → 规范化 skipSanWhitelist=false；
-  - 规范化后若最终值与全局不同仍会伴随 `*_strategy_override_applied`；若相同仅发 conflict。
-- 测试：新增 `git_strategy_override_guard_ignored.rs`、`git_strategy_override_conflict_{http,tls,combo,no_conflict}.rs` 及 Registry 单元测试更新；全量 `cargo test` + 前端 `pnpm test` 通过。
-- 文档：`new-doc/TECH_DESIGN_P2_PLAN.md` 已补充冲突规范化与事件顺序、回退策略、测试矩阵。
+### Backward Compatibility
+- 前端无需修改即可继续消费原有事件；可以逐步迁移为只解析 `strategy_override_summary` 以降噪。
+- 冲突归一化：
+  - HTTP：`followRedirects=false` 且 `maxRedirects>0` → 规范化 `maxRedirects=0` 并发 conflict。
+  - TLS：`insecureSkipVerify=true` 且 `skipSanWhitelist=true` → 规范化 `skipSanWhitelist=false` 并发 conflict。
+  - 规范化导致值变化仍会出现对应 *_applied（若 gating 开）。
 
-回退：删除 conflict emit 分支可静默规范化；进一步删除规范化逻辑回到仅忽略字段阶段；移除 ignored emit 分支回退为仅日志。
+### Revert / 回退指引
+- 关闭 summary：移除 `emit_strategy_summary` 调用（功能退化为独立事件模式）。
+- 关闭 gating：删除 `strategy_applied_events_enabled` 分支逻辑（总是发独立 *_applied）。
+- 移除 TLS/Retry 覆盖：删对应 apply 分支与相关事件发射。
+- 取消 partial fallback 逻辑：移除 `decide_partial_fallback` 调用及事件。
+- 静默冲突：删除 conflict emit 分支（仍规范化）；再删除规范化逻辑可回到“忽略”模式。
+- 忽略未知字段提示：删除 ignored emit 分支（仅日志或静默）。
+- i18n 回退：移除新增中文关键字匹配。
+
+### Front-end
+- strategyOverride 透传深度与 filter 与后端保持兼容；`startGitFetch` 兼容旧 preset 字符串与对象参数新写法。
+
+
 
 ## v0.2.0-P2.2b (2025-09-19)
 
