@@ -157,7 +157,7 @@ describe("api/git clone 集成（mocked tauri）", () => {
   it("startGitFetch 透传 preset 给后端", async () => {
     await initTaskEvents();
     (invoke as any).mockResolvedValueOnce("git-f2");
-    const id2 = await startGitFetch("", "C:/tmp/repo", "branches");
+    const id2 = await startGitFetch("", "C:/tmp/repo", { preset: "branches" });
     expect(id2).toBe("git-f2");
     expect(invoke).toHaveBeenCalledWith("git_fetch", { repo: "", dest: "C:/tmp/repo", preset: "branches" });
     disposeTaskEvents();
