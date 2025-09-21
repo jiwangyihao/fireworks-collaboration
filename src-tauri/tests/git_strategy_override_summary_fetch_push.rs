@@ -84,3 +84,63 @@ async fn push_summary_event_and_gating_off() {
     assert!(summary_ok, "push summary missing or codes absent; events={:?}", events);
     assert!(!has_independent_applied, "gating off: should not emit independent applied events (push); events={:?}", events);
 }
+
+#[tokio::test]
+async fn fetch_summary_event_no_override() {
+    std::env::set_var("FWC_STRATEGY_APPLIED_EVENTS", "0");
+    let _ = drain_captured_events();
+    let origin_dir = init_repo();
+    // 创建工作仓库并添加远程
+    let work_dir = tempfile::tempdir().unwrap();
+    let work_repo = git2::Repository::init(work_dir.path()).unwrap();
+    work_repo.remote("origin", origin_dir.path().to_string_lossy().as_ref()).unwrap();
+
+    let reg = std::sync::Arc::new(TaskRegistry::new());
+    let repo_url = origin_dir.path().to_string_lossy().to_string();
+    let dest_path = work_dir.path().to_string_lossy().to_string();
+    let (id, token) = reg.create(TaskKind::GitFetch { repo: repo_url.clone(), dest: dest_path.clone(), depth: None, filter: None, strategy_override: None });
+    let handle = reg.spawn_git_fetch_task_with_opts(Some(AppHandle {}), id, token.clone(), repo_url, dest_path, None, None, None, None);
+    let _ = handle.await;
+    let events = drain_captured_events();
+    let mut found_summary = false;
+    for (topic, p) in &events {
+        if topic == "task://error" && p.contains("\"code\":\"strategy_override_summary\"") && p.contains(&id.to_string()) {
+            let outer: serde_json::Value = serde_json::from_str(p).expect("valid outer json");
+            let msg_str = outer.get("message").and_then(|v| v.as_str()).expect("message string");
+            let inner: serde_json::Value = serde_json::from_str(msg_str).expect("inner summary json");
+            assert!(inner.get("appliedCodes").unwrap().as_array().unwrap().is_empty(), "expected no appliedCodes, inner={inner:?}");
+            found_summary = true; break;
+        }
+    }
+    assert!(found_summary, "fetch no-override summary not found; events={:?}", events);
+}
+
+#[tokio::test]
+async fn push_summary_event_no_override() {
+    std::env::set_var("FWC_STRATEGY_APPLIED_EVENTS", "0");
+    let _ = drain_captured_events();
+    let origin_dir = init_repo();
+    let src_clone = tempfile::tempdir().unwrap();
+    let src_repo = git2::Repository::init(src_clone.path()).unwrap();
+    std::fs::write(src_clone.path().join("c.txt"), "three").unwrap();
+    let mut idx = src_repo.index().unwrap(); idx.add_path(std::path::Path::new("c.txt")).unwrap(); idx.write().unwrap();
+    let tree_id = idx.write_tree().unwrap(); let tree = src_repo.find_tree(tree_id).unwrap(); let sig = src_repo.signature().unwrap(); src_repo.commit(Some("HEAD"), &sig, &sig, "c1", &tree, &[]).unwrap();
+    src_repo.remote("origin", origin_dir.path().to_string_lossy().as_ref()).unwrap();
+
+    let reg = std::sync::Arc::new(TaskRegistry::new());
+    let (pid, ptoken) = reg.create(TaskKind::GitPush { dest: src_clone.path().to_string_lossy().to_string(), remote: Some("origin".into()), refspecs: None, username: None, password: None, strategy_override: None });
+    let handle = reg.spawn_git_push_task(Some(AppHandle {}), pid, ptoken.clone(), src_clone.path().to_string_lossy().to_string(), Some("origin".into()), None, None, None, None);
+    let _ = handle.await;
+    let events = drain_captured_events();
+    let mut found_summary = false;
+    for (topic, p) in &events {
+        if topic == "task://error" && p.contains("\"code\":\"strategy_override_summary\"") && p.contains(&pid.to_string()) {
+            let outer: serde_json::Value = serde_json::from_str(p).expect("valid outer json");
+            let msg_str = outer.get("message").and_then(|v| v.as_str()).expect("message string");
+            let inner: serde_json::Value = serde_json::from_str(msg_str).expect("inner summary json");
+            assert!(inner.get("appliedCodes").unwrap().as_array().unwrap().is_empty(), "expected no appliedCodes, inner={inner:?}");
+            found_summary = true; break;
+        }
+    }
+    assert!(found_summary, "push no-override summary not found; events={:?}", events);
+}

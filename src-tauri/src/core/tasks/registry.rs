@@ -4,7 +4,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use crate::events::emitter::{emit_all, AppHandle};
 use super::model::{TaskMeta, TaskKind, TaskState, TaskSnapshot, TaskStateEvent, TaskProgressEvent, TaskErrorEvent};
-use super::retry::{load_retry_plan, backoff_delay_ms, is_retryable, categorize};
+use super::retry::{backoff_delay_ms, is_retryable, categorize};
 use crate::core::git::errors::GitError;
 use crate::core::config::model::AppConfig;
 
@@ -411,19 +411,28 @@ impl TaskRegistry {
                 if let Some(http_over) = opts.strategy_override.as_ref().and_then(|s| s.http.as_ref()) {
                     let (f, m, changed, conflict) = Self::apply_http_override("GitFetch", &id, &global_cfg, Some(http_over));
                     effective_follow_redirects = f; effective_max_redirects = m;
-                    if changed && applied_enabled { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} applied_codes.push("http_strategy_override_applied".into()); }
+                    if changed {
+                        if applied_enabled { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                        applied_codes.push("http_strategy_override_applied".into());
+                    }
                     if let Some(msg)=conflict { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("strategy_override_conflict".into()), message: format!("http conflict: {}", msg), retried_times:None }; this.emit_error(app_ref,&evt);} }
                 }
                 if let Some(tls_over) = opts.strategy_override.as_ref().and_then(|s| s.tls.as_ref()) {
                     let (ins, skip, changed, conflict) = Self::apply_tls_override("GitFetch", &id, &global_cfg, Some(tls_over));
                     effective_insecure_skip_verify = ins; effective_skip_san_whitelist = skip;
-                    if changed && applied_enabled { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("tls_strategy_override_applied".into()), message: format!("tls override applied: insecureSkipVerify={} skipSanWhitelist={}", ins, skip), retried_times:None }; this.emit_error(app_ref,&evt);} applied_codes.push("tls_strategy_override_applied".into()); }
+                    if changed {
+                        if applied_enabled { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("tls_strategy_override_applied".into()), message: format!("tls override applied: insecureSkipVerify={} skipSanWhitelist={}", ins, skip), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                        applied_codes.push("tls_strategy_override_applied".into());
+                    }
                     if let Some(msg)=conflict { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("strategy_override_conflict".into()), message: format!("tls conflict: {}", msg), retried_times:None }; this.emit_error(app_ref,&evt);} }
                 }
                 if let Some(retry_over) = opts.strategy_override.as_ref().and_then(|s| s.retry.as_ref()) {
                     let (plan, changed) = Self::apply_retry_override(&global_cfg.retry, Some(retry_over));
                     retry_plan = plan;
-                    if changed && applied_enabled { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("retry_strategy_override_applied".into()), message: format!("retry override applied: max={} baseMs={} factor={} jitter={}", retry_plan.max, retry_plan.base_ms, retry_plan.factor, retry_plan.jitter), retried_times:None }; this.emit_error(app_ref,&evt);} applied_codes.push("retry_strategy_override_applied".into()); }
+                    if changed {
+                        if applied_enabled { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("retry_strategy_override_applied".into()), message: format!("retry override applied: max={} baseMs={} factor={} jitter={}", retry_plan.max, retry_plan.base_ms, retry_plan.factor, retry_plan.jitter), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                        applied_codes.push("retry_strategy_override_applied".into());
+                    }
                 }
                 tracing::info!(target="git", depth=?opts.depth, filter=?opts.filter.as_ref().map(|f| f.as_str()), has_strategy=?opts.strategy_override.is_some(), strategy_http_follow=?effective_follow_redirects, strategy_http_max_redirects=?effective_max_redirects, strategy_tls_insecure=?effective_insecure_skip_verify, strategy_tls_skip_san=?effective_skip_san_whitelist, "git_fetch options accepted (depth/filter/strategy parsed)");
                 if let Some((msg, _shallow)) = Self::decide_partial_fallback(depth_applied, filter_requested.as_deref(), global_cfg.partial_filter_supported) {
@@ -571,11 +580,13 @@ impl TaskRegistry {
             // P2.3a: parse strategyOverride early (depth/filter not applicable for push). If invalid => Protocol Fail.
             let mut effective_follow_redirects = None;
             let mut effective_max_redirects = None;
-            let mut retry_plan: Option<super::retry::RetryPlan> = None;
+            // 统一初始化重试计划（即使没有 retry override 也使用全局 plan，保证 summary 一定发出）
+            let mut retry_plan: super::retry::RetryPlan = Self::runtime_config().retry.clone().into();
             let mut effective_insecure_skip_verify: Option<bool> = None;
             let mut effective_skip_san_whitelist: Option<bool> = None;
             let mut applied_codes: Vec<String> = vec![];
             let applied_enabled = Self::strategy_applied_events_enabled();
+            // parse strategy_override (push 专用)；无论是否存在都需最终 summary
             if let Some(raw) = strategy_override.clone() {
                 use crate::core::git::default_impl::opts::parse_strategy_override;
                 match parse_strategy_override(Some(raw)) {
@@ -600,26 +611,29 @@ impl TaskRegistry {
                                 let (f,m,changed, conflict) = Self::apply_http_override("GitPush", &id, &global_cfg, Some(http_over));
                                 effective_follow_redirects = Some(f);
                                 effective_max_redirects = Some(m);
-                                if changed { if applied_enabled { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} } applied_codes.push("http_strategy_override_applied".into()); }
+                                if changed {
+                                    if applied_enabled { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                                    applied_codes.push("http_strategy_override_applied".into());
+                                }
                                 if let Some(msg)=conflict { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("strategy_override_conflict".into()), message: format!("http conflict: {}", msg), retried_times:None }; this.emit_error(app_ref,&evt);} }
                             }
                             if let Some(tls_over) = parsed.tls.as_ref() {
                                 let (ins, skip, changed, conflict) = Self::apply_tls_override("GitPush", &id, &global_cfg, Some(tls_over));
                                 effective_insecure_skip_verify = Some(ins);
                                 effective_skip_san_whitelist = Some(skip);
-                                if changed { if applied_enabled { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("tls_strategy_override_applied".into()), message: format!("tls override applied: insecureSkipVerify={} skipSanWhitelist={}", ins, skip), retried_times:None }; this.emit_error(app_ref,&evt);} } applied_codes.push("tls_strategy_override_applied".into()); }
+                                if changed {
+                                    if applied_enabled { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("tls_strategy_override_applied".into()), message: format!("tls override applied: insecureSkipVerify={} skipSanWhitelist={}", ins, skip), retried_times:None }; this.emit_error(app_ref,&evt);} }
+                                    applied_codes.push("tls_strategy_override_applied".into());
+                                }
                                 if let Some(msg)=conflict { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("strategy_override_conflict".into()), message: format!("tls conflict: {}", msg), retried_times:None }; this.emit_error(app_ref,&evt);} }
                             }
                             if let Some(retry_over) = parsed.retry.as_ref() {
-                                let (plan, changed) = Self::apply_retry_override(&global_cfg.retry, Some(retry_over));
-                                retry_plan = Some(plan.clone());
-                                if changed { if applied_enabled { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("retry_strategy_override_applied".into()), message: format!("retry override applied: max={} baseMs={} factor={} jitter={}", plan.max, plan.base_ms, plan.factor, plan.jitter), retried_times:None }; this.emit_error(app_ref,&evt);} } applied_codes.push("retry_strategy_override_applied".into()); }
+                                let (plan_new, changed) = Self::apply_retry_override(&global_cfg.retry, Some(retry_over));
+                                if changed { if applied_enabled { if let Some(app_ref)=&app { let evt = TaskErrorEvent { task_id:id, kind:"GitPush".into(), category:"Protocol".into(), code:Some("retry_strategy_override_applied".into()), message: format!("retry override applied: max={} baseMs={} factor={} jitter={}", plan_new.max, plan_new.base_ms, plan_new.factor, plan_new.jitter), retried_times:None }; this.emit_error(app_ref,&evt);} } applied_codes.push("retry_strategy_override_applied".into()); }
+                                retry_plan = plan_new;
                             }
                             tracing::info!(target="strategy", kind="push", has_override=true, http_follow=?effective_follow_redirects, http_max_redirects=?effective_max_redirects, tls_insecure=?effective_insecure_skip_verify, tls_skip_san=?effective_skip_san_whitelist, strategy_override_valid=true, "strategyOverride accepted for push (parse+http/tls apply)");
-                            // push 无 filter 概念，直接 summary
-                            if let Some(plan) = retry_plan.as_ref() {
-                                Self::emit_strategy_summary(&app, id, "GitPush", (effective_follow_redirects.unwrap_or(global_cfg.http.follow_redirects), effective_max_redirects.unwrap_or(global_cfg.http.max_redirects)), plan, (effective_insecure_skip_verify.unwrap_or(global_cfg.tls.insecure_skip_verify), effective_skip_san_whitelist.unwrap_or(global_cfg.tls.skip_san_whitelist)), applied_codes.clone(), false);
-                            }
+                            // summary 延后到统一位置发射
                         } else {
                             tracing::info!(target="strategy", kind="push", has_override=true, http_follow=?effective_follow_redirects, http_max_redirects=?effective_max_redirects, tls_insecure=?effective_insecure_skip_verify, tls_skip_san=?effective_skip_san_whitelist, strategy_override_valid=true, "strategyOverride accepted for push (empty object)");
                         }
@@ -627,7 +641,20 @@ impl TaskRegistry {
                 }
             }
 
-            let plan = retry_plan.unwrap_or_else(|| load_retry_plan());
+            // 若没有 override，对 effective_* 采用全局默认；然后统一发 summary（即使没有任何 appliedCodes）
+            tracing::debug!(target="strategy", kind="push", task_id=%id, applied_codes=?applied_codes, "emit push strategy summary");
+            let global_after = Self::runtime_config();
+            let eff_follow = effective_follow_redirects.unwrap_or(global_after.http.follow_redirects);
+            let eff_max = effective_max_redirects.unwrap_or(global_after.http.max_redirects);
+            let eff_insecure = effective_insecure_skip_verify.unwrap_or(global_after.tls.insecure_skip_verify);
+            let eff_skip = effective_skip_san_whitelist.unwrap_or(global_after.tls.skip_san_whitelist);
+            // 去重（防止将来多次同类型 override 重复记录）
+            let mut dedup_codes = applied_codes.clone();
+            dedup_codes.sort();
+            dedup_codes.dedup();
+            Self::emit_strategy_summary(&app, id, "GitPush", (eff_follow, eff_max), &retry_plan, (eff_insecure, eff_skip), dedup_codes, false);
+
+            let plan = retry_plan; // 已确保存在
             let mut attempt: u32 = 0;
             // 用于检测是否进入上传阶段（进入后不再自动重试）
             let upload_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
