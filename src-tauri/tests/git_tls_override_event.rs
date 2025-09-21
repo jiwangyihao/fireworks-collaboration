@@ -39,7 +39,7 @@ fn tls_override_changed_and_unchanged() {
         let h1 = reg.clone().spawn_git_clone_task_with_opts(Some(app.clone()), id1, tk1, src_path.clone(), dest1.path().to_string_lossy().to_string(), None, None, Some(ov1));
         wait_task(&reg, id1).await; h1.await.unwrap();
         let ev1 = drain_captured_events();
-        let mut tls_evt=0; for (topic,p) in &ev1 { if topic=="task://error" && p.contains("tls_strategy_override_applied") && p.contains(&id1.to_string()) { tls_evt+=1; } }
+    let mut tls_evt=0; for (topic,p) in &ev1 { if topic=="task://error" && p.contains("\"code\":\"tls_strategy_override_applied\"") && p.contains(&id1.to_string()) { tls_evt+=1; } }
         assert_eq!(tls_evt,1,"tls override event exactly once for changed values");
 
         // 2) clone with unchanged tls override (defaults: insecure=false skipSan=false)
@@ -49,7 +49,7 @@ fn tls_override_changed_and_unchanged() {
         let h2 = reg.clone().spawn_git_clone_task_with_opts(Some(app.clone()), id2, tk2, src_path.clone(), dest2.path().to_string_lossy().to_string(), None, None, Some(ov2));
         wait_task(&reg, id2).await; h2.await.unwrap();
         let ev2 = drain_captured_events();
-        for (topic,p) in &ev2 { if topic=="task://error" && p.contains("tls_strategy_override_applied") && p.contains(&id2.to_string()) { panic!("should not emit tls override event when values unchanged"); } }
+    for (topic,p) in &ev2 { if topic=="task://error" && p.contains("\"code\":\"tls_strategy_override_applied\"") && p.contains(&id2.to_string()) { panic!("should not emit tls override event when values unchanged"); } }
 
         // 3) fetch with tls override skipSanWhitelist=true
         let work3 = tempfile::tempdir().unwrap();
@@ -62,7 +62,7 @@ fn tls_override_changed_and_unchanged() {
         let hf = reg.clone().spawn_git_fetch_task_with_opts(Some(app.clone()), idf, tkf, src_path.clone(), work3.path().to_string_lossy().to_string(), None, None, None, Some(ovf));
         wait_task(&reg, idf).await; hf.await.unwrap();
         let evf = drain_captured_events();
-        let mut tls_evt_f=0; for (topic,p) in &evf { if topic=="task://error" && p.contains("tls_strategy_override_applied") && p.contains(&idf.to_string()) { tls_evt_f+=1; } }
+    let mut tls_evt_f=0; for (topic,p) in &evf { if topic=="task://error" && p.contains("\"code\":\"tls_strategy_override_applied\"") && p.contains(&idf.to_string()) { tls_evt_f+=1; } }
         assert_eq!(tls_evt_f,1);
 
         // 4) push path with tls override (insecure=true, skipSan=true) -> event once
@@ -75,7 +75,7 @@ fn tls_override_changed_and_unchanged() {
         let hp = reg.clone().spawn_git_push_task(Some(app.clone()), idp, tkp, work4.path().to_string_lossy().to_string(), None, None, None, None, Some(ovp));
         wait_task(&reg, idp).await; hp.await.unwrap();
         let evp = drain_captured_events();
-        let mut tls_evt_p=0; for (topic,p) in &evp { if topic=="task://error" && p.contains("tls_strategy_override_applied") && p.contains(&idp.to_string()) { tls_evt_p+=1; } }
+    let mut tls_evt_p=0; for (topic,p) in &evp { if topic=="task://error" && p.contains("\"code\":\"tls_strategy_override_applied\"") && p.contains(&idp.to_string()) { tls_evt_p+=1; } }
         assert_eq!(tls_evt_p,1);
     });
 }

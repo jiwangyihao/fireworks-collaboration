@@ -35,7 +35,7 @@ fn git_clone_retry_override_event_and_no_event() {
         handle.await.unwrap();
         let events_first = peek_captured_events();
         let mut found=false; let mut count=0;
-        for (topic,payload) in &events_first { if topic=="task://error" && payload.contains("retry_strategy_override_applied") && payload.contains(&id.to_string()) { found=true; count+=1; } }
+    for (topic,payload) in &events_first { if topic=="task://error" && payload.contains("\"code\":\"retry_strategy_override_applied\"") && payload.contains(&id.to_string()) { found=true; count+=1; } }
         assert!(found, "expected retry_strategy_override_applied event");
         assert_eq!(count, 1, "should emit exactly once for changed override");
 
@@ -49,6 +49,6 @@ fn git_clone_retry_override_event_and_no_event() {
         for _ in 0..100 { if let Some(s)=reg.snapshot(&id2) { if matches!(s.state, TaskState::Completed | TaskState::Failed) { break; } } tokio::time::sleep(std::time::Duration::from_millis(50)).await; }
         handle2.await.unwrap();
         let events_second = peek_captured_events();
-        for (topic,payload) in events_second { if topic=="task://error" && payload.contains("retry_strategy_override_applied") && payload.contains(&id2.to_string()) { panic!("should NOT emit retry override applied event when values unchanged"); } }
+    for (topic,payload) in events_second { if topic=="task://error" && payload.contains("\"code\":\"retry_strategy_override_applied\"") && payload.contains(&id2.to_string()) { panic!("should NOT emit retry override applied event when values unchanged"); } }
     });
 }

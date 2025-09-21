@@ -60,7 +60,7 @@ fn tls_mixed_scenarios() {
 
     let ev = drain_captured_events();
     let mut tls_a=0; let mut tls_c=0; let mut unexpected=Vec::new();
-    for (topic,p) in &ev { if topic=="task://error" { if p.contains("tls_strategy_override_applied") { if p.contains(&id_a.to_string()) { tls_a+=1; } else if p.contains(&id_c.to_string()) { tls_c+=1; } else { unexpected.push(p.clone()); } } } }
+    for (topic,p) in &ev { if topic=="task://error" { if p.contains("\"code\":\"tls_strategy_override_applied\"") { if p.contains(&id_a.to_string()) { tls_a+=1; } else if p.contains(&id_c.to_string()) { tls_c+=1; } else { unexpected.push(p.clone()); } } } }
         assert_eq!(tls_a,1,"clone insecure should emit once");
         assert_eq!(tls_c,1,"push skipSan should emit once");
         assert!(unexpected.is_empty(), "no tls events expected for empty or unknown field overrides: {:?}", unexpected);
