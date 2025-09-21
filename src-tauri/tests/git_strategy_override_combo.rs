@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 use fireworks_collaboration_lib::tasks::{TaskRegistry, TaskKind};
-use fireworks_collaboration_lib::events::emitter::{AppHandle, peek_captured_events, drain_captured_events};
+use fireworks_collaboration_lib::events::emitter::{AppHandle, drain_captured_events};
 use fireworks_collaboration_lib::tasks::model::TaskState;
 
 fn make_local_repo() -> tempfile::TempDir {
@@ -40,7 +40,7 @@ fn strategy_override_combo() {
         let h1 = reg.clone().spawn_git_clone_task_with_opts(Some(app.clone()), id1, t1, src_path.clone(), dest1.path().to_string_lossy().to_string(), None, None, Some(ov1));
         wait_task(&reg, id1).await; h1.await.unwrap();
         let ev1 = drain_captured_events();
-        let mut http_evt=0; let mut retry_evt=0; for (topic,p) in &ev1 { if topic=="task://error" { if p.contains("http_strategy_override_applied") && p.contains(&id1.to_string()) { http_evt+=1; } if p.contains("retry_strategy_override_applied") && p.contains(&id1.to_string()) { retry_evt+=1; } } }
+    let mut http_evt=0; let mut retry_evt=0; for (topic,p) in &ev1 { if topic=="task://error" { if p.contains("\"code\":\"http_strategy_override_applied\"") && p.contains(&id1.to_string()) { http_evt+=1; } if p.contains("\"code\":\"retry_strategy_override_applied\"") && p.contains(&id1.to_string()) { retry_evt+=1; } } }
         assert_eq!(http_evt,1,"http override event exactly once");
         assert_eq!(retry_evt,1,"retry override event exactly once");
 
@@ -51,7 +51,7 @@ fn strategy_override_combo() {
         let h2 = reg.clone().spawn_git_clone_task_with_opts(Some(app.clone()), id2, t2, src_path.clone(), dest2.path().to_string_lossy().to_string(), None, None, Some(ov2));
         wait_task(&reg, id2).await; h2.await.unwrap();
         let ev2 = drain_captured_events();
-        let mut http_evt2=0; let mut retry_evt2=0; for (topic,p) in &ev2 { if topic=="task://error" { if p.contains("http_strategy_override_applied") && p.contains(&id2.to_string()) { http_evt2+=1; } if p.contains("retry_strategy_override_applied") && p.contains(&id2.to_string()) { retry_evt2+=1; } } }
+    let mut http_evt2=0; let mut retry_evt2=0; for (topic,p) in &ev2 { if topic=="task://error" { if p.contains("\"code\":\"http_strategy_override_applied\"") && p.contains(&id2.to_string()) { http_evt2+=1; } if p.contains("\"code\":\"retry_strategy_override_applied\"") && p.contains(&id2.to_string()) { retry_evt2+=1; } } }
         assert_eq!(http_evt2,0); assert_eq!(retry_evt2,1);
 
         // 3) clone unchanged override (values == defaults) -> no events
@@ -61,7 +61,7 @@ fn strategy_override_combo() {
         let h3 = reg.clone().spawn_git_clone_task_with_opts(Some(app.clone()), id3, t3, src_path.clone(), dest3.path().to_string_lossy().to_string(), None, None, Some(ov3));
         wait_task(&reg, id3).await; h3.await.unwrap();
         let ev3 = drain_captured_events();
-        for (topic,p) in &ev3 { if topic=="task://error" && (p.contains("http_strategy_override_applied") || p.contains("retry_strategy_override_applied")) && p.contains(&id3.to_string()) { panic!("should not emit events for unchanged override"); } }
+    for (topic,p) in &ev3 { if topic=="task://error" && (p.contains("\"code\":\"http_strategy_override_applied\"") || p.contains("\"code\":\"retry_strategy_override_applied\"")) && p.contains(&id3.to_string()) { panic!("should not emit events for unchanged override"); } }
 
         // 4) invalid retry (max=0) -> Protocol fail, no override-applied events
         let dest4 = tempfile::tempdir().unwrap();
@@ -72,7 +72,7 @@ fn strategy_override_combo() {
         let snap4 = reg.snapshot(&id4).unwrap();
         assert!(matches!(snap4.state, TaskState::Failed));
         let ev4 = drain_captured_events();
-        for (topic,p) in &ev4 { if topic=="task://error" && p.contains("override_applied") && p.contains(&id4.to_string()) { panic!("invalid override should not emit applied events"); } }
+    for (topic,p) in &ev4 { if topic=="task://error" && p.contains("_strategy_override_applied") && p.contains(&id4.to_string()) && p.contains("\"code\":") { panic!("invalid override should not emit applied events"); } }
 
         // 5) fetch with http+retry override
         let work5 = tempfile::tempdir().unwrap();
@@ -85,7 +85,7 @@ fn strategy_override_combo() {
         let h5 = reg.clone().spawn_git_fetch_task_with_opts(Some(app.clone()), id5, tk5, src_path.clone(), work5.path().to_string_lossy().to_string(), None, None, None, Some(ov5));
         wait_task(&reg, id5).await; h5.await.unwrap();
         let ev5 = drain_captured_events();
-        let mut h_evt5=0; let mut r_evt5=0; for (topic,p) in &ev5 { if topic=="task://error" { if p.contains("http_strategy_override_applied") && p.contains(&id5.to_string()) { h_evt5+=1; } if p.contains("retry_strategy_override_applied") && p.contains(&id5.to_string()) { r_evt5+=1; } } }
+    let mut h_evt5=0; let mut r_evt5=0; for (topic,p) in &ev5 { if topic=="task://error" { if p.contains("\"code\":\"http_strategy_override_applied\"") && p.contains(&id5.to_string()) { h_evt5+=1; } if p.contains("\"code\":\"retry_strategy_override_applied\"") && p.contains(&id5.to_string()) { r_evt5+=1; } } }
         assert_eq!(h_evt5,1); assert_eq!(r_evt5,1);
 
         // 6) push with retry only (http unchanged) - create a commit first
@@ -101,7 +101,7 @@ fn strategy_override_combo() {
         let h6 = reg.clone().spawn_git_push_task(Some(app.clone()), id6, tk6, work6.path().to_string_lossy().to_string(), None, None, None, None, Some(ov6));
         wait_task(&reg, id6).await; h6.await.unwrap();
         let ev6 = drain_captured_events();
-        let mut http_evt6=0; let mut retry_evt6=0; for (topic,p) in &ev6 { if topic=="task://error" { if p.contains("http_strategy_override_applied") && p.contains(&id6.to_string()) { http_evt6+=1; } if p.contains("retry_strategy_override_applied") && p.contains(&id6.to_string()) { retry_evt6+=1; } } }
+    let mut http_evt6=0; let mut retry_evt6=0; for (topic,p) in &ev6 { if topic=="task://error" { if p.contains("\"code\":\"http_strategy_override_applied\"") && p.contains(&id6.to_string()) { http_evt6+=1; } if p.contains("\"code\":\"retry_strategy_override_applied\"") && p.contains(&id6.to_string()) { retry_evt6+=1; } } }
         assert_eq!(http_evt6,0); assert_eq!(retry_evt6,1);
     });
 }
