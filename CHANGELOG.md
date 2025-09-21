@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased (P2.3e)
+## Unreleased (P2.3f)
+
+新增：任务级策略覆盖前端与文档补全 (P2.3f)
+- Added: 前端 `StrategyOverride` 类型与 `startGitClone/startGitFetch/startGitPush` 的 `strategyOverride` 透传（含 depth/filter 支持）。
+- Added: Store `lastErrorById` 记录 `code` 字段，用于区分 informational 覆盖事件（applied/conflict/ignored）。
+- Added: 前端事件监听现已向 store 传递后端 `task://error` 的 `code`（之前仅保存 category/message）。
+- Added: `startGitFetch` 保留旧签名字符串第三参（preset）兼容，同时支持对象参数扩展 depth/filter/strategyOverride。
+- Changed: informational 覆盖事件（applied/conflict/ignored）不再清空已有 `retriedTimes`，若未提供该字段则沿用之前的重试计数，避免丢失上下文。
+- Added: README “P2.3 任务级策略覆盖” 使用说明与事件代码表。
+- Added: 设计文档新增 P2.3f 总结章节，汇总最终事件矩阵与回退策略。
+- Added: 前端测试 `strategy-override.events.test.ts` 覆盖 code 存储。
+
+整合：与已存在的 `*_strategy_override_applied` / `strategy_override_conflict` / `strategy_override_ignored_fields` 事件保持兼容，无破坏性变更。
+
+回退：删除 README 与文档新增段落 + 移除前端 strategyOverride 透传即回退为 P2.3e 行为。
+
+## P2.3e
 
 新增：任务级策略覆盖护栏与冲突规范化
 - Added: per-task strategy override ignored fields event `strategy_override_ignored_fields` （解析阶段收集未知顶层与分节字段并一次性提示，不阻断任务）。

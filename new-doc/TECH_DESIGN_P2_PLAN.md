@@ -814,3 +814,89 @@ Added: per-task TLS strategy override application (insecureSkipVerify/skipSanWhi
 - 新增并发/组合集成测试：`git_strategy_override_tls_combo.rs`（并行 3 个 clone 任务分别 http+tls+retry 全变 / tls-only / 全部不变，验证事件幂等与互不串扰）。
 - 原 `git_tls_override_event.rs` 继续保留基础串行路径；组合测试验证并行下事件次数精确为 1。
 - 所有新增测试总计 +6（单元 5 + 集成 1）均通过；全套测试总数提升，未引入 flakiness（在 Windows 环境 <1s 对应单元模块执行）。
+
+### P2.3f 任务级策略覆盖文档与前端支持（本次完成）
+
+> 本章节为最终收束：在既有解析 / 应用 / 护栏与事件完成后，补齐前端 API 透传、事件 code 存储与文档示例。
+
+#### 1. 交付内容
+- 前端 API：`startGitClone` / `startGitFetch` / `startGitPush` 支持 `strategyOverride`（与可选 depth/filter）。
+- 公共类型：`StrategyOverride`（http/tls/retry 三子集）。
+- Store：`lastErrorById` 增加 `code` 字段；用于区分 informational 提示与真正失败（后续可在 UI 过滤分类）。
+- 新前端测试：`strategy-override.events.test.ts` 覆盖 applied/conflict/ignored 事件 code 记录。
+- README：新增使用示例与事件代码表；本设计文档追加总结章节。
+
+#### 2. 事件代码（最终矩阵）
+| code | 触发条件 | 幂等 | 分类 |
+|------|----------|------|------|
+| http_strategy_override_applied | follow/max 至少一项与全局不同 | 单任务一次 | Protocol |
+| tls_strategy_override_applied | insecure/skipSan 至少一项不同 | 单任务一次 | Protocol |
+| retry_strategy_override_applied | 任一重试参数不同 | 单任务一次 | Protocol |
+| strategy_override_conflict | 互斥组合被规范化（HTTP 或 TLS） | 规则数上限（≤2） | Protocol |
+| strategy_override_ignored_fields | 出现未知字段（顶层或子节） | 单任务一次 | Protocol |
+
+顺序：applied → conflict → ignored；三类 applied 互不排斥；conflict/ignored 可与任意 applied 并存。
+
+#### 3. 回退策略归档
+| 目标 | 操作 | 保留影响 |
+|------|------|----------|
+| 关闭 informational 事件 | 移除 emit 分支 | 覆盖仍生效 |
+| 关闭单类覆盖 | 移除对应 apply_* 调用 | 其它仍可用 |
+| 关闭冲突规范化 | 移除冲突检测修改 | 可能传播矛盾组合 |
+| 关闭忽略字段事件 | 移除 ignored emit | 日志仍可定位 |
+| 全量回退 | 移除解析与全部 apply | 恢复全局配置行为 |
+
+#### 4. 不变性
+- 所有新增参数可选；旧调用无改动。
+- 事件通道未增加；仅附加 code 字段。
+- Informational 事件不改变任务 state，失败语义不变。
+
+#### 5. 风险与验证
+- 仅前端透传与显示层改动；核心判定逻辑早期阶段已由后端测试矩阵覆盖。
+- 新增单测验证 code 存储，降低回归风险。
+
+#### 6. 结论
+P2.3f 标记完成；策略覆盖功能对调用方“自描述”闭环形成。后续增加新策略字段可沿用相同模式（解析→应用→事件→文档补充）。
+
+#### 7. 兼容性与调用护栏（补充合并）
+本阶段在不破坏既有调用的基础上引入多项兼容与容错：
+- 旧版 `startGitFetch(repoPath, remote)` （第二参数为远端名字符串） 仍受支持；新版对象式签名 `startGitFetch({ repo, remote, depth, filter, strategyOverride })` 检测到第二参数为字符串时回退旧路径（测试：`git.fetch.compat.test.ts`）。
+- `preset=remote` 省略时不显式传入（测试：`git.fetch.remote-omit.test.ts`），确保参数最小化与后端期望一致。
+- 空对象 `strategyOverride: {}` 会被透传（测试：clone 空 override 用例），不会触发任何 applied/conflict/ignored 事件，保证“显式声明为空” 与 “未提供” 语义相同。
+- “仅 override” / “credentials+override 组合” / “override + depth/filter 组合” 等多种排列均已在前端 API 测试中覆盖（文件：`git.api.test.ts` 中组合场景 + push credentials+override）。
+- 未知字段与互斥组合在后端被护栏事件捕获，不影响任务主流程（参见 P2.3e 章节），前端无需额外分支。
+
+#### 8. retriedTimes 语义完善
+为避免信息型（informational）策略事件覆盖真实重试进度导致的 `retriedTimes` 可观测性下降，Store 合并逻辑采用“保留与提升”策略：
+- 若新到达的 `task://error` 事件缺失 `retriedTimes` 字段，则沿用先前已记录的数值。
+- 若携带 `retriedTimes` 且值更大，则更新（提升）；更小则忽略，防止回退。
+相关测试：`tasks.error.retried-preserve.test.ts` 覆盖“信息事件不清空” 与 “更大值提升” 两条路径。此语义确保：
+1) 策略 applied/conflict/ignored 等信息提示不会让界面回退到“未重试”状态；
+2) 后续真实重试（若分类为可重试）仍可正确累进展示。
+
+#### 9. 测试矩阵增量汇总（P2.3f 相对 P2.3e）
+前端新增 / 扩展测试类别：
+- 事件 code 存储与顺序：`strategy-override.events.test.ts`、`tasks.strategy-order.test.ts`、`tasks.strategy-multi-applied.test.ts`。
+- 兼容性：`git.fetch.compat.test.ts`、`git.fetch.remote-omit.test.ts`。
+- 参数组合：`git.api.test.ts` 扩展（empty override / override-only / http+tls+retry / retry-only / credentials+override / depth+filter+override 交叉）。
+- retriedTimes 逻辑：`tasks.error.retried-preserve.test.ts`。
+
+后端（Rust）在原有 HTTP/TLS/Retry/护栏测试基础上无需新增代码路径，因此本阶段未再添加新的后端文件；但通过前端集成测试间接验证：
+- 事件幂等（单任务 applied* ≤1，冲突规则 ≤2，ignored ≤1）。
+- 冲突与规范化不影响 applied 触发条件（normalized 后仍差异则双事件）。
+- 旧 fetch 签名路径与新签名路径行为一致（仅参数封装差异）。
+
+总体当前统计（参考最近一次全量运行）：
+- 前端测试：≈108 用例（新增/扩展用例集中在策略事件与 API 兼容面）。
+- 后端测试：≈66 用例（含策略覆盖、护栏、git 基础命令）。
+
+#### 10. 质量与回归护栏
+本阶段引入的文档与测试强化了以下不变量（由测试锁定）：
+- 调用兼容：旧 fetch 签名不抛异常；空 override 与缺省等价；remote preset 省略不改变行为。
+- 事件顺序：applied → conflict → ignored；无逆序交叉。（顺序测试确保新增逻辑插入点固定）。
+- 幂等：单任务每类 applied 事件至多一次；信息事件不会降低 retriedTimes；冲突事件数量受规则集大小约束。
+- 安全：策略事件仅承载布尔/数字差异，不含敏感凭证或路径；凭证 + override 组合不泄露凭证到事件 payload。
+- 回退：任一覆盖或事件类别可通过移除对应 emit/调用点有界撤销，不需要迁移或清理存量数据。
+
+风险评估：剩余主要风险集中在未来新增策略字段时的规则扩展一致性；当前通过事件 code 矩阵与回退策略（章节 3 与 7）形成明确边界。建议后续新增字段时：先增补矩阵 & 护栏测试，再接入前端透传，保持与 P2.3f 模式一致。
+

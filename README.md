@@ -71,3 +71,50 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "cd '$PWD/src-tauri'; car
 
 > 若需了解 Vue SFC `<script setup>` 的类型推导与 Volar Take Over 模式，可参考原模板文档：
 > https://github.com/johnsoncodehk/volar/discussions/471
+
+## 🚀 P2.3 任务级策略覆盖 (strategyOverride)
+
+自 P2.3 起，`git_clone` / `git_fetch` / `git_push` 支持可选 `strategyOverride`，在“单个任务”范围内覆盖全局 HTTP / TLS / Retry 安全子集参数，不修改全局配置，也不影响其他并发任务：
+
+支持字段：
+- `http.followRedirects?: boolean`
+- `http.maxRedirects?: number (<=20)`
+- `tls.insecureSkipVerify?: boolean`
+- `tls.skipSanWhitelist?: boolean`
+- `retry.max?: number` / `retry.baseMs?: number` / `retry.factor?: number` / `retry.jitter?: boolean`
+
+调用示例（前端）：
+
+```ts
+import { startGitClone } from './api/tasks';
+
+await startGitClone('https://github.com/org/repo.git', 'D:/work/repo', {
+	depth: 1,
+	filter: 'blob:none',
+	strategyOverride: {
+		http: { followRedirects: false, maxRedirects: 0 },
+		tls: { insecureSkipVerify: false, skipSanWhitelist: false },
+		retry: { max: 3, baseMs: 400, factor: 2, jitter: true },
+	},
+});
+```
+
+信息事件（复用 `task://error` 通道, `category=Protocol`）在值发生实际变化时最多各出现一次：
+
+| code | 场景 |
+|------|------|
+| `http_strategy_override_applied` | HTTP 覆盖生效 |
+| `tls_strategy_override_applied` | TLS 覆盖生效 |
+| `retry_strategy_override_applied` | Retry 覆盖生效 |
+| `strategy_override_conflict` | 发现互斥组合并已规范化（如 follow=false & max>0 → max=0） |
+| `strategy_override_ignored_fields` | 含未知字段被忽略 |
+
+这些提示事件不会导致任务失败，可用于 UI 中“提示”标签展示；真正的失败仍是 `state=failed`。
+
+前端实现要点：
+- 事件监听已将 `code` 写入 `tasks` store 的 `lastErrorById[taskId].code`，供上层 UI 过滤。
+- `startGitFetch` 兼容旧写法 `startGitFetch(repo,dest,"branches")`；推荐改用对象 `{ preset: "branches" }` 以便同时传递 `depth/filter/strategyOverride`。
+- 多个覆盖相关事件会覆盖 code，但若后续 informational 事件不带 `retriedTimes`，会保留之前的重试次数值，避免丢失重试上下文。
+
+回退策略：删除事件分支（仅日志）或移除对应 `apply_*_override` 调用即可恢复旧行为。
+
