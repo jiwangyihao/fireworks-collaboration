@@ -277,8 +277,112 @@
 ## 3. 实现说明（占位，后续分别补充）
 
 ### P3.0 基线巩固与观测脚手架 实现说明
+已完成（实现于本提交，后续补丁扩展已集成状态机与初步 timing 标记）：
 
-（此处留空，后续补充实现细节）
+1. 回退决策抽象
+  - 新增文件 `core/git/transport/fallback.rs`。
+  - 提供 `FallbackStage { None, Fake, Real, Default }`、`FallbackReason`、`FallbackDecision` 状态机：
+    - `FallbackDecision::initial(ctx)` 基于 `DecisionCtx { policy_allows_fake, runtime_fake_disabled }` 生成首个阶段；
+    - `advance_on_error()` 顺序执行 Fake→Real、Real→Default，Default 为终态；
+    - 保留 `history` 供后续指标/事件使用（不在 P3.0 输出）。
+  - 不涉及 I/O 与全局状态，保证可测与以后接入 rollout/hash/auto-disable 时的扩展性。
+
+2. 指标接口脚手架 + 初步接入
+  - 新增 `core/git/transport/metrics.rs`，定义：
+    - `TimingRecorder`：记录 connect / tls / first-byte / total 四段耗时；
+    - `TimingCapture` 纯数据结构（可序列化扩展时使用）；
+    - `TransportMetricsCollector` trait 与 `NoopCollector` 占位实现；
+  - 在 `CustomHttpsSubtransport::connect_tls_with_fallback` 中引入 `TimingRecorder`，记录 connect/tls 两段；`firstByte` 与 `total` 留待 P3.2 在 HTTP 读取包装层补齐；
+  - 当前使用 `NoopCollector`，未产生事件或持久化输出。
+
+3. 模块导出
+  - `transport/mod.rs` re-export 新增的决策与指标类型，后续阶段最小侵入式接入。
+
+4. 测试
+  - 新增 `core/git/transport/tests/fallback_decision_tests.rs`：覆盖
+    1) policy skip 直接 Default；
+    2) 完整链 Fake→Real→Default 顺序；
+    3) runtime_fake_disabled 行为等同 policy_allows_fake=false；
+  - 在 `fallback.rs` 内部还包含本地单元测试（初始与 advance 链）。
+
+5. 向后兼容
+  - 已用状态机重写 `connect_tls_with_fallback` 内部逻辑，但保持“首次 Fake 失败即 Real，再失败错误上抛”语义一致；错误消息保留原格式前缀 `tls handshake:`；
+  - 未输出任何新增事件 / 字段，前端零感知；
+  - 配置模型暂未引入 `http.fakeSniRolloutPercent`（仅设计文档记录）。
+
+6. 后续接入挂点（P3.1+）
+  - 在子传输建立连接前：构造 `DecisionCtx`（加入 rollout / host hash / auto-disable flag）；
+  - 握手失败回调处：调用 `advance_on_error()` 决定是否重试下阶段；
+  - 成功建立后：结合 `TimingRecorder` 输出 `timing` 字段；
+  - metrics collector 将在 P3.2 注册全局实现，支持聚合与导出。
+
+7. 回退策略验证计划（待 P3.1 接入）
+  - 引入 fault-injection feature 触发 Fake 握手错误，验证自动进入 Real；
+  - 增加历史长度与阶段终态快照测试，锁定兼容性。
+
+当前阶段未做：
+  - 未采集 firstByte/total 以及未输出 timing 事件；
+  - 未添加证书指纹逻辑（属于 P3.2 范围）。
+
+风险与缓解：
+  - 未来接入时可能与现有错误分类逻辑耦合：通过纯函数 & 明确阶段枚举降低冲突；
+  - 状态机扩展（加入“SkipFakePolicy”仍映射 Default）不会破坏历史记录顺序；后续若新增 Real-Host 验证专属 reason，可并行新增 `FallbackReason` 枚举值，不影响现有测试。
+
+#### 追加实现补充（2025-09-21）
+
+在最初提交基础上，P3.0 已进一步补齐以下内容，使其成为后续 P3.1～P3.2 的“稳定挂点”：
+
+1. 策略覆盖 (strategy override) 汇总事件一致性强化
+  - 为 `GitFetch` / `GitPush` 引入始终存在的 `strategy_override_summary` 事件（即使没有任何 override / gating 关闭）。
+  - `appliedCodes`：去重、与独立 applied 事件解耦；当 `FWC_STRATEGY_APPLIED_EVENTS=0` 时仅保留 summary（独立 *_strategy_override_applied 不发射）。
+  - 额外测试：
+    - 含 override：`fetch_summary_event_and_applied_codes` / `push_summary_event_and_gating_off`（gating 关闭仍有 summary）。
+    - 无 override：`fetch_summary_event_no_override` / `push_summary_event_no_override`（`appliedCodes` 为空数组）。
+  - 解析测试由简单字符串包含升级为双层 JSON 解析（外层 TaskErrorEvent，内层 summary），降低转义格式回归风险。
+
+2. 回退状态机稳定性增强测试
+  - 新增终态幂等（Default 再次 advance 不变）测试用例，保证未来扩展阶段不会破坏当前链条语义。
+  - 通过历史长度与阶段序列断言锁定链条 Fake→Real→Default 顺序不被误改。
+
+3. TimingRecorder 行为验证
+  - 新增单元测试模拟典型顺序（connect -> tls），捕获 `connect_ms` / `tls_ms` 两段耗时并确保不会因重复 finish 导致 panic 或数据污染。
+  - 记录点：目前只在握手内部建立与结束；`firstByte` / `total` 预留字段在 P3.2 的流读取包装层接入。
+
+4. 错误分类映射基线
+  - 建立表驱动（快照式）分类测试，锁定 git2 / I/O / TLS 场景→类别(Network / Tls / Verify / Auth 等) 的稳定性；后续新增 Real-Host 验证和 SPKI Pin 时，在分类表增量扩展。
+
+5. 事件开销与兼容性
+  - 统计：当前每个 push/fetch 仅新增 1 条 summary（以及在 gating=1 且有变更时的少量 applied 事件），单任务额外事件控制在 ≤3（符合 P3.1 规划目标）。
+  - 旧前端兼容验证：summary 事件沿用 `task://error` 通道 + code 字段，不影响已有错误渲染分支（未改变原 code 语义，只是信息型）。
+
+6. 调试与可观测准备
+  - 在 push 汇总前加入 `tracing::debug!(kind="push", applied_codes=..)` 日志，为后续 rollout 观察 / 采样偏差排查提供轻量信号。
+  - 保持 metrics 仍为 NoopCollector，确保当前阶段不会引入额外运行时开销；后续启用只需用真实 Collector 替换注入点。
+
+7. 风险更新
+  - 误判“summary 缺失”问题根因：测试过滤参数不匹配导致 0 test 运行；已通过 --list / --exact 方式核实真实执行路径并添加 no-override 场景防回归。
+  - 字符串匹配脆弱性：转为结构化 JSON 解析后风险降低；若未来内层字段扩展（timing/fallbackStage），现有解析逻辑无需调整。
+
+8. 为 P3.1 / P3.2 预留的明确挂点（现已具备）：
+  - Rollout：在创建 `FallbackDecision::initial` 时添加一致性采样决策（hash(host) % percent）；未命中直接返回 `FallbackStage::Default`。
+  - Auto Disable（P3.5）临时 flag：在构造 `DecisionCtx` 增加 `runtime_fake_disabled`（已存在占位语义），只需接入统计触发逻辑即可。
+  - Timing 扩展：在请求读取（首字节回调）与任务完成附近调用 `mark_first_byte()` / `finish()`，随后将 `TimingCapture` 注入 summary 或独立 timing 事件。
+  - 指纹采集：握手成功后位置唯一，当前连接函数已集中路径，可在 Fake / Real 成功分支后注入。
+
+9. 完成度小结（P3.0 封板视角）
+  | 模块 | 状态 | 备注 |
+  |------|------|------|
+  | FallbackDecision | 完成 | 行为与 P2 相同，可扩展 |
+  | TimingRecorder (connect/tls) | 完成 | firstByte/total 待 P3.2 |
+  | Strategy summary 一致性 | 完成 | fetch/push + gating 覆盖 |
+  | Applied codes 去重 | 完成 | 去重 + gating 分离 |
+  | 错误分类基线 | 完成 | 快照式测试，后续增量 |
+  | 指纹采集 | 未开始 | P3.2 |
+  | Rollout 采样 | 未开始 | P3.1 |
+  | Real-Host 验证 | 未开始 | P3.3 |
+  | SPKI Pin 解析占位 | 未开始 | P3.4 |
+
+该补充使 P3.0 具备“低变更面、可快速回退、测试护栏充分”的基线特征，可安全进入 P3.1（默认启用 + 百分比采样）。
 
 ### P3.1 默认启用与渐进放量 实现说明
 
