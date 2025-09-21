@@ -6,9 +6,13 @@
 
 #[path = "http/mod.rs"]
 mod http;
+mod fallback;
+mod metrics;
 mod register;
 mod rewrite;
 
 pub use http::set_push_auth_header_value;
 pub use register::ensure_registered;
 pub use rewrite::maybe_rewrite_https_to_custom;
+pub use fallback::{FallbackDecision, FallbackStage, FallbackReason, DecisionCtx};
+pub use metrics::{TimingRecorder, TimingCapture, TransportMetricsCollector, NoopCollector};

@@ -14,6 +14,7 @@ use url::Url;
 
 use crate::core::config::model::AppConfig;
 use crate::core::tls::util::{decide_sni_host_with_proxy, match_domain, proxy_present};
+use crate::core::git::transport::{FallbackDecision, DecisionCtx, FallbackStage, TimingRecorder, NoopCollector, TransportMetricsCollector};
 use crate::core::tls::verifier::{create_client_config, create_client_config_with_expected_name};
 
 mod auth;
@@ -126,75 +127,51 @@ impl CustomHttpsSubtransport {
         host: &str,
         port: u16,
     ) -> Result<(StreamOwned<ClientConnection, TcpStream>, bool, String), Error> {
+        let mut timing = TimingRecorder::new();
+        let collector: Arc<dyn TransportMetricsCollector> = Arc::new(NoopCollector::default());
         tracing::debug!(target="git.transport", host=%host, port=%port, "begin tcp connect");
-        // 先 TCP 直连
-        let addr = format!("{host}:{port}");
-        let tcp = TcpStream::connect(addr).map_err(|e| {
-            tracing::debug!(target="git.transport", host=%host, port=%port, error=%e.to_string(), "tcp connect failed");
-            Error::from_str(&format!("tcp connect: {e}"))
-        })?;
-        tcp.set_nodelay(true).ok();
+        let mut decision = FallbackDecision::initial(&DecisionCtx { policy_allows_fake: self.cfg.http.fake_sni_enabled, runtime_fake_disabled: false });
 
-        // 计算 SNI
-        let (sni, used_fake) = self.compute_sni(host);
-        let server_name =
-            ServerName::try_from(sni.as_str()).map_err(|_| Error::from_str("invalid sni host"))?;
+        // single attempt closure reused across Fake / Real
+    let mut attempt = |stage: FallbackStage, host: &str, port: u16| -> Result<(StreamOwned<ClientConnection, TcpStream>, bool, String), Error> {
+            timing.mark_connect_start();
+            let addr = format!("{host}:{port}");
+            let tcp = TcpStream::connect(addr).map_err(|e| {
+                tracing::debug!(target="git.transport", host=%host, port=%port, error=%e.to_string(), stage=?stage, "tcp connect failed");
+                Error::from_str(&format!("tcp connect: {e}"))
+            })?;
+            tcp.set_nodelay(true).ok();
+            timing.mark_connect_end();
 
-        // 选择证书验证配置：如果使用了伪 SNI，则在白名单验证阶段按真实主机名检查
-        let tls_cfg: Arc<ClientConfig> = if used_fake {
-            Arc::new(create_client_config_with_expected_name(&self.cfg.tls, host))
-        } else {
-            self.tls.clone()
+            let (sni, used_fake) = match stage { FallbackStage::Fake => self.compute_sni(host), FallbackStage::Real | FallbackStage::Default | FallbackStage::None => (host.to_string(), false) };
+            timing.mark_tls_start();
+            let server_name = ServerName::try_from(sni.as_str()).map_err(|_| Error::from_str("invalid sni host"))?;
+            let tls_cfg: Arc<ClientConfig> = if used_fake { Arc::new(create_client_config_with_expected_name(&self.cfg.tls, host)) } else { self.tls.clone() };
+            tracing::debug!(target="git.transport", host=%host, port=%port, sni=%sni, used_fake=%used_fake, stage=?stage, "start tls handshake");
+            let mut conn = ClientConnection::new(tls_cfg.clone(), server_name).map_err(|e| Error::from_str(&format!("tls client: {e}")))?;
+            match conn.complete_io(&mut &tcp) {
+                Ok(_) => {
+                    timing.mark_tls_end();
+                    let mut stream = StreamOwned::new(conn, tcp);
+                    let _ = stream.flush();
+                    Ok((stream, used_fake, sni))
+                }
+                Err(err) => {
+                    tracing::debug!(target="git.transport", host=%host, port=%port, used_fake=%used_fake, stage=?stage, error=%err.to_string(), "tls handshake failed");
+                    Err(Error::from_str(&format!("tls handshake: {err}")))
+                }
+            }
         };
 
-        // 先尝试以选定 SNI 完成握手
-        tracing::debug!(target="git.transport", host=%host, port=%port, sni=%sni, used_fake=%used_fake, "start tls handshake");
-        let mut conn = ClientConnection::new(tls_cfg.clone(), server_name)
-            .map_err(|e| {
-                tracing::debug!(target="git.transport", host=%host, port=%port, error=%e.to_string(), "tls client create failed");
-                Error::from_str(&format!("tls client: {e}"))
-            })?;
-        // 进行一次握手驱动
-        match conn.complete_io(&mut &tcp) {
-            Ok(_) => {
-                tracing::debug!(target="git.transport", host=%host, port=%port, used_fake=%used_fake, "tls handshake ok");
-                let mut stream = StreamOwned::new(conn, tcp);
-                let _ = stream.flush();
-                return Ok((stream, used_fake, sni));
-            }
-            Err(err) => {
-                tracing::debug!(target="git.transport", host=%host, port=%port, used_fake=%used_fake, error=%err.to_string(), "tls handshake failed");
-                // 若是伪 SNI，则无论错误类型都回退一次
-                if used_fake {
-                    tracing::debug!(target="git.transport", host=%host, port=%port, "fake SNI failed, fallback to real SNI: {err}");
-                    let addr2 = format!("{host}:{port}");
-                    let tcp2 = TcpStream::connect(addr2).map_err(|e| {
-                        tracing::debug!(target="git.transport", host=%host, port=%port, error=%e.to_string(), "tcp reconnect for real sni failed");
-                        Error::from_str(&format!("tcp connect: {e}"))
-                    })?;
-                    tcp2.set_nodelay(true).ok();
-                    let real_server = ServerName::try_from(host)
-                        .map_err(|_| Error::from_str("invalid real host"))?;
-                    let mut conn2 = ClientConnection::new(self.tls.clone(), real_server)
-                        .map_err(|e| {
-                            tracing::debug!(target="git.transport", host=%host, port=%port, error=%e.to_string(), "tls client create (real) failed");
-                            Error::from_str(&format!("tls client: {e}"))
-                        })?;
-                    match conn2.complete_io(&mut &tcp2) {
-                        Ok(_) => {
-                            tracing::debug!(target="git.transport", host=%host, port=%port, "tls handshake (real sni) ok")
-                        }
-                        Err(e) => {
-                            tracing::debug!(target="git.transport", host=%host, port=%port, error=%e.to_string(), "tls handshake (real sni) failed");
-                            return Err(Error::from_str(&format!("tls handshake (real sni): {e}")));
-                        }
-                    }
-                    let mut stream2 = StreamOwned::new(conn2, tcp2);
-                    let _ = stream2.flush();
-                    // TLS 层已回退为真实 SNI，后续无需再做 HTTP 层回退
-                    return Ok((stream2, false, host.to_string()));
-                } else {
-                    return Err(Error::from_str(&format!("tls handshake: {err}")));
+        // Drive attempts based on decision chain
+        loop {
+            let stage = decision.stage();
+            match attempt(stage, host, port) {
+                Ok(ok) => {
+                    timing.finish(); collector.record(&timing.capture); return Ok(ok);
+                }
+                Err(e) => {
+                    if let Some(_tr) = decision.advance_on_error() { continue; } else { timing.finish(); collector.record(&timing.capture); return Err(e); }
                 }
             }
         }
