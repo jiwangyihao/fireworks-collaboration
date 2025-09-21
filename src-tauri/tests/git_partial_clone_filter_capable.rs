@@ -9,7 +9,7 @@ fn unique_dir(label:&str)->PathBuf { std::env::temp_dir().join(format!("fwc-part
 fn build_origin()->PathBuf { let dir = unique_dir("origin"); std::fs::create_dir_all(&dir).unwrap(); let run=|a:&[&str]|{assert!(Command::new("git").current_dir(&dir).args(a).status().unwrap().success());}; run(&["init","--quiet"]); run(&["config","user.email","a@example.com"]); run(&["config","user.name","A"]); for i in 1..=3 { std::fs::write(dir.join(format!("f{}.txt",i)), i.to_string()).unwrap(); run(&["add","."]); run(&["commit","-m", &format!("c{}", i)]); } dir }
 
 async fn run_case(depth: Option<u32>, filter: &str) {
-  std::env::set_var("FWC_PARTIAL_FILTER_CAPABLE","1");
+  std::env::set_var("FWC_PARTIAL_FILTER_SUPPORTED","1");
   let origin = build_origin();
   let dest = unique_dir("clone");
   let registry = Arc::new(TaskRegistry::new());
@@ -23,7 +23,7 @@ async fn run_case(depth: Option<u32>, filter: &str) {
   let mut attempts=0; let mut seen_fallback=false; while attempts<10 { let evs=peek_captured_events(); for (topic,json) in &evs { if topic=="task://error" && json.contains("partial_filter_fallback") { seen_fallback=true; break; } } if seen_fallback { break; } tokio::time::sleep(std::time::Duration::from_millis(40)).await; attempts+=1; }
   let _ = drain_captured_events();
   assert!(!seen_fallback, "should NOT emit fallback when capability enabled (clone depth={:?} filter={})", depth, filter);
-  std::env::remove_var("FWC_PARTIAL_FILTER_CAPABLE");
+  std::env::remove_var("FWC_PARTIAL_FILTER_SUPPORTED");
 }
 
 #[tokio::test]

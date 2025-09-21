@@ -19,7 +19,7 @@ fn build_origin_and_work()->(PathBuf, PathBuf) {
 }
 
 async fn run_case(depth: Option<u32>, filter: &str) {
-  std::env::set_var("FWC_PARTIAL_FILTER_CAPABLE","1");
+  std::env::set_var("FWC_PARTIAL_FILTER_SUPPORTED","1");
   let (work, _origin) = build_origin_and_work();
   let registry = Arc::new(TaskRegistry::new());
   let (id, token) = registry.create(TaskKind::GitFetch { repo: "origin".into(), dest: work.to_string_lossy().to_string(), depth, filter: Some(filter.into()), strategy_override: None });
@@ -31,7 +31,7 @@ async fn run_case(depth: Option<u32>, filter: &str) {
   let mut attempts=0; let mut seen_fallback=false; while attempts<10 { let evs=peek_captured_events(); for (topic,json) in &evs { if topic=="task://error" && json.contains("partial_filter_fallback") { seen_fallback=true; break; } } if seen_fallback { break; } tokio::time::sleep(std::time::Duration::from_millis(40)).await; attempts+=1; }
   let _ = drain_captured_events();
   assert!(!seen_fallback, "should NOT emit fallback when capability enabled (fetch depth={:?} filter={})", depth, filter);
-  std::env::remove_var("FWC_PARTIAL_FILTER_CAPABLE");
+  std::env::remove_var("FWC_PARTIAL_FILTER_SUPPORTED");
 }
 
 #[tokio::test]
