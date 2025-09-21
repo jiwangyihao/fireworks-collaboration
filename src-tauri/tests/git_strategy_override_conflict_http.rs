@@ -19,7 +19,7 @@ fn http_conflict_follow_false_max_positive() {
     handle.await.unwrap();
     let events = peek_captured_events();
     let mut conflict_evt=0; let mut applied_evt=0; let mut conflict_msg_ok=false;
-    for (topic,p) in events { if topic=="task://error" && p.contains(&id.to_string()) { if p.contains("http_strategy_override_applied") { applied_evt+=1; } if p.contains("strategy_override_conflict") { conflict_evt+=1; if p.contains("force maxRedirects=0") { conflict_msg_ok=true; } } } }
+  for (topic,p) in events { if topic=="task://error" && p.contains(&id.to_string()) { if p.contains("\"code\":\"http_strategy_override_applied\"") { applied_evt+=1; } if p.contains("\"code\":\"strategy_override_conflict\"") { conflict_evt+=1; if p.contains("force maxRedirects=0") { conflict_msg_ok=true; } } } }
     assert_eq!(applied_evt,1,"http applied event once");
     assert_eq!(conflict_evt,1,"conflict event once");
     assert!(conflict_msg_ok, "conflict message should mention force maxRedirects=0");

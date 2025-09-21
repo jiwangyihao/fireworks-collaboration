@@ -19,7 +19,7 @@ fn tls_conflict_insecure_and_skip_san() {
     handle.await.unwrap();
     let events = peek_captured_events();
     let mut conflict_evt=0; let mut applied_evt=0; let mut normalized=false;
-    for (topic,p) in events { if topic=="task://error" && p.contains(&id.to_string()) { if p.contains("tls_strategy_override_applied") { applied_evt+=1; if p.contains("skipSanWhitelist=false") { normalized=true; } } if p.contains("strategy_override_conflict") { conflict_evt+=1; if p.contains("normalizes skipSanWhitelist=false") { normalized=true; } } } }
+  for (topic,p) in events { if topic=="task://error" && p.contains(&id.to_string()) { if p.contains("\"code\":\"tls_strategy_override_applied\"") { applied_evt+=1; if p.contains("skipSanWhitelist=false") { normalized=true; } } if p.contains("\"code\":\"strategy_override_conflict\"") { conflict_evt+=1; if p.contains("normalizes skipSanWhitelist=false") { normalized=true; } } } }
     assert_eq!(applied_evt,1,"tls applied event once");
     assert_eq!(conflict_evt,1,"conflict event once");
     assert!(normalized, "normalized skipSanWhitelist should appear in events");

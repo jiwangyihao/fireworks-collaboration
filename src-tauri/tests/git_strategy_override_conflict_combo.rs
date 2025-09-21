@@ -29,13 +29,13 @@ fn combo_conflict_and_ignored_http_tls() {
 
     let ev = peek_captured_events();
     let mut http_conflict=0; let mut tls_conflict=0; let mut ignored=0; let mut http_applied=0; let mut tls_applied=0;
-    for (topic,p) in ev { if topic=="task://error" && p.contains(&id.to_string()) {
-        if p.contains("http_strategy_override_applied") { http_applied+=1; }
-        if p.contains("tls_strategy_override_applied") { tls_applied+=1; }
-        if p.contains("strategy_override_conflict") && p.contains("http conflict") { http_conflict+=1; }
-        if p.contains("strategy_override_conflict") && p.contains("tls conflict") { tls_conflict+=1; }
-        if p.contains("strategy_override_ignored_fields") { ignored+=1; }
-    }}
+  for (topic,p) in ev { if topic=="task://error" && p.contains(&id.to_string()) {
+    if p.contains("\"code\":\"http_strategy_override_applied\"") { http_applied+=1; }
+    if p.contains("\"code\":\"tls_strategy_override_applied\"") { tls_applied+=1; }
+    if p.contains("\"code\":\"strategy_override_conflict\"") && p.contains("http conflict") { http_conflict+=1; }
+    if p.contains("\"code\":\"strategy_override_conflict\"") && p.contains("tls conflict") { tls_conflict+=1; }
+    if p.contains("\"code\":\"strategy_override_ignored_fields\"") { ignored+=1; }
+  }}
     assert_eq!(http_applied,1); assert_eq!(tls_applied,1);
     assert_eq!(http_conflict,1, "expect one http conflict event");
     assert_eq!(tls_conflict,1, "expect one tls conflict event");

@@ -32,7 +32,7 @@ fn clone_override_with_ignored_fields_emits_event() {
         handle.await.unwrap();
         let events = peek_captured_events();
         let mut ignored_evt = 0; let mut http_evt = 0; // ensure existing override events still possible
-        for (topic,payload) in events { if topic=="task://error" { if payload.contains("strategy_override_ignored_fields") && payload.contains(&id.to_string()) { ignored_evt+=1; } if payload.contains("http_strategy_override_applied") { http_evt+=1; } } }
+    for (topic,payload) in events { if topic=="task://error" { if payload.contains("\"code\":\"strategy_override_ignored_fields\"") && payload.contains(&id.to_string()) { ignored_evt+=1; } if payload.contains("\"code\":\"http_strategy_override_applied\"") { http_evt+=1; } } }
         assert_eq!(ignored_evt, 1, "expected exactly one ignored fields event");
         assert!(http_evt <=1, "http override event optional but at most once");
     });
@@ -60,7 +60,7 @@ fn clone_override_without_ignored_fields_no_event() {
         for _ in 0..120 { if let Some(s) = reg.snapshot(&id) { if matches!(s.state, TaskState::Completed | TaskState::Failed) { break; } } tokio::time::sleep(std::time::Duration::from_millis(40)).await; }
         handle.await.unwrap();
         let events = peek_captured_events();
-        let mut ignored_found = false; for (topic,payload) in events { if topic=="task://error" && payload.contains("strategy_override_ignored_fields") && payload.contains(&id.to_string()) { ignored_found=true; break; } }
+    let mut ignored_found = false; for (topic,payload) in events { if topic=="task://error" && payload.contains("\"code\":\"strategy_override_ignored_fields\"") && payload.contains(&id.to_string()) { ignored_found=true; break; } }
         assert!(!ignored_found, "should NOT emit ignored fields event for clean override");
     });
 }

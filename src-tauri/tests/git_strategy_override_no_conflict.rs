@@ -23,7 +23,7 @@ fn no_conflict_http_tls_override() {
     handle.await.unwrap();
     let ev = peek_captured_events();
     let mut conflict_found=false; let mut http_applied=0; let mut tls_applied=0;
-    for (topic,p) in ev { if topic=="task://error" && p.contains(&id.to_string()) { if p.contains("strategy_override_conflict") { conflict_found=true; } if p.contains("http_strategy_override_applied") { http_applied+=1; } if p.contains("tls_strategy_override_applied") { tls_applied+=1; } } }
+  for (topic,p) in ev { if topic=="task://error" && p.contains(&id.to_string()) { if p.contains("\"code\":\"strategy_override_conflict\"") { conflict_found=true; } if p.contains("\"code\":\"http_strategy_override_applied\"") { http_applied+=1; } if p.contains("\"code\":\"tls_strategy_override_applied\"") { tls_applied+=1; } } }
   assert_eq!(http_applied,0, "http values unchanged -> no http applied event");
   assert_eq!(tls_applied,1, "tls insecure changed -> one tls applied event");
   assert!(!conflict_found, "no conflict expected for normalized inputs");
