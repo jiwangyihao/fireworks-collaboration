@@ -2,12 +2,19 @@
 
 ## Unreleased (P2)
 
+### Test Refactor Second Pass
+- 新增事件等待 helper: `wait_for_event` / `wait_for_applied_code(_default)`，支持基于结构化事件出现的精准等待。
+- 批量使用 `tests_support::repo::build_repo` 替换重复仓库初始化（策略冲突、HTTP/TLS/Retry 组合、TLS mixed、Retry override、HTTP override idempotent 等）。
+- 统一等待：移除多处手写 for 循环轮询，改用 `wait_task_terminal`（返回 Result，集中化超时逻辑）。
+- 覆盖率硬化预备：新增脚本 `scripts/coverage_check.ps1`，支持 `FWC_COVERAGE_MIN_LINE` / `FWC_COVERAGE_ENFORCE` 环境变量，当前仍为软门控。
+- 代码清理：移除未使用导入，确保等待结果显式消费，降低未来启用 `-D warnings` 风险。
+
 ### Added
 - `strategy_override_summary` 聚合事件（Clone / Fetch / Push）提供 http/retry/tls 最终值、`appliedCodes`、`filterRequested`。
 - 任务级策略覆盖扩展：TLS (`insecureSkipVerify` / `skipSanWhitelist`) 与 Retry (`max/baseMs/factor/jitter`) 字段。
 - 环境变量：
-  - `FWC_STRATEGY_APPLIED_EVENTS`（=0 关闭独立 *_strategy_override_applied 事件，仅用 summary）。
-  - `FWC_PARTIAL_FILTER_SUPPORTED`（=1 视为支持 partial filter，不触发回退事件）。
+  - `FWC_PARTIAL_FILTER_SUPPORTED`（=1 视为支持 partial filter，不触发回退事件；兼容 `FWC_PARTIAL_FILTER_CAPABLE`）。
+  - （已废弃）`FWC_LEGACY_STRATEGY_EVENTS`：T6 中移除，对行为无影响（legacy 策略类 TaskErrorEvent 已删除）。
 - 事件：
   - `strategy_override_conflict`（HTTP & TLS 冲突归一化提示）。
   - `strategy_override_ignored_fields`（汇总未知顶层与分节字段）。
@@ -16,7 +23,7 @@
 - i18n：网络错误分类增加中文关键字（连接被拒绝/解析失败/超时 等）。
 
 ### Changed
-- 独立 `*_strategy_override_applied` 事件受 `FWC_STRATEGY_APPLIED_EVENTS` 控制；关闭时仍在 summary.appliedCodes 中呈现差异。
+- 独立 `*_strategy_override_applied` 与 `strategy_override_summary` 结构化事件始终发布；其 legacy TaskErrorEvent 版本（含 summary）在 T6 中被彻底移除。
 - Push 任务策略覆盖逻辑与 Clone/Fetch 对齐（变更总被计入 `appliedCodes`，独立事件按 gating）。
 - Informational 覆盖事件不再清空 `retriedTimes`（保持先前重试上下文）。
 
@@ -30,20 +37,15 @@
 - `new-doc/TECH_DESIGN_P2_PLAN.md`：补充 P2.3c~P2.3g 综合章节（gating / partial / i18n / 回退矩阵 / summary schema）。
 
 ### Backward Compatibility
-- 前端无需修改即可继续消费原有事件；可以逐步迁移为只解析 `strategy_override_summary` 以降噪。
+- （更新）T6 后需消费结构化事件（Strategy/Policy/Transport）；旧 *_strategy_override_applied / conflict / summary / adaptive / partial_filter_fallback / ignored_fields TaskErrorEvent 不再发射。
 - 冲突归一化：
   - HTTP：`followRedirects=false` 且 `maxRedirects>0` → 规范化 `maxRedirects=0` 并发 conflict。
   - TLS：`insecureSkipVerify=true` 且 `skipSanWhitelist=true` → 规范化 `skipSanWhitelist=false` 并发 conflict。
   - 规范化导致值变化仍会出现对应 *_applied（若 gating 开）。
 
 ### Revert / 回退指引
-- 关闭 summary：移除 `emit_strategy_summary` 调用（功能退化为独立事件模式）。
-- 关闭 gating：删除 `strategy_applied_events_enabled` 分支逻辑（总是发独立 *_applied）。
-- 移除 TLS/Retry 覆盖：删对应 apply 分支与相关事件发射。
-- 取消 partial fallback 逻辑：移除 `decide_partial_fallback` 调用及事件。
-- 静默冲突：删除 conflict emit 分支（仍规范化）；再删除规范化逻辑可回到“忽略”模式。
-- 忽略未知字段提示：删除 ignored emit 分支（仅日志或静默）。
-- i18n 回退：移除新增中文关键字匹配。
+- 恢复 legacy 事件已不支持（代码删除）；如需调试旧前端请基于历史 tag 回滚。
+- 若需降噪：仅消费 `StrategyEvent::Summary` 的 `applied_codes` 与 Conflict/Retry/Transport 结构化事件。
 
 ### Front-end
 - strategyOverride 透传深度与 filter 与后端保持兼容；`startGitFetch` 兼容旧 preset 字符串与对象参数新写法。

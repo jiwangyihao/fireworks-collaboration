@@ -23,6 +23,8 @@ tauri-app = [
   "tauri-plugin-fs",
   "tauri-plugin-http"
 ]
+# 基准测试（需手动启用）
+bench = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -62,13 +64,15 @@ rand = { version = "0.8" }
 dirs-next = "2"
 once_cell = "1"
 sha1 = "0.10"
+tempfile = "3"
 
 [dev-dependencies]
 # 与主运行时一致，测试中使用 current_thread 以减少潜在冲突
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
-tempfile = "3"
 futures = "0.3"
 once_cell = "1"
+proptest = "1"
+criterion = { version = "0.5", features=["html_reports"] }
 
 # Windows specific dependencies for registry access
 [target.'cfg(windows)'.dependencies]

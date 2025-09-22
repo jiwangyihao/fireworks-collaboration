@@ -8,8 +8,9 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "test": "vitest run",
-    "test:ui": "vitest"
+  "test": "vitest run",
+  "test:ui": "vitest",
+  "test:cov": "vitest run --coverage"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.12",
