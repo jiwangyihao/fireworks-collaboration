@@ -75,8 +75,8 @@ impl TaskRegistry {
     }
 
     fn runtime_config() -> AppConfig {
-        // 目前仍使用默认 + 环境变量轻量覆盖（避免引入复杂热加载）。
-        let mut cfg = AppConfig::default();
+        // 尝试加载持久化配置；失败时回退默认并应用轻量环境变量覆盖。
+        let mut cfg = crate::core::config::loader::load_or_init().unwrap_or_else(|_| AppConfig::default());
         if let Ok(v) = std::env::var("FWC_PARTIAL_FILTER_SUPPORTED") { if v == "1" { cfg.partial_filter_supported = true; } }
         cfg
     }
@@ -173,6 +173,7 @@ impl TaskRegistry {
         tokio::task::spawn_blocking(move || {
             match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Running), None => this.set_state_noemit(&id, TaskState::Running) }
 
+
             // 预发一个开始事件
             if let Some(app_ref) = &app {
                 let prog = TaskProgressEvent { task_id: id, kind: "GitClone".into(), phase: "Starting".into(), percent: 0, objects: None, bytes: None, total_hint: None, retried_times: None };
@@ -253,6 +254,21 @@ impl TaskRegistry {
                     }
                     // 汇总事件（无条件发送，便于前端一次性展示）
                     Self::emit_strategy_summary(&app, id, "GitClone", (effective_follow_redirects, effective_max_redirects), &retry_plan, (effective_insecure_skip_verify, effective_skip_san_whitelist), applied_codes.clone(), filter_requested.is_some());
+                    // 自适应 TLS rollout 事件（仅当改写发生说明命中采样）
+                    if let Some(rewritten) = crate::core::git::transport::maybe_rewrite_https_to_custom(&global_cfg, repo.as_str()) {
+                        let _ = rewritten; // 值不需要发送
+                        if let Some(app_ref)=&app {
+                            let payload = serde_json::json!({
+                                "taskId": id,
+                                "kind": "GitClone",
+                                "code": "adaptive_tls_rollout",
+                                "percentApplied": global_cfg.http.fake_sni_rollout_percent,
+                                "sampled": true
+                            });
+                            let evt = TaskErrorEvent { task_id:id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("adaptive_tls_rollout".into()), message: payload.to_string(), retried_times:None };
+                            emit_all(app_ref, EV_ERROR, &evt);
+                        }
+                    }
                 }
             }
 
@@ -442,6 +458,20 @@ impl TaskRegistry {
                     }
                 }
                 Self::emit_strategy_summary(&app, id, "GitFetch", (effective_follow_redirects, effective_max_redirects), &retry_plan, (effective_insecure_skip_verify, effective_skip_san_whitelist), applied_codes.clone(), filter_requested.is_some());
+                if let Some(rewritten) = crate::core::git::transport::maybe_rewrite_https_to_custom(&global_cfg, repo.as_str()) {
+                    let _ = rewritten;
+                    if let Some(app_ref)=&app {
+                        let payload = serde_json::json!({
+                            "taskId": id,
+                            "kind": "GitFetch",
+                            "code": "adaptive_tls_rollout",
+                            "percentApplied": global_cfg.http.fake_sni_rollout_percent,
+                            "sampled": true
+                        });
+                        let evt = TaskErrorEvent { task_id:id, kind:"GitFetch".into(), category:"Protocol".into(), code:Some("adaptive_tls_rollout".into()), message: payload.to_string(), retried_times:None };
+                        emit_all(app_ref, EV_ERROR, &evt);
+                    }
+                }
             }
 
             let plan = retry_plan.clone();
@@ -653,6 +683,8 @@ impl TaskRegistry {
             dedup_codes.sort();
             dedup_codes.dedup();
             Self::emit_strategy_summary(&app, id, "GitPush", (eff_follow, eff_max), &retry_plan, (eff_insecure, eff_skip), dedup_codes, false);
+            // push adaptive rollout
+            if let Some(rewritten) = crate::core::git::transport::maybe_rewrite_https_to_custom(&global_after, dest.as_str()) { let _=rewritten; if let Some(app_ref)=&app { let payload=serde_json::json!({"taskId":id,"kind":"GitPush","code":"adaptive_tls_rollout","percentApplied":global_after.http.fake_sni_rollout_percent,"sampled":true}); let evt=TaskErrorEvent{task_id:id,kind:"GitPush".into(),category:"Protocol".into(),code:Some("adaptive_tls_rollout".into()),message:payload.to_string(),retried_times:None}; emit_all(app_ref, EV_ERROR, &evt);} }
 
             let plan = retry_plan; // 已确保存在
             let mut attempt: u32 = 0;
@@ -985,6 +1017,71 @@ impl TaskRegistry {
             match res { Ok(())=> { match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Completed), None=> this.set_state_noemit(&id,TaskState::Completed) } }, Err(e)=> { let cat = super::retry::categorize(&e); if let Some(app_ref)=&app { let err_evt = TaskErrorEvent::from_parts(id, "GitRemoteRemove", cat, format!("{}", e), None); this.emit_error(app_ref,&err_evt);} match &app { Some(app_ref)=> this.set_state_emit(app_ref,&id,TaskState::Failed), None=> this.set_state_noemit(&id,TaskState::Failed) } } }
         })
     }
+}
+
+/// 测试辅助：模拟 GitClone 事件发射逻辑（strategy summary + adaptive_tls_rollout），不进行真实网络操作。
+pub fn test_emit_clone_strategy_and_rollout(repo: &str, task_id: uuid::Uuid) {
+    use crate::events::emitter::{emit_all, AppHandle};
+    let app = AppHandle; // non-tauri placeholder
+    let global_cfg = TaskRegistry::runtime_config();
+    // 仅发 summary（简化：省略 override 处理）
+    let summary = serde_json::json!({
+        "taskId": task_id,
+        "kind": "GitClone",
+        "code": "strategy_override_summary",
+        "http": {"follow": global_cfg.http.follow_redirects, "maxRedirects": global_cfg.http.max_redirects},
+        "retry": {"max": global_cfg.retry.max, "baseMs": global_cfg.retry.base_ms, "factor": global_cfg.retry.factor, "jitter": global_cfg.retry.jitter},
+        "tls": {"insecureSkipVerify": global_cfg.tls.insecure_skip_verify, "skipSanWhitelist": global_cfg.tls.skip_san_whitelist},
+        "appliedCodes": [],
+        "filterRequested": false
+    });
+    let evt = super::model::TaskErrorEvent { task_id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("strategy_override_summary".into()), message: summary.to_string(), retried_times: None };
+    emit_all(&app, EV_ERROR, &evt);
+    if let Some(_rewritten) = crate::core::git::transport::maybe_rewrite_https_to_custom(&global_cfg, repo) {
+        let payload = serde_json::json!({
+            "taskId": task_id,
+            "kind": "GitClone",
+            "code": "adaptive_tls_rollout",
+            "percentApplied": global_cfg.http.fake_sni_rollout_percent,
+            "sampled": true
+        });
+        let evt = super::model::TaskErrorEvent { task_id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("adaptive_tls_rollout".into()), message: payload.to_string(), retried_times: None };
+        emit_all(&app, EV_ERROR, &evt);
+    }
+}
+
+/// 测试辅助：带 strategyOverride 的 clone 事件路径（应用 http/tls/retry overrides 并发射相应事件）。
+pub fn test_emit_clone_with_override(_repo:&str, task_id:uuid::Uuid, strategy_override: serde_json::Value) {
+    use crate::events::emitter::{emit_all, AppHandle};
+    let app = AppHandle;
+    let global_cfg = TaskRegistry::runtime_config();
+    // parse override using existing parser
+    let parsed_opts = crate::core::git::default_impl::opts::parse_depth_filter_opts(None, None, Some(strategy_override)).expect("parse override");
+    let mut applied_codes: Vec<String> = vec![];
+    let applied_enabled = TaskRegistry::strategy_applied_events_enabled();
+    let mut effective_follow = global_cfg.http.follow_redirects;
+    let mut effective_max = global_cfg.http.max_redirects;
+    let mut retry_plan: super::retry::RetryPlan = global_cfg.retry.clone().into();
+    let mut effective_insecure = global_cfg.tls.insecure_skip_verify;
+    let mut effective_skip = global_cfg.tls.skip_san_whitelist;
+    if let Some(http_over) = parsed_opts.strategy_override.as_ref().and_then(|s| s.http.as_ref()) {
+        let (f, m, changed, conflict) = TaskRegistry::apply_http_override("GitClone", &task_id, &global_cfg, Some(http_over));
+        effective_follow = f; effective_max = m;
+        if changed { if applied_enabled { let evt = TaskErrorEvent { task_id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("http_strategy_override_applied".into()), message: format!("http override applied: follow={} max={}", f, m), retried_times:None }; emit_all(&app, EV_ERROR, &evt); } applied_codes.push("http_strategy_override_applied".into()); }
+        if let Some(msg)=conflict { let evt = TaskErrorEvent { task_id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("strategy_override_conflict".into()), message: format!("http conflict: {}", msg), retried_times:None }; emit_all(&app, EV_ERROR, &evt); }
+    }
+    if let Some(tls_over) = parsed_opts.strategy_override.as_ref().and_then(|s| s.tls.as_ref()) {
+        let (ins, skip, changed, conflict) = TaskRegistry::apply_tls_override("GitClone", &task_id, &global_cfg, Some(tls_over));
+        effective_insecure = ins; effective_skip = skip;
+        if changed { if applied_enabled { let evt = TaskErrorEvent { task_id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("tls_strategy_override_applied".into()), message: format!("tls override applied: insecureSkipVerify={} skipSanWhitelist={}", ins, skip), retried_times:None }; emit_all(&app, EV_ERROR, &evt); } applied_codes.push("tls_strategy_override_applied".into()); }
+        if let Some(msg)=conflict { let evt = TaskErrorEvent { task_id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("strategy_override_conflict".into()), message: format!("tls conflict: {}", msg), retried_times:None }; emit_all(&app, EV_ERROR, &evt); }
+    }
+    if let Some(retry_over) = parsed_opts.strategy_override.as_ref().and_then(|s| s.retry.as_ref()) {
+        let (plan, changed) = TaskRegistry::apply_retry_override(&global_cfg.retry, Some(retry_over));
+        retry_plan = plan;
+        if changed { if applied_enabled { let evt = TaskErrorEvent { task_id, kind:"GitClone".into(), category:"Protocol".into(), code:Some("retry_strategy_override_applied".into()), message: format!("retry override applied: max={} baseMs={} factor={} jitter={}", retry_plan.max, retry_plan.base_ms, retry_plan.factor, retry_plan.jitter), retried_times:None }; emit_all(&app, EV_ERROR, &evt); } applied_codes.push("retry_strategy_override_applied".into()); }
+    }
+    TaskRegistry::emit_strategy_summary(&Some(app.clone()), task_id, "GitClone", (effective_follow, effective_max), &retry_plan, (effective_insecure, effective_skip), applied_codes, false);
 }
 
 // (test helper for fallback recording was removed in cleanup — fallback currently validated by completion test only)
