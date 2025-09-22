@@ -8,6 +8,10 @@ pub struct HttpCfg {
     #[serde(default = "default_fake_sni_hosts")] pub fake_sni_hosts: Vec<String>,
     /// 在服务端返回 403 时，是否尝试切换到其他 SNI 候选并自动重试（仅限 info/refs GET 阶段）
     #[serde(default = "default_true")] pub sni_rotate_on_403: bool,
+    /// P3.1: 渐进放量百分比 (0..=100)。缺省 100 表示全量启用；0 表示禁用（等价 fake_sni_enabled=false）。
+    #[serde(default = "default_rollout_percent")] pub fake_sni_rollout_percent: u8,
+    /// P3.1: 附加允许进入自适应 TLS (Fake SNI) 采样的域名白名单（不自动加入 SAN 校验白名单，仅用于改写判定）。
+    #[serde(default)] pub host_allow_list_extra: Vec<String>,
     #[serde(default = "default_true")] pub follow_redirects: bool,
     #[serde(default = "default_max_redirects")] pub max_redirects: u8,
     #[serde(default = "default_large_body_warn")] pub large_body_warn_bytes: u64,
@@ -55,6 +59,7 @@ fn default_san_whitelist() -> Vec<String> {
     ]
 }
 fn default_log_level() -> String { "info".to_string() }
+fn default_rollout_percent() -> u8 { 100 }
 
 /// 默认的假 SNI 候选列表（中国常见网站域名）
 fn default_fake_sni_hosts() -> Vec<String> {
@@ -90,6 +95,8 @@ impl Default for AppConfig {
                 fake_sni_enabled: default_true(),
                 fake_sni_hosts: default_fake_sni_hosts(),
                 sni_rotate_on_403: default_true(),
+                fake_sni_rollout_percent: default_rollout_percent(),
+                host_allow_list_extra: Vec::new(),
                 follow_redirects: default_true(),
                 max_redirects: default_max_redirects(),
                 large_body_warn_bytes: default_large_body_warn(),
