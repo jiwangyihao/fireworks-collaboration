@@ -3,7 +3,8 @@
 use std::path::PathBuf; use std::process::Command; use std::sync::Arc;
 use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
 use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
-use fireworks_collaboration_lib::events::emitter::{AppHandle, peek_captured_events, drain_captured_events};
+use fireworks_collaboration_lib::events::emitter::AppHandle;
+use fireworks_collaboration_lib::events::structured::{get_global_memory_bus, Event, TransportEvent};
 
 fn unique_dir(label:&str)->PathBuf { std::env::temp_dir().join(format!("fwc-partial-fetch-capable-{}-{}", label, uuid::Uuid::new_v4())) }
 fn build_origin_and_work()->(PathBuf, PathBuf) {
@@ -25,12 +26,11 @@ async fn run_case(depth: Option<u32>, filter: &str) {
   let (id, token) = registry.create(TaskKind::GitFetch { repo: "origin".into(), dest: work.to_string_lossy().to_string(), depth, filter: Some(filter.into()), strategy_override: None });
   let app = AppHandle; let depth_json = depth.map(|d| serde_json::json!(d));
   let handle = registry.spawn_git_fetch_task_with_opts(Some(app), id, token, "origin".into(), work.to_string_lossy().to_string(), None, depth_json, Some(filter.into()), None);
-  let mut waited=0; while waited<6000 { if let Some(s)=registry.snapshot(&id) { if matches!(s.state, TaskState::Completed|TaskState::Failed|TaskState::Canceled){ break; } } tokio::time::sleep(std::time::Duration::from_millis(60)).await; waited+=60; }
+  let _ = fireworks_collaboration_lib::tests_support::wait::wait_task_terminal(&registry,&id,60,100).await;
   let snap = registry.snapshot(&id).unwrap(); assert_eq!(snap.state, TaskState::Completed, "fetch should succeed when capability on");
   handle.await.unwrap();
-  let mut attempts=0; let mut seen_fallback=false; while attempts<10 { let evs=peek_captured_events(); for (topic,json) in &evs { if topic=="task://error" && json.contains("partial_filter_fallback") { seen_fallback=true; break; } } if seen_fallback { break; } tokio::time::sleep(std::time::Duration::from_millis(40)).await; attempts+=1; }
-  let _ = drain_captured_events();
-  assert!(!seen_fallback, "should NOT emit fallback when capability enabled (fetch depth={:?} filter={})", depth, filter);
+  let mut attempts=0; let mut seen=false; while attempts<10 { if let Some(bus)=get_global_memory_bus() { if bus.snapshot().iter().any(|e| matches!(e, Event::Transport(TransportEvent::PartialFilterFallback { .. }))) { seen=true; break; } } tokio::time::sleep(std::time::Duration::from_millis(40)).await; attempts+=1; }
+  assert!(!seen, "should NOT emit structured fallback when capability enabled (fetch depth={:?} filter={})", depth, filter);
   std::env::remove_var("FWC_PARTIAL_FILTER_SUPPORTED");
 }
 

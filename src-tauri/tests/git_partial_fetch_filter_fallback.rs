@@ -25,7 +25,7 @@ async fn fetch_with_filter_fallbacks_successfully() {
     let registry = Arc::new(TaskRegistry::new());
     let (id, token) = registry.create(TaskKind::GitFetch { repo: "origin".into(), dest: work.to_string_lossy().to_string(), depth: None, filter: Some("blob:none".into()), strategy_override: None });
     let handle = registry.spawn_git_fetch_task_with_opts(None, id, token, "origin".into(), work.to_string_lossy().to_string(), None, None, Some("blob:none".into()), None);
-    let mut waited=0; while waited<8000 { if let Some(s)=registry.snapshot(&id) { if matches!(s.state, TaskState::Completed|TaskState::Failed|TaskState::Canceled){ break; } } tokio::time::sleep(std::time::Duration::from_millis(50)).await; waited+=50; }
+    let _ = fireworks_collaboration_lib::tests_support::wait::wait_task_terminal(&registry,&id,50,160).await;
     let snap = registry.snapshot(&id).unwrap(); assert_eq!(snap.state, TaskState::Completed, "fetch with filter fallback should complete successfully");
     handle.await.unwrap();
     assert!(work.join(".git").exists(), "work should remain a git repo");

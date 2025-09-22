@@ -3,7 +3,9 @@
 use std::path::PathBuf; use std::process::Command; use std::sync::Arc;
 use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
 use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
-use fireworks_collaboration_lib::events::emitter::{AppHandle, peek_captured_events, drain_captured_events};
+use fireworks_collaboration_lib::events::emitter::AppHandle;
+use fireworks_collaboration_lib::events::structured::{set_global_event_bus, MemoryEventBus};
+use fireworks_collaboration_lib::tests_support::event_assert::{assert_partial_unsupported, assert_no_partial_capability, assert_no_partial_fallback};
 
 fn unique_dir(label:&str)->PathBuf { std::env::temp_dir().join(format!("fwc-partial-fetch-invalid-cap-{}-{}", label, uuid::Uuid::new_v4())) }
 fn build_origin_and_work()->(PathBuf, PathBuf) {
@@ -17,16 +19,18 @@ fn build_origin_and_work()->(PathBuf, PathBuf) {
 #[tokio::test]
 async fn fetch_invalid_filter_capability_enabled_still_fails() {
   std::env::set_var("FWC_PARTIAL_FILTER_CAPABLE","1");
+  std::env::set_var("FWC_PARTIAL_FILTER_SUPPORTED","1");
   let (work,_origin) = build_origin_and_work();
   let registry = Arc::new(TaskRegistry::new());
   let (id, token) = registry.create(TaskKind::GitFetch { repo: "origin".into(), dest: work.to_string_lossy().to_string(), depth: None, filter: Some("bad:filter".into()), strategy_override: None });
-  let app = AppHandle; let handle = registry.spawn_git_fetch_task_with_opts(Some(app), id, token, "origin".into(), work.to_string_lossy().to_string(), None, None, Some("bad:filter".into()), None);
-  let mut waited=0; while waited<3000 { if let Some(s)=registry.snapshot(&id) { if matches!(s.state, TaskState::Completed|TaskState::Failed|TaskState::Canceled){ break; } } tokio::time::sleep(std::time::Duration::from_millis(50)).await; waited+=50; }
+  let app = AppHandle; let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new())); let handle = registry.spawn_git_fetch_task_with_opts(Some(app), id, token, "origin".into(), work.to_string_lossy().to_string(), None, None, Some("bad:filter".into()), None);
+  let _ = fireworks_collaboration_lib::tests_support::wait::wait_task_terminal(&registry,&id,50,60).await; // ≈3s 上限
   let snap = registry.snapshot(&id).unwrap(); assert_eq!(snap.state, TaskState::Failed, "invalid filter should fail even when capability=1");
   handle.await.unwrap();
-  let mut has_protocol=false; let mut has_fallback=false; for (topic,json) in peek_captured_events() { if topic=="task://error" { if json.contains("unsupported filter") { has_protocol=true; } if json.contains("partial_filter_fallback") { has_fallback=true; } } }
-  assert!(has_protocol, "expected protocol error");
-  assert!(!has_fallback, "should not emit fallback code for invalid filter");
-  let _ = drain_captured_events();
+  // 断言：有 unsupported 事件；无 capability（解析失败不应产生 capability）且无 fallback
+  assert_partial_unsupported(&id.to_string(), Some("unsupported filter"));
+  assert_no_partial_capability(&id.to_string());
+  assert_no_partial_fallback(&id.to_string());
   std::env::remove_var("FWC_PARTIAL_FILTER_CAPABLE");
+  std::env::remove_var("FWC_PARTIAL_FILTER_SUPPORTED");
 }

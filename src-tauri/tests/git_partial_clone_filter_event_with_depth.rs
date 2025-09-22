@@ -5,7 +5,9 @@ use std::process::Command;
 use std::sync::Arc;
 use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
 use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
-use fireworks_collaboration_lib::events::emitter::{AppHandle, peek_captured_events, drain_captured_events};
+use fireworks_collaboration_lib::events::emitter::AppHandle;
+use fireworks_collaboration_lib::events::structured::{set_global_event_bus, MemoryEventBus};
+use fireworks_collaboration_lib::tests_support::event_assert::assert_partial_fallback;
 
 fn unique_dir(label:&str)->PathBuf { std::env::temp_dir().join(format!("fwc-partial-depth-{}-{}", label, uuid::Uuid::new_v4())) }
 
@@ -25,11 +27,10 @@ async fn filter_with_depth_fallback_shallow_message() {
 	let registry = Arc::new(TaskRegistry::new());
 	let (id, token) = registry.create(TaskKind::GitClone { repo: origin.to_string_lossy().to_string(), dest: dest.to_string_lossy().to_string(), depth: Some(1), filter: Some("tree:0".into()), strategy_override: None });
 	let app = AppHandle;
+	let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
 	let handle = registry.spawn_git_clone_task_with_opts(Some(app), id, token, origin.to_string_lossy().to_string(), dest.to_string_lossy().to_string(), Some(serde_json::json!(1)), Some("tree:0".into()), None);
-	let mut waited=0; while waited<8000 { if let Some(s)=registry.snapshot(&id) { if matches!(s.state, TaskState::Completed|TaskState::Failed|TaskState::Canceled) { break; } } tokio::time::sleep(std::time::Duration::from_millis(50)).await; waited+=50; }
+	let _ = fireworks_collaboration_lib::tests_support::wait::wait_task_terminal(&registry,&id,50,160).await; // 50ms * 160 ≈8s
 	let snap = registry.snapshot(&id).unwrap(); assert_eq!(snap.state, TaskState::Completed, "clone should complete");
 	handle.await.unwrap();
-	let mut found=false; let mut attempts=0; while attempts<20 && !found { let evs = peek_captured_events(); for (topic, json) in &evs { if topic=="task://error" && json.contains("fallback=shallow") && json.contains("GitClone") { found=true; break; } } if !found { tokio::time::sleep(std::time::Duration::from_millis(50)).await; } attempts+=1; }
-	let _ = drain_captured_events();
-	assert!(found, "expected fallback=shallow protocol error event for depth+filter clone");
+	assert_partial_fallback(&id.to_string(), Some(true));
 }
