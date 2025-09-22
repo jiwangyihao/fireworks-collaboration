@@ -1,7 +1,9 @@
 use std::sync::Arc;
-use fireworks_collaboration_lib::events::emitter::{peek_captured_events, AppHandle};
-use fireworks_collaboration_lib::tasks::{TaskRegistry, TaskKind};
-use fireworks_collaboration_lib::tasks::model::TaskState;
+use fireworks_collaboration_lib::events::emitter::AppHandle;
+use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
+use fireworks_collaboration_lib::events::structured::{set_global_event_bus, MemoryEventBus};
+use fireworks_collaboration_lib::tests_support::event_assert::{assert_applied_code, assert_no_applied_code};
 
 #[test]
 fn git_clone_http_override_only_follow_triggers_event() {
@@ -15,7 +17,9 @@ fn git_clone_http_override_only_follow_triggers_event() {
         let sig = repo.signature().unwrap(); repo.commit(Some("HEAD"), &sig,&sig,"c1", &tree, &[]).unwrap();
         let dest = tempfile::tempdir().unwrap();
 
-        let reg = Arc::new(TaskRegistry::new());
+    let reg = Arc::new(TaskRegistry::new());
+    // 在任务启动前设置结构化内存事件总线
+    let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
         let override_json = serde_json::json!({"http": {"followRedirects": false}}); // only follow changes (default true)
     // 创建占位任务 ID，实际策略在 spawn 参数中提供，避免重复 applied 事件
     let (id, token) = reg.create(TaskKind::Sleep { ms: 5 });
@@ -23,12 +27,9 @@ fn git_clone_http_override_only_follow_triggers_event() {
 
         for _ in 0..140 { if let Some(s)=reg.snapshot(&id) { if matches!(s.state, TaskState::Completed|TaskState::Failed) { break; } } tokio::time::sleep(std::time::Duration::from_millis(25)).await; }
 
-        let events = peek_captured_events();
-        let mut count=0; let mut found=false;
-        for (topic,payload) in events {
-            if topic=="task://error" && payload.contains("\"code\":\"http_strategy_override_applied\"") && payload.contains(&id.to_string()) { found=true; count+=1; }
-        }
-        assert!(found, "expected override event for only follow change");
-        assert_eq!(count, 1, "should emit only once");
+    // 断言 summary 中 http applied code 出现一次（且无 retry/tls）
+        assert_applied_code(&id.to_string(), "http_strategy_override_applied");
+        assert_no_applied_code(&id.to_string(), "retry_strategy_override_applied");
+        assert_no_applied_code(&id.to_string(), "tls_strategy_override_applied");
     });
 }

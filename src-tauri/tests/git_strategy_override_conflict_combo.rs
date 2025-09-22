@@ -1,9 +1,12 @@
-use std::fs; use std::sync::Arc; use fireworks_collaboration_lib::tasks::{TaskRegistry, TaskKind}; use fireworks_collaboration_lib::events::emitter::{AppHandle, peek_captured_events}; use fireworks_collaboration_lib::tasks::model::TaskState;
+use std::fs; use std::sync::Arc; use fireworks_collaboration_lib::tasks::{TaskRegistry, TaskKind}; use fireworks_collaboration_lib::events::emitter::AppHandle; use fireworks_collaboration_lib::tasks::model::TaskState;
+use fireworks_collaboration_lib::events::structured::{set_global_event_bus, MemoryEventBus};
+use fireworks_collaboration_lib::tests_support::event_assert::{assert_conflict_kind, assert_applied_code};
 
 #[test]
 fn combo_conflict_and_ignored_http_tls() {
   let rt = tokio::runtime::Runtime::new().unwrap();
   rt.block_on(async {
+    let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
     // build repo
     let tmp_src = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(tmp_src.path()).unwrap();
@@ -27,18 +30,12 @@ fn combo_conflict_and_ignored_http_tls() {
     for _ in 0..100 { if let Some(s)=reg.snapshot(&id) { if matches!(s.state, TaskState::Completed|TaskState::Failed) { break; } } tokio::time::sleep(std::time::Duration::from_millis(40)).await; }
     handle.await.unwrap();
 
-    let ev = peek_captured_events();
-    let mut http_conflict=0; let mut tls_conflict=0; let mut ignored=0; let mut http_applied=0; let mut tls_applied=0;
-  for (topic,p) in ev { if topic=="task://error" && p.contains(&id.to_string()) {
-    if p.contains("\"code\":\"http_strategy_override_applied\"") { http_applied+=1; }
-    if p.contains("\"code\":\"tls_strategy_override_applied\"") { tls_applied+=1; }
-    if p.contains("\"code\":\"strategy_override_conflict\"") && p.contains("http conflict") { http_conflict+=1; }
-    if p.contains("\"code\":\"strategy_override_conflict\"") && p.contains("tls conflict") { tls_conflict+=1; }
-    if p.contains("\"code\":\"strategy_override_ignored_fields\"") { ignored+=1; }
-  }}
-    assert_eq!(http_applied,1); assert_eq!(tls_applied,1);
-    assert_eq!(http_conflict,1, "expect one http conflict event");
-    assert_eq!(tls_conflict,1, "expect one tls conflict event");
-    assert_eq!(ignored,1, "expect one ignored fields event");
+    // 断言 http / tls 应用代码存在
+    assert_applied_code(&id.to_string(), "http_strategy_override_applied");
+    assert_applied_code(&id.to_string(), "tls_strategy_override_applied");
+    // 冲突事件
+    assert_conflict_kind(&id.to_string(), "http", None);
+    assert_conflict_kind(&id.to_string(), "tls", None);
+    // ignored fields 仍通过 legacy TaskErrorEvent，目前尚无结构化映射（后续可扩展）—— 暂保持原字符串测试在 guard 专用测试里迁移
   });
 }

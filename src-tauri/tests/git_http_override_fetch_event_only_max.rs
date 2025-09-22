@@ -1,12 +1,15 @@
 use std::sync::Arc;
-use fireworks_collaboration_lib::events::emitter::{peek_captured_events, AppHandle};
+use fireworks_collaboration_lib::events::emitter::AppHandle;
 use fireworks_collaboration_lib::tasks::{TaskRegistry, TaskKind};
 use fireworks_collaboration_lib::tasks::model::TaskState;
+use fireworks_collaboration_lib::events::structured::{set_global_event_bus, MemoryEventBus};
+use fireworks_collaboration_lib::tests_support::event_assert::assert_applied_code;
 
 #[test]
 fn git_fetch_http_override_only_max_triggers_event() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
+        let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
         // create source repo with one commit
         let src = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(src.path()).unwrap();
@@ -32,10 +35,6 @@ fn git_fetch_http_override_only_max_triggers_event() {
     let app = AppHandle; reg.clone().spawn_git_fetch_task_with_opts(Some(app), id, token, src.path().to_string_lossy().to_string(), work.path().to_string_lossy().to_string(), None, None, None, Some(override_json));
         for _ in 0..160 { if let Some(s)=reg.snapshot(&id) { if matches!(s.state, TaskState::Completed|TaskState::Failed) { break; } } tokio::time::sleep(std::time::Duration::from_millis(25)).await; }
 
-        let events = peek_captured_events();
-        let mut found=false; let mut count=0;
-    for (topic,payload) in events { if topic=="task://error" && payload.contains("\"code\":\"http_strategy_override_applied\"") && payload.contains(&id.to_string()) { found=true; count+=1; } }
-        assert!(found, "expected override event for fetch only max change");
-        assert_eq!(count, 1, "expected single event emission");
+        assert_applied_code(&id.to_string(), "http_strategy_override_applied");
     });
 }

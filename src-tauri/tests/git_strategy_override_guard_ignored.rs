@@ -1,14 +1,22 @@
 use std::fs;
 use std::sync::Arc;
 use fireworks_collaboration_lib::tasks::{TaskRegistry, TaskKind};
-use fireworks_collaboration_lib::events::emitter::{AppHandle, peek_captured_events};
-use fireworks_collaboration_lib::tasks::model::TaskState;
+use fireworks_collaboration_lib::events::emitter::AppHandle;
+// TaskState 仅在等待 helper 内部使用，测试文件无需直接引用
+use fireworks_collaboration_lib::events::structured::{set_global_event_bus, MemoryEventBus, Event, get_global_memory_bus};
+use fireworks_collaboration_lib::tests_support::event_assert::{assert_ignored_fields};
+use std::sync::Mutex;
 
-// 验证含未知字段的 strategyOverride 产生一次 strategy_override_ignored_fields 事件
+static TEST_SERIAL_MUTEX: Mutex<()> = Mutex::new(());
+
+// 验证含未知字段的 strategyOverride 产生一次结构化 IgnoredFields 事件（legacy TaskErrorEvent 已移除）
 #[test]
 fn clone_override_with_ignored_fields_emits_event() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
+        let _guard = TEST_SERIAL_MUTEX.lock().unwrap();
+    let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
+    if let Some(bus) = get_global_memory_bus() { let _ = bus.take_all(); }
         let tmp_src = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(tmp_src.path()).unwrap();
         // commit
@@ -27,14 +35,11 @@ fn clone_override_with_ignored_fields_emits_event() {
         });
         let (id, token) = reg.create(TaskKind::GitClone { repo: tmp_src.path().to_string_lossy().to_string(), dest: dest.path().to_string_lossy().to_string(), depth: None, filter: None, strategy_override: Some(override_json.clone()) });
         let app = AppHandle;
-        let handle = reg.clone().spawn_git_clone_task_with_opts(Some(app), id, token, tmp_src.path().to_string_lossy().to_string(), dest.path().to_string_lossy().to_string(), None, None, Some(override_json));
-        for _ in 0..120 { if let Some(s) = reg.snapshot(&id) { if matches!(s.state, TaskState::Completed | TaskState::Failed) { break; } } tokio::time::sleep(std::time::Duration::from_millis(50)).await; }
+    let handle = reg.clone().spawn_git_clone_task_with_opts(Some(app), id, token, tmp_src.path().to_string_lossy().to_string(), dest.path().to_string_lossy().to_string(), None, None, Some(override_json));
+    let _ = fireworks_collaboration_lib::tests_support::wait::wait_task_terminal(&reg, &id, 50, 120).await;
         handle.await.unwrap();
-        let events = peek_captured_events();
-        let mut ignored_evt = 0; let mut http_evt = 0; // ensure existing override events still possible
-    for (topic,payload) in events { if topic=="task://error" { if payload.contains("\"code\":\"strategy_override_ignored_fields\"") && payload.contains(&id.to_string()) { ignored_evt+=1; } if payload.contains("\"code\":\"http_strategy_override_applied\"") { http_evt+=1; } } }
-        assert_eq!(ignored_evt, 1, "expected exactly one ignored fields event");
-        assert!(http_evt <=1, "http override event optional but at most once");
+    // 结构化：断言新的 StrategyEvent::IgnoredFields
+    assert_ignored_fields(&id.to_string(), "GitClone", &["extraTop"], &["http.AAA","tls.BBB","retry.CCC"]);
     });
 }
 
@@ -43,6 +48,9 @@ fn clone_override_with_ignored_fields_emits_event() {
 fn clone_override_without_ignored_fields_no_event() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
+        let _guard = TEST_SERIAL_MUTEX.lock().unwrap();
+    let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
+    if let Some(bus) = get_global_memory_bus() { let _ = bus.take_all(); }
         let tmp_src = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(tmp_src.path()).unwrap();
         // commit
@@ -56,11 +64,14 @@ fn clone_override_without_ignored_fields_no_event() {
         let override_json = serde_json::json!({"http": {"followRedirects": false}});
         let (id, token) = reg.create(TaskKind::GitClone { repo: tmp_src.path().to_string_lossy().to_string(), dest: dest.path().to_string_lossy().to_string(), depth: None, filter: None, strategy_override: Some(override_json.clone()) });
         let app = AppHandle;
-        let handle = reg.clone().spawn_git_clone_task_with_opts(Some(app), id, token, tmp_src.path().to_string_lossy().to_string(), dest.path().to_string_lossy().to_string(), None, None, Some(override_json));
-        for _ in 0..120 { if let Some(s) = reg.snapshot(&id) { if matches!(s.state, TaskState::Completed | TaskState::Failed) { break; } } tokio::time::sleep(std::time::Duration::from_millis(40)).await; }
+    let handle = reg.clone().spawn_git_clone_task_with_opts(Some(app), id, token, tmp_src.path().to_string_lossy().to_string(), dest.path().to_string_lossy().to_string(), None, None, Some(override_json));
+    let _ = fireworks_collaboration_lib::tests_support::wait::wait_task_terminal(&reg, &id, 40, 120).await;
         handle.await.unwrap();
-        let events = peek_captured_events();
-    let mut ignored_found = false; for (topic,payload) in events { if topic=="task://error" && payload.contains("\"code\":\"strategy_override_ignored_fields\"") && payload.contains(&id.to_string()) { ignored_found=true; break; } }
-        assert!(!ignored_found, "should NOT emit ignored fields event for clean override");
+    // 不应出现 IgnoredFields 结构化事件（clean override）
+    let bus = fireworks_collaboration_lib::events::structured::get_global_memory_bus().expect("bus");
+    let snapshot = bus.snapshot();
+    // 使用 helper 验证没有 IgnoredFields 结构化事件
+    let has_ignored = snapshot.iter().any(|e| matches!(e, Event::Strategy(fireworks_collaboration_lib::events::structured::StrategyEvent::IgnoredFields{id,kind,..}) if id==&id.to_string() && kind=="GitClone"));
+    assert!(!has_ignored, "unexpected structured IgnoredFields event for clean override");
     });
 }

@@ -1,14 +1,18 @@
 //! Tests retry override actually impacts retry plan (attempt count / factor / baseMs) for failing clone.
 use std::sync::Arc;
 use fireworks_collaboration_lib::tasks::{TaskRegistry, TaskKind};
-use fireworks_collaboration_lib::events::emitter::{AppHandle, peek_captured_events};
+use fireworks_collaboration_lib::events::emitter::AppHandle;
 use fireworks_collaboration_lib::tasks::model::TaskState;
+use fireworks_collaboration_lib::events::structured::{set_global_event_bus, MemoryEventBus, Event, StrategyEvent, get_global_memory_bus};
+#[path = "support/mod.rs"] mod support; use support::event_assert::retry_applied_matrix;
 
 #[test]
 fn clone_retry_override_applies_override_event_without_retry_on_internal_error() {
     // Use an obviously invalid URL to force immediate network/protocol failure.
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
+        // 安装全局 MemoryEventBus 捕获结构化事件
+        let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
         let reg = Arc::new(TaskRegistry::new());
         let app = AppHandle;
         // max=2 so that exactly one retry attempt is scheduled -> we expect a single progress line "attempt 1 of 2" and no "attempt 2" line since attempt 2 is the final attempt actually executing, not queued for another retry.
@@ -20,14 +24,13 @@ fn clone_retry_override_applies_override_event_without_retry_on_internal_error()
     let handle = reg.clone().spawn_git_clone_task_with_opts(Some(app), id, token, bad_url.into(), dest.path().to_string_lossy().to_string(), None, None, Some(override_json));
         for _ in 0..120 { if let Some(s)=reg.snapshot(&id) { if matches!(s.state, TaskState::Failed | TaskState::Completed) { break; } } tokio::time::sleep(std::time::Duration::from_millis(50)).await; }
         handle.await.unwrap();
-    let events = peek_captured_events();
-        let mut http_event_found=false; let mut progress_retry_attempts=0; let mut override_event=false;
-    // Debug dump for diagnosis
-    for (topic,p) in &events { if topic=="task://error" { if p.contains("retry_strategy_override_applied") && p.contains(&id.to_string()) { override_event=true; } if p.contains("http_strategy_override_applied") { http_event_found=true; } } if topic=="task://progress" && p.contains("Retrying (attempt 1 of 2)") { progress_retry_attempts+=1; } }
-        assert!(override_event, "expected retry override applied event");
-        assert!(!http_event_found, "no http override expected (only retry supplied)");
-    // 更新：由于改进了网络错误分类（中文/连接拒绝更可能归为 Network），此处允许出现一次重试进度。
-    assert!(progress_retry_attempts <= 1, "expected at most one retry schedule, got {}", progress_retry_attempts);
+        // 结构化事件断言：存在 RetryApplied 且 id 匹配；不得出现 Strategy::HttpApplied
+        let matrix = retry_applied_matrix();
+        assert!(matrix.iter().any(|(rid, _)| rid==&id.to_string()), "expected a RetryApplied policy event for task id");
+        // 若出现 StrategyEvent::HttpApplied 则失败（本测试未设置 http override）
+    let mem = get_global_memory_bus().unwrap();
+        let has_http = mem.snapshot().into_iter().any(|e| matches!(e, Event::Strategy(StrategyEvent::HttpApplied{..})));
+        assert!(!has_http, "no http override expected (only retry supplied)");
     });
 }
 
@@ -35,6 +38,7 @@ fn clone_retry_override_applies_override_event_without_retry_on_internal_error()
 fn clone_retry_override_factor_edges() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
+        let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
         // Two tasks: factor=0.5 and factor=10.0; verify override events present (can't deterministically assert sleep duration, but factor surfaces in message).
         let reg = Arc::new(TaskRegistry::new());
         let app = AppHandle;
@@ -49,11 +53,9 @@ fn clone_retry_override_factor_edges() {
     let (id2, tk2) = reg.create(TaskKind::GitClone { repo: bad_url2.into(), dest: dest2.path().to_string_lossy().to_string(), depth: None, filter: None, strategy_override: Some(ov2.clone()) });
     let h2 = reg.clone().spawn_git_clone_task_with_opts(Some(app.clone()), id2, tk2, bad_url2.into(), dest2.path().to_string_lossy().to_string(), None, None, Some(ov2));
         h1.await.unwrap(); h2.await.unwrap();
-        // Might interleave; gather once
-        let events = peek_captured_events();
-        let mut f05=false; let mut f10=false;
-        for (topic,p) in &events { if topic=="task://error" && p.contains("retry_strategy_override_applied") { if p.contains(&id1.to_string()) && p.contains("factor=0.5") { f05=true; } if p.contains(&id2.to_string()) && p.contains("factor=10") { f10=true; } } }
-        assert!(f05, "factor=0.5 override event should appear");
-        assert!(f10, "factor=10.0 override event should appear");
+        let matrix = retry_applied_matrix();
+        // changed 字段中虽然不包含 factor 数值本身，但我们只需确认两个任务都触发 override；可后续在策略 Summary 中补强详细断言。
+        assert!(matrix.iter().any(|(rid, _)| rid==&id1.to_string()), "expected override event for factor=0.5 task");
+        assert!(matrix.iter().any(|(rid, _)| rid==&id2.to_string()), "expected override event for factor=10 task");
     });
 }

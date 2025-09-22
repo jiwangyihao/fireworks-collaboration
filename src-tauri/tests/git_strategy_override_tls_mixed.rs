@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 use fireworks_collaboration_lib::tasks::{TaskRegistry, TaskKind};
-use fireworks_collaboration_lib::events::emitter::{AppHandle, drain_captured_events};
+use fireworks_collaboration_lib::events::emitter::AppHandle;
+use fireworks_collaboration_lib::tests_support::event_assert::{assert_tls_applied, assert_no_applied_code};
+use fireworks_collaboration_lib::events::structured::{set_global_event_bus, MemoryEventBus};
 use fireworks_collaboration_lib::tasks::model::TaskState;
 
 async fn wait_done(reg:&TaskRegistry, id:uuid::Uuid){ for _ in 0..120 { if let Some(s)=reg.snapshot(&id) { if matches!(s.state, TaskState::Completed | TaskState::Failed | TaskState::Canceled) { break; } } tokio::time::sleep(std::time::Duration::from_millis(35)).await; } }
@@ -22,7 +24,8 @@ fn make_repo() -> tempfile::TempDir {
 fn tls_mixed_scenarios() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let src = make_repo(); let src_path = src.path().to_string_lossy().to_string();
+    let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
+    let src = make_repo(); let src_path = src.path().to_string_lossy().to_string();
         let reg = Arc::new(TaskRegistry::new()); let app = AppHandle;
 
         // clone A: insecure only
@@ -58,11 +61,10 @@ fn tls_mixed_scenarios() {
         wait_done(&reg, id_c).await; hc.await.unwrap();
         wait_done(&reg, id_d).await; hd.await.unwrap();
 
-    let ev = drain_captured_events();
-    let mut tls_a=0; let mut tls_c=0; let mut unexpected=Vec::new();
-    for (topic,p) in &ev { if topic=="task://error" { if p.contains("\"code\":\"tls_strategy_override_applied\"") { if p.contains(&id_a.to_string()) { tls_a+=1; } else if p.contains(&id_c.to_string()) { tls_c+=1; } else { unexpected.push(p.clone()); } } } }
-        assert_eq!(tls_a,1,"clone insecure should emit once");
-        assert_eq!(tls_c,1,"push skipSan should emit once");
-        assert!(unexpected.is_empty(), "no tls events expected for empty or unknown field overrides: {:?}", unexpected);
+    assert_tls_applied(&id_a.to_string(), true); // clone insecure
+    assert_tls_applied(&id_c.to_string(), true); // push skipSan
+    // fetch empty object & unknown field: no tls applied
+    assert_no_applied_code(&id_b.to_string(), "tls_strategy_override_applied");
+    assert_no_applied_code(&id_d.to_string(), "tls_strategy_override_applied");
     });
 }

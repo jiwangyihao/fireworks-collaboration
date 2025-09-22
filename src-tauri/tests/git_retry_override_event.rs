@@ -1,6 +1,8 @@
-use fireworks_collaboration_lib::events::emitter::{peek_captured_events, AppHandle};
-use fireworks_collaboration_lib::tasks::{TaskRegistry, TaskKind};
-use fireworks_collaboration_lib::tasks::model::TaskState;
+use fireworks_collaboration_lib::events::emitter::AppHandle;
+use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
+use fireworks_collaboration_lib::events::structured::{set_global_event_bus, MemoryEventBus};
+use fireworks_collaboration_lib::tests_support::event_assert::{assert_applied_code, assert_no_applied_code};
 use std::sync::Arc;
 
 // Combined test to avoid parallel interference:
@@ -25,22 +27,21 @@ fn git_clone_retry_override_event_and_no_event() {
         repo.commit(Some("HEAD"), &sig, &sig, "c1", &tree, &[]).unwrap();
 
         let dest = tempfile::tempdir().unwrap();
-        let reg = Arc::new(TaskRegistry::new());
+    let reg = Arc::new(TaskRegistry::new());
+    // 在启动任务前设置结构化事件总线以捕获策略事件
+    let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
         // Override retry values different from defaults (default max=6 baseMs=300 factor=1.5 jitter=true)
         let override_json = serde_json::json!({"retry": {"max": 3, "baseMs": 500, "factor": 2.0, "jitter": false}});
         let (id, token) = reg.create(TaskKind::GitClone { repo: tmp_src.path().to_string_lossy().to_string(), dest: dest.path().to_string_lossy().to_string(), depth: None, filter: None, strategy_override: Some(override_json.clone()) });
         let app = AppHandle;
-        let handle = reg.clone().spawn_git_clone_task_with_opts(Some(app), id, token, tmp_src.path().to_string_lossy().to_string(), dest.path().to_string_lossy().to_string(), None, None, Some(override_json));
+    let handle = reg.clone().spawn_git_clone_task_with_opts(Some(app), id, token, tmp_src.path().to_string_lossy().to_string(), dest.path().to_string_lossy().to_string(), None, None, Some(override_json));
         for _ in 0..100 { if let Some(s)=reg.snapshot(&id) { if matches!(s.state, TaskState::Completed | TaskState::Failed) { break; } } tokio::time::sleep(std::time::Duration::from_millis(50)).await; }
         handle.await.unwrap();
-        let events_first = peek_captured_events();
-        let mut found=false; let mut count=0;
-    for (topic,payload) in &events_first { if topic=="task://error" && payload.contains("\"code\":\"retry_strategy_override_applied\"") && payload.contains(&id.to_string()) { found=true; count+=1; } }
-        assert!(found, "expected retry_strategy_override_applied event");
-        assert_eq!(count, 1, "should emit exactly once for changed override");
+    assert_applied_code(&id.to_string(), "retry_strategy_override_applied");
 
         // Drain before second scenario
-        let _ = fireworks_collaboration_lib::events::emitter::drain_captured_events();
+    // summary 事件无条件发送，不需清空 legacy；重新设置新 bus 以隔离
+    let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
 
         // Scenario 2: unchanged override -> no event
         let dest2 = tempfile::tempdir().unwrap();
@@ -48,7 +49,6 @@ fn git_clone_retry_override_event_and_no_event() {
         let handle2 = reg.clone().spawn_git_clone_task_with_opts(Some(AppHandle), id2, token2, tmp_src.path().to_string_lossy().to_string(), dest2.path().to_string_lossy().to_string(), None, None, Some(serde_json::json!({"retry": {"max": 6, "baseMs": 300, "factor": 1.5, "jitter": true}})));
         for _ in 0..100 { if let Some(s)=reg.snapshot(&id2) { if matches!(s.state, TaskState::Completed | TaskState::Failed) { break; } } tokio::time::sleep(std::time::Duration::from_millis(50)).await; }
         handle2.await.unwrap();
-        let events_second = peek_captured_events();
-    for (topic,payload) in events_second { if topic=="task://error" && payload.contains("\"code\":\"retry_strategy_override_applied\"") && payload.contains(&id2.to_string()) { panic!("should NOT emit retry override applied event when values unchanged"); } }
+        assert_no_applied_code(&id2.to_string(), "retry_strategy_override_applied");
     });
 }

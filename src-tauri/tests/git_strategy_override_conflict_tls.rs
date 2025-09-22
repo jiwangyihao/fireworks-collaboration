@@ -1,9 +1,12 @@
-use std::fs; use std::sync::Arc; use fireworks_collaboration_lib::tasks::{TaskRegistry, TaskKind}; use fireworks_collaboration_lib::events::emitter::{AppHandle, peek_captured_events}; use fireworks_collaboration_lib::tasks::model::TaskState; 
+use std::fs; use std::sync::Arc; use fireworks_collaboration_lib::tasks::{TaskRegistry, TaskKind}; use fireworks_collaboration_lib::events::emitter::AppHandle; use fireworks_collaboration_lib::tasks::model::TaskState; 
+use fireworks_collaboration_lib::events::structured::{set_global_event_bus, MemoryEventBus};
+use fireworks_collaboration_lib::tests_support::event_assert::{assert_conflict_kind, assert_applied_code};
 
 #[test]
 fn tls_conflict_insecure_and_skip_san() {
   let rt = tokio::runtime::Runtime::new().unwrap();
   rt.block_on(async {
+    let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
     let tmp_src = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(tmp_src.path()).unwrap();
     let fp = tmp_src.path().join("a.txt"); fs::write(&fp, "hi").unwrap();
@@ -17,11 +20,8 @@ fn tls_conflict_insecure_and_skip_san() {
     let handle = reg.clone().spawn_git_clone_task_with_opts(Some(app), id, token, tmp_src.path().to_string_lossy().to_string(), dest.path().to_string_lossy().to_string(), None, None, Some(override_json));
     for _ in 0..80 { if let Some(s)=reg.snapshot(&id) { if matches!(s.state, TaskState::Completed|TaskState::Failed) { break; } } tokio::time::sleep(std::time::Duration::from_millis(40)).await; }
     handle.await.unwrap();
-    let events = peek_captured_events();
-    let mut conflict_evt=0; let mut applied_evt=0; let mut normalized=false;
-  for (topic,p) in events { if topic=="task://error" && p.contains(&id.to_string()) { if p.contains("\"code\":\"tls_strategy_override_applied\"") { applied_evt+=1; if p.contains("skipSanWhitelist=false") { normalized=true; } } if p.contains("\"code\":\"strategy_override_conflict\"") { conflict_evt+=1; if p.contains("normalizes skipSanWhitelist=false") { normalized=true; } } } }
-    assert_eq!(applied_evt,1,"tls applied event once");
-    assert_eq!(conflict_evt,1,"conflict event once");
-    assert!(normalized, "normalized skipSanWhitelist should appear in events");
+    assert_applied_code(&id.to_string(), "tls_strategy_override_applied");
+    // 冲突消息包含规范化 skipSanWhitelist=false
+    assert_conflict_kind(&id.to_string(), "tls", Some("skipSanWhitelist=false"));
   });
 }

@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 use fireworks_collaboration_lib::tasks::{TaskRegistry, TaskKind};
-use fireworks_collaboration_lib::events::emitter::{AppHandle, drain_captured_events};
+use fireworks_collaboration_lib::events::emitter::AppHandle;
+use fireworks_collaboration_lib::tests_support::event_assert::{assert_applied_code, assert_no_applied_code, assert_tls_applied, assert_http_applied};
+use fireworks_collaboration_lib::events::structured::{set_global_event_bus, MemoryEventBus};
 use fireworks_collaboration_lib::tasks::model::TaskState;
 
 async fn wait_task(reg:&TaskRegistry, id:uuid::Uuid) { for _ in 0..120 { if let Some(s)=reg.snapshot(&id) { if matches!(s.state, TaskState::Completed | TaskState::Failed | TaskState::Canceled) { break; } } tokio::time::sleep(std::time::Duration::from_millis(35)).await; } }
@@ -27,7 +29,8 @@ fn make_local_repo() -> tempfile::TempDir {
 fn strategy_override_http_tls_retry_combo_parallel() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let src = make_local_repo();
+    let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
+    let src = make_local_repo();
         let src_path = src.path().to_string_lossy().to_string();
         let reg = Arc::new(TaskRegistry::new());
         let app = AppHandle;
@@ -64,9 +67,9 @@ fn strategy_override_http_tls_retry_combo_parallel() {
         wait_task(&reg, id1).await; wait_task(&reg, id2).await; wait_task(&reg, id3).await;
         h1.await.unwrap(); h2.await.unwrap(); h3.await.unwrap();
 
-        let ev = drain_captured_events();
-        let mut http1=0; let mut tls1=0; let mut retry1=0; let mut tls2=0;
-    for (topic,p) in &ev { if topic=="task://error" { if p.contains(&id1.to_string()) { if p.contains("\"code\":\"http_strategy_override_applied\"") { http1+=1; } if p.contains("\"code\":\"tls_strategy_override_applied\"") { tls1+=1; } if p.contains("\"code\":\"retry_strategy_override_applied\"") { retry1+=1; } } if p.contains(&id2.to_string()) { if p.contains("\"code\":\"tls_strategy_override_applied\"") { tls2+=1; } if p.contains("\"code\":\"http_strategy_override_applied\"") || p.contains("\"code\":\"retry_strategy_override_applied\"") { panic!("unexpected http/retry event for task2"); } } if p.contains(&id3.to_string()) && (p.contains("\"code\":\"http_strategy_override_applied\"") || p.contains("\"code\":\"tls_strategy_override_applied\"") || p.contains("\"code\":\"retry_strategy_override_applied\"")) { panic!("no override events expected for task3"); } } }
-        assert_eq!(http1,1); assert_eq!(tls1,1); assert_eq!(retry1,1); assert_eq!(tls2,1);
+        // 结构化断言：
+        assert_http_applied(&id1.to_string(), true); assert_tls_applied(&id1.to_string(), true); assert_applied_code(&id1.to_string(), "retry_strategy_override_applied");
+        assert_tls_applied(&id2.to_string(), true); assert_no_applied_code(&id2.to_string(), "http_strategy_override_applied"); assert_no_applied_code(&id2.to_string(), "retry_strategy_override_applied");
+        assert_no_applied_code(&id3.to_string(), "http_strategy_override_applied"); assert_no_applied_code(&id3.to_string(), "tls_strategy_override_applied"); assert_no_applied_code(&id3.to_string(), "retry_strategy_override_applied");
     });
 }

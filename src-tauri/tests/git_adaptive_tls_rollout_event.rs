@@ -3,7 +3,8 @@
 //! still executes for https://github.com/* style URLs. We therefore target a public-like URL
 //! yet rely on rewrite logic only (no real network handshakes are performed in these tests).
 
-use fireworks_collaboration_lib::events::emitter::{peek_captured_events, drain_captured_events};
+use fireworks_collaboration_lib::events::structured::{set_global_event_bus, MemoryEventBus};
+use fireworks_collaboration_lib::tests_support::event_assert::assert_adaptive_tls_event;
 use fireworks_collaboration_lib::core::tasks::registry::test_emit_clone_strategy_and_rollout;
 use std::sync::{OnceLock, Mutex};
 
@@ -16,10 +17,11 @@ fn test_serial_guard() -> std::sync::MutexGuard<'static, ()> {
 fn ensure_base_dir_once() {
     static INIT: OnceLock<()> = OnceLock::new();
     INIT.get_or_init(|| {
-        let dir = tempfile::tempdir().expect("temp cfg dir");
-        // into_path 让目录在进程生命周期内保留，避免被删除
-        let path = dir.into_path();
-        fireworks_collaboration_lib::core::config::loader::set_global_base_dir(&path);
+    let dir = tempfile::tempdir().expect("temp cfg dir");
+    // 使用 keep() 代替已废弃 into_path，确保目录在进程生命周期内保留
+    let path_buf = dir.path().to_path_buf();
+    // 无需持久化，目录生命周期覆盖整个进程运行期即可
+    fireworks_collaboration_lib::core::config::loader::set_global_base_dir(&path_buf);
     });
 }
 
@@ -48,7 +50,7 @@ fn test_a_rollout_100_emits_event() {
     let _lock = test_serial_guard();
     ensure_base_dir_once();
     // Ensure clean captured events
-    let _ = drain_captured_events();
+    let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
     let _proxy_guard = ProxyEnvGuard::new();
 
     // 显式设置 100%（不依赖默认值，确保与其它测试互不影响）
@@ -62,17 +64,14 @@ fn test_a_rollout_100_emits_event() {
     let id = uuid::Uuid::new_v4();
     test_emit_clone_strategy_and_rollout(repo_url, id);
 
-    let events = peek_captured_events();
-    let mut found = false;
-    for (topic,payload) in &events { if topic=="task://error" && payload.contains("adaptive_tls_rollout") && payload.contains(&id.to_string()) { found=true; break; } }
-    assert!(found, "expected adaptive_tls_rollout event for rollout=100; events={events:?}");
+    assert_adaptive_tls_event(&id.to_string(), true);
 }
 
 #[test]
 fn test_b_rollout_0_no_event() {
     let _lock = test_serial_guard();
     ensure_base_dir_once();
-    let _ = drain_captured_events();
+    let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
     let _proxy_guard = ProxyEnvGuard::new();
     // 显式写入 0% 并保存
     let mut cfg = fireworks_collaboration_lib::core::config::loader::load_or_init().expect("load cfg");
@@ -82,15 +81,14 @@ fn test_b_rollout_0_no_event() {
     let id = uuid::Uuid::new_v4();
     test_emit_clone_strategy_and_rollout(repo_url, id);
 
-    let events = peek_captured_events();
-    for (topic,payload) in &events { if topic=="task://error" && payload.contains("adaptive_tls_rollout") && payload.contains(&id.to_string()) { panic!("unexpected rollout event when percent=0: {payload}"); } }
+    assert_adaptive_tls_event(&id.to_string(), false);
 }
 
 #[test]
 fn test_c_single_event_only_once() {
     let _lock = test_serial_guard();
     ensure_base_dir_once();
-    let _ = drain_captured_events();
+    let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));
     let _proxy_guard = ProxyEnvGuard::new();
     let repo_url = "https://github.com/owner/repo";
     // ensure percent=100 again (覆盖可能被 test_b 写入的 0%)
@@ -99,7 +97,6 @@ fn test_c_single_event_only_once() {
     fireworks_collaboration_lib::core::config::loader::save(&cfg).expect("save cfg");
     let id = uuid::Uuid::new_v4();
     test_emit_clone_strategy_and_rollout(repo_url, id);
-    let events = peek_captured_events();
-    let mut count=0; for (topic,payload) in &events { if topic=="task://error" && payload.contains("adaptive_tls_rollout") && payload.contains(&id.to_string()) { count+=1; } }
-    assert!(count<=1, "rollout event should appear at most once, got {count} events={events:?}");
+    // 结构化事件发布一次
+    assert_adaptive_tls_event(&id.to_string(), true);
 }
