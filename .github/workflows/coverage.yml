@@ -1,0 +1,121 @@
+name: Coverage (Baseline)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+      pull-requests: write
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend unit coverage (vitest)
+        run: pnpm test:cov -- --reporter=default --coverage.provider=v8
+
+      - name: Upload frontend coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: coverage
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Install llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Rust coverage
+        working-directory: src-tauri
+        run: |
+          cargo llvm-cov --version
+          cargo llvm-cov --lcov --output-path lcov.info --ignore-filename-regex '(tests|target|/.cargo/registry)' --workspace
+
+      - name: Soft gate (coverage thresholds)
+        if: always()
+        working-directory: src-tauri
+        run: |
+          echo "[soft-gate] parsing lcov.info applying soft thresholds" 
+          if [ ! -f lcov.info ]; then echo "lcov.info missing"; exit 1; fi
+          # 总体行覆盖
+          LF=$(grep -E '^LF:' lcov.info | awk -F':' '{s+=$2} END{print s+0}')
+          LH=$(grep -E '^LH:' lcov.info | awk -F':' '{s+=$2} END{print s+0}')
+          PCT=0; if [ "$LF" -gt 0 ]; then PCT=$(awk -v h=$LH -v f=$LF 'BEGIN{printf "%.2f", (h/f)*100}') ; fi
+          echo "Rust total: LH=$LH LF=$LF => $PCT%"
+          # 策略模块文件聚合（registry.rs 与 opts.rs 代表核心策略/任务策略融合逻辑）
+          CORE_LF=0; CORE_LH=0
+          for f in core/tasks/registry.rs core/git/default_impl/opts.rs; do
+            if grep -q "SF:.*$f" lcov.info; then
+              fLF=$(awk -v file="$f" '/^SF:/ {sf=$0} /^LF:/ {if (sf ~ file) print $0}' lcov.info | awk -F':' '{s+=$2} END{print s+0}')
+              fLH=$(awk -v file="$f" '/^SF:/ {sf=$0} /^LH:/ {if (sf ~ file) print $0}' lcov.info | awk -F':' '{s+=$2} END{print s+0}')
+              CORE_LF=$((CORE_LF+fLF)); CORE_LH=$((CORE_LH+fLH));
+            fi
+          done
+          CORE_PCT=0; if [ "$CORE_LF" -gt 0 ]; then CORE_PCT=$(awk -v h=$CORE_LH -v f=$CORE_LF 'BEGIN{printf "%.2f", (h/f)*100}') ; fi
+          echo "Core strategy files: LH=$CORE_LH LF=$CORE_LF => $CORE_PCT%"
+          THRESH_TOTAL=75.00
+            THRESH_CORE=85.00
+          WARN=0
+          awk -v p=$PCT -v t=$THRESH_TOTAL 'BEGIN{if (p<t) exit 1}' || { echo "::warning ::Rust total coverage $PCT% < $THRESH_TOTAL%"; WARN=1; }
+          awk -v p=$CORE_PCT -v t=$THRESH_CORE 'BEGIN{if (p<t) exit 1}' || { echo "::warning ::Core strategy coverage $CORE_PCT% < $THRESH_CORE%"; WARN=1; }
+          # 前端占位（HTML only 目前无法解析）
+          if [ ! -f ../coverage/index.html ]; then echo "::warning ::Frontend coverage report missing (expected HTML)"; WARN=1; else echo "Frontend coverage HTML present (no numeric soft gate yet)"; fi
+          if [ "${{ env.FWC_STRICT_COVERAGE }}" = "1" ]; then
+            if [ $WARN -ne 0 ]; then
+              echo "Strict coverage mode enabled (FWC_STRICT_COVERAGE=1) -> failing due to warnings";
+              exit 1;
+            else
+              echo "Strict coverage mode enabled and all thresholds satisfied";
+            fi
+          else
+            if [ $WARN -eq 0 ]; then echo "Soft gate PASS"; else echo "Soft gate completed with warnings (non-blocking)"; fi
+          fi
+
+      - name: Upload rust coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-coverage
+          path: src-tauri/lcov.info
+
+      - name: Summary
+        if: always()
+        run: |
+          echo '### Coverage Artifacts Generated' >> $GITHUB_STEP_SUMMARY
+          echo '* Frontend HTML: artifact frontend-coverage' >> $GITHUB_STEP_SUMMARY
+          echo '* Rust lcov: artifact rust-coverage' >> $GITHUB_STEP_SUMMARY
+
+# 说明:
+# 1. 当前不设置阈值（非阻断），后续可添加脚本解析 lcov 决定失败。
+# 2. 仅基础收集，未做差异行过滤；后续可在脚本中比较基线。
