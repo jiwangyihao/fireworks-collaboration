@@ -2,7 +2,8 @@
 use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
 use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+// 之前使用临时轮询 + sleep；已统一到 wait helper，这里移除未使用导入避免 warning。
+use fireworks_collaboration_lib::tests_support::wait::{wait_for_state};
 
 #[tokio::test]
 async fn snapshot_unknown_returns_none() {
@@ -24,7 +25,7 @@ async fn cancel_idempotent() {
     let (id, token) = reg.create(TaskKind::Sleep { ms: 200 });
     reg.clone().spawn_sleep_task(None, id, token.clone(), 200);
     // 等待进入 running
-    for _ in 0..20 { if let Some(s) = reg.snapshot(&id) { if matches!(s.state, TaskState::Running) { break; } } sleep(Duration::from_millis(15)).await; }
+    let _ = wait_for_state(&reg, &id, TaskState::Running, 15, 20).await;
     assert!(reg.cancel(&id));
     assert!(reg.cancel(&id)); // 第二次依然返回 true（token 已经取消，但语义上视为仍然允许取消调用）
 }
@@ -37,7 +38,7 @@ async fn list_snapshots_are_independent_clones() {
     let list_before = reg.list();
     assert_eq!(list_before.len(), 1);
     // 等待完成
-    for _ in 0..40 { if let Some(s) = reg.snapshot(&id) { if matches!(s.state, TaskState::Completed) { break; } } sleep(Duration::from_millis(15)).await; }
+    let _ = wait_for_state(&reg, &id, TaskState::Completed, 15, 40).await;
     let list_after = reg.list();
     assert_eq!(list_after.len(), 1);
     // 确认之前克隆的 snapshot 不会被内部状态突变（只验证 state 变化不会回写）
