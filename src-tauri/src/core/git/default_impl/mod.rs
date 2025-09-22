@@ -1,6 +1,7 @@
 use std::{path::Path, sync::atomic::AtomicBool};
 
 use crate::core::git::transport::{ensure_registered, maybe_rewrite_https_to_custom};
+// adaptive_tls_rollout 事件在任务注册层发射；此处不直接发射以便获取真实 task id。
 // (helpers module handles SNI decision and config loading when needed)
 
 use super::{errors::{GitError, ErrorCategory}, service::{GitService, ProgressPayload}};
@@ -74,11 +75,15 @@ impl GitService for DefaultGitService {
         if let Err(e) = ensure_registered(&cfg) {
             return Err(GitError::new(ErrorCategory::Internal, format!("register custom transport: {}", e.message())));
         }
-        let repo_url_final = maybe_rewrite_https_to_custom(&cfg, repo).unwrap_or_else(|| repo.to_string());
+        let rewritten = maybe_rewrite_https_to_custom(&cfg, repo);
+        let adaptive_used = rewritten.is_some();
+        let repo_url_final = rewritten.unwrap_or_else(|| repo.to_string());
         // 若是本地路径克隆，git2/libgit2 不支持 depth 参数；忽略之以保持兼容（后续可发回退事件）。
         let effective_depth = if looks_like_path { None } else { depth };
         // Bridge to dedicated module (P2.0). Internals currently delegate to ops.rs.
-        clone::do_clone(repo_url_final.as_str(), dest, effective_depth, should_interrupt, on_progress)
+    let r = clone::do_clone(repo_url_final.as_str(), dest, effective_depth, should_interrupt, on_progress);
+    if adaptive_used { tracing::debug!(target="git.clone", adaptive_tls_rollout=true, percent=cfg.http.fake_sni_rollout_percent, "adaptive tls applied for clone"); }
+    r
     }
 
     fn fetch_blocking<F: FnMut(ProgressPayload)>(
