@@ -1,0 +1,24 @@
+use std::sync::Once;
+
+static INIT: Once = Once::new();
+
+/// 统一测试环境初始化：
+/// - 日志（tracing）
+/// - 必要 Git 环境变量（防止提交操作缺失身份信息）
+pub fn init_test_env() {
+    INIT.call_once(|| {
+        // 简化：若用户未设置 RUST_LOG，则提供一个默认级别。
+        if std::env::var("RUST_LOG").is_err() {
+            std::env::set_var("RUST_LOG", "info");
+        }
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        // Git 身份（某些实现可能需要）。
+        std::env::set_var("GIT_AUTHOR_NAME", "fwc-test");
+        std::env::set_var("GIT_AUTHOR_EMAIL", "fwc-test@example.com");
+        std::env::set_var("GIT_COMMITTER_NAME", "fwc-test");
+        std::env::set_var("GIT_COMMITTER_EMAIL", "fwc-test@example.com");
+    });
+}
