@@ -20,7 +20,7 @@ fn build_origin()->(PathBuf, PathBuf) {
 
 #[tokio::test]
 async fn fetch_filter_fallback_has_code() {
-  let (work, origin) = build_origin();
+  let (work, _origin) = build_origin();
   let registry = Arc::new(TaskRegistry::new());
   let (id, token) = registry.create(TaskKind::GitFetch { repo: "origin".into(), dest: work.to_string_lossy().to_string(), depth: None, filter: Some("tree:0".into()), strategy_override: None });
   let app = AppHandle; let handle = registry.spawn_git_fetch_task_with_opts(Some(app), id, token, "origin".into(), work.to_string_lossy().to_string(), None, None, Some("tree:0".into()), None);

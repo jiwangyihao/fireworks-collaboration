@@ -4,6 +4,12 @@
 use fireworks_collaboration_lib::events::emitter::{AppHandle, drain_captured_events};
 use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
 use fireworks_collaboration_lib::core::tasks::model::TaskKind;
+use std::sync::{OnceLock, Mutex, MutexGuard};
+
+fn capture_guard() -> MutexGuard<'static, ()> {
+    static G: OnceLock<Mutex<()>> = OnceLock::new();
+    G.get_or_init(|| Mutex::new(())).lock().unwrap()
+}
 
 fn init_repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -21,6 +27,7 @@ fn init_repo() -> tempfile::TempDir {
 
 #[tokio::test]
 async fn fetch_summary_event_and_applied_codes() {
+    let _g = capture_guard();
     std::env::set_var("FWC_STRATEGY_APPLIED_EVENTS", "1");
     let _ = drain_captured_events();
     let origin_dir = init_repo();
@@ -51,6 +58,7 @@ async fn fetch_summary_event_and_applied_codes() {
 
 #[tokio::test]
 async fn push_summary_event_and_gating_off() {
+    let _g = capture_guard();
     std::env::set_var("FWC_STRATEGY_APPLIED_EVENTS", "0");
     let _ = drain_captured_events();
     // 初始化一个包含提交的仓库并克隆到另一个目录作为推送来源
@@ -87,6 +95,7 @@ async fn push_summary_event_and_gating_off() {
 
 #[tokio::test]
 async fn fetch_summary_event_no_override() {
+    let _g = capture_guard();
     std::env::set_var("FWC_STRATEGY_APPLIED_EVENTS", "0");
     let _ = drain_captured_events();
     let origin_dir = init_repo();
@@ -117,6 +126,7 @@ async fn fetch_summary_event_no_override() {
 
 #[tokio::test]
 async fn push_summary_event_no_override() {
+    let _g = capture_guard();
     std::env::set_var("FWC_STRATEGY_APPLIED_EVENTS", "0");
     let _ = drain_captured_events();
     let origin_dir = init_repo();

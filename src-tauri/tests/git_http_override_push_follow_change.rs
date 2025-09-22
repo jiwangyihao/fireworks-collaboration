@@ -30,10 +30,10 @@ fn git_push_http_override_follow_change_triggers_event() {
         // wait
         for _ in 0..160 { if let Some(s)=reg.snapshot(&id) { if matches!(s.state, TaskState::Completed|TaskState::Failed) { break; } } tokio::time::sleep(std::time::Duration::from_millis(25)).await; }
 
+    #[derive(serde::Deserialize)] struct Outer { code: Option<String>, #[serde(rename="taskId")] task_id: Option<uuid::Uuid> }
         let events = peek_captured_events();
-        let mut found=false; let mut count=0;
-        for (topic,payload) in events { if topic=="task://error" && payload.contains("http_strategy_override_applied") && payload.contains(&id.to_string()) { found=true; count+=1; } }
-        assert!(found, "expected override event for push follow change");
-        assert_eq!(count, 1, "single event expected");
+        let mut count=0;
+    for (topic,payload) in events { if topic=="task://error" { if let Ok(o)=serde_json::from_str::<Outer>(&payload) { if o.task_id==Some(id) && o.code.as_deref()==Some("http_strategy_override_applied") { count+=1; } } } }
+        assert_eq!(count, 1, "expected exactly one http_strategy_override_applied event (summary not counted)");
     });
 }

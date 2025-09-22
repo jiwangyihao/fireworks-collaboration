@@ -31,7 +31,7 @@ fn push_tls_insecure_only_event_once() {
         let hp = reg.clone().spawn_git_push_task(Some(app.clone()), id_push, tk_push, work.path().to_string_lossy().to_string(), None, None, None, None, Some(over));
         wait_done(&reg, id_push).await; hp.await.unwrap();
         let ev = drain_captured_events();
-        let mut tls_evt=0; for (topic,p) in &ev { if topic=="task://error" && p.contains("tls_strategy_override_applied") && p.contains(&id_push.to_string()) { tls_evt+=1; } }
+        let mut tls_evt=0; for (topic,p) in &ev { if topic=="task://error" && p.contains("\"code\":\"tls_strategy_override_applied\"") && p.contains(&id_push.to_string()) { tls_evt+=1; } }
         assert_eq!(tls_evt,1,"expected exactly one tls override event for push insecure only");
     });
 }

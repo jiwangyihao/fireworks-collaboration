@@ -2,7 +2,6 @@
 //! P2.2d: Partial clone filter 回退测试（当前阶段不真正启用 partial，需发送非阻断提示并成功完成克隆）
 use std::path::PathBuf;
 use std::process::Command;
-use tokio_util::sync::CancellationToken;
 use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
 use fireworks_collaboration_lib::core::tasks::registry::SharedTaskRegistry;
 use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
