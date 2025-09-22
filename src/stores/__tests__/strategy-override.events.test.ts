@@ -35,4 +35,10 @@ describe('strategy override informational events', () => {
     store.setLastError('r1', { category: 'Protocol', message: 'http override applied: follow=true max=5', code: 'http_strategy_override_applied', retriedTimes: 0 });
     expect(store.lastErrorById['r1'].retriedTimes).toBe(0);
   });
+
+  it('records adaptive tls rollout event code', () => {
+    const store = useTasksStore();
+    store.setLastError('a1', { category: 'Protocol', message: '{"percentApplied":50,"sampled":true}', code: 'adaptive_tls_rollout' });
+    expect(store.lastErrorById['a1'].code).toBe('adaptive_tls_rollout');
+  });
 });
