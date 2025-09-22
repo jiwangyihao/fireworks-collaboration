@@ -64,6 +64,16 @@ pub struct TaskMeta {
     pub created_at: SystemTime,
     pub cancel_token: CancellationToken,
     pub fail_reason: Option<String>,
+    /// 生命周期事件幂等标记，避免重复发送结构化 Started/Completed/Canceled/Failed
+    pub lifecycle_flags: LifecycleFlags,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LifecycleFlags {
+    pub started: bool,
+    pub completed: bool,
+    pub canceled: bool,
+    pub failed: bool,
 }
 
 impl TaskMeta {

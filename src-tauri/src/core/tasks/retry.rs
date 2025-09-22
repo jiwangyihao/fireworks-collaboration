@@ -13,6 +13,20 @@ pub struct RetryPlan {
     pub jitter: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetryDiff { pub changed: Vec<&'static str> }
+
+/// 计算新旧重试策略差异；返回 (diff, changed_flag)
+pub fn compute_retry_diff(old: &RetryPlan, new: &RetryPlan) -> (RetryDiff, bool) {
+    let mut changed = Vec::new();
+    if old.max != new.max { changed.push("max"); }
+    if old.base_ms != new.base_ms { changed.push("baseMs"); }
+    if (old.factor - new.factor).abs() > f64::EPSILON { changed.push("factor"); }
+    if old.jitter != new.jitter { changed.push("jitter"); }
+    let changed_flag = !changed.is_empty();
+    (RetryDiff { changed }, changed_flag)
+}
+
 impl From<RetryCfg> for RetryPlan {
     fn from(c: RetryCfg) -> Self { Self { max: c.max, base_ms: c.base_ms, factor: c.factor, jitter: c.jitter } }
 }
@@ -88,5 +102,21 @@ mod tests {
             let d = backoff_delay_ms(&p, 0);
             assert!(d >= 100 && d <= 300, "delay {} out of range", d);
         }
+    }
+
+    #[test]
+    fn test_compute_retry_diff() {
+        let a = RetryPlan { max: 6, base_ms: 300, factor: 1.5, jitter: true };
+        let b_same = RetryPlan { max: 6, base_ms: 300, factor: 1.5, jitter: true };
+        let (d0, ch0) = compute_retry_diff(&a, &b_same);
+        assert!(!ch0); assert!(d0.changed.is_empty());
+        let b_diff = RetryPlan { max: 3, base_ms: 500, factor: 2.0, jitter: false };
+        let (d1, ch1) = compute_retry_diff(&a, &b_diff);
+        assert!(ch1);
+        assert_eq!(d1.changed.len(), 4);
+        assert!(d1.changed.contains(&"max"));
+        assert!(d1.changed.contains(&"baseMs"));
+        assert!(d1.changed.contains(&"factor"));
+        assert!(d1.changed.contains(&"jitter"));
     }
 }

@@ -32,8 +32,8 @@ pub struct StrategyHttpOverride {
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct StrategyTlsOverride {
-    #[serde(alias = "insecureSkipVerify")] pub insecure_skip_verify: Option<bool>,
-    #[serde(alias = "skipSanWhitelist")] pub skip_san_whitelist: Option<bool>,
+    #[serde(alias = "insecureSkipVerify", alias = "insecure_skip_verify")] pub insecure_skip_verify: Option<bool>,
+    #[serde(alias = "skipSanWhitelist", alias = "skip_san_whitelist")] pub skip_san_whitelist: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
