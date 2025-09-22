@@ -274,7 +274,7 @@
 回退：不进入 P4，列出修复项再复跑 soak；
 风险&缓解：测试环境偏差——在至少两个网络环境运行；指标漂移——自动对比前一次报告差值。
 
-## 3. 实现说明（占位，后续分别补充）
+## 3. 实现说明
 
 ### P3.0 基线巩固与观测脚手架 实现说明
 已完成（实现于本提交，后续补丁扩展已集成状态机与初步 timing 标记）：
@@ -386,7 +386,84 @@
 
 ### P3.1 默认启用与渐进放量 实现说明
 
-（此处留空，后续补充实现细节）
+#### 1. 目标
+默认启用自适应 TLS（白名单域），提供稳定一致的按 host 百分比采样 + 信息事件；不破坏既有回退链 / 策略覆盖事件；形成后续 timing / 指纹 / fallback 指标挂点且可一键回退。
+
+#### 2. 配置
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| http.fakeSniEnabled | bool | true | 关闭后完全停用 Fake 改写与 rollout 事件 |
+| http.fakeSniRolloutPercent | u8(0..=100) | 100 | 采样阈值；0=全部 MISS（仍保留回退逻辑框架） |
+| http.hostAllowListExtra | string[] | [] | 附加允许进入 Fake 判定的域（不影响证书 SAN 校验逻辑） |
+
+缺省缺字段时采用默认值（向后兼容）。`fakeSniEnabled=false` 优先级最高，直接短路。
+
+#### 3. 采样 & 判定流程
+1. Host allow 判定：主白名单命中或在 extra 列表中 → allow，否则直接 Default（不统计 MISS）。
+2. 若 allow：`bucket = (SHA1(host)[0..2] => u16) % 100`；命中条件 `bucket < percent`。
+3. 命中（HIT）→ 进入 Fake→Real→Default 回退链；未命中（MISS）→ 直接 Default。
+4. 任务层可重复调用判定（纯函数），保证拥有 taskId 时再发 rollout 事件；无副作用。
+
+特性：同 host 稳定；percent=100 恒 HIT；percent=0 恒 MISS（但与 fakeSniEnabled=false 区分：仍走判定框架）。
+
+#### 4. 事件
+新增 `adaptive_tls_rollout`（信息型）：
+- 通道：`task://error`，`category=Protocol`。
+- 触发：任务 summary 发出后确认此次连接为采样 HIT 且执行 Fake 改写。
+- 单任务最多 1 条。未命中不发。
+示例（message 内 JSON）：`{"taskId","kind","code":"adaptive_tls_rollout","percentApplied":37,"sampled":true}`。
+
+保留：`strategy_override_summary` + `*_strategy_override_applied`（已改为精确事件匹配）。
+
+#### 5. 内部计数器
+`ROLLOUT_HIT` / `ROLLOUT_MISS` （Relaxed 原子）。allow 且：HIT 计 HIT；bucket>=percent 计 MISS。非 allow host 不计入。当前仅内存占位，后续指标导出。
+
+#### 6. 测试策略（关键点）
+| 场景 | 断言 |
+|------|------|
+| 0% | 无 `adaptive_tls_rollout` 事件 |
+| 100% | 有且最多 1 条事件 |
+| hostAllowListExtra | 非主白名单域可触发事件 |
+| 一致性 | 同 host 多次要么全 HIT 要么全 MISS |
+| insecure push | 精确 1 条 `tls_strategy_override_applied` |
+| no override | summary 存在，appliedCodes=[] |
+| 并发串行化 | 不丢失 summary / 不重复 rollout |
+| helper 事件 | 无网络仍能稳定发 summary + rollout |
+
+事件匹配规范：仅使用精确 `"code":"<event_code>"`；不要用子串（避免与 summary.appliedCodes 冲突）。
+
+#### 7. 回归修复
+| 问题 | 根因 | 修复 |
+|------|------|------|
+| 0% 仍发事件 | OnceLock 配置基目录第二次未生效 | 改为统一路径修改后保存 |
+| push 计数=2 | 子串匹配误计 summary.appliedCodes | 精确 code 匹配 |
+| summary 偶发缺失 | 并发 drain 竞争 | 事件捕获互斥 |
+
+#### 8. 回退 / 兼容
+快速暂停：`fakeSniRolloutPercent=0`；完全关闭：`fakeSniEnabled=false`。无需重启。旧前端忽略新事件不受影响。事件顺序：summary → rollout（若有）。
+
+#### 9. 性能 & 风险
+单次 SHA1 + 原子增量；未观察显著耗时或锁竞争。风险：采样倾斜（通过 SHA1 均匀性 + 测试护栏缓解）、计数误判（精确匹配策略）。
+
+#### 10. 后续挂点
+| 未来 | 复用 | 增量 |
+|------|------|------|
+| P3.2 timing/usedFakeSni | rollout 判定结果 | 在 summary/timing 事件扩展字段 |
+| P3.2 指纹 | Fake/Real 成功分支 | 指纹缓存 + change 事件 |
+| P3.5 fallback 事件 | 状态机历史 | 生成 `adaptive_tls_fallback` |
+| P3.5 auto-disable | 计数 + 错误率 | runtime flag 切换 |
+
+#### 11. 验收结论
+所有计划测试矩阵通过；0% / 100% 行为正确；无重复事件；前端存储兼容；Changelog 条目已准备；形成下一阶段指标与可观测扩展挂点。
+
+#### 12. Changelog 建议
+Added: Adaptive TLS percentage rollout (host-stable sampling) + event `adaptive_tls_rollout` (backward compatible). Changed: `http.fakeSniEnabled` now defaults true. Internal: in-memory rollout hit/miss counters.
+
+#### 13. 回退验证
+1. 设置 percent=0 → 重新执行 clone/fetch 无 rollout 事件。\n2. 设置 enabled=false → 无改写/无事件。\n3. 原 override / partial / shallow 用例全部保持通过。
+
+#### 14. 一句话总结
+以最小侵入方式完成默认启用与确定性采样，事件与指标挂点就绪且可一键回退，为后续 timing / 指纹 / fallback 与自适应禁用提供稳定基线。
 
 ### P3.2 可观测性强化（基础） 实现说明
 
