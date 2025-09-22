@@ -1,0 +1,313 @@
+#![cfg(not(feature = "tauri-app"))]
+//! 聚合测试：Error Mapping & i18n (Roadmap 12.14)
+//! ------------------------------------------------------------
+//! Phase4 Metrics (属性测试集中 v1.17)：
+//!   * Added sections (props): strategy_props / retry_props / partial_filter_props / tls_props
+//!   * Migrated property source files: 5 (prop_strategy_http_override.rs, prop_retry_override.rs, prop_strategy_summary_codes.rs, prop_partial_filter_capability.rs, prop_tls_override.rs)
+//!   * Seeds retained: prop_tls_override.proptest-regressions
+//!   * Total proptest groups: 5 (http override, summary codes, retry override, partial filter fallback, tls override normalization)
+//!   * Root-level prop_* files replaced with placeholders (assert!(true)) preserving git blame
+//!   * Consolidation rationale: reduce search surface & ensure future override semantic changes require touching a single file
+//!   * Next follow-up (optional): extract shared AppConfig mutation patterns into a helper to cut duplication (~30 lines)
+//! 来源文件：
+//!   - error_i18n_map.rs (错误分类 + 中文消息 Network 分类验证)
+//! 设计说明：
+//!   * 当前仅有一个 legacy 用例：中文“无法 连接 ... 超时”消息映射到 Network。
+//!   * 本聚合文件预留分区结构，后续接入多 locale key / fallback / 组合错误场景。
+//! 分区：
+//!   section_error_mapping        -> 错误分类（map_git2_error -> ErrorCategory + AppErrorKind 桥接）
+//!   section_i18n_locale_basic    -> 多语言关键 key 存在性（首版占位已实现）
+//!   section_i18n_fallback        -> locale 回退策略（首版占位实现：不存在 locale -> fallback en）
+//!   section_integration_edge     -> 复合错误互斥（占位）
+//! 未来扩展计划 (Post-audit):
+//!   - 引入 AppErrorKind 枚举统一抽象 (Protocol/Network/Cancel/Timeout/...)
+//!   - 提供 helper: assert_error_category(label, err, AppErrorKind)
+//!   - 构建 locale fixture & key 列表，断言所有关键 keys 在 zh/en 下存在
+//!   - Fallback 测试：设置不存在 locale -> 回退 en
+//!   - 组合：模拟 Cancel + Timeout 互斥，验证只出现一个类别
+//! Cross-ref:
+//!   - git_* 聚合文件中已经使用 ErrorCategory 进行分类断言
+//!   - events_* 聚合文件中的失败/取消终态映射将在 12.15 之后结合 AppErrorKind 统一
+
+use fireworks_collaboration_lib::core::git::default_impl::helpers::map_git2_error;
+use fireworks_collaboration_lib::core::git::errors::ErrorCategory;
+use crate::common::test_env::init_test_env;
+
+#[path = "../common/mod.rs"] mod common; // 引入 test_env 所需（局部路径）
+
+#[ctor::ctor]
+fn __init_env() { init_test_env(); }
+use std::collections::{HashMap, HashSet};
+
+// --- 临时测试端 AppErrorKind 抽象（未来迁入生产代码） ---
+// 说明：
+//  * 通过与 ErrorCategory 一一映射保证后续扩展（Timeout/Permission 等）时只需在
+//    bridge 函数中增加匹配分支；
+//  * 测试先行提供语义层，可在 12.15 接入结构化任务错误事件时直接复用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum AppErrorKind { Network, Protocol, Cancel, Timeout, Permission, Other }
+
+fn app_error_from_category(cat: ErrorCategory) -> AppErrorKind {
+    match cat {
+        ErrorCategory::Network => AppErrorKind::Network,
+        ErrorCategory::Protocol => AppErrorKind::Protocol,
+        ErrorCategory::Cancel => AppErrorKind::Cancel,
+        // 当前生产分类尚未暴露 Timeout/Permission，统一映射 Other；后续接入后在此分支拆出
+        _ => AppErrorKind::Other,
+    }
+}
+
+// locale fixture: key -> (en, zh) 简化；真实实现应来源于生产 i18n 表。
+fn locale_fixture() -> HashMap<&'static str, (&'static str, &'static str)> {
+    let mut m = HashMap::new();
+    m.insert("error.network.timeout", ("Network timeout", "网络超时"));
+    m.insert("error.protocol.invalid", ("Protocol invalid", "协议错误"));
+    m.insert("error.cancel.requested", ("Operation cancelled", "操作已取消"));
+    m
+}
+
+fn locale_keys() -> Vec<&'static str> { locale_fixture().keys().cloned().collect() }
+
+// 简化：fallback 获取：若 locale 不存在或 key 缺失 -> en
+fn translate(key: &str, locale: &str) -> Option<String> {
+    let f = locale_fixture();
+    f.get(key).map(|(en, zh)| match locale {
+        "zh" => zh.to_string(),
+        _ => en.to_string(),
+    })
+}
+
+// ---------------- section_error_mapping ----------------
+mod section_error_mapping {
+    use super::*;
+    #[test]
+    fn chinese_connection_error_classified_as_network() {
+        // 构造 git2::Error：中文超时/连接信息应映射为 Network
+        let err = git2::Error::from_str("无法 连接 到 服务器: 超时");
+        let cat = map_git2_error(&err);
+        assert!(matches!(cat, ErrorCategory::Network), "expected Network got {:?}", cat);
+        let app = app_error_from_category(cat);
+        assert_eq!(app, AppErrorKind::Network);
+    }
+
+    #[test]
+    fn app_error_kind_bridge_roundtrip_smoke() {
+        use ErrorCategory::*;
+        let cats = [Network, Protocol, Cancel];
+        for c in cats { let k = app_error_from_category(c); match (c, k) {
+                (Network, AppErrorKind::Network) | (Protocol, AppErrorKind::Protocol) | (Cancel, AppErrorKind::Cancel) => {},
+                _ => panic!("bridge mismatch {:?} -> {:?}", c, k)
+            }}
+    }
+
+    #[test]
+    fn app_error_kind_future_variants_currently_other() {
+        // 确认未来预留枚举（Timeout/Permission）尚无直接分类路径（必须映射为 Other 占位）
+        // 这里直接构造一个不匹配的类别：使用生产分类中的“其它”类型（若存在）或模拟 -> 断言映射为 Other。
+        // 由于 ErrorCategory 未暴露 Timeout/Permission，我们仅验证 bridge 函数不产生这些值。
+        use ErrorCategory::*;
+        let cats = [Network, Protocol, Cancel];
+        for c in cats { let k = app_error_from_category(c); assert!(!matches!(k, AppErrorKind::Timeout | AppErrorKind::Permission), "unexpected early mapping to future variant {:?}", k); }
+    }
+}
+
+// ---------------- section_i18n_locale_basic ----------------
+mod section_i18n_locale_basic {
+    use super::*;
+    #[test]
+    fn locale_keys_present_in_all_supported_languages() {
+        let keys = locale_keys();
+        assert!(!keys.is_empty(), "fixture keys empty");
+        // 支持语言集合（后续扩展时仅在此添加）
+        let langs = ["en", "zh"];
+        for k in &keys { for lang in &langs { let t = translate(k, lang).unwrap_or_default(); assert!(!t.is_empty(), "missing translation for key={} lang={}", k, lang); } }
+        // key 去重校验
+        let set: HashSet<&str> = keys.iter().copied().collect();
+        assert_eq!(set.len(), keys.len(), "duplicate locale key detected");
+    }
+}
+
+// ---------------- section_i18n_fallback ----------------
+mod section_i18n_fallback {
+    use super::*;
+    #[test]
+    fn missing_locale_fallbacks_to_en() {
+        let key = "error.network.timeout";
+        let zh = translate(key, "zh").expect("zh");
+        let en = translate(key, "en").expect("en");
+        let bogus = translate(key, "fr").expect("fallback fr->en");
+        assert_ne!(zh, en, "zh/en translations should differ in fixture");
+        assert_eq!(bogus, en, "fallback should return en variant");
+    }
+
+    #[test]
+    fn missing_key_returns_none() {
+        assert!(translate("non.existent.key", "en").is_none());
+    }
+}
+
+// ---------------- section_integration_edge ----------------
+mod section_integration_edge {
+    // 仍为占位：后续将模拟多错误来源并断言只归约到单一 AppErrorKind + 正确 locale key
+    #[test]
+    fn integration_edge_placeholder() { assert!(true); }
+}
+
+// -----------------------------------------------------------------------------
+// Phase 4 属性测试集中 (strategy / retry / partial_filter / tls)
+// 来源文件 (root-level prop_*.rs，将在迁移完成后占位化):
+//   - prop_strategy_http_override.rs
+//   - prop_retry_override.rs
+//   - prop_strategy_summary_codes.rs
+//   - prop_partial_filter_capability.rs
+//   - prop_tls_override.rs
+// 说明：保持与原测试函数名一致，添加 section_* 前缀模块划分。
+// 属性测试均受 cfg(not(feature = "tauri-app")) 保护，与本文件一致无需额外 cfg。
+// -----------------------------------------------------------------------------
+
+// ---------------- section_strategy_props ----------------
+#[cfg(test)]
+mod section_strategy_props {
+    use super::*;
+    use proptest::prelude::*;
+    use fireworks_collaboration_lib::core::config::model::AppConfig;
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use uuid::Uuid;
+
+    proptest! {
+        #[test]
+        fn http_override_conflict_normalizes(follow in any::<bool>(), raw_max in 0u32..25) {
+            let mut global = AppConfig::default();
+            global.http.follow_redirects = !follow;
+            let over = fireworks_collaboration_lib::core::git::default_impl::opts::StrategyHttpOverride {
+                follow_redirects: Some(follow),
+                max_redirects: Some(raw_max as u32),
+                ..Default::default()
+            };
+            let (_f, m, _changed, conflict) = TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, Some(&over));
+            prop_assert!(m <= 20, "clamped max should be <=20, got {m}");
+            if follow == false && m > 0 { prop_assert!(conflict.is_some(), "expected conflict message when follow=false and m>0"); }
+            if conflict.is_some() { prop_assert_eq!(m, 0, "conflict must normalize max to 0"); }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn strategy_summary_applied_codes_consistency(http_follow in proptest::bool::ANY,
+                                                      http_max in 0u8..=20,
+                                                      tls_insecure in proptest::bool::ANY,
+                                                      tls_skip in proptest::bool::ANY,
+                                                      retry_max in 1u32..10,
+                                                      retry_base in 50u64..500,
+                                                      retry_factor in 1u32..5) {
+            let mut global = AppConfig::default();
+            global.http.follow_redirects = !http_follow;
+            global.http.max_redirects = if http_max==0 {1} else {http_max};
+            global.tls.insecure_skip_verify = !tls_insecure;
+            global.tls.skip_san_whitelist = !tls_skip;
+            global.retry.max = retry_max + 5;
+            global.retry.base_ms = retry_base + 10;
+            global.retry.factor = (retry_factor as f64) + 0.5;
+            let http_over = fireworks_collaboration_lib::core::git::default_impl::opts::StrategyHttpOverride { follow_redirects: Some(http_follow), max_redirects: Some(http_max as u32), ..Default::default() };
+            let tls_over = fireworks_collaboration_lib::core::git::default_impl::opts::StrategyTlsOverride { insecure_skip_verify: Some(tls_insecure), skip_san_whitelist: Some(tls_skip) };
+            let retry_over = fireworks_collaboration_lib::core::git::default_impl::opts::StrategyRetryOverride { max: Some(retry_max), base_ms: Some(retry_base as u32), factor: Some(retry_factor as f32), jitter: Some(false) };
+            let (f,m,http_changed,_http_conflict) = TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, Some(&http_over));
+            let (_ins,_skip,tls_changed,_tls_conflict) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&tls_over));
+            let (_retry_plan, retry_changed) = TaskRegistry::apply_retry_override(&global.retry, Some(&retry_over));
+            let mut codes: Vec<String> = vec![];
+            if http_changed { codes.push("http_strategy_override_applied".into()); }
+            if tls_changed { codes.push("tls_strategy_override_applied".into()); }
+            if retry_changed { codes.push("retry_strategy_override_applied".into()); }
+            codes.sort(); codes.dedup();
+            if http_changed { assert!(codes.iter().any(|c| c=="http_strategy_override_applied")); }
+            if tls_changed { assert!(codes.iter().any(|c| c=="tls_strategy_override_applied")); }
+            if retry_changed { assert!(codes.iter().any(|c| c=="retry_strategy_override_applied")); }
+            if !http_changed && !tls_changed && !retry_changed { assert!(codes.is_empty()); }
+            assert_ne!(global.http.follow_redirects, f, "we intentionally changed follow to trigger changed");
+            let _ = m; // silence warnings
+        }
+    }
+}
+
+// ---------------- section_retry_props ----------------
+#[cfg(test)]
+mod section_retry_props {
+    use super::*;
+    use proptest::prelude::*;
+    use fireworks_collaboration_lib::core::config::model::RetryCfg;
+    use fireworks_collaboration_lib::core::git::default_impl::opts::StrategyRetryOverride;
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+
+    proptest! {
+        #[test]
+        fn retry_override_changes_detected(max in 0u32..10, base_ms in 50u32..2000, factor in 1.0f64..3.0f64, jitter in any::<bool>()) {
+            let mut global = RetryCfg::default();
+            global.max = 5; global.base_ms = 300; global.factor = 1.5; global.jitter = true;
+            let over = StrategyRetryOverride { max: Some(max), base_ms: Some(base_ms), factor: Some(factor as f32), jitter: Some(jitter) };
+            let (plan, changed) = TaskRegistry::apply_retry_override(&global, Some(&over));
+            if plan.max == global.max && plan.base_ms == global.base_ms && (plan.factor - global.factor).abs() < f64::EPSILON && plan.jitter == global.jitter {
+                prop_assert!(!changed, "no field changed but changed=true");
+            } else { prop_assert!(changed, "some field changed but changed=false"); }
+            prop_assert!(plan.factor >= 0.0, "factor should stay non-negative");
+        }
+    }
+}
+
+// ---------------- section_partial_filter_props ----------------
+#[cfg(test)]
+mod section_partial_filter_props {
+    use super::*;
+    use proptest::prelude::*;
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+
+    proptest! {
+        #[test]
+        fn partial_filter_fallback_decision(depth in prop::option::of(0u32..5), filter in prop::option::of("[a-z0-9:_]{1,8}")) {
+            for supported in [true,false] {
+                let shallow_expected = depth.is_some();
+                let res = TaskRegistry::decide_partial_fallback(depth, filter.as_deref(), supported);
+                if filter.is_none() || supported { assert!(res.is_none(), "no fallback when no filter or supported"); }
+                else {
+                    let (msg, shallow_flag) = res.expect("expected fallback");
+                    assert!(msg.contains("partial filter unsupported"));
+                    assert_eq!(shallow_flag, shallow_expected, "shallow flag should mirror depth presence");
+                }
+            }
+        }
+    }
+}
+
+// ---------------- section_tls_props ----------------
+#[cfg(test)]
+mod section_tls_props {
+    use super::*;
+    use proptest::prelude::*;
+    use fireworks_collaboration_lib::core::config::model::AppConfig;
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use uuid::Uuid;
+
+    proptest! {
+        #[test]
+        fn tls_override_conflict_normalization(insecure in proptest::bool::ANY, skip in proptest::bool::ANY) {
+            let mut global = AppConfig::default();
+            global.tls.insecure_skip_verify = false; global.tls.skip_san_whitelist = false;
+            let over = fireworks_collaboration_lib::core::git::default_impl::opts::StrategyTlsOverride {
+                insecure_skip_verify: Some(insecure),
+                skip_san_whitelist: Some(skip),
+            };
+            let (_ins, skip_eff, changed, conflict) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
+            if insecure {
+                assert!(!skip_eff, "when insecure=true skipSan must normalize to false");
+                if skip { assert!(conflict.is_some(), "conflict expected when both insecure and skip requested"); } else { assert!(conflict.is_none(), "no conflict when insecure=true but skip=false"); }
+            } else {
+                assert_eq!(skip_eff, skip, "when insecure=false skip preserved");
+                assert!(conflict.is_none(), "no conflict when insecure=false");
+            }
+            let normalized_change = insecure && skip;
+            let expect_changed = (insecure != global.tls.insecure_skip_verify) || (!insecure && skip != global.tls.skip_san_whitelist) || normalized_change;
+            assert_eq!(changed, expect_changed, "changed flag semantic");
+            assert!(!global.tls.insecure_skip_verify); assert!(!global.tls.skip_san_whitelist);
+        }
+    }
+}
+
