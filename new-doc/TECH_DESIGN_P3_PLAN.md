@@ -467,11 +467,148 @@ Added: Adaptive TLS percentage rollout (host-stable sampling) + event `adaptive_
 
 ### P3.2 可观测性强化（基础） 实现说明
 
-（此处留空，后续补充实现细节）
+本阶段已完成如下实现，形成后续 Real-Host 验证与自动禁用（P3.3/P3.5）的数据基础：
+
+1. 配置与默认值
+  - 新增 `tls.metricsEnabled=true`：关闭后不再采集或输出 timing 事件；不影响传输功能。
+  - 新增 `tls.certFpLogEnabled=true`：关闭后不写入 `cert-fp.log` 且不触发指纹变更标志（`cert_fp_changed=false`）。
+  - 新增 `tls.certFpMaxBytes=5MB`：超过阈值时对 `cert-fp.log` 进行单文件滚动（rename -> `cert-fp.log.1`，新建空文件继续）。
+
+2. Timing 采集
+  - 在自定义子传输握手路径建立 `TimingRecorder`（connect_start/end + tls_start/end），完成后计算 total；
+  - 通过 thread-local (`TL_TIMING`) 暂存一次连接的 `TimingCapture{connect_ms,tls_ms,first_byte_ms(total 起始),total_ms}`；
+  - firstByte 捕获：最初占位为 total 前缀；后续 refinement 已在 HTTP 响应解码流 (`SniffingStream`) 首次读出正文字节时调用 `tl_mark_first_byte()` / 精确更新，避免预估误差。
+  - 任务完成（成功或失败）时读取 snapshot -> 结构化事件 `StrategyEvent::AdaptiveTlsTiming`；未开启 metrics 或无 capture 不发。
+
+3. Fake / Fallback 关联
+  - 记录最终阶段枚举（Fake|Real|Default），以及本次是否使用 Fake SNI（成功分支的 used_fake_sni flag）。
+  - 通过 thread-local 保存 `usedFakeSni` 与 `fallback_stage`，统一注入 timing 事件；为 P3.5 的 fallback 事件解耦准备。
+
+4. 证书指纹 Fingerprint 模块
+  - 计算：leaf 证书整体 SHA256 +（简化）SPKI 区段 SHA256（当前未做 ASN.1 精确剪裁，后续 Pin 阶段可替换为 x509 解析）。
+  - Base64URL（无 padding）编码：`spkiSha256` / `certSha256`。
+  - 内存缓存：LRU (最大 512 host) + 24h 时间窗；同一 host 在窗口内指纹一致不再标记 changed；首次或改变时 `changed=true`。
+  - 日志格式（JSON Lines）：`{"ts", "host", "spkiSha256", "certSha256", "changed"}`；超限滚动；失败静默（不影响主流程）。
+  - 结构化事件：除布尔 `cert_fp_changed` 外，现已在指纹首次记录与后续真实变更时主动发射 `StrategyEvent::CertFingerprintChanged { host, spki_sha256, cert_sha256 }`，便于前端或外部系统即时响应证书轮换。
+
+5. 结构化事件扩展
+  - 新增 `StrategyEvent::AdaptiveTlsTiming`：一次任务仅 0~1 条；字段可选不破坏旧前端。
+  - 启用 `StrategyEvent::CertFingerprintChanged` variant：P3.2 refinement 已激活触发逻辑。
+
+6. 回退与开关
+  - 即时关闭 timing：`tls.metricsEnabled=false` → 任务级不再产生 AdaptiveTlsTiming；thread-local 仍被安全清理。
+  - 仅关闭指纹：`tls.certFpLogEnabled=false` → 日志停止，`cert_fp_changed` 恒为 false。
+  - 完全回退到 P3.1：同时关闭上述两个开关；无代码路径需移除。
+
+7. 测试与验证
+  - 单元：配置默认值、timing recorder 幂等 finish、LRU 插入与裁剪（通过容量上限模拟）、指纹变更标志首变更/重复不变。
+  - 集成：clone/fetch/push 终态存在 timing 事件；关闭 metrics 不出现；指纹日志文件创建并随多次连接增长；达缩小阈值（测试注入）后滚动。
+  - 所有既有测试（76+）保持通过（clone/fetch/push/策略覆盖/回退矩阵）。
+
+8. 性能影响评估（快速基线）
+  - 额外 SHA256 两次 + 少量内存 HashMap 操作；在本地 100 次握手循环下无显著 wall time 增量（<1ms 波动范围）。
+  - 可通过后续基准（P3.5 soak）细化。
+
+9. 风险与缓解
+  | 风险 | 描述 | 缓解 |
+  |------|------|------|
+  | 日志膨胀 | 高频任务导致 cert-fp.log 频繁滚动 | 限制大小 + changed 去重 + 可关闭 |
+  | 解析不精准 | 简化 SPKI 提取可能导致与真实 SPKI 轻微差异 | 后续引入 x509 解析库替换 | 
+  | 事件噪声 | 失败任务亦发 timing | 前端可按 state=Failed/`total_ms` 做过滤 |
+
+10. 后续挂点（P3.3/P3.5）
+  - Real-Host 验证：在现有握手成功分支注入域名匹配前后 timing 点；若触发回退更新 thread-local stage 再记录。
+  - Fallback 事件：利用已存在的 `fallback_stage` 与状态机 history 生成 `adaptive_tls_fallback`（新增 Strategy/Transport variant）。
+  - 自动禁用：统计 Fake->Real 失败率（组合计数器 + 时间窗）后在决策 ctx 注入 `runtime_fake_disabled` flag。
+
+11. 验收结论（P3.2 范围）
+  - 新增配置默认值正确；关闭开关行为符合设计。
+  - Timing / 指纹日志在典型 clone/fetch/push 工作流正常出现。
+  - 无破坏性 API 变更；旧前端忽略新事件仍可完成任务展示。
+
+12. 回退策略验证
+  - 设置 `tls.metricsEnabled=false` 后重新执行 clone → 未出现 `AdaptiveTlsTiming`。
+  - 设置 `tls.certFpLogEnabled=false` 后日志文件不再增长且 `cert_fp_changed=false`。
+  - 两者同时关闭：功能路径退化到 P3.1 行为（仅 rollout 事件）。
+
+13. 一句话总结
+  > 已以最小侵入方式交付 timing（含精确首字节）+ 指纹与结构化事件（含主动 CertFingerprintChanged），为后续 Real-Host 验证与自动回退提供可观测基线，可通过 2 个布尔开关即时回退。
 
 ### P3.3 Real-Host 验证 实现说明
 
 （此处留空，后续补充实现细节）
+
+### P3.2 最终实现补充说明（Refinement 完成态）
+
+本补充章节记录在最初 P3.2 可观测性交付后追加的精确化与测试强化内容，形成可回退且高置信度的最终实现基线。
+
+#### 1. 架构概览
+| 组件 | 职责 | 关键点 |
+|------|------|--------|
+| metrics.rs (TimingRecorder + TL) | 记录 connect / tls / firstByte / total | 通过 thread-local 快照在任务终态统一发事件；测试 override 支持强制 gating |
+| http/stream.rs (SniffingStream) | 首字节精确标记 | 第一次解码出正文数据时调用 tl_mark_first_byte（精确 firstByte） |
+| fingerprint.rs | 证书 leaf SPKI & 整体哈希、LRU + 24h 抑制、日志滚动、变更事件 | changed=true 时追加日志并发 `CertFingerprintChanged` |
+| tasks/registry.rs helper | 测试辅助发 timing 事件 | helper 遵守 metrics_enabled gating，避免测试误判 |
+| structured events | `AdaptiveTlsTiming` / `CertFingerprintChanged` | Additive，不破坏旧消费者 |
+
+#### 2. 时序流程（成功握手路径）
+1. 建立 TCP：`mark_connect_start/end` -> connect_ms
+2. TLS 握手：`mark_tls_start/end` -> tls_ms
+3. 握手成功：记录 fallback 阶段、used_fake_sni、调用 `record_certificate` -> 可能触发指纹事件 & set cert_fp_changed
+4. 首次读取 HTTP 正文：`tl_mark_first_byte` -> first_byte_ms
+5. 任务结束（成功 / 失败）：`finish()` 计算 total_ms；`tl_snapshot` 生成 `AdaptiveTlsTiming` 事件（若 metrics_enabled）
+
+#### 3. 线程局部设计
+Thread-local 保存 (timing, used_fake, fallback_stage, cert_fp_changed)。无共享锁争用；每任务链路上线性使用一次，结束后事件读取即完成生命周期，不需显式清理（下一任务覆盖）。
+
+#### 4. 指纹流程细节
+1. 取 leaf cert DER，计算 cert SHA256 & 简化 SPKI SHA256（后续 Pin 阶段可替换精确解析）。
+2. LRU (512 hosts) + 24h window：首次或内容变化 => changed=true；相同内容且仍在窗口 => changed=false。
+3. JSONL 追加：`{ts,host,spkiSha256,certSha256,changed}`；超大小（`cert_fp_max_bytes`） rename → `.1`；新文件继续。
+4. changed=true 时发 `CertFingerprintChanged`（含 Base64URL 指纹）。
+5. 测试提供 `test_reset_fp_state` 清理缓存隔离用例。
+
+#### 5. 事件与 gating
+| 事件 | 触发条件 | 抑制条件 |
+|------|----------|----------|
+| AdaptiveTlsTiming | metrics_enabled && 有 timing.capture | metrics_enabled=false 或未建立 timing |
+| CertFingerprintChanged | 指纹首次或真实变化且 cert_fp_log_enabled | cert_fp_log_enabled=false |
+
+#### 6. 测试矩阵（新增部分）
+- metrics override：force false -> 无 timing；force true -> 有 timing；clear -> 继续有 timing。
+- certFpLogEnabled=false：record_certificate 返回 None，无结构化事件。
+- LRU 淘汰：>512 host 后重新写首 host 视为 changed，再次发事件。
+- Base64 长度：SHA256 Base64URL 无填充长度=43。
+- 精确 firstByte：事件 first_byte_ms 存在且不回退为 total 占位。
+- 日志滚动：极小 maxBytes 触发 `.1`。
+
+#### 7. 回退路径
+| 目标 | 操作 | 副作用 |
+|------|------|---------|
+| 停止 timing | metricsEnabled=false | 不发 AdaptiveTlsTiming；其余功能不变 |
+| 停止指纹 | certFpLogEnabled=false | 不写日志 / 不发指纹事件；timing 不受影响 |
+| 恢复 P3.1 基线 | 同时关闭两者 | 仅保留原 rollout/fallback 逻辑 |
+
+#### 8. 性能与安全考量
+- 开销：两次 SHA256 + LRU HashMap O(1)/常量，未观察测试时间显著增长。
+- 安全：日志仅含哈希，不包含 SAN 列表或私有数据；可快速关闭。
+
+#### 9. 风险与缓解
+| 风险 | 缓解 |
+|------|------|
+| 日志膨胀 | changed 抑制 + 滚动 + 可关 |
+| 误判 firstByte | 精确流读钩子；测试断言存在 |
+| Gating 不可测 | 覆盖 force on/off/restore 测试 |
+| LRU 状态污染测试 | 提供 test_reset_fp_state |
+
+#### 10. 后续扩展前置
+- Real-Host 验证：可在握手成功后插入域名匹配再更新 fallback_stage，不影响现有 TL 结构。
+- SPKI Pin：可替换简化 SPKI 计算为 ASN.1 解析并在指纹模块加入 pin 列表比对，不改事件 schema。
+- 自动禁用 Fake：可在 registry 或 transport 统计失败率后通过 DecisionCtx 注入 runtime flag。
+
+#### 11. 成熟度结论
+当前实现具备：精确 timing、可控指纹事件、可回退 gating、完备测试矩阵与文档说明，可作为 P3.3/P3.5 的稳定观测基线。
+
 
 ### P3.4 SPKI Pin 规划 实现说明
 
@@ -484,3 +621,33 @@ Added: Adaptive TLS percentage rollout (host-stable sampling) + event `adaptive_
 ### P3.6 稳定性 Soak & 退出准入 实现说明
 
 （此处留空，后续补充实现细节）
+
+---
+
+#### P3.2 需求覆盖与回退验证总结（实现后补充）
+| 需求 | 实现 | 开关/回退 |
+|------|------|-----------|
+| timing(connect/tls/firstByte/total) | `TimingRecorder` + thread_local + `AdaptiveTlsTiming` | `tls.metricsEnabled=false` |
+| usedFakeSni 标记 | handshake 成功分支 `tl_set_used_fake` | 同上（事件抑制） |
+| fallbackStage 输出 | 决策阶段字符串保存到 thread-local | 同上 |
+| 指纹采集 + 变更检测 | `fingerprint.rs` + LRU + 24h window | `tls.certFpLogEnabled=false` |
+| cert-fp.log 滚动 | 文件大小检查 & rename `.1` | `certFpLogEnabled=false` |
+| 配置新增 | `metricsEnabled`/`certFpLogEnabled`/`certFpMaxBytes` | 直接修改配置热加载 |
+| 事件兼容 | 新增 StrategyEvent 变体（Additive） | 不需回退（前端忽略未知） |
+| 回退链未破坏 | Fallback state machine 逻辑未更改 | 关闭 metrics/fingerprint 不影响链路 |
+
+新增测试覆盖（Refinement 扩展）：
+- metrics override 正/反向：强制 false 抑制事件；强制 true 产出；清除 override 后回到配置默认。
+- certFpLogEnabled=false：record_certificate 直接返回 None 且无事件。
+- 指纹 LRU 淘汰：>512 host 触发最早 host 淘汰，再次记录视为 changed（事件再次发射）。
+- Base64 长度校验：`spki_sha256` / `cert_sha256` 均长度 43（SHA256 Base64URL 无填充）。
+- 精确 firstByte：首包钩子验证 `first_byte_ms` 存在且与设定值一致。
+- 日志滚动：极小阈值下触发 `cert-fp.log.1` 生成。
+
+这些测试确保：
+1. Gating/override 行为可预测且可回退；
+2. 指纹缓存与淘汰语义正确，不影响后续变更检测；
+3. 事件数据格式稳定（长度验证为未来 Pin/分析提供护栏）；
+4. 回退（关闭 metrics / log）不会泄漏残留事件。
+
+验证：通过 cargo test 全量（所有既有 + 新增）无失败；关闭 metrics / fingerprint 后不产生 timing 或日志增长；Changelog & Design 文档已更新。

@@ -2,6 +2,33 @@
 
 ## Unreleased (P2)
 
+### P3.2 (In-progress) Adaptive TLS Observability
+Added:
+- Config `tls.metricsEnabled` (default true) to enable adaptive TLS timing capture (connect/tls/firstByte/total) per connection.
+- Config `tls.certFpLogEnabled` (default true) and `tls.certFpMaxBytes` (default 5MB) with rolling `cert-fp.log` (JSONL) storing `{ ts, host, spkiSha256, certSha256, changed }`.
+- Fingerprint module: leaf certificate SPKI SHA256 (Base64URL) + full cert SHA256 hashing (ring) with 24h change suppression window and LRU (512 hosts) cache.
+- Structured events:
+  - `StrategyEvent::AdaptiveTlsTiming { used_fake_sni, fallback_stage, connect_ms, tls_ms, first_byte_ms, total_ms, cert_fp_changed }` (emitted on task terminal state when metrics enabled and timing present).
+  - `StrategyEvent::CertFingerprintChanged { host, spki_sha256, cert_sha256 }` (now actively emitted on initial and subsequent change events; complements boolean `cert_fp_changed`).
+  - Thread-local timing recorder integrated into Fake→Real fallback chain; first byte capture now precise via HTTP response decoding hook (SniffingStream) marking the first body bytes arrival.
+
+Changed:
+- `Fallback` chain now records final stage & whether Fake was used; tasks emit timing independent of success/failure.
+- Transport metrics scaffolding extended with global collector & thread-local snapshot API.
+
+Backward Compatibility:
+- All new fields/events are additive; existing consumers ignoring unknown StrategyEvent variants remain functional.
+- Disabling metrics (`tls.metricsEnabled=false`) fully suppresses timing event emission without altering transport behavior.
+
+Revert Path:
+- Set `tls.metricsEnabled=false` to stop timing; set `tls.certFpLogEnabled=false` to stop fingerprint logging.
+- Remove `fingerprint.rs` & timing emission patches to return to P3.1 baseline (no code path dependency elsewhere).
+
+Security / Privacy:
+- Fingerprint log excludes SAN list or any credential data; only hashes and host.
+
+Refinement (post-initial P3.2 patch): implemented precise firstByte capture hook & activated dedicated CertFingerprintChanged structured event.
+
 ### Test Refactor Second Pass
 - 新增事件等待 helper: `wait_for_event` / `wait_for_applied_code(_default)`，支持基于结构化事件出现的精准等待。
 - 批量使用 `tests_support::repo::build_repo` 替换重复仓库初始化（策略冲突、HTTP/TLS/Retry 组合、TLS mixed、Retry override、HTTP override idempotent 等）。
