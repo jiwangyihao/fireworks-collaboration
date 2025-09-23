@@ -36,6 +36,8 @@ pub enum StrategyEvent {
     Summary { id: String, kind: String, http_follow: bool, http_max: u8, retry_max: u32, retry_base_ms: u64, retry_factor: f64, retry_jitter: bool, tls_insecure: bool, tls_skip_san: bool, applied_codes: Vec<String>, filter_requested: bool }
     ,AdaptiveTlsRollout { id: String, kind: String, percent_applied: u8, sampled: bool }
     ,IgnoredFields { id: String, kind: String, top_level: Vec<String>, nested: Vec<String> }
+    ,AdaptiveTlsTiming { id: String, kind: String, used_fake_sni: bool, fallback_stage: String, connect_ms: Option<u32>, tls_ms: Option<u32>, first_byte_ms: Option<u32>, total_ms: Option<u32>, cert_fp_changed: bool }
+    ,CertFingerprintChanged { id: String, host: String, spki_sha256: String, cert_sha256: String }
 }
 
 /// 统一顶层事件枚举

@@ -225,6 +225,15 @@ impl TaskRegistry {
     pub fn spawn_git_clone_task_with_opts(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, repo: String, dest: String, depth: Option<serde_json::Value>, filter: Option<String>, strategy_override: Option<serde_json::Value>) -> JoinHandle<()> {
         let this = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
+            fn emit_adaptive_tls_timing(id:Uuid, kind:&str){
+                use crate::core::git::transport::{tl_snapshot, metrics_enabled};
+                use crate::events::structured::{publish_global, Event as StructuredEvent, StrategyEvent as StructuredStrategyEvent};
+                if !metrics_enabled() { return; }
+                let snap = tl_snapshot();
+                if let Some(t) = snap.timing {
+                    publish_global(StructuredEvent::Strategy(StructuredStrategyEvent::AdaptiveTlsTiming { id: id.to_string(), kind: kind.to_string(), used_fake_sni: snap.used_fake.unwrap_or(false), fallback_stage: snap.fallback_stage.unwrap_or("Unknown").to_string(), connect_ms: t.connect_ms, tls_ms: t.tls_ms, first_byte_ms: t.first_byte_ms, total_ms: t.total_ms, cert_fp_changed: snap.cert_fp_changed.unwrap_or(false) }));
+                }
+            }
             use crate::events::structured::{publish_global, Event as StructuredEvent, StrategyEvent as StructuredStrategyEvent};
             match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Running), None => this.set_state_noemit(&id, TaskState::Running) }
             this.publish_lifecycle_started(&id, "GitClone");
@@ -378,6 +387,7 @@ impl TaskRegistry {
                             let prog = TaskProgressEvent { task_id: id, kind: "GitClone".into(), phase: "Completed".into(), percent: 100, objects: None, bytes: None, total_hint: None, retried_times: None };
                             emit_all(app_ref, EV_PROGRESS, &prog);
                         }
+                        emit_adaptive_tls_timing(id, "GitClone");
                         match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Completed), None => this.set_state_noemit(&id, TaskState::Completed) }
                         this.publish_lifecycle_completed(&id);
                         interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -404,6 +414,7 @@ impl TaskRegistry {
                             std::thread::sleep(std::time::Duration::from_millis(delay));
                             continue;
                         } else {
+                            emit_adaptive_tls_timing(id, "GitClone");
                             match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => { this.set_state_noemit(&id, TaskState::Failed); this.publish_lifecycle_failed_if_needed(&id, "failed without error event"); } }
                             interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                             let _ = watcher.join();
@@ -419,6 +430,13 @@ impl TaskRegistry {
     pub fn spawn_git_fetch_task_with_opts(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, repo: String, dest: String, preset: Option<String>, depth: Option<serde_json::Value>, filter: Option<String>, strategy_override: Option<serde_json::Value>) -> JoinHandle<()> {
         let this = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
+            fn emit_adaptive_tls_timing(id:Uuid, kind:&str){
+                use crate::core::git::transport::{tl_snapshot, metrics_enabled};
+                use crate::events::structured::{publish_global, Event as StructuredEvent, StrategyEvent as StructuredStrategyEvent};
+                if !metrics_enabled() { return; }
+                let snap = tl_snapshot();
+                if let Some(t) = snap.timing { publish_global(StructuredEvent::Strategy(StructuredStrategyEvent::AdaptiveTlsTiming { id: id.to_string(), kind: kind.to_string(), used_fake_sni: snap.used_fake.unwrap_or(false), fallback_stage: snap.fallback_stage.unwrap_or("Unknown").to_string(), connect_ms: t.connect_ms, tls_ms: t.tls_ms, first_byte_ms: t.first_byte_ms, total_ms: t.total_ms, cert_fp_changed: snap.cert_fp_changed.unwrap_or(false) })); }
+            }
             let _ = &preset; // 目前 git2 路径未使用该预设参数
             match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Running), None => this.set_state_noemit(&id, TaskState::Running) }
             this.publish_lifecycle_started(&id, "GitFetch");
@@ -558,6 +576,7 @@ impl TaskRegistry {
                 match res {
                     Ok(()) => {
                         if let Some(app_ref) = &app { let prog = TaskProgressEvent { task_id: id, kind: "GitFetch".into(), phase: "Completed".into(), percent: 100, objects: None, bytes: None, total_hint: None, retried_times: None }; emit_all(app_ref, EV_PROGRESS, &prog); }
+                        emit_adaptive_tls_timing(id, "GitFetch");
                         match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Completed), None => this.set_state_noemit(&id, TaskState::Completed) }
                         interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                         let _ = watcher.join();
@@ -583,6 +602,7 @@ impl TaskRegistry {
                             std::thread::sleep(std::time::Duration::from_millis(delay));
                             continue;
                         } else {
+                            emit_adaptive_tls_timing(id, "GitFetch");
                             match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => this.set_state_noemit(&id, TaskState::Failed) }
                             interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                             let _ = watcher.join();
@@ -607,6 +627,13 @@ impl TaskRegistry {
     pub fn spawn_git_push_task(self: &Arc<Self>, app: Option<AppHandle>, id: Uuid, token: CancellationToken, dest: String, remote: Option<String>, refspecs: Option<Vec<String>>, username: Option<String>, password: Option<String>, strategy_override: Option<serde_json::Value>) -> JoinHandle<()> {
         let this = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
+            fn emit_adaptive_tls_timing(id:Uuid, kind:&str){
+                use crate::core::git::transport::{tl_snapshot, metrics_enabled};
+                use crate::events::structured::{publish_global, Event as StructuredEvent, StrategyEvent as StructuredStrategyEvent};
+                if !metrics_enabled() { return; }
+                let snap = tl_snapshot();
+                if let Some(t) = snap.timing { publish_global(StructuredEvent::Strategy(StructuredStrategyEvent::AdaptiveTlsTiming { id: id.to_string(), kind: kind.to_string(), used_fake_sni: snap.used_fake.unwrap_or(false), fallback_stage: snap.fallback_stage.unwrap_or("Unknown").to_string(), connect_ms: t.connect_ms, tls_ms: t.tls_ms, first_byte_ms: t.first_byte_ms, total_ms: t.total_ms, cert_fp_changed: snap.cert_fp_changed.unwrap_or(false) })); }
+            }
             match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Running), None => this.set_state_noemit(&id, TaskState::Running) }
             this.publish_lifecycle_started(&id, "GitPush");
 
@@ -767,6 +794,7 @@ impl TaskRegistry {
                 match res {
                     Ok(()) => {
                         if let Some(app_ref) = &app { let prog = TaskProgressEvent { task_id: id, kind: "GitPush".into(), phase: "Completed".into(), percent: 100, objects: None, bytes: None, total_hint: None, retried_times: None }; emit_all(app_ref, EV_PROGRESS, &prog); }
+                        emit_adaptive_tls_timing(id, "GitPush");
                         match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Completed), None => this.set_state_noemit(&id, TaskState::Completed) }
                         this.publish_lifecycle_completed(&id);
                         interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -794,6 +822,7 @@ impl TaskRegistry {
                             std::thread::sleep(std::time::Duration::from_millis(delay));
                             continue;
                         } else {
+                            emit_adaptive_tls_timing(id, "GitPush");
                             match &app { Some(app_ref) => this.set_state_emit(app_ref, &id, TaskState::Failed), None => { this.set_state_noemit(&id, TaskState::Failed); this.publish_lifecycle_failed_if_needed(&id, "failed without error event"); } }
                             interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                             let _ = watcher.join();
@@ -1106,6 +1135,20 @@ pub fn test_emit_clone_with_override(_repo:&str, task_id:uuid::Uuid, mut strateg
     let applied_codes_clone = applied_codes.clone();
     publish_global(StructuredEvent::Strategy(StructuredStrategyEvent::Summary { id: task_id.to_string(), kind: "GitClone".into(), http_follow: effective_follow, http_max: effective_max, retry_max: retry_plan.max, retry_base_ms: retry_plan.base_ms, retry_factor: retry_plan.factor, retry_jitter: retry_plan.jitter, tls_insecure: effective_insecure, tls_skip_san: effective_skip, applied_codes: applied_codes_clone.clone(), filter_requested: false }));
     TaskRegistry::emit_strategy_summary(&Some(app.clone()), task_id, "GitClone", (effective_follow, effective_max), &retry_plan, (effective_insecure, effective_skip), applied_codes, false);
+}
+
+/// 测试辅助：人工写入 thread-local timing 并发射 AdaptiveTlsTiming 事件（不执行网络）。
+#[cfg(test)]
+pub fn test_emit_adaptive_tls_timing(task_id: uuid::Uuid, kind:&str) {
+    use crate::core::git::transport::metrics::{tl_set_timing, TimingCapture, tl_set_fallback_stage, tl_set_used_fake};
+    use crate::events::structured::{publish_global, Event as StructuredEvent, StrategyEvent as StructuredStrategyEvent};
+    // Respect runtime gating so tests can verify suppression behavior
+    if !crate::core::git::transport::metrics::metrics_enabled() { return; }
+    tl_set_used_fake(true);
+    tl_set_fallback_stage("Fake");
+    let cap = TimingCapture { connect_ms: Some(10), tls_ms: Some(30), first_byte_ms: Some(40), total_ms: Some(50) };
+    tl_set_timing(&cap);
+    publish_global(StructuredEvent::Strategy(StructuredStrategyEvent::AdaptiveTlsTiming { id: task_id.to_string(), kind: kind.to_string(), used_fake_sni: true, fallback_stage: "Fake".into(), connect_ms: cap.connect_ms, tls_ms: cap.tls_ms, first_byte_ms: cap.first_byte_ms, total_ms: cap.total_ms, cert_fp_changed: false }));
 }
 
 // (test helper for fallback recording was removed in cleanup — fallback currently validated by completion test only)

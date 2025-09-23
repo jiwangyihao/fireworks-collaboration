@@ -14,6 +14,7 @@ use crate::core::tls::verifier::{create_client_config, create_client_config_with
 use super::auth::get_push_auth_header;
 use super::util::{find_crlf, find_double_crlf, log_body_preview, parse_http_header_first_line_and_host};
 use super::{HttpOp, TransferKind};
+use crate::core::git::transport::metrics::tl_mark_first_byte;
 
 pub(super) struct SniffingStream {
     pub(super) inner: StreamOwned<ClientConnection, TcpStream>,
@@ -536,7 +537,7 @@ impl Read for SniffingStream {
         }
         if !self.decoded.is_empty() {
             let n = self.decoded.len().min(buf.len());
-            if !self.read_body_logged { log_body_preview(&self.decoded[..n.min(32)], &self.host, "first decoded bytes"); self.read_body_logged = true; }
+            if !self.read_body_logged { log_body_preview(&self.decoded[..n.min(32)], &self.host, "first decoded bytes"); self.read_body_logged = true; tl_mark_first_byte(); }
             buf[..n].copy_from_slice(&self.decoded[..n]);
             self.decoded.drain(..n);
             if !self.read_logged { let cap = 2048usize; let upto = self.header_buf.len().min(cap); self.read_buf.extend_from_slice(&self.header_buf[..upto]); self.try_log_response(); }
@@ -545,7 +546,7 @@ impl Read for SniffingStream {
         self.fill_decoded()?;
         if !self.decoded.is_empty() {
             let n = self.decoded.len().min(buf.len());
-            if !self.read_body_logged { log_body_preview(&self.decoded[..n.min(32)], &self.host, "first decoded bytes"); self.read_body_logged = true; }
+            if !self.read_body_logged { log_body_preview(&self.decoded[..n.min(32)], &self.host, "first decoded bytes"); self.read_body_logged = true; tl_mark_first_byte(); }
             buf[..n].copy_from_slice(&self.decoded[..n]);
             self.decoded.drain(..n);
             if !self.read_logged { let cap = 2048usize; let upto = self.header_buf.len().min(cap); self.read_buf.extend_from_slice(&self.header_buf[..upto]); self.try_log_response(); }
@@ -558,7 +559,7 @@ impl Read for SniffingStream {
                 let n = self.decoded.len().min(buf.len());
                 buf[..n].copy_from_slice(&self.decoded[..n]);
                 self.decoded.drain(..n);
-                if !self.read_logged { let cap = 2048usize; let upto = self.header_buf.len().min(cap); self.read_buf.extend_from_slice(&self.header_buf[..upto]); self.try_log_response(); }
+                if !self.read_logged { let cap = 2048usize; let upto = self.header_buf.len().min(cap); self.read_buf.extend_from_slice(&self.header_buf[..upto]); self.try_log_response(); tl_mark_first_byte(); }
                 return Ok(n);
             }
             if self.eof { return Ok(0); }
