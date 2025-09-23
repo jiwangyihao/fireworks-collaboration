@@ -22,3 +22,13 @@ pub fn init_test_env() {
         std::env::set_var("GIT_COMMITTER_EMAIL", "fwc-test@example.com");
     });
 }
+
+#[cfg(test)]
+mod tests_env_smoke {
+    #[test]
+    fn init_env_smoke() {
+        // 多次调用应只初始化一次（幂等）
+        super::init_test_env();
+        super::init_test_env();
+    }
+}
