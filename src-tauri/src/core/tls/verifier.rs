@@ -222,13 +222,13 @@ mod tests {
 
     #[test]
     fn test_create_client_config() {
-    let tls = TlsCfg { san_whitelist: vec!["github.com".into(), "*.github.com".into()], insecure_skip_verify: false, skip_san_whitelist: false };
+    let tls = TlsCfg { san_whitelist: vec!["github.com".into(), "*.github.com".into()], insecure_skip_verify: false, skip_san_whitelist: false, metrics_enabled: true, cert_fp_log_enabled: true, cert_fp_max_bytes: 1024*1024 };
         let _cfg = create_client_config(&tls);
     }
 
     #[test]
     fn test_create_client_config_insecure() {
-    let tls = TlsCfg { san_whitelist: vec![], insecure_skip_verify: true, skip_san_whitelist: false };
+    let tls = TlsCfg { san_whitelist: vec![], insecure_skip_verify: true, skip_san_whitelist: false, metrics_enabled: true, cert_fp_log_enabled: true, cert_fp_max_bytes: 1024*1024 };
         let _cfg = create_client_config(&tls);
     }
 }
