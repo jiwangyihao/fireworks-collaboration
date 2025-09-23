@@ -106,6 +106,29 @@ impl PipelineOutcome {
     pub fn has_event_prefix(&self, prefix: &str) -> bool { self.events.iter().any(|e| e.starts_with(prefix)) }
 }
 
+// ---- 公共断言辅助（供 e2e / 其它聚合复用） ----
+/// 断言提交数量至少增长 min_delta。
+#[allow(dead_code)]
+pub fn assert_commit_growth_at_least(out: &PipelineOutcome, min_delta: i32) {
+    let delta = out.commit_delta().expect("commit delta should exist in success path");
+    assert!(delta >= min_delta, "expected commit growth >= {min_delta}, got {delta}; before={:?} after={:?}", out.commit_count_before, out.commit_count_after);
+}
+
+/// 断言提交数量未变化（delta == 0）。
+#[allow(dead_code)]
+pub fn assert_commit_unchanged(out: &PipelineOutcome) {
+    let delta = out.commit_delta().expect("commit delta should exist for unchanged assertion");
+    assert_eq!(delta, 0, "expected commit unchanged (delta=0), got {delta}; before={:?} after={:?}", out.commit_count_before, out.commit_count_after);
+}
+
+/// 失败路径：若 before/after 同时存在则确认未前进；缺失 after 视为允许（fetch 失败等情况）。
+#[allow(dead_code)]
+pub fn assert_failure_commit_not_advanced(out: &PipelineOutcome) {
+    if let (Some(b), Some(a)) = (out.commit_count_before, out.commit_count_after) {
+        assert_eq!(a, b, "commit count should not advance on failure: before={b} after={a}");
+    }
+}
+
 pub fn run_pipeline(spec: &PipelineSpec) -> PipelineOutcome {
     let mut out = PipelineOutcome::default();
     for step in &spec.steps { run_step_simulated(step, &mut out); }
