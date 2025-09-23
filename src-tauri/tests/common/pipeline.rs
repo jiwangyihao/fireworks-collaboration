@@ -16,6 +16,20 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+// ---- 事件常量（集中管理，便于未来结构化事件枚举替换） ----
+const EV_CLONE_START: &str = "pipeline:clone:start";
+const EV_CLONE_COMPLETE: &str = "pipeline:clone:complete";
+const EV_MODIFY_FILE_CHANGED: &str = "pipeline:modify:file_changed";
+const EV_COMMIT_CREATE: &str = "pipeline:commit:create";
+const EV_PUSH_START: &str = "pipeline:push:start";
+const EV_PUSH_SUCCESS: &str = "pipeline:push:success";
+const EV_PUSH_FAILED: &str = "pipeline:push:failed";
+const EV_FETCH_START: &str = "pipeline:fetch:start";
+const EV_FETCH_COMPLETE: &str = "pipeline:fetch:complete";
+const EV_FETCH_FAILED: &str = "pipeline:fetch:failed";
+
+fn emit(events: &mut Vec<String>, e: &str) { events.push(e.into()); }
+
 // ---- 新增：Pipeline 配置 & 故障注入 ----
 #[derive(Debug, Clone, Default)]
 pub struct PipelineConfig {
@@ -28,36 +42,49 @@ pub struct PipelineConfig {
 pub enum FaultKind { ForcePushFailure }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PipelineStepKind { Clone, Modify, Commit, Push, Fetch }
+pub enum PipelineStepKind {
+    /// 克隆远端（或模拟克隆）
+    Clone,
+    /// 修改工作区文件（模拟新增/变更）
+    Modify,
+    /// 产生一次提交
+    Commit,
+    /// 推送到远端
+    Push,
+    /// 获取远端更新（或刷新状态）
+    Fetch,
+}
 
 #[derive(Debug, Clone)]
 pub struct PipelineStep {
     pub kind: PipelineStepKind,
+    #[allow(dead_code)] // 预留：未来用于报告 / 可读性输出（当前测试未直接断言 desc 内容）
     pub desc: &'static str,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct PipelineSpec {
-    pub steps: Vec<PipelineStep>,
-}
+pub struct PipelineSpec { pub steps: Vec<PipelineStep> }
 
 impl PipelineSpec {
+    #[allow(dead_code)] // 预留：外部可直接构造完整步骤序列（当前内部主要走 builder）
     pub fn new(steps: Vec<PipelineStep>) -> Self { Self { steps } }
-    pub fn basic_clone_build_push() -> Self {
-        Self::new(vec![
-            PipelineStep { kind: PipelineStepKind::Clone, desc: "clone" },
-            PipelineStep { kind: PipelineStepKind::Modify, desc: "modify" },
-            PipelineStep { kind: PipelineStepKind::Commit, desc: "commit" },
-            PipelineStep { kind: PipelineStepKind::Push, desc: "push" },
-            PipelineStep { kind: PipelineStepKind::Fetch, desc: "fetch" },
-        ])
-    }
-    pub fn read_only() -> Self {
-        Self::new(vec![
-            PipelineStep { kind: PipelineStepKind::Clone, desc: "clone" },
-            PipelineStep { kind: PipelineStepKind::Fetch, desc: "fetch" },
-        ])
-    }
+    pub fn basic_clone_build_push() -> Self { PipelineBuilder::new().clone_step().modify().commit().push().fetch().build() }
+    #[allow(dead_code)] // 预留：后续可能用于只读校验场景（clone + fetch），当前未被调用
+    pub fn read_only() -> Self { PipelineBuilder::new().clone_step().fetch().build() }
+    pub fn builder() -> PipelineBuilder { PipelineBuilder::new() }
+}
+
+#[derive(Debug, Default)]
+pub struct PipelineBuilder { steps: Vec<PipelineStep> }
+impl PipelineBuilder {
+    pub fn new() -> Self { Self { steps: Vec::new() } }
+    pub fn push_step(mut self, kind: PipelineStepKind, desc: &'static str) -> Self { self.steps.push(PipelineStep { kind, desc }); self }
+    pub fn clone_step(self) -> Self { self.push_step(PipelineStepKind::Clone, "clone") }
+    pub fn modify(self) -> Self { self.push_step(PipelineStepKind::Modify, "modify") }
+    pub fn commit(self) -> Self { self.push_step(PipelineStepKind::Commit, "commit") }
+    pub fn push(self) -> Self { self.push_step(PipelineStepKind::Push, "push") }
+    pub fn fetch(self) -> Self { self.push_step(PipelineStepKind::Fetch, "fetch") }
+    pub fn build(self) -> PipelineSpec { PipelineSpec { steps: self.steps } }
 }
 
 #[derive(Debug, Default)]
@@ -70,35 +97,35 @@ pub struct PipelineOutcome {
     pub commit_count_after: Option<u32>,
 }
 
+impl PipelineOutcome {
+    pub fn is_failed(&self) -> bool { self.failed }
+    pub fn is_success(&self) -> bool { !self.failed }
+    pub fn commit_delta(&self) -> Option<i32> {
+        match (self.commit_count_before, self.commit_count_after) { (Some(b), Some(a)) => Some(a as i32 - b as i32), _ => None }
+    }
+    pub fn has_event_prefix(&self, prefix: &str) -> bool { self.events.iter().any(|e| e.starts_with(prefix)) }
+}
+
 pub fn run_pipeline(spec: &PipelineSpec) -> PipelineOutcome {
     let mut out = PipelineOutcome::default();
-    for step in &spec.steps {
-        match step.kind {
-            PipelineStepKind::Clone => {
-                // 占位：创建临时目录并记录事件
-                let dir = std::env::temp_dir().join(format!("fwc-pipeline-{}", uuid::Uuid::new_v4()));
-                std::fs::create_dir_all(&dir).expect("create pipeline temp dir");
-                out.workdir = Some(dir);
-                out.events.push("pipeline:clone:start".into());
-                out.events.push("pipeline:clone:complete".into());
-            }
-            PipelineStepKind::Modify => {
-                out.events.push("pipeline:modify:file_changed".into());
-            }
-            PipelineStepKind::Commit => {
-                out.events.push("pipeline:commit:create".into());
-            }
-            PipelineStepKind::Push => {
-                out.events.push("pipeline:push:start".into());
-                out.events.push("pipeline:push:success".into());
-            }
-            PipelineStepKind::Fetch => {
-                out.events.push("pipeline:fetch:start".into());
-                out.events.push("pipeline:fetch:complete".into());
-            }
-        }
-    }
+    for step in &spec.steps { run_step_simulated(step, &mut out); }
     out
+}
+
+fn run_step_simulated(step: &PipelineStep, out: &mut PipelineOutcome) {
+    match step.kind {
+        PipelineStepKind::Clone => {
+            let dir = std::env::temp_dir().join(format!("fwc-pipeline-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).expect("create pipeline temp dir");
+            out.workdir = Some(dir);
+            emit(&mut out.events, EV_CLONE_START);
+            emit(&mut out.events, EV_CLONE_COMPLETE);
+        }
+        PipelineStepKind::Modify => emit(&mut out.events, EV_MODIFY_FILE_CHANGED),
+        PipelineStepKind::Commit => emit(&mut out.events, EV_COMMIT_CREATE),
+        PipelineStepKind::Push => { emit(&mut out.events, EV_PUSH_START); emit(&mut out.events, EV_PUSH_SUCCESS); },
+        PipelineStepKind::Fetch => { emit(&mut out.events, EV_FETCH_START); emit(&mut out.events, EV_FETCH_COMPLETE); },
+    }
 }
 
 // ---- 真实执行支持 ----
@@ -142,32 +169,34 @@ pub fn run_pipeline_with(spec: &PipelineSpec, cfg: &PipelineConfig) -> PipelineO
                 out.commit_count_before = Some(git_rev_count(&dir));
                 local = Some(dir.clone());
                 out.workdir = Some(dir);
-                out.events.push("pipeline:clone:complete".into());
+                emit(&mut out.events, EV_CLONE_COMPLETE);
             }
             PipelineStepKind::Modify => {
-                if let Some(l) = &local { std::fs::write(l.join("new.txt"), "data\n").unwrap(); out.events.push("pipeline:modify:file_changed".into()); }
+                if let Some(l) = &local { std::fs::write(l.join("new.txt"), "data\n").unwrap(); emit(&mut out.events, EV_MODIFY_FILE_CHANGED); }
             }
             PipelineStepKind::Commit => {
                 if let Some(l) = &local {
                     run(Command::new("git").current_dir(l).args(["add", "."]));
                     run(Command::new("git").current_dir(l).args(["commit", "-m", "pipeline_commit"]));
-                    out.events.push("pipeline:commit:create".into());
+                    emit(&mut out.events, EV_COMMIT_CREATE);
                 }
             }
             PipelineStepKind::Push => {
-                let mut force_fail = cfg.faults.iter().any(|f| matches!(f, FaultKind::ForcePushFailure));
+                let force_fail = cfg.faults.iter().any(|f| matches!(f, FaultKind::ForcePushFailure));
                 if let Some(l) = &local {
                     if force_fail { // 改 remote URL 指向不存在以触发失败
                         run(Command::new("git").current_dir(l).args(["remote", "set-url", "origin", "file:///non/existent/remote"]));
                     }
+                    emit(&mut out.events, EV_PUSH_START);
                     let status = Command::new("git").current_dir(l).args(["push", "origin", "HEAD:refs/heads/master"]).status().expect("push");
-                    if status.success() && !force_fail { out.events.push("pipeline:push:success".into()); } else { out.failed = true; out.events.push("pipeline:push:failed".into()); }
+                    if status.success() && !force_fail { emit(&mut out.events, EV_PUSH_SUCCESS); } else { out.failed = true; emit(&mut out.events, EV_PUSH_FAILED); }
                 }
             }
             PipelineStepKind::Fetch => {
                 if let Some(l) = &local {
+                    emit(&mut out.events, EV_FETCH_START);
                     let status = Command::new("git").current_dir(l).args(["fetch", "origin"]).status().expect("fetch");
-                    if status.success() { out.events.push("pipeline:fetch:complete".into()); } else { out.failed = true; out.events.push("pipeline:fetch:failed".into()); }
+                    if status.success() { emit(&mut out.events, EV_FETCH_COMPLETE); } else { out.failed = true; emit(&mut out.events, EV_FETCH_FAILED); }
                     out.commit_count_after = Some(git_rev_count(l));
                 }
             }
@@ -183,7 +212,60 @@ mod tests_pipeline_smoke {
     fn smoke_basic_pipeline() {
         let spec = PipelineSpec::basic_clone_build_push();
         let out = run_pipeline(&spec);
-        assert!(out.events.iter().any(|e| e.contains("clone:complete")));
-        assert!(out.events.iter().any(|e| e.contains("push:success")));
+        assert!(out.has_event_prefix(EV_CLONE_COMPLETE));
+        assert!(out.has_event_prefix(EV_PUSH_SUCCESS));
+    }
+
+    #[test]
+    fn builder_and_outcome_helpers() {
+        let spec = PipelineSpec::builder().clone_step().modify().commit().push().fetch().build();
+        let out = run_pipeline(&spec);
+        assert!(out.is_success());
+        assert!(!out.is_failed());
+        assert!(out.has_event_prefix("pipeline:push:"));
+    }
+}
+
+#[cfg(test)]
+mod tests_pipeline_real {
+    use super::*;
+
+    // 真实执行（启用 git 命令），并注入故障，覆盖：
+    // * PipelineConfig.remote_commits / enable_real / faults 字段读取
+    // * FaultKind::ForcePushFailure 枚举变体
+    // * run_pipeline_with 分支、EV_PUSH_FAILED / EV_FETCH_FAILED 常量
+    // * PipelineOutcome.remote_dir / commit_count_before / commit_count_after 字段读取
+    // * PipelineOutcome::commit_delta 方法调用
+    #[test]
+    fn real_pipeline_force_push_failure() {
+        // 配置含 2 个初始提交，开启真实模式，并注入推送失败故障
+        let cfg = PipelineConfig { remote_commits: 2, enable_real: true, faults: vec![FaultKind::ForcePushFailure] };
+        let spec = PipelineSpec::builder().clone_step().modify().commit().push().fetch().build();
+        let out = run_pipeline_with(&spec, &cfg);
+        // 失败路径：应产生 push 失败 事件，并标记 failed
+        assert!(out.failed, "expect pipeline failed due to injected push failure");
+        assert!(out.has_event_prefix(EV_CLONE_COMPLETE));
+        assert!(out.has_event_prefix(EV_PUSH_START));
+        assert!(out.has_event_prefix(EV_PUSH_FAILED), "missing push failed event: {:?}", out.events);
+        assert!(out.has_event_prefix(EV_FETCH_START));
+        assert!(out.has_event_prefix(EV_FETCH_FAILED), "missing fetch failed event (remote url broken)" );
+        // 字段读取（标记使用）
+        assert!(out.remote_dir.is_some());
+        assert!(out.commit_count_before.is_some());
+        // fetch 失败时 commit_count_after 可能为 None
+        let _delta = out.commit_delta();
+    }
+
+    // 成功路径：无故障，验证 push / fetch 成功事件，并使用 commit_delta。
+    #[test]
+    fn real_pipeline_success_path() {
+        let cfg = PipelineConfig { remote_commits: 1, enable_real: true, faults: vec![] };
+        let spec = PipelineSpec::builder().clone_step().modify().commit().push().fetch().build();
+        let out = run_pipeline_with(&spec, &cfg);
+        assert!(out.is_success(), "pipeline should succeed without faults");
+        assert!(out.has_event_prefix(EV_PUSH_SUCCESS));
+        assert!(out.has_event_prefix(EV_FETCH_COMPLETE));
+        // commit_delta 在成功路径下应为 Some(>=0)
+        if let Some(delta) = out.commit_delta() { assert!(delta >= 0); }
     }
 }
