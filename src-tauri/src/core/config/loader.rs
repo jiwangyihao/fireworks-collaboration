@@ -40,6 +40,12 @@ fn config_path() -> PathBuf {
     join_default_path(&base)
 }
 
+/// 返回配置基目录（包含 config 子目录的上一级）。仅用于派生其它观测文件（如 cert-fp.log）。
+pub fn base_dir() -> PathBuf {
+    let p = config_path();
+    p.parent().unwrap_or_else(|| std::path::Path::new(".")).parent().unwrap_or_else(|| std::path::Path::new(".")).to_path_buf()
+}
+
 pub fn load_or_init() -> Result<AppConfig> {
     load_or_init_at_path(&config_path())
 }

@@ -25,6 +25,12 @@ pub struct TlsCfg {
     #[serde(default)] pub insecure_skip_verify: bool,
     /// 可选：仅跳过自定义 SAN 白名单校验，但仍执行常规的证书链与域名校验（默认关闭）
     #[serde(default)] pub skip_san_whitelist: bool,
+    /// P3.2: 是否启用自适应 TLS timing 指标采集（connect/tls/firstByte/total）。默认启用；关闭后不记录/不发事件。
+    #[serde(default = "default_true")] pub metrics_enabled: bool,
+    /// P3.2: 是否启用证书指纹日志与变更检测。默认启用；关闭后不写 cert-fp.log 也不触发指纹变更事件。
+    #[serde(default = "default_true")] pub cert_fp_log_enabled: bool,
+    /// P3.2: 证书指纹日志文件最大字节数（达到后进行简单滚动 rename 为 .1 并重新开始）。默认 5MB。
+    #[serde(default = "default_cert_fp_max_bytes")] pub cert_fp_max_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +66,7 @@ fn default_san_whitelist() -> Vec<String> {
 }
 fn default_log_level() -> String { "info".to_string() }
 fn default_rollout_percent() -> u8 { 100 }
+fn default_cert_fp_max_bytes() -> u64 { 5 * 1024 * 1024 }
 
 /// 默认的假 SNI 候选列表（中国常见网站域名）
 fn default_fake_sni_hosts() -> Vec<String> {
@@ -101,7 +108,7 @@ impl Default for AppConfig {
                 max_redirects: default_max_redirects(),
                 large_body_warn_bytes: default_large_body_warn(),
             },
-            tls: TlsCfg { san_whitelist: default_san_whitelist(), insecure_skip_verify: false, skip_san_whitelist: false },
+            tls: TlsCfg { san_whitelist: default_san_whitelist(), insecure_skip_verify: false, skip_san_whitelist: false, metrics_enabled: true, cert_fp_log_enabled: true, cert_fp_max_bytes: default_cert_fp_max_bytes() },
             logging: LoggingCfg { auth_header_masked: default_true(), log_level: default_log_level() },
             retry: RetryCfg::default(),
             partial_filter_supported: false,
@@ -153,6 +160,9 @@ mod tests {
     assert!(s.contains("\"factor\""));
     assert!(s.contains("\"jitter\""));
     assert!(s.contains("\"partialFilterSupported\""));
+    assert!(s.contains("\"metricsEnabled\""));
+    assert!(s.contains("\"certFpLogEnabled\""));
+    assert!(s.contains("\"certFpMaxBytes\""));
     }
 
     #[test]
@@ -175,5 +185,8 @@ mod tests {
         assert!(cfg.http.follow_redirects);
         assert_eq!(cfg.http.max_redirects, 5);
         assert!(cfg.tls.san_whitelist.iter().any(|d| d.ends_with("github.com")));
+    assert!(cfg.tls.metrics_enabled, "metricsEnabled default true");
+    assert!(cfg.tls.cert_fp_log_enabled, "certFpLogEnabled default true");
+    assert_eq!(cfg.tls.cert_fp_max_bytes, 5*1024*1024);
     }
 }

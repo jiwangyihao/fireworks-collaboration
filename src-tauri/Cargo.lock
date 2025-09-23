@@ -1179,6 +1179,7 @@ dependencies = [
  "once_cell",
  "proptest",
  "rand 0.8.5",
+ "ring",
  "rustls 0.21.12",
  "serde",
  "serde_json",

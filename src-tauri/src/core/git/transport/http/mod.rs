@@ -14,7 +14,10 @@ use url::Url;
 
 use crate::core::config::model::AppConfig;
 use crate::core::tls::util::{decide_sni_host_with_proxy, match_domain, proxy_present};
-use crate::core::git::transport::{FallbackDecision, DecisionCtx, FallbackStage, TimingRecorder, NoopCollector, TransportMetricsCollector};
+use crate::core::git::transport::{FallbackDecision, DecisionCtx, FallbackStage, TimingRecorder};
+use crate::core::git::transport::{metrics_enabled};
+use crate::core::git::transport::metrics::{finish_and_store, tl_set_used_fake, tl_set_fallback_stage, tl_set_cert_fp_changed};
+use crate::core::git::transport::record_certificate;
 use crate::core::tls::verifier::{create_client_config, create_client_config_with_expected_name};
 
 mod auth;
@@ -127,8 +130,7 @@ impl CustomHttpsSubtransport {
         host: &str,
         port: u16,
     ) -> Result<(StreamOwned<ClientConnection, TcpStream>, bool, String), Error> {
-        let mut timing = TimingRecorder::new();
-        let collector: Arc<dyn TransportMetricsCollector> = Arc::new(NoopCollector::default());
+    let mut timing = TimingRecorder::new();
         tracing::debug!(target="git.transport", host=%host, port=%port, "begin tcp connect");
         let mut decision = FallbackDecision::initial(&DecisionCtx { policy_allows_fake: self.cfg.http.fake_sni_enabled, runtime_fake_disabled: false });
 
@@ -168,10 +170,19 @@ impl CustomHttpsSubtransport {
             let stage = decision.stage();
             match attempt(stage, host, port) {
                 Ok(ok) => {
-                    timing.finish(); collector.record(&timing.capture); return Ok(ok);
+                    if metrics_enabled() { finish_and_store(&mut timing); }
+                    // record used fake & stage
+                    tl_set_used_fake(ok.1);
+                    let stage_str = match decision.stage() { FallbackStage::Fake => "Fake", FallbackStage::Real => "Real", FallbackStage::Default => "Default", FallbackStage::None => "None" };
+                    tl_set_fallback_stage(stage_str);
+                    // fingerprint recording (best-effort)
+                    if let Some(certs) = ok.0.conn.peer_certificates() {
+                        if let Some((changed, _spki, _cert)) = record_certificate(host, &certs[..]) { if changed { tl_set_cert_fp_changed(true); } }
+                    }
+                    return Ok(ok);
                 }
                 Err(e) => {
-                    if let Some(_tr) = decision.advance_on_error() { continue; } else { timing.finish(); collector.record(&timing.capture); return Err(e); }
+                    if let Some(_tr) = decision.advance_on_error() { continue; } else { if metrics_enabled() { finish_and_store(&mut timing); } return Err(e); }
                 }
             }
         }

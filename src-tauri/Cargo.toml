@@ -46,6 +46,7 @@ anyhow = "1"
 thiserror = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 base64 = "0.22"
+  ring = { version = "0.17" }
 # 新增异步运行时依赖（修复 tokio / tokio_util 未解析错误）
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
 tokio-util = { version = "0.7", features = ["rt"] }
