@@ -176,3 +176,51 @@ mod tests_event_assert_smoke {
         assert_terminal_exclusive(&events, "result:success", &["result:exhausted", "result:abort"]);
     }
 }
+
+// ---- Structured events helper (opt-in) ----
+// 说明：为了避免在多个测试文件中重复实现结构化事件 -> JSON 行 / 唯一 id 校验 / 类型标签映射逻辑，
+// 这里提供最小抽象；当未来引入强类型枚举断言时可直接替换内部实现。
+
+#[allow(dead_code)] // 多个集成测试 crate 未同时使用全部 helper，避免重复 dead_code 噪音
+pub mod structured_ext {
+    use std::collections::HashSet;
+    use fireworks_collaboration_lib::events::structured::Event;
+
+    /// 将结构化事件序列序列化为 JSON 行（稳定排序按输入顺序）。
+    pub fn serialize_events_to_json_lines(events: &[Event]) -> Vec<String> {
+        events.iter()
+            .map(|e| serde_json::to_string(e).expect("serialize structured event"))
+            .collect()
+    }
+
+    /// 基于序列化 JSON 行验证所有出现的 id 唯一；支持多种 variant 路径。
+    pub fn assert_unique_event_ids(json_lines: &[String]) {
+        use serde_json::Value;
+        let mut ids = HashSet::new();
+        for (idx, line) in json_lines.iter().enumerate() {
+            let v: Value = serde_json::from_str(line).expect("line should be valid json");
+            // 遍历一层 data 下第一个对象 variant 取其 id 字段（若存在）
+            if let Some(data) = v.get("data") {
+                if let Some(obj) = data.as_object() {
+                    if let Some((_, variant_v)) = obj.iter().next() { // 取首个 variant
+                        if let Some(id) = variant_v.get("id").and_then(|idv| idv.as_str()) {
+                            assert!(ids.insert(id.to_string()), "duplicate event id detected: {} (line {})", id, idx);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 将结构化事件映射为顶层类型标签（Task/Policy/Strategy/Transport/...）。
+    pub fn map_structured_events_to_type_tags(events: &[Event]) -> Vec<String> {
+        events.iter().map(|e| {
+            match e { // 依赖 Display/Debug 之外的稳定 variant 名称
+                Event::Task(_) => "Task",
+                Event::Policy(_) => "Policy",
+                Event::Strategy(_) => "Strategy",
+                Event::Transport(_) => "Transport",
+            }.to_string()
+        }).collect()
+    }
+}
