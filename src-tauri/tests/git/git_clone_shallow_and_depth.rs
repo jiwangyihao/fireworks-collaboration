@@ -37,7 +37,7 @@ mod section_basic_shallow {
     use std::process::Command;
     use std::sync::atomic::AtomicBool;
     use fireworks_collaboration_lib::core::git::{DefaultGitService, service::GitService};
-    use crate::common::{fixtures::{rev_count, path_slug}, test_env};
+    use crate::common::{repo_factory::rev_count, fixtures::path_slug, test_env};
 
     fn build_origin(commits: u32) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("fwc-shallow-origin-{}", uuid::Uuid::new_v4()));
@@ -132,7 +132,7 @@ mod section_deepen {
     use std::sync::atomic::AtomicBool;
     use fireworks_collaboration_lib::core::git::{DefaultGitService, service::GitService};
     use crate::common::shallow_matrix::{shallow_cases, ShallowCase};
-    use crate::common::fixtures::{rev_count, path_slug, shallow_file_lines, detect_shallow_repo};
+    use crate::common::{repo_factory::rev_count, fixtures::{path_slug, shallow_file_lines, detect_shallow_repo}};
     use crate::common::test_env;
 
     fn build_origin(commits: u32) -> std::path::PathBuf {

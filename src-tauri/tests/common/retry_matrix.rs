@@ -10,6 +10,7 @@
 #![allow(dead_code)]
 
 use std::fmt::{Display, Formatter};
+use crate::common::CaseDescribe;
 
 #[derive(Debug, Clone, Copy)]
 pub enum BackoffKind {
@@ -39,6 +40,27 @@ impl Display for RetryCase {
         write!(f, "Retry(attempts={},base={},backoff={:?},policy={:?})", self.attempts, self.base_delay_ms, self.backoff, self.policy)
     }
 }
+
+impl RetryCase {
+    /// 便于参数化测试/日志的紧凑描述。
+    pub fn describe(&self) -> String { format!("a{}-b{}-{:?}-{}", self.attempts, self.base_delay_ms, self.backoff, self.policy_code()) }
+    /// 根据策略估算实际可执行尝试次数（AbortAfter(n) -> n-1 尝试，最少 0）。
+    pub fn effective_attempts(&self) -> u8 {
+        match self.policy {
+            PolicyOverride::AbortAfter(n) => n.saturating_sub(1).min(self.attempts),
+            _ => self.attempts,
+        }
+    }
+    /// 策略是否为 Abort。
+    pub fn is_abort(&self) -> bool { matches!(self.policy, PolicyOverride::AbortAfter(_)) }
+    /// 策略是否为提前成功。
+    pub fn is_force_success(&self) -> bool { matches!(self.policy, PolicyOverride::ForceSuccessEarly) }
+    fn policy_code(&self) -> &'static str {
+        match self.policy { PolicyOverride::None => "N", PolicyOverride::ForceSuccessEarly => "F", PolicyOverride::AbortAfter(_) => "A" }
+    }
+}
+
+impl CaseDescribe for RetryCase { fn describe(&self) -> String { self.describe() } }
 
 /// 返回一组代表性 retry 组合（避免组合爆炸）。
 /// 说明：
@@ -72,6 +94,9 @@ pub fn compute_backoff_sequence(case: &RetryCase) -> Vec<u64> {
     seq
 }
 
+/// 计算理论总逻辑延迟（不考虑提前成功/中止实际缩短，供上层做上界断言）。
+pub fn total_delay(case: &RetryCase) -> u64 { compute_backoff_sequence(case).into_iter().sum() }
+
 #[cfg(test)]
 mod tests_internal {
     use super::*;
@@ -87,5 +112,17 @@ mod tests_internal {
                 }
             }
         }
+    }
+
+    #[test]
+    fn describe_unique_and_effective_attempts_bounds() {
+        let cases = retry_cases();
+        let _descs = crate::common::assert_unique_describe(&cases);
+        for c in cases { assert!(c.effective_attempts() <= c.attempts); }
+    }
+
+    #[test]
+    fn total_delay_non_zero_when_attempts_gt0() {
+        for c in retry_cases() { if c.attempts > 0 { assert!(total_delay(&c) > 0); } }
     }
 }

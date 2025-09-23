@@ -29,22 +29,31 @@ pub type TagMapper = fn(&str) -> Option<EventTag>;
 ///  - 识别前缀（task:, pre:, cancel:, timeout:, strategy:, http:, tls:, retry:, progress:, policy:, transport:）
 ///  - 提取前缀作为标签；特殊处理 attempt#/result: 等模式。
 pub fn default_tag_mapper(line: &str) -> Option<EventTag> {
-    let prefixes = [
-        "task:", "pre:check:", "cancel:requested:", "timeout:", "strategy:",
-        "http:override", "tls:rollout", "attempt#", "result:", "progress:",
-        "retry_", "policy:", "transport:", "metric:",
+    // 更宽泛的前缀集合 + 新增 fetch/pipeline/filter/capability/push
+    const PREFIX_HINTS: &[&str] = &[
+        "task:", "pre:check:", "cancel:requested", "timeout:", "strategy:",
+        "http:override", "tls:", "attempt#", "result:", "progress:",
+        "retry", "policy:", "transport:", "metric:", "fetch:", "pipeline:",
+        "push:", "filter:", "capability:", "shallow:",
     ];
-    for p in prefixes {
-        if line.starts_with(p) || line.contains(p) { // contains 兼容某些中部 anchor
-            // attempt#/result: 保留后缀关键片段
-            if line.starts_with("attempt#") {
-                // attempt#1 -> Attempt
-                return Some(EventTag::new("Attempt"));
-            }
-            if line.starts_with("result:") { return Some(EventTag::new(&line[..line.find(' ').unwrap_or(line.len())])); }
-            if let Some(idx) = line.find(':') { return Some(EventTag::new(&line[..idx])); }
+
+    // attempt#N 归一化为 Attempt；result:xxx 归一化为 result:xxx token
+    if let Some(rest) = line.strip_prefix("attempt#") { if !rest.is_empty() { return Some(EventTag::new("Attempt")); } }
+    if line.starts_with("result:") {
+        let token = line.split_whitespace().next().unwrap_or(line);
+        return Some(EventTag::new(token));
+    }
+
+    // 直接匹配首个冒号前 token（允许多级，例如 tls:rollout:start -> tls）
+    if let Some(idx) = line.find(':') {
+        let head = &line[..=idx]; // 含冒号，利于与提示列表对齐
+        if PREFIX_HINTS.iter().any(|p| head.starts_with(p)) {
+            return Some(EventTag::new(&head[..head.len()-1])); // 去掉尾随冒号
         }
     }
+
+    // contains 兜底：某些 tag 可能在中部（例如 pre:check:failed）
+    for p in PREFIX_HINTS { if line.contains(p) { return Some(EventTag::new(p.trim_end_matches(':'))); } }
     None
 }
 
@@ -53,19 +62,18 @@ pub fn tagify<'a, I: IntoIterator<Item=&'a String>>(events: I, mapper: TagMapper
     events.into_iter().filter_map(|e| mapper(e)).collect()
 }
 
+/// 自定义闭包版本，便于一次性捕获上下文（例如基于正则或外部映射表）
+pub fn tagify_with<'a, I, F>(events: I, mut f: F) -> Vec<EventTag>
+where
+    I: IntoIterator<Item=&'a String>,
+    F: FnMut(&str) -> Option<EventTag>,
+{
+    events.into_iter().filter_map(|e| f(e)).collect()
+}
+
 /// 标签子序列匹配（与 expect_subsequence 一致逻辑，但操作 EventTag）。
 pub fn expect_tags_subsequence(tags: &[EventTag], anchors: &[&str]) {
-    let mut pos = 0usize;
-    for &a in anchors {
-        let mut found = None;
-        for (idx, tag) in tags.iter().enumerate().skip(pos) {
-            if tag.as_str().contains(a) { found = Some(idx); break; }
-        }
-        match found {
-            Some(i) => pos = i + 1,
-            None => panic!("[event-assert] tag subsequence anchor '{}' not found after index {}", a, if pos==0 {0usize.saturating_sub(1)} else {pos-1}),
-        }
-    }
+    subsequence_core(tags, anchors, |t| t.as_str(), "tag")
 }
 
 /// 终态互斥断言：确保 expected 子串至少出现一次，且 forbidden 任意一个都不出现。
@@ -92,101 +100,37 @@ pub fn assert_last_phase_contains(events: &[String], expected: &str) {
 /// 简单子序列匹配：按顺序确认每个锚点字符串在后续事件中第一次出现。
 /// 未来将升级为结构化事件类型匹配，并支持可选/重复段模式。
 pub fn expect_subsequence(events: &[String], anchors: &[&str]) {
+    subsequence_core(events, anchors, |s| s.as_str(), "line")
+}
+
+// ---------------- Internal generic core ----------------
+fn subsequence_core<T, F>(items: &[T], anchors: &[&str], project: F, kind: &str)
+where
+    F: Fn(&T) -> &str,
+{
     let mut pos = 0usize;
-    for &a in anchors {
+    for (ai, &anchor) in anchors.iter().enumerate() {
         let mut found = None;
-        for (idx, ev) in events.iter().enumerate().skip(pos) {
-            if ev.contains(a) { found = Some(idx); break; }
+        for (idx, it) in items.iter().enumerate().skip(pos) {
+            if project(it).contains(anchor) { found = Some(idx); break; }
         }
         match found {
             Some(i) => { pos = i + 1; },
             None => {
-                panic!("[event-assert] subsequence anchor '{}' not found after index {}", a, if pos==0 {0usize.saturating_sub(1)} else {pos-1});
+                // 提供上下文窗口：前后各2个元素展示 & 已匹配锚点数
+                let window_start = pos.saturating_sub(2);
+                let window_slice: Vec<_> = items.iter().skip(window_start).take(5).map(|it| project(it)).collect();
+                panic!(
+                    "[event-assert] {kind} subsequence mismatch: missing anchor '{anchor}' at step {ai} after index {}. Context(before+after)={:?} anchors={:?}",
+                    pos.saturating_sub(1), window_slice, anchors
+                );
             }
         }
     }
 }
 
-// ---- 结构化事件过渡占位 ----
-/// 未来将把生产事件枚举 (Event::Task/Policy/Strategy/...) 转换为统一标签；
-/// 目前提供占位函数，允许测试代码在升级前后保持调用点不变。
-/// 当前实现仅直接调用 tagify 以保证兼容。
-pub fn structured_tags<'a, I: IntoIterator<Item=&'a String>>(events: I) -> Vec<EventTag> {
-    tagify(events, default_tag_mapper)
-}
+// （structured_tags / expect_structured_sequence 已移除：未来结构化事件阶段再引入强类型接口）
 
-/// 结构化锚点子序列断言占位：等价于 expect_tags_subsequence。
-pub fn expect_structured_sequence(tags: &[EventTag], anchors: &[&str]) {
-    expect_tags_subsequence(tags, anchors)
-}
-
-// ---------------------------------------------------------------------------
-// Structured Event Helpers (migrated from support/event_assert.rs)
-// 提供针对生产结构化事件枚举的快照、筛选与语义断言。
-// 后续若 common 事件 DSL 升级为直接基于枚举，可融合精简。
-// ---------------------------------------------------------------------------
-// allow(dead_code): 结构化事件辅助函数在部分测试阶段可能未被全部引用
-use fireworks_collaboration_lib::events::structured::{Event, TaskEvent, PolicyEvent, StrategyEvent, TransportEvent, get_global_memory_bus};
-
-/// 获取当前全局 MemoryEventBus 的快照事件；若不存在则返回空 Vec。
-pub fn snapshot_events() -> Vec<Event> { get_global_memory_bus().map(|b| b.snapshot()).unwrap_or_default() }
-/// 查找是否存在满足谓词的事件。
-pub fn has_event<F: Fn(&Event) -> bool>(pred: F) -> bool { snapshot_events().iter().any(pred) }
-/// 收集所有策略事件便于测试遍历。
-pub fn collect_policy() -> Vec<PolicyEvent> { snapshot_events().into_iter().filter_map(|e| match e { Event::Policy(p)=>Some(p), _=>None }).collect() }
-/// 收集 TaskEvent
-pub fn collect_task() -> Vec<TaskEvent> { snapshot_events().into_iter().filter_map(|e| match e { Event::Task(t)=>Some(t), _=>None }).collect() }
-/// 简单断言：存在指定 code 的 PolicyEvent (例如 retry_strategy_override_applied)
-pub fn assert_policy_code(code: &str) { let all = collect_policy(); assert!(all.iter().any(|p| matches!(p, PolicyEvent::RetryApplied{code: c,..} if c==code)), "expected policy event code={code}, got={all:?}"); }
-/// 查找所有 RetryApplied 事件，返回 (id, changed)
-pub fn retry_applied_matrix() -> Vec<(String, Vec<String>)> { collect_policy().into_iter().filter_map(|p| match p { PolicyEvent::RetryApplied { id, changed, .. } => Some((id, changed)) }).collect() }
-/// 查找策略 Summary 事件
-pub fn collect_strategy_summary() -> Vec<StrategyEvent> { snapshot_events().into_iter().filter_map(|e| match e { Event::Strategy(s @ StrategyEvent::Summary { .. }) => Some(s), _=>None }).collect() }
-pub fn collect_transport_partial_fallback() -> Vec<(String,bool)> { snapshot_events().into_iter().filter_map(|e| match e { Event::Transport(TransportEvent::PartialFilterFallback { id, shallow, .. }) => Some((id, shallow)), _=>None }).collect() }
-/// Strategy 冲突事件收集与断言
-pub fn collect_strategy_conflicts() -> Vec<(String,String,String)> { snapshot_events().into_iter().filter_map(|e| match e { Event::Strategy(StrategyEvent::Conflict { id, kind, message }) => Some((id, kind, message)), _ => None }).collect() }
-pub fn assert_conflict_kind(id: &str, kind: &str, msg_contains: Option<&str>) {
-    let all = collect_strategy_conflicts();
-    let matches: Vec<_> = all.iter().filter(|(cid, ck, _)| cid==id && ck==kind).collect();
-    assert!(!matches.is_empty(), "expected StrategyEvent::Conflict id={id} kind={kind}, got={all:?}");
-    if let Some(m) = msg_contains { assert!(matches.iter().any(|(_,_,msg)| msg.contains(m)), "expected conflict message to contain '{m}' got={matches:?}"); }
-}
-/// Strategy Summary applied_codes 断言
-pub fn summary_applied_codes(id: &str) -> Vec<String> { snapshot_events().into_iter().filter_map(|e| match e { Event::Strategy(StrategyEvent::Summary { id: sid, applied_codes, .. }) if sid==id => Some(applied_codes), _ => None }).flatten().collect() }
-pub fn assert_applied_code(id: &str, code: &str) { let codes = summary_applied_codes(id); assert!(codes.iter().any(|c| c==code), "expected applied code {code} for task {id}, got {codes:?}"); }
-pub fn assert_no_applied_code(id: &str, code: &str) { let codes = summary_applied_codes(id); assert!(!codes.iter().any(|c| c==code), "did not expect applied code {code} for task {id}, got {codes:?}"); }
-/// Transport PartialFilter Capability / Unsupported
-pub fn collect_transport_partial_capability() -> Vec<(String,bool)> { snapshot_events().into_iter().filter_map(|e| match e { Event::Transport(TransportEvent::PartialFilterCapability { id, supported }) => Some((id, supported)), _=>None }).collect() }
-pub fn collect_transport_partial_unsupported() -> Vec<(String,String)> { snapshot_events().into_iter().filter_map(|e| match e { Event::Transport(TransportEvent::PartialFilterUnsupported { id, requested }) => Some((id, requested)), _=>None }).collect() }
-pub fn assert_partial_capability(id: &str, expect_supported: bool) {
-    let all = collect_transport_partial_capability();
-    let hit: Vec<_> = all.iter().filter(|(tid, _)| tid==id).collect();
-    assert!(!hit.is_empty(), "expected PartialFilterCapability event for {id}, got none: all={all:?}");
-    assert!(hit.iter().any(|(_, s)| *s==expect_supported), "expected supported={expect_supported} for {id}, got={hit:?}");
-}
-pub fn assert_no_partial_capability(id: &str) { let all = collect_transport_partial_capability(); assert!(!all.iter().any(|(tid, _)| tid==id), "did not expect PartialFilterCapability for {id}, got={all:?}"); }
-pub fn assert_partial_unsupported(id: &str, requested_contains: Option<&str>) {
-    let all = collect_transport_partial_unsupported();
-    let matches: Vec<_> = all.iter().filter(|(tid, _)| tid==id).collect();
-    assert!(!matches.is_empty(), "expected PartialFilterUnsupported for {id}, got none: all={all:?}");
-    if let Some(pat) = requested_contains { assert!(matches.iter().any(|(_, r)| r.contains(pat)), "expected requested to contain '{pat}' got matches={matches:?}"); }
-}
-pub fn assert_no_partial_unsupported(id: &str) { let all = collect_transport_partial_unsupported(); assert!(!all.iter().any(|(tid, _)| tid==id), "did not expect PartialFilterUnsupported for {id}, got={all:?}"); }
-pub fn assert_partial_fallback(id:&str, expect_shallow:Option<bool>) {
-    let all = collect_transport_partial_fallback();
-    let found: Vec<_> = all.iter().filter(|(tid, _)| tid==id).collect();
-    assert!(!found.is_empty(), "expected partial filter fallback event for task {id}, got none: all={all:?}");
-    if let Some(s) = expect_shallow { assert!(found.iter().any(|(_,sh)| *sh==s), "expected shallow={s} in fallback events for {id}, got={found:?}"); }
-}
-pub fn assert_no_partial_fallback(id:&str) { let all = collect_transport_partial_fallback(); assert!(!all.iter().any(|(tid, _)| tid==id), "did not expect partial filter fallback for task {id}, but found: {all:?}"); }
-/// 统计指定 task id 的生命周期计数
-pub fn task_lifecycle_counters(id: &str) -> (usize, usize, usize, usize) {
-    let mut started=0; let mut completed=0; let mut canceled=0; let mut failed=0;
-    for t in collect_task() { match t { TaskEvent::Started { id: tid, .. } if tid==id => started+=1, TaskEvent::Completed { id: tid } if tid==id => completed+=1, TaskEvent::Canceled { id: tid } if tid==id => canceled+=1, TaskEvent::Failed { id: tid, .. } if tid==id => failed+=1, _=>{} } }
-    (started, completed, canceled, failed)
-}
-/// Debug 打印
-pub fn debug_dump() { for e in snapshot_events() { eprintln!("STRUCTURED_EVENT: {:?}", e); } }
 
 #[cfg(test)]
 mod tests_event_assert_smoke {
@@ -208,5 +152,27 @@ mod tests_event_assert_smoke {
         ];
         let tags = tagify(&events, default_tag_mapper);
         expect_tags_subsequence(&tags, &["task", "cancel", "task"]);
+    }
+
+    #[test]
+    fn tagify_with_custom_mapper() {
+        let events = vec!["alpha:one".into(), "beta:two".into(), "alpha:three".into()];
+        let tags = tagify_with(&events, |l| l.strip_prefix("alpha:").map(|_| EventTag::new("alpha")));
+        assert_eq!(tags.iter().map(|t| t.as_str()).collect::<Vec<_>>(), vec!["alpha", "alpha"]);
+        expect_tags_subsequence(&tags, &["alpha", "alpha"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "missing anchor")] // 断言包含核心提示
+    fn subsequence_panic_contains_context() {
+        let events = vec!["a:start".into(), "b:mid".into(), "c:end".into()];
+        // 第二个锚点不存在
+        expect_subsequence(&events, &["a:start", "z:missing"]);
+    }
+
+    #[test]
+    fn terminal_exclusive_smoke_usage() {
+        let events = vec!["result:success".into()];
+        assert_terminal_exclusive(&events, "result:success", &["result:exhausted", "result:abort"]);
     }
 }

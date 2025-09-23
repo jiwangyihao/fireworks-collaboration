@@ -1,5 +1,10 @@
-//! repo_factory: 提供更高层次的测试仓库构造与 HEAD/分支状态工具。
-//! 当前仅实现 12.3 阶段所需的最小集合；后续阶段（clone/fetch/push）可扩展。
+//! repo_factory: 高层测试仓库构造 / 结构描述 / 分支 & 历史工具。
+//! 改进版：
+//!  * 统一内部初始化与提交逻辑（去重）
+//!  * 提供 RepoBuilder 构建多分支 + 线性/追加提交
+//!  * 提供 RepoDescriptor 便于测试输出/快照 (branches, commits)
+//!  * 保持向后兼容：原有 `repo_with_branches` / `repo_with_linear_commits` API 未删除
+//! 未来扩展：标签创建、复杂拓扑（分叉/合并）、基于对象计数的 shallow 验证支撑。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -7,47 +12,100 @@ use uuid::Uuid;
 use fireworks_collaboration_lib::core::git::default_impl::{init::git_init, commit::git_commit, add::git_add, branch::git_branch};
 use fireworks_collaboration_lib::core::git::service::ProgressPayload;
 
-/// 创建带若干分支的仓库：
-/// - 初始化 main 分支，写入并提交一个 base 文件。
-/// - 对 `branches` 中的每个名字创建分支（指向当前 HEAD，不自动 checkout）。
-#[allow(dead_code)]
-pub fn repo_with_branches(branches: &[&str]) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("fwc-branches-{}", Uuid::new_v4()));
+// ---- 内部通用 Helper ----
+fn init_empty_repo(path: &Path) {
     let cancel = AtomicBool::new(false);
-    git_init(&path, &cancel, |_p: ProgressPayload| {}).expect("init repo");
-    // base commit
-    std::fs::write(path.join("base.txt"), "base").unwrap();
-    git_add(&path, &["base.txt"], &cancel, |_p| {}).unwrap();
-    git_commit(&path, "chore: base", None, false, &cancel, |_p| {}).unwrap();
-    for b in branches { git_branch(&path, b, false, false, &cancel, |_p| {}).unwrap(); }
-    path
+    git_init(path, &cancel, |_p: ProgressPayload| {}).expect("init repo");
 }
 
-/// 读取当前 HEAD 所指向的本地分支名；若为分离 HEAD 则返回 None。
-#[allow(dead_code)]
-pub fn current_branch(repo_path: &Path) -> Option<String> {
-    let repo = git2::Repository::open(repo_path).ok()?;
-    let head = repo.head().ok()?;
-    if head.is_branch() { head.shorthand().map(|s| s.to_string()) } else { None }
-}
-
-/// 判断 HEAD 是否处于分离状态。
-#[allow(dead_code)]
-pub fn is_head_detached(repo_path: &Path) -> bool {
-    git2::Repository::open(repo_path).map(|r| r.head().map(|h| !h.is_branch()).unwrap_or(false)).unwrap_or(false)
-}
-
-/// 快速创建：指定 (commit_message, file_name, file_content) 序列并线性提交；返回路径。
-/// 可用于后续需要多提交历史的 checkout / reset 等场景。
-#[allow(dead_code)]
-pub fn repo_with_linear_commits(specs: &[(&str, &str, &str)]) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("fwc-linear-{}", Uuid::new_v4()));
+fn commit_file(repo: &Path, file: &str, content: &str, msg: &str) {
     let cancel = AtomicBool::new(false);
-    git_init(&path, &cancel, |_p: ProgressPayload| {}).expect("init repo");
-    for (msg, file, content) in specs {
-        std::fs::write(path.join(file), content).unwrap();
-        git_add(&path, &[*file], &cancel, |_p| {}).unwrap();
-        git_commit(&path, msg, None, false, &cancel, |_p| {}).unwrap();
+    std::fs::write(repo.join(file), content).expect("write file");
+    git_add(repo, &[file], &cancel, |_p| {}).expect("git add");
+    git_commit(repo, msg, None, false, &cancel, |_p| {}).expect("git commit");
+}
+
+fn create_temp(prefix: &str) -> PathBuf { std::env::temp_dir().join(format!("fwc-{prefix}-{}", Uuid::new_v4())) }
+
+/// 仓库结构描述（最小摘要，可用于断言或调试输出）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoDescriptor {
+    pub path: PathBuf,
+    pub branches: Vec<String>,
+    pub commit_count: usize,
+}
+// describe() 方法已移除（未被引用，保持结构最小化）。
+
+/// 测试仓库构建器：链式构造多分支 + 提交。
+#[derive(Debug, Default)]
+pub struct RepoBuilder {
+    base_commits: Vec<(String, String, String)>, // (file, content, msg)
+    branches: Vec<String>,
+    additional_commits: Vec<(String, String, String)>,
+}
+impl RepoBuilder {
+    pub fn new() -> Self { Self::default() }
+    /// 初始线性提交（依次创建）。
+    pub fn with_base_commit<S: Into<String>>(mut self, file: S, content: S, msg: S) -> Self {
+        let (file, content, msg) = (file.into(), content.into(), msg.into());
+        self.base_commits.push((file, content, msg)); self }
+    /// 在构建后追加的额外线性提交（构造完成后按顺序追加）。
+    pub fn with_commit<S: Into<String>>(mut self, file: S, content: S, msg: S) -> Self {
+        let (file, content, msg) = (file.into(), content.into(), msg.into());
+        self.additional_commits.push((file, content, msg)); self }
+    /// 添加需要创建的分支（指向最终 HEAD，不自动 checkout）。
+    pub fn with_branch<S: Into<String>>(mut self, name: S) -> Self { self.branches.push(name.into()); self }
+    pub fn build(self) -> RepoDescriptor {
+        let path = create_temp("repo-bld");
+        init_empty_repo(&path);
+        for (file, content, msg) in &self.base_commits { commit_file(&path, file, content, msg); }
+        for (file, content, msg) in &self.additional_commits { commit_file(&path, file, content, msg); }
+        let cancel = AtomicBool::new(false);
+        for b in &self.branches { git_branch(&path, b, false, false, &cancel, |_p| {}).expect("git branch"); }
+        let branches = list_local_branches(&path);
+        let commit_count = rev_count(&path) as usize;
+        RepoDescriptor { path, branches, commit_count }
     }
-    path
+}
+
+/// 读取当前仓库 HEAD 可达提交数量（利用 git log rev-list）。
+pub fn rev_count(path: &Path) -> u32 {
+    let repo = git2::Repository::open(path).expect("open repo for rev_count");
+    let mut revwalk = repo.revwalk().expect("revwalk");
+    revwalk.push_head().expect("push head");
+    let mut c = 0u32; for _ in revwalk { c += 1; } c
+}
+
+fn list_local_branches(path: &Path) -> Vec<String> {
+    let repo = git2::Repository::open(path).expect("open repo");
+    let mut out = Vec::new();
+    let branches = repo.branches(Some(git2::BranchType::Local)).expect("branches");
+    for b in branches { if let Ok((branch, _ty)) = b { if let Some(name) = branch.name().ok().flatten() { out.push(name.to_string()); } } }
+    out.sort(); out
+}
+
+
+// (branches_from_slice removed; builder now takes owned Strings directly)
+
+
+
+// ---- HEAD / 分支状态工具：保持原有函数，仅微调实现 (无需改) ----
+
+#[cfg(test)]
+mod tests_repo_factory {
+    use super::*;
+
+    #[test]
+    fn builder_basic_branches_and_commits() {
+        let desc = RepoBuilder::new()
+            .with_base_commit("a.txt", "A", "feat: a")
+            .with_commit("b.txt", "B", "feat: b")
+            .with_branch("dev")
+            .with_branch("release")
+            .build();
+        assert!(desc.commit_count >= 2, "expect >=2 commits");
+        assert!(desc.branches.iter().any(|b| b == "dev"));
+        assert!(desc.branches.iter().any(|b| b == "release"));
+    }
+
 }

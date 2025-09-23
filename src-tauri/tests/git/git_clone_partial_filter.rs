@@ -33,7 +33,7 @@ mod common;
 
 // ---------------- section_capability ----------------
 mod section_capability {
-    use crate::common::{partial_filter_matrix::{partial_filter_cases, PartialFilterCase, PartialFilterKind}, partial_filter_support::{assess_partial_filter, SupportLevel, warn_if_no_filter_marker}, test_env};
+    use crate::common::{partial_filter_matrix::{clone_partial_filter_cases, PartialFilterCase, PartialFilterKind}, partial_filter_support::{assess_partial_filter, SupportLevel, warn_if_no_filter_marker}, test_env};
     use crate::common::git_scenarios::{CloneParams, run_clone};
 
     fn build_params_for_case(case: &PartialFilterCase) -> CloneParams {
@@ -51,7 +51,7 @@ mod section_capability {
     #[test]
     fn clone_partial_capability_each_case_support_level_not_unsupported() {
         test_env::init_test_env();
-        for case in partial_filter_cases() {
+    for case in clone_partial_filter_cases() {
             let params = build_params_for_case(&case);
             let out = run_clone(&params);
             let outcome = assess_partial_filter(params.filter.as_deref().unwrap_or(""), params.depth, &out.events);
