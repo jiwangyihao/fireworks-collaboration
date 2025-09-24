@@ -33,49 +33,12 @@ use fireworks_collaboration_lib::core::git::default_impl::helpers::map_git2_erro
 use fireworks_collaboration_lib::core::git::errors::ErrorCategory;
 use crate::common::test_env::init_test_env;
 
-#[path = "../common/mod.rs"] mod common; // 引入 test_env 所需（局部路径）
+#[path = "../common/mod.rs"] mod common; // 引入 test_env / prelude
+use crate::common::prelude::*; // 统一引入公共工具（i18n/断言/矩阵等）
 
 #[ctor::ctor]
 fn __init_env() { init_test_env(); }
-use std::collections::{HashMap, HashSet};
-
-// --- 临时测试端 AppErrorKind 抽象（未来迁入生产代码） ---
-// 说明：
-//  * 通过与 ErrorCategory 一一映射保证后续扩展（Timeout/Permission 等）时只需在
-//    bridge 函数中增加匹配分支；
-//  * 测试先行提供语义层，可在 12.15 接入结构化任务错误事件时直接复用。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum AppErrorKind { Network, Protocol, Cancel, Timeout, Permission, Other }
-
-fn app_error_from_category(cat: ErrorCategory) -> AppErrorKind {
-    match cat {
-        ErrorCategory::Network => AppErrorKind::Network,
-        ErrorCategory::Protocol => AppErrorKind::Protocol,
-        ErrorCategory::Cancel => AppErrorKind::Cancel,
-        // 当前生产分类尚未暴露 Timeout/Permission，统一映射 Other；后续接入后在此分支拆出
-        _ => AppErrorKind::Other,
-    }
-}
-
-// locale fixture: key -> (en, zh) 简化；真实实现应来源于生产 i18n 表。
-fn locale_fixture() -> HashMap<&'static str, (&'static str, &'static str)> {
-    let mut m = HashMap::new();
-    m.insert("error.network.timeout", ("Network timeout", "网络超时"));
-    m.insert("error.protocol.invalid", ("Protocol invalid", "协议错误"));
-    m.insert("error.cancel.requested", ("Operation cancelled", "操作已取消"));
-    m
-}
-
-fn locale_keys() -> Vec<&'static str> { locale_fixture().keys().cloned().collect() }
-
-// 简化：fallback 获取：若 locale 不存在或 key 缺失 -> en
-fn translate(key: &str, locale: &str) -> Option<String> {
-    let f = locale_fixture();
-    f.get(key).map(|(en, zh)| match locale {
-        "zh" => zh.to_string(),
-        _ => en.to_string(),
-    })
-}
+use std::collections::HashSet;
 
 // ---------------- section_error_mapping ----------------
 mod section_error_mapping {
@@ -86,28 +49,6 @@ mod section_error_mapping {
         let err = git2::Error::from_str("无法 连接 到 服务器: 超时");
         let cat = map_git2_error(&err);
         assert!(matches!(cat, ErrorCategory::Network), "expected Network got {:?}", cat);
-        let app = app_error_from_category(cat);
-        assert_eq!(app, AppErrorKind::Network);
-    }
-
-    #[test]
-    fn app_error_kind_bridge_roundtrip_smoke() {
-        use ErrorCategory::*;
-        let cats = [Network, Protocol, Cancel];
-        for c in cats { let k = app_error_from_category(c); match (c, k) {
-                (Network, AppErrorKind::Network) | (Protocol, AppErrorKind::Protocol) | (Cancel, AppErrorKind::Cancel) => {},
-                _ => panic!("bridge mismatch {:?} -> {:?}", c, k)
-            }}
-    }
-
-    #[test]
-    fn app_error_kind_future_variants_currently_other() {
-        // 确认未来预留枚举（Timeout/Permission）尚无直接分类路径（必须映射为 Other 占位）
-        // 这里直接构造一个不匹配的类别：使用生产分类中的“其它”类型（若存在）或模拟 -> 断言映射为 Other。
-        // 由于 ErrorCategory 未暴露 Timeout/Permission，我们仅验证 bridge 函数不产生这些值。
-        use ErrorCategory::*;
-        let cats = [Network, Protocol, Cancel];
-        for c in cats { let k = app_error_from_category(c); assert!(!matches!(k, AppErrorKind::Timeout | AppErrorKind::Permission), "unexpected early mapping to future variant {:?}", k); }
     }
 }
 
@@ -146,12 +87,7 @@ mod section_i18n_fallback {
     }
 }
 
-// ---------------- section_integration_edge ----------------
-mod section_integration_edge {
-    // 仍为占位：后续将模拟多错误来源并断言只归约到单一 AppErrorKind + 正确 locale key
-    #[test]
-    fn integration_edge_placeholder() { assert!(true); }
-}
+// 删除过时占位：integration_edge_placeholder（无实际覆盖价值）
 
 // -----------------------------------------------------------------------------
 // Phase 4 属性测试集中 (strategy / retry / partial_filter / tls)

@@ -40,6 +40,7 @@ pub mod retry_matrix;          // 12.9: push & retry 矩阵
 pub mod http_override_stub;    // 12.10: http override cases & stub
 pub mod pipeline;              // 12.15: pipeline DSL (e2e scaffolding)
 pub mod task_wait;             // 12.18: 任务等待辅助
+pub mod i18n;                  // 12.19: 简化 i18n fixture/translate for tests
 
 // （移除 TEST_COMMON_VERSION / init / ensure_init 兼容层）
 
@@ -141,6 +142,9 @@ pub mod prelude {
 
 	// 通用 Trait / helper
 	pub use super::{CaseDescribe, assert_unique_describe, describe_slug};
+
+	// i18n 简化工具（测试侧 fixture）
+	pub use super::i18n::{translate, locale_keys};
 
 	// 任务等待辅助
 	pub use super::task_wait::wait_until_task_done;
