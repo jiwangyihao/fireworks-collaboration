@@ -20,3 +20,7 @@ pub use metrics::{TimingRecorder, TimingCapture, TransportMetricsCollector, Noop
 // P3.2: expose selective metrics thread-local helpers for task registry emission
 pub use metrics::{tl_snapshot, metrics_enabled};
 pub use fingerprint::record_certificate;
+
+// Test-only helpers re-export for ease of access in tests modules
+#[cfg(test)]
+pub use http::{test_reset_fallback_counters, test_snapshot_fallback_counters};

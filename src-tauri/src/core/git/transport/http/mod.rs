@@ -26,6 +26,31 @@ mod stream;
 
 pub use auth::set_push_auth_header_value;
 
+// P3.3: Real-Host 验证失败触发的回退统计（Fake -> Real），按原因分类。
+use std::sync::atomic::{AtomicU64, Ordering};
+static FALLBACK_TLS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static FALLBACK_VERIFY_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+pub fn test_reset_fallback_counters() { FALLBACK_TLS_TOTAL.store(0, Ordering::Relaxed); FALLBACK_VERIFY_TOTAL.store(0, Ordering::Relaxed); }
+#[cfg(test)]
+pub fn test_snapshot_fallback_counters() -> (u64, u64) { (FALLBACK_TLS_TOTAL.load(Ordering::Relaxed), FALLBACK_VERIFY_TOTAL.load(Ordering::Relaxed)) }
+
+fn classify_and_count_fallback(err_msg: &str) -> &'static str {
+    let em = err_msg.to_ascii_lowercase();
+    // rustls 错误文本约定：General("SAN whitelist mismatch") 或域名不符等 -> Verify；其他握手/IO -> Tls
+    if em.contains("whitelist") || em.contains("san") || em.contains("name") || em.contains("verify") {
+        FALLBACK_VERIFY_TOTAL.fetch_add(1, Ordering::Relaxed);
+        "Verify"
+    } else {
+        FALLBACK_TLS_TOTAL.fetch_add(1, Ordering::Relaxed);
+        "Tls"
+    }
+}
+
+#[cfg(test)]
+pub fn test_classify_and_count_fallback(err_msg: &str) -> &'static str { classify_and_count_fallback(err_msg) }
+
 /// 自定义 HTTPS 子传输：仅接管 TCP/TLS 建立与可选伪 SNI；HTTP 语义仍由 libgit2 智能传输处理。
 pub(super) struct CustomHttpsSubtransport {
     pub(super) cfg: AppConfig,
@@ -149,7 +174,8 @@ impl CustomHttpsSubtransport {
             timing.mark_tls_start();
             let server_name = ServerName::try_from(sni.as_str()).map_err(|_| Error::from_str("invalid sni host"))?;
             let tls_cfg: Arc<ClientConfig> = if used_fake { Arc::new(create_client_config_with_expected_name(&self.cfg.tls, host)) } else { self.tls.clone() };
-            tracing::debug!(target="git.transport", host=%host, port=%port, sni=%sni, used_fake=%used_fake, stage=?stage, "start tls handshake");
+            let rhv = self.cfg.tls.real_host_verify_enabled;
+            tracing::debug!(target="git.transport", host=%host, port=%port, sni=%sni, used_fake=%used_fake, stage=?stage, real_host_verify=%rhv, "start tls handshake");
             let mut conn = ClientConnection::new(tls_cfg.clone(), server_name).map_err(|e| Error::from_str(&format!("tls client: {e}")))?;
             match conn.complete_io(&mut &tcp) {
                 Ok(_) => {
@@ -159,7 +185,13 @@ impl CustomHttpsSubtransport {
                     Ok((stream, used_fake, sni))
                 }
                 Err(err) => {
-                    tracing::debug!(target="git.transport", host=%host, port=%port, used_fake=%used_fake, stage=?stage, error=%err.to_string(), "tls handshake failed");
+                    let em = err.to_string();
+                    // 若当前是 Fake 阶段，记录一次回退统计并打印锚点日志
+                    if matches!(stage, FallbackStage::Fake) {
+                        let reason = classify_and_count_fallback(&em);
+                        tracing::debug!(target="git.transport", host=%host, port=%port, used_fake=%used_fake, stage=?stage, reason=%reason, "adaptive_tls_fallback: fake->real");
+                    }
+                    tracing::debug!(target="git.transport", host=%host, port=%port, used_fake=%used_fake, stage=?stage, error=%em, "tls handshake failed");
                     Err(Error::from_str(&format!("tls handshake: {err}")))
                 }
             }
