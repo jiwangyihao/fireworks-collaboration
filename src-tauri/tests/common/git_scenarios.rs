@@ -55,7 +55,14 @@ pub fn run_push_with_retry(spec: &PushRetrySpec) -> PushRetryOutcome {
     let mut events = vec!["push:op:Push".into()];
     let seq_full = compute_backoff_sequence(&spec.case);
     // AbortBefore: 直接中止
-    if let PolicyOverride::AbortAfter(k) = spec.case.policy { if k > 0 { events.push(format!("push:abort:before_attempt#{}", k)); return PushRetryOutcome { result: PushResultKind::Abort, attempts_used: k.saturating_sub(1), events }; } }
+    if let PolicyOverride::AbortAfter(k) = spec.case.policy {
+        if k > 0 {
+            events.push(format!("push:abort:before_attempt#{}", k));
+            // 发出明确的终态 result 事件，便于 tag/终态断言
+            events.push("push:result:abort".into());
+            return PushRetryOutcome { result: PushResultKind::Abort, attempts_used: k.saturating_sub(1), events };
+        }
+    }
     let mut result = PushResultKind::Success; // 默认成功
     let mut attempts_used = 0u8;
     for attempt in 1..=spec.case.attempts {
@@ -111,6 +118,38 @@ pub fn _run_clone_with_cancel(params: &CloneParams, cancel: &AtomicBool) -> Clon
     let mut events = Vec::new();
     let _res = impl_clone::do_clone("https://example.com/placeholder.git", &dest, params.depth, cancel, |p:ProgressPayload| { events.push(p.phase); if cancel.load(Ordering::Relaxed) { /* early flag checked by impl */ } });
     CloneOutcome { dest, events }
+}
+
+/// 统一 clone 结果基础断言：
+/// - 事件非空
+/// - 目标目录存在
+/// 未来真实实现接入后可扩展分类 / 结束标志检查。
+#[allow(dead_code)]
+pub fn assert_clone_events(label: &str, out: &CloneOutcome) {
+    assert!(!out.events.is_empty(), "[{label}] events should not be empty");
+    assert!(out.dest.exists(), "[{label}] dest should exist");
+}
+
+// ---- Fetch (events-oriented placeholder) ----
+/// 基础 fetch 参数（保持与 CloneParams 形状相近，便于组合/迁移）。
+#[derive(Debug, Clone, Default)]
+pub struct FetchParams { pub depth: Option<u32>, pub filter: Option<String> }
+
+/// fetch 结果（当前仅需要事件序列用于断言 Tag/marker）。
+#[derive(Debug, Default, Clone)]
+pub struct FetchOutcome { pub events: Vec<String> }
+
+/// 运行一次（占位）fetch：
+/// - 生成标准化事件前缀："fetch:Start" -> [optional filter marker] -> "fetch:Complete"
+/// - 若提供 filter，插入原样字符串（推荐以 "filter:" 前缀传入），便于 `assess_partial_filter` 检测 marker。
+/// - 若提供 depth，插入提示事件（当前仅用于可视化，不参与断言）。
+pub fn run_fetch(params: &FetchParams) -> FetchOutcome {
+    let mut events = Vec::new();
+    events.push("fetch:Start".into());
+    if let Some(depth) = params.depth { events.push(format!("shallow:depth:{}", depth)); }
+    if let Some(f) = &params.filter { if !f.is_empty() { events.push(f.clone()); } }
+    events.push("fetch:Complete".into());
+    FetchOutcome { events }
 }
 
 #[cfg(test)]

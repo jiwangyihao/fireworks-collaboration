@@ -124,6 +124,15 @@ pub fn assert_commit_unchanged(out: &PipelineOutcome) {
 /// 失败路径：若 before/after 同时存在则确认未前进；缺失 after 视为允许（fetch 失败等情况）。
 #[allow(dead_code)]
 pub fn assert_failure_commit_not_advanced(out: &PipelineOutcome) {
+    // 优先依据远端仓库判断（push 失败时更符合预期：远端不应前进）
+    if let Some(remote) = &out.remote_dir {
+        if let Some(b) = out.commit_count_before { // b 在 clone 步设置：等于远端初始提交数
+            let a_remote = git_rev_count(remote);
+            assert_eq!(a_remote, b, "commit count should not advance on failure: before={b} after={a_remote}");
+            return;
+        }
+    }
+    // 回退：若没有远端信息，则比较本地 before/after（仅模拟路径）
     if let (Some(b), Some(a)) = (out.commit_count_before, out.commit_count_after) {
         assert_eq!(a, b, "commit count should not advance on failure: before={b} after={a}");
     }

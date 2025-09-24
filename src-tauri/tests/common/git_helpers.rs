@@ -32,6 +32,16 @@ pub fn assert_err_in(label: &str, err: GitError, want: &[ErrorCategory]) {
 /// 组合 expect + 多类别；如果是 Ok 则 panic。
 pub fn expect_err_in<T>(label: &str, r: Result<T, GitError>, want: &[ErrorCategory]) { match r { Ok(_) => panic!("[{label}] expected error in {:?} but got Ok", want), Err(e) => assert_err_in(label, e, want) } }
 
+/// 断言进度百分比序列单调不下降（允许相等）。
+/// 提供统一的失败信息格式，减少各测试文件内重复循环代码。
+#[allow(dead_code)]
+pub fn assert_progress_monotonic(label: &str, percents: &[u32]) {
+    assert!(percents.len() >= 2, "[{label}] expect >=2 progress events, got {:?}", percents);
+    for w in percents.windows(2) {
+        if w[1] < w[0] { panic!("[{label}] progress not monotonic: {:?}", percents); }
+    }
+}
+
 #[cfg(test)]
 mod tests_git_helpers {
     use super::*;

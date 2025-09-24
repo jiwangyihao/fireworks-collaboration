@@ -99,6 +99,23 @@ pub fn stage_files(repo_path: &Path, files: &[(&str, &str)]) {
     index.write().unwrap();
 }
 
+/// 便捷：写入并提交一组文件（需要仓库已初始化）。返回提交是否成功 (Err 透传 GitError)。
+/// 用途：branch/checkout 等测试快速追加提交，无需重复展开 add + commit 细节。
+#[allow(dead_code)]
+pub fn commit_files(repo_path: &Path, files: &[(&str, &str)], message: &str, allow_empty: bool) -> Result<(), fireworks_collaboration_lib::core::git::errors::GitError> {
+    use fireworks_collaboration_lib::core::git::default_impl::{add::git_add, commit::git_commit};
+    use fireworks_collaboration_lib::core::git::service::ProgressPayload;
+    use std::sync::atomic::AtomicBool;
+    // 写文件
+    write_files(repo_path, files).expect("write commit files");
+    let cancel = AtomicBool::new(false);
+    // add
+    let add_list: Vec<&str> = files.iter().map(|(n, _)| *n).collect();
+    git_add(repo_path, &add_list, &cancel, |_p: ProgressPayload| {})?;
+    // commit
+    git_commit(repo_path, message, None, allow_empty, &cancel, |_p| {})
+}
+
 /// 便捷：创建仓库并一次性写入 & 暂存若干文件，返回路径。
 pub fn repo_with_staged(files: &[(&str, &str)]) -> PathBuf { let dir = create_empty_dir(); stage_files(&dir, files); dir }
 
