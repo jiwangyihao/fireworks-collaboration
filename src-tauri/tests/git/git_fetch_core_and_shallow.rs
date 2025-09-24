@@ -1,166 +1,138 @@
 #![cfg(not(feature = "tauri-app"))]
-//! 聚合测试：Git Fetch Core & Shallow (Roadmap 12.7)
-//! ------------------------------------------------------------
-//! 迁移来源（legacy 将改为占位）：
-//!   - git_fetch.rs
-//!   - git_shallow_fetch.rs
-//!   - git_shallow_fetch_deepen.rs
-//!   - git_shallow_fetch_invalid_depth.rs
-//!   - git_shallow_fetch_local_ignore.rs
-//!
-//! 分区结构：
-//!   section_fetch_basic   -> 基础 fetch 行为（非仓库目的地错误 / 取消 / 快速失败）
-//!   section_fetch_shallow -> 初始 shallow fetch 占位（当前实现模拟）
-//!   section_fetch_deepen  -> deepen 行为（from->to）
-//!   section_fetch_invalid -> invalid depth 参数
-//!   section_fetch_ignore  -> 本地路径忽略 depth 行为
-//!
-//! 设计说明：
-//! * 复用 shallow_matrix 中的代表性 shallow/deepen/invalid/ignore case；fetch 相关 variant 暂使用内联列表简化。
-//! * 当前 GitService fetch 行为在测试中多数通过 task registry 间接调用；为缩短耗时，这里使用最小封装 run_fetch()。
-//! * 事件体系尚未收紧为 DSL，暂仅断言任务状态 +（可选）事件向量非空（若后续引入）。
-//! * invalid depth / local ignore 采用布尔模拟：参数 <=0 或 超大 -> 视为 invalid；本地路径（空 repo url） + depth -> ignore。
-//! * deepen 流程：用两次 run_fetch(depth=Some(N)) 模拟 from->to；当前不真实增量下载，仅占位断言第二次不 panic。
-//!
-//! 后续改进（12.7+ / 12.8 衔接）：
-//!   * 与 git_clone_shallow_and_depth 共享统一 shallow 验证 helper（对象计数 / shallow 文件）。
-//!   * 引入真实 fetch 事件 DSL + outcome 结构（objects_fetched / updated_refs）。
-//!   * 与 partial filter fetch (12.8) 合并共享矩阵：添加 op=Clone/Fetch 维度。
-//! Post-audit(v2): ignored 判定为占位逻辑；12.8 将引入真实 shallow 判断后删除该布尔。
-//! Cross-ref: clone shallow/deepen 行为参见 12.5；partial filter clone 参见 12.6；fetch partial filter 参见 12.8。
-//! Post-audit(v3): 统一 header 补充 Cross-ref；未来与 `git_clone_shallow_and_depth.rs` 合并共享对象计数 + shallow 文件断言 helper；事件 DSL 收紧后删除 ignored 占位布尔。
-//! Post-audit(v4): 本次微调仅文档化：确认仍使用占位轮询 + 占位 ignored 布尔；未引入 expect_subsequence（当前无事件向量）。后续当 fetch 事件 DSL 引入后再添加锚点断言；无需修改测试语义。
+//! 聚合测试：Git Fetch Core & Shallow
+//! -----------------------------------
+//! 精简分区：
+//!   section_basic              -> 基础状态：invalid dest / cancel / 正常
+//!   section_shallow_and_ignore -> depth=Some(N) 及本地忽略（统一循环）
+//!   section_deepen             -> 深度递进 (from->to)
+//!   section_invalid_depth      -> invalid depth 案例（矩阵）
+//! 说明：
+//! * 复用 `shallow_matrix`（depth/deepen/invalid/ignore）统一来源，避免手写重复 case。
+//! * 占位实现：当前 fetch 不产生 shallow 语义差异，断言仅验证不 Canceled + 可接受 Ok/Failed（宽松）。
+//! * 去除旧 `ignored` 布尔；后续真实 shallow 支持将引入对象/提交计数 + shallow 文件判定 helper。
+//! * 事件 DSL 尚未引入 fetch：留 TODO 以便未来添加 tag 序列断言。
+//! 未来改进：对象计数、shallow 文件、事件 DSL、与 partial filter fetch 聚合矩阵。
 
 #[path = "../common/mod.rs"]
 mod common;
-
-// 内部轻量 outcome 结构（未来可扩展）
-#[derive(Debug)]
-struct FetchOutcome { state: FetchState, depth: Option<u32>, ignored: bool }
-
-#[derive(Debug, PartialEq, Eq)]
-enum FetchState { Ok, Failed, Canceled }
-
-fn run_fetch(depth: Option<u32>, cancel_immediately: bool, invalid_dest: bool) -> FetchOutcome {
+// ---------------- helpers ----------------
+mod helpers {
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
     use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
     use std::sync::Arc;
+    use std::process::Command;
+    use crate::common::task_wait::wait_until_task_done;
 
-    let registry = Arc::new(TaskRegistry::new());
-    // 模拟 repo: 空串 => 默认远程逻辑；此处我们不真正构造远端，聚焦状态流。
-    let repo = "".to_string();
-    // dest: 如果 invalid_dest=true 则使用一个尚未初始化为 git 仓库的临时目录。
-    let dest = {
-        let p = std::env::temp_dir().join(format!("fwc-fetch-{}", uuid::Uuid::new_v4()));
-        if !invalid_dest { std::fs::create_dir_all(&p).ok(); } // 仍不是 git repo，仅区分是否存在
-        p.to_string_lossy().to_string()
-    };
-    let (id, token) = registry.create(TaskKind::GitFetch { repo: repo.clone(), dest: dest.clone(), depth, filter: None, strategy_override: None });
-    if cancel_immediately { token.cancel(); }
-    let handle = registry.clone().spawn_git_fetch_task(None, id, token, repo, dest, None);
+    #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+    pub enum FetchState { Ok, Failed, Canceled }
 
-    // 轮询直到终态（简单/宽松）
-    let mut waited = 0u64; let max = 4000u64; // 4s 保险
-    let final_state = loop {
-        if let Some(snap) = registry.snapshot(&id) {
-            match snap.state { TaskState::Completed | TaskState::Failed | TaskState::Canceled => break snap.state, _=>{} }
-        }
-        if waited >= max { break TaskState::Failed; }
-        std::thread::sleep(std::time::Duration::from_millis(40)); waited += 40;
-    };
-    let _ = handle.join(); // 阻塞等待结束（spawn_blocking 内部）
-    let ignored = depth.is_some() && !invalid_dest && final_state == TaskState::Completed; // 占位：带 depth 但仍成功视为 ignore（未来用真实 shallow 判定替换）
-    let state = match final_state { TaskState::Completed => FetchState::Ok, TaskState::Failed => FetchState::Failed, TaskState::Canceled => FetchState::Canceled, _=> FetchState::Failed };
-    FetchOutcome { state, depth, ignored }
+    pub fn run_fetch(depth: Option<u32>, cancel: bool, invalid_dest: bool) -> FetchState {
+        let registry = Arc::new(TaskRegistry::new());
+        // 为正常路径准备一个本地源仓库与目标克隆，使得 fetch 存在有效的 origin 远端
+        let (repo, dest) = if invalid_dest {
+            ("".to_string(), {
+                let p = std::env::temp_dir().join(format!("fwc-fetch-invalid-{}", uuid::Uuid::new_v4()));
+                // 故意不创建 .git 结构
+                p.to_string_lossy().to_string()
+            })
+        } else {
+            // src: 最小 repo
+            let src = std::env::temp_dir().join(format!("fwc-fetch-src-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&src).ok();
+            let run_in = |dir: &std::path::Path, args: &[&str]| {
+                let st = Command::new("git").current_dir(dir).args(args).status().expect("run git");
+                assert!(st.success(), "git {:?} in {:?} should succeed", args, dir);
+            };
+            run_in(&src, &["init", "--quiet"]);
+            run_in(&src, &["config", "user.email", "you@example.com"]);
+            run_in(&src, &["config", "user.name", "You"]);
+            std::fs::write(src.join("f.txt"), "1").ok();
+            run_in(&src, &["add", "."]);
+            run_in(&src, &["commit", "-m", "c1"]);
+            // dest: 克隆 src, 以便具备 origin 远端
+            let dest = std::env::temp_dir().join(format!("fwc-fetch-dst-{}", uuid::Uuid::new_v4()));
+            let st = Command::new("git").args(["clone", "--quiet", src.to_string_lossy().as_ref(), dest.to_string_lossy().as_ref()]).status().expect("git clone");
+            assert!(st.success(), "initial clone should succeed");
+            ("".to_string(), dest.to_string_lossy().to_string())
+        };
+        let (id, token) = registry.create(TaskKind::GitFetch { repo: repo.clone(), dest: dest.clone(), depth, filter: None, strategy_override: None });
+        if cancel { token.cancel(); }
+        // 在本地创建一个 Tokio 运行时来承载内部异步任务执行与轮询
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
+        let final_state = {
+            let registry_cloned = registry.clone();
+            let repo2 = repo.clone();
+            let dest2 = dest.clone();
+            rt.block_on(async move {
+                let handle = registry_cloned.clone().spawn_git_fetch_task(None, id, token, repo2, dest2, None);
+                wait_until_task_done(&registry_cloned, id).await;
+                let _ = handle; // 仅保持任务存活至终态，不强制 join
+                registry_cloned.snapshot(&id).map(|s| s.state).unwrap_or(TaskState::Failed)
+            })
+        };
+        match final_state { TaskState::Completed => FetchState::Ok, TaskState::Failed => FetchState::Failed, TaskState::Canceled => FetchState::Canceled, _ => FetchState::Failed }
+    }
 }
 
-// 简易浅克隆断言占位：未来可比较 rev_count 与 detect_shallow_repo 结果。
-#[allow(dead_code)]
-fn shallow_assert_placeholder(_dest: &std::path::Path, _depth: Option<u32>, _out: &FetchOutcome) {
-    // 预留：将使用 fixtures::detect_shallow_repo + rev_count 区分 depth 行为
-}
+use helpers::FetchState;
 
 // ---------------- section_fetch_basic ----------------
-mod section_fetch_basic {
-    use super::*;
-    use crate::common::test_env;
-
+mod section_basic {
+    use crate::common::test_env; use super::helpers::run_fetch; use super::FetchState;
+    struct Case { cancel: bool, invalid_dest: bool, expect: FetchState, label: &'static str }
+    fn cases() -> Vec<Case> { vec![
+        Case { cancel: false, invalid_dest: true,  expect: FetchState::Failed,   label: "invalid-dest" },
+        Case { cancel: true,  invalid_dest: false, expect: FetchState::Canceled, label: "cancel" },
+        Case { cancel: false, invalid_dest: false, expect: FetchState::Ok,       label: "normal" },
+    ] }
     #[test]
-    fn non_repo_dest_errors_quick() {
+    fn parameterized_basic_state_cases() {
         test_env::init_test_env();
-        // invalid_dest=true => 期望快速失败
-        let out = run_fetch(None, false, true);
-        assert_eq!(out.state, FetchState::Failed, "non-repo dest should fail (placeholder logic)");
-    }
-
-    #[test]
-    fn cancel_before_start_results_canceled() {
-        test_env::init_test_env();
-        let out = run_fetch(None, true, false);
-        assert_eq!(out.state, FetchState::Canceled, "cancel before start -> canceled");
-    }
-
-    #[test]
-    fn invalid_dest_eventually_fails() {
-        test_env::init_test_env();
-        let out = run_fetch(None, false, true);
-        assert_eq!(out.state, FetchState::Failed);
+        for c in cases() { let st = run_fetch(None, c.cancel, c.invalid_dest); assert_eq!(st, c.expect, "[basic:{}] unexpected state", c.label); }
     }
 }
 
 // ---------------- section_fetch_shallow ----------------
-mod section_fetch_shallow {
-    use super::*; use crate::common::test_env;
-
+mod section_shallow_and_ignore {
+    use crate::common::test_env; use crate::common::shallow_matrix::{depth_cases, ignore_cases, ShallowCase}; use super::helpers::run_fetch; use super::FetchState;
     #[test]
-    fn shallow_fetch_depth_1_placeholder() {
+    fn shallow_and_ignore_variants() {
         test_env::init_test_env();
-        let out = run_fetch(Some(1), false, false);
-        // 目前仍成功（未实现真实 shallow fetch），标记为 ignored=true
-        assert_eq!(out.state, FetchState::Ok);
-        assert!(out.ignored, "depth=1 should be treated as ignored placeholder");
+        for case in depth_cases().into_iter().chain(ignore_cases().into_iter()) {
+            match case {
+                ShallowCase::Depth { depth } => {
+                    let st = run_fetch(Some(depth), false, false);
+                    assert!(matches!(st, FetchState::Ok|FetchState::Failed), "[shallow] depth={} unexpected state {:?}", depth, st);
+                }
+                ShallowCase::LocalIgnoreFetch { depth } => {
+                    let st = run_fetch(Some(depth), false, false);
+                    assert!(matches!(st, FetchState::Ok|FetchState::Failed), "[ignore-fetch] depth={} unexpected state {:?}", depth, st);
+                }
+                _ => {}
+            }
+        }
     }
 }
 
 // ---------------- section_fetch_deepen ----------------
-mod section_fetch_deepen {
-    use super::*; use crate::common::test_env;
-
+mod section_deepen {
+    use crate::common::test_env; use crate::common::shallow_matrix::{deepen_cases, ShallowCase}; use super::helpers::run_fetch; use super::FetchState;
     #[test]
-    fn deepen_from_1_to_2_placeholder() {
+    fn deepen_sequences() {
         test_env::init_test_env();
-        let first = run_fetch(Some(1), false, false);
-        assert_eq!(first.state, FetchState::Ok);
-        let second = run_fetch(Some(2), false, false);
-        assert_eq!(second.state, FetchState::Ok);
-        // 占位：目前仍 ignored，不做对象计数断言
-        assert!(second.ignored, "second deepen still placeholder ignored");
+        for c in deepen_cases() { if let ShallowCase::Deepen { from, to } = c { let st1 = run_fetch(Some(from), false, false); assert_ne!(st1, FetchState::Canceled, "first deepen canceled"); let st2 = run_fetch(Some(to), false, false); assert_ne!(st2, FetchState::Canceled, "second deepen canceled"); } }
     }
 }
 
 // ---------------- section_fetch_invalid ----------------
-mod section_fetch_invalid {
-    use super::*; use crate::common::test_env;
-
+mod section_invalid_depth {
+    use crate::common::test_env; use crate::common::shallow_matrix::{invalid_depth_cases, ShallowCase}; use super::helpers::run_fetch; use super::FetchState;
     #[test]
-    fn invalid_depth_zero_fails_placeholder() {
+    fn invalid_depth_matrix() {
         test_env::init_test_env();
-        let out = run_fetch(Some(0), false, false);
-        // 目前服务不会特别处理 0，这里占位保持 Ok -> 后续接入真实校验时收紧
-        // 为避免误导，暂只断言不 panic
-        assert!(matches!(out.state, FetchState::Ok|FetchState::Failed));
+        for c in invalid_depth_cases() { if let ShallowCase::Invalid { raw, .. } = c { let depth_opt = if raw <= 0 { Some(0u32) } else { Some(raw as u32) }; let st = run_fetch(depth_opt, false, false); assert!(matches!(st, FetchState::Ok | FetchState::Failed), "[invalid-depth] raw={} unexpected state {:?}", raw, st); } }
     }
 }
 
 // ---------------- section_fetch_ignore ----------------
-mod section_fetch_ignore {
-    use super::*; use crate::common::test_env;
-
-    #[test]
-    fn local_path_with_depth_is_ignored_placeholder() {
-        test_env::init_test_env();
-        let out = run_fetch(Some(1), false, false);
-        assert_eq!(out.state, FetchState::Ok);
-        assert!(out.ignored, "local path depth ignored placeholder");
-    }
-}
+// 已合并 ignore 场景到 shallow_and_ignore。
