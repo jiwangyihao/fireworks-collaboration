@@ -69,6 +69,44 @@ use crate::common::task_wait::wait_until_task_done as wait_done;
 #[ctor::ctor]
 fn __init_env() { init_test_env(); }
 
+// ---------------- section_transport_fallback_decision ----------------
+// 将核心传输层的 Fallback 决策状态机（Fake -> Real -> Default）单元测试迁移为集成测试。
+// 覆盖点：
+//  - policy 不允许 fake -> 初始 Default，原因为 SkipFakePolicy
+//  - policy 允许 fake -> 初始 Fake，advance 触发完整链路 Fake->Real->Default
+//  - runtime_fake_disabled=true 时行为等同 policy skip
+mod section_transport_fallback_decision { use super::*; use fireworks_collaboration_lib::core::git::transport::{DecisionCtx, FallbackDecision, FallbackStage, FallbackReason};
+    #[test]
+    fn skip_fake_policy_creates_default_stage() {
+        let ctx = DecisionCtx { policy_allows_fake: false, runtime_fake_disabled: false };
+        let d = FallbackDecision::initial(&ctx);
+        assert_eq!(d.stage(), FallbackStage::Default);
+        let h = d.history();
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].reason, FallbackReason::SkipFakePolicy);
+    }
+
+    #[test]
+    fn full_chain_history_order() {
+        let ctx = DecisionCtx { policy_allows_fake: true, runtime_fake_disabled: false };
+        let mut d = FallbackDecision::initial(&ctx);
+        assert_eq!(d.stage(), FallbackStage::Fake);
+        d.advance_on_error().expect("fake->real");
+        d.advance_on_error().expect("real->default");
+        assert!(d.advance_on_error().is_none());
+        let stages: Vec<_> = d.history().iter().map(|tr| tr.to).collect();
+        assert_eq!(stages, vec![FallbackStage::Fake, FallbackStage::Real, FallbackStage::Default]);
+    }
+
+    #[test]
+    fn runtime_fake_disabled_behaves_like_policy_skip() {
+        let ctx = DecisionCtx { policy_allows_fake: true, runtime_fake_disabled: true };
+        let d = FallbackDecision::initial(&ctx);
+        assert_eq!(d.stage(), FallbackStage::Default);
+        assert_eq!(d.history()[0].reason, FallbackReason::SkipFakePolicy);
+    }
+}
+
 // 已移除：早期 Strategy 占位实现与覆盖测试（无真实策略逻辑，改由结构化事件测试覆盖）
 
 // ---------------- section_http_basic ----------------
