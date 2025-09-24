@@ -153,3 +153,23 @@ fn cert_fingerprint_changed_base64_length() {
     }
     assert!(found, "expected fingerprint change event for b64.test");
 }
+
+#[test]
+fn fallback_counters_classification_basic() {
+    use crate::core::git::transport::http::{test_reset_fallback_counters, test_snapshot_fallback_counters, test_classify_and_count_fallback};
+    test_reset_fallback_counters();
+    // Map messages that should classify as Verify
+    let r1 = test_classify_and_count_fallback("tls: General(SAN whitelist mismatch)");
+    assert_eq!(r1, "Verify");
+    let r2 = test_classify_and_count_fallback("certificate name mismatch");
+    assert_eq!(r2, "Verify");
+    // Map messages that should classify as Tls
+    let r3 = test_classify_and_count_fallback("tls handshake: unexpected eof");
+    assert_eq!(r3, "Tls");
+    let r4 = test_classify_and_count_fallback("tcp connect: timed out");
+    assert_eq!(r4, "Tls");
+    // Check counters reflect 2 Verify and 2 Tls
+    let (tls, verify) = test_snapshot_fallback_counters();
+    assert_eq!(verify, 2, "verify counter");
+    assert_eq!(tls, 2, "tls counter");
+}
