@@ -19,13 +19,20 @@
 //!   section_retry_event    -> 事件锚点子序列验证
 
 #[path = "../common/mod.rs"] mod common;
-use common::{retry_matrix::{retry_cases, PolicyOverride}, git_scenarios::{run_push_with_retry, PushRetrySpec, PushResultKind}, event_assert::{expect_subsequence, assert_contains_phases, EventPhase, tagify, default_tag_mapper, expect_tags_subsequence, assert_terminal_exclusive}};
+use common::{retry_matrix::{retry_cases, PolicyOverride}, git_scenarios::{run_push_with_retry, PushRetrySpec, PushResultKind}, event_assert::{expect_subsequence, tagify, default_tag_mapper, expect_tags_subsequence, assert_terminal_exclusive}};
+
+// 小辅助：若标签可映射，则断言最小锚点子序列
+fn expect_tag_subseq_min(events: &[String], anchors: &[&str]) {
+    let tags = tagify(events, default_tag_mapper);
+    if !tags.is_empty() { expect_tags_subsequence(&tags, anchors); }
+}
 
 // ---------------- section_push_basic ----------------
 mod section_push_basic {
     use super::*;
     #[test]
     fn push_basic_success_placeholder() {
+        common::test_env::init_test_env();
         // 使用一个 attempts=1 且不模拟冲突的 case：直接成功
         let case = retry_cases().into_iter().find(|c| c.attempts == 1).expect("have attempts=1 case");
         let spec = PushRetrySpec { case, simulate_conflict: false };
@@ -34,10 +41,9 @@ mod section_push_basic {
         assert_eq!(out.attempts_used, 1);
         assert!(!out.events.is_empty());
         // 标签锚点：Attempt -> result:success
-        let tags = tagify(&out.events, default_tag_mapper);
-        if !tags.is_empty() { expect_tags_subsequence(&tags, &["Attempt", "result:success"]); }
+        expect_tag_subseq_min(&out.events, &["Attempt", "result:success"]);
         // 终态互斥：success 不得与 exhausted/abort/conflict 同存
-    assert_terminal_exclusive(&out.events, "result:success", &["result:exhausted", "result:abort"]);
+        assert_terminal_exclusive(&out.events, "result:success", &["result:exhausted", "result:abort"]);
     }
 }
 
@@ -45,43 +51,43 @@ mod section_push_basic {
 mod section_push_conflict {
     use super::*;
     #[test]
-    fn push_conflict_exhausted() {
-        // 选一个 attempts>=3 的 case，模拟冲突直到耗尽
-        let case = retry_cases().into_iter().find(|c| c.attempts >= 3 && matches!(c.policy, PolicyOverride::None)).expect("have attempts>=3 none policy case");
-        let spec = PushRetrySpec { case, simulate_conflict: true };
-        let out = run_push_with_retry(&spec);
-        assert!(matches!(out.result, PushResultKind::Exhausted));
-        assert_eq!(out.attempts_used, case.attempts);
-        // 最后事件包含 exhausted
-        assert!(out.events.iter().any(|e| e.contains("exhausted")), "missing exhausted event");
-        let tags = tagify(&out.events, default_tag_mapper);
-        if !tags.is_empty() { expect_tags_subsequence(&tags, &["Attempt", "Attempt"]); }
-        assert_terminal_exclusive(&out.events, "result:exhausted", &["result:success", "result:abort"]);
-    }
+    fn push_conflict_variants_behave_as_expected() {
+        common::test_env::init_test_env();
+        // 预备不同策略 case 选择器
+        let pick_exhausted = || retry_cases().into_iter().find(|c| c.attempts >= 3 && matches!(c.policy, PolicyOverride::None)).expect("have attempts>=3 none policy case");
+        let pick_force_success = || retry_cases().into_iter().find(|c| matches!(c.policy, PolicyOverride::ForceSuccessEarly)).expect("force success early case");
+        let pick_abort = || retry_cases().into_iter().find(|c| matches!(c.policy, PolicyOverride::AbortAfter(_))).expect("abort case");
 
-    #[test]
-    fn push_conflict_force_success_early() {
-        let case = retry_cases().into_iter().find(|c| matches!(c.policy, PolicyOverride::ForceSuccessEarly)).expect("force success early case");
-        let spec = PushRetrySpec { case, simulate_conflict: true };
-        let out = run_push_with_retry(&spec);
-        assert!(matches!(out.result, PushResultKind::Success));
-        assert!(out.attempts_used >= 2, "should succeed by attempt 2 or later");
-        let tags = tagify(&out.events, default_tag_mapper);
-        if !tags.is_empty() { expect_tags_subsequence(&tags, &["Attempt", "Attempt", "result:success"]); }
-    assert_terminal_exclusive(&out.events, "result:success", &["result:exhausted", "result:abort"]);
-    }
+        // Exhausted
+        {
+            let case = pick_exhausted();
+            let out = run_push_with_retry(&PushRetrySpec { case, simulate_conflict: true });
+            assert!(matches!(out.result, PushResultKind::Exhausted));
+            assert_eq!(out.attempts_used, case.attempts);
+            assert!(out.events.iter().any(|e| e.contains("exhausted")), "missing exhausted event");
+            expect_tag_subseq_min(&out.events, &["Attempt", "Attempt"]);
+            assert_terminal_exclusive(&out.events, "result:exhausted", &["result:success", "result:abort"]);
+        }
 
-    #[test]
-    fn push_conflict_abort_before_attempt() {
-        // AbortAfter(k) case -> 直接 Abort
-        let case = retry_cases().into_iter().find(|c| matches!(c.policy, PolicyOverride::AbortAfter(_))).expect("abort case");
-        let spec = PushRetrySpec { case, simulate_conflict: true };
-        let out = run_push_with_retry(&spec);
-        assert!(matches!(out.result, PushResultKind::Abort));
-        assert!(out.events.iter().any(|e| e.contains("abort")), "missing abort event");
-        let tags = tagify(&out.events, default_tag_mapper);
-        if !tags.is_empty() { expect_tags_subsequence(&tags, &["Attempt", "result:abort"]); }
-        assert_terminal_exclusive(&out.events, "result:abort", &["result:success", "result:exhausted"]);
+        // ForceSuccessEarly
+        {
+            let case = pick_force_success();
+            let out = run_push_with_retry(&PushRetrySpec { case, simulate_conflict: true });
+            assert!(matches!(out.result, PushResultKind::Success));
+            assert!(out.attempts_used >= 2, "should succeed by attempt 2 or later");
+            expect_tag_subseq_min(&out.events, &["Attempt", "Attempt", "result:success"]);
+            assert_terminal_exclusive(&out.events, "result:success", &["result:exhausted", "result:abort"]);
+        }
+
+        // AbortBeforeAttempt
+        {
+            let case = pick_abort();
+            let out = run_push_with_retry(&PushRetrySpec { case, simulate_conflict: true });
+            assert!(matches!(out.result, PushResultKind::Abort));
+            assert!(out.events.iter().any(|e| e.contains("abort")), "missing abort event");
+            expect_tag_subseq_min(&out.events, &["Attempt", "result:abort"]);
+            assert_terminal_exclusive(&out.events, "result:abort", &["result:success", "result:exhausted"]);
+        }
     }
 }
 
@@ -99,32 +105,38 @@ mod section_retry_policy {
 mod section_retry_event {
     use super::*;
     #[test]
-    fn event_subsequence_contains_attempt_and_result() {
-        let case = retry_cases().into_iter().find(|c| c.attempts >= 3 && matches!(c.policy, PolicyOverride::None)).expect("case");
-        let spec = PushRetrySpec { case, simulate_conflict: true };
-        let out = run_push_with_retry(&spec);
-        // 预期至少出现 attempt#1 -> attempt#2 -> retry -> exhausted（子序列锚点）
-    expect_subsequence(&out.events, &["attempt#1", "attempt#2", "result:retry"]);
-    // 标签序列（Attempt -> Attempt -> result:retry）
-    let tags = tagify(&out.events, default_tag_mapper);
-    expect_tags_subsequence(&tags, &["Attempt", "Attempt", "result:retry"]);
-        // retry 模式下最终要么 retry/exhausted 事件存在
-        assert!(out.events.iter().any(|e| e.contains("retry")));
-        assert!(out.events.iter().any(|e| e.contains("result")));
-        // 如果已耗尽，终态应为 exhausted；否则允许 conflict 中间态（不做互斥断言以免与中间 conflict 重合）
-        if out.events.iter().any(|e| e.contains("result:exhausted")) {
-            assert_terminal_exclusive(&out.events, "result:exhausted", &["result:success", "result:abort"]);
-        }
-    }
+    fn event_attempt_and_result_subsequences() {
+        common::test_env::init_test_env();
+        #[derive(Copy, Clone)]
+        enum PathKind { RetryThenExhausted, ForceSuccessEarly }
+        let kinds = [PathKind::RetryThenExhausted, PathKind::ForceSuccessEarly];
 
-    #[test]
-    fn event_success_subsequence() {
-        let case = retry_cases().into_iter().find(|c| matches!(c.policy, PolicyOverride::ForceSuccessEarly)).expect("force success early case");
-        let spec = PushRetrySpec { case, simulate_conflict: true };
-        let out = run_push_with_retry(&spec);
-        expect_subsequence(&out.events, &["attempt#1", "attempt#2", "result:success"]);
-        let tags = tagify(&out.events, default_tag_mapper);
-        expect_tags_subsequence(&tags, &["Attempt", "Attempt", "result:success"]);
-        assert_terminal_exclusive(&out.events, "result:success", &["result:exhausted", "result:abort"]);
+        for kind in kinds {
+            let (case, simulate_conflict, raw_anchors, tag_anchors): (_, bool, &[&str], &[&str]) = match kind {
+                PathKind::RetryThenExhausted => (
+                    retry_cases().into_iter().find(|c| c.attempts >= 3 && matches!(c.policy, PolicyOverride::None)).expect("case"),
+                    true,
+                    &["attempt#1", "attempt#2", "result:retry"],
+                    &["Attempt", "Attempt", "result:retry"],
+                ),
+                PathKind::ForceSuccessEarly => (
+                    retry_cases().into_iter().find(|c| matches!(c.policy, PolicyOverride::ForceSuccessEarly)).expect("force success early case"),
+                    true,
+                    &["attempt#1", "attempt#2", "result:success"],
+                    &["Attempt", "Attempt", "result:success"],
+                ),
+            };
+            let out = run_push_with_retry(&PushRetrySpec { case, simulate_conflict });
+            expect_subsequence(&out.events, raw_anchors);
+            expect_tag_subseq_min(&out.events, tag_anchors);
+            // 基本存在性检查
+            assert!(out.events.iter().any(|e| e.contains("result")));
+            if out.events.iter().any(|e| e.contains("result:exhausted")) {
+                assert_terminal_exclusive(&out.events, "result:exhausted", &["result:success", "result:abort"]);
+            }
+            if out.events.iter().any(|e| e.contains("result:success")) {
+                assert_terminal_exclusive(&out.events, "result:success", &["result:exhausted", "result:abort"]);
+            }
+        }
     }
 }

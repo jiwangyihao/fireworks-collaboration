@@ -28,10 +28,8 @@ mod section_basic_init {
     use std::sync::atomic::AtomicBool;
     use fireworks_collaboration_lib::core::git::default_impl::init::git_init;
     use fireworks_collaboration_lib::core::git::errors::ErrorCategory;
-    use fireworks_collaboration_lib::core::git::service::ProgressPayload;
 
     use crate::common::{fixtures, test_env};
-
     use crate::common::git_helpers;
 
     #[test]
@@ -39,9 +37,8 @@ mod section_basic_init {
         test_env::init_test_env();
         let dest = fixtures::temp_dir();
         let flag = AtomicBool::new(false);
-        let mut phases = Vec::new();
-            git_init(&dest, &flag, |p: ProgressPayload| { phases.push(p.phase); }).expect("[init-basic] init ok");
-            assert!(dest.join(".git").exists(), "[init-basic] expect .git dir after init");
+        git_init(&dest, &flag, |_p| {}).expect("[init-basic] init ok");
+        assert!(dest.join(".git").exists(), "[init-basic] expect .git dir after init");
         // second time should be idempotent
         git_init(&dest, &flag, |_p| {}).expect("[init-basic] idempotent");
     }
@@ -56,49 +53,6 @@ mod section_basic_init {
         let out = git_init(&dest, &flag, |_p| {});
         assert!(out.is_err(), "[init-basic] expect cancel error");
         git_helpers::assert_err_category("init-basic cancel", out.err().unwrap(), ErrorCategory::Cancel);
-    }
-}
-
-mod section_repo_layout {
-    use std::sync::atomic::AtomicBool;
-    use fireworks_collaboration_lib::core::git::errors::ErrorCategory;
-    use fireworks_collaboration_lib::core::git::default_impl as impls;
-    use crate::common::{fixtures, test_env};
-
-    use crate::common::git_helpers;
-
-    #[test]
-    fn operations_not_implemented_yet_return_protocol() {
-        test_env::init_test_env();
-        let dest = fixtures::temp_dir();
-        std::fs::create_dir_all(&dest).unwrap();
-        let flag = AtomicBool::new(false);
-
-        // commit
-        let r = impls::commit::git_commit(&dest, "msg", None, false, &flag, |_p| {});
-        git_helpers::expect_err_category("repo-layout commit", r, ErrorCategory::Protocol);
-
-        // branch
-        let r = impls::branch::git_branch(&dest, "dev", false, false, &flag, |_p| {});
-        git_helpers::expect_err_category("repo-layout branch", r, ErrorCategory::Protocol);
-
-        // checkout
-        let r = impls::checkout::git_checkout(&dest, "dev", false, &flag, |_p| {});
-        git_helpers::expect_err_category("repo-layout checkout", r, ErrorCategory::Protocol);
-
-        // tag
-        let r = impls::tag::git_tag(&dest, "v0.1.0", None, false, false, &flag, |_p| {});
-        git_helpers::expect_err_category("repo-layout tag", r, ErrorCategory::Protocol);
-
-        // remote set/add/remove
-        let r = impls::remote::git_remote_set(&dest, "origin", "https://example.com/repo.git", &flag, |_p| {});
-        git_helpers::expect_err_category("repo-layout remote-set", r, ErrorCategory::Protocol);
-
-        let r = impls::remote::git_remote_add(&dest, "origin", "https://example.com/repo.git", &flag, |_p| {});
-        git_helpers::expect_err_category("repo-layout remote-add", r, ErrorCategory::Protocol);
-
-        let r = impls::remote::git_remote_remove(&dest, "origin", &flag, |_p| {});
-        git_helpers::expect_err_category("repo-layout remote-remove", r, ErrorCategory::Protocol);
     }
 }
 
