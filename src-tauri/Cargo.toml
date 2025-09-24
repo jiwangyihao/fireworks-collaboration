@@ -74,6 +74,7 @@ futures = "0.3"
 once_cell = "1"
 proptest = "1"
 criterion = { version = "0.5", features=["html_reports"] }
+ctor = "0.2"
 
 # Windows specific dependencies for registry access
 [target.'cfg(windows)'.dependencies]
@@ -107,4 +108,59 @@ required-features = []
 [[test]]
 name = "git_clone_partial_filter"
 path = "tests/git/git_clone_partial_filter.rs"
+required-features = []
+
+[[test]]
+name = "git_fetch_core_and_shallow"
+path = "tests/git/git_fetch_core_and_shallow.rs"
+required-features = []
+
+[[test]]
+name = "git_fetch_partial_filter"
+path = "tests/git/git_fetch_partial_filter.rs"
+required-features = []
+
+[[test]]
+name = "git_preconditions_and_cancel"
+path = "tests/git/git_preconditions_and_cancel.rs"
+required-features = []
+
+[[test]]
+name = "git_push_and_retry"
+path = "tests/git/git_push_and_retry.rs"
+required-features = []
+
+[[test]]
+name = "git_strategy_and_override"
+path = "tests/git/git_strategy_and_override.rs"
+required-features = []
+
+[[test]]
+name = "git_tag_and_remote"
+path = "tests/git/git_tag_and_remote.rs"
+required-features = []
+
+[[test]]
+name = "events_structure_and_contract"
+path = "tests/events/events_structure_and_contract.rs"
+required-features = []
+
+[[test]]
+name = "events_task_lifecycle_git"
+path = "tests/events/events_task_lifecycle_git.rs"
+required-features = []
+
+[[test]]
+name = "error_and_i18n"
+path = "tests/quality/error_and_i18n.rs"
+required-features = []
+
+[[test]]
+name = "task_registry_and_service"
+path = "tests/tasks/task_registry_and_service.rs"
+required-features = []
+
+[[test]]
+name = "e2e_public_git"
+path = "tests/e2e/e2e_public_git.rs"
 required-features = []

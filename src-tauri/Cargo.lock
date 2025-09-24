@@ -1172,6 +1172,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "criterion",
+ "ctor",
  "dirs-next",
  "futures",
  "git2",

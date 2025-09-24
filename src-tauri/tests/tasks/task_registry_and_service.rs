@@ -72,14 +72,7 @@ async fn wait_task_state(reg: &TaskRegistry, id: &uuid::Uuid, target: TaskState,
     wait_predicate(|| reg.snapshot(id).map(|s| s.state == target).unwrap_or(false), max_ms, DEFAULT_STEP_MS).await
 }
 
-#[allow(dead_code)]
-async fn spawn_sleep_and_wait(reg: Arc<TaskRegistry>, ms: u64, enter_running_ms: u64) -> (uuid::Uuid, fireworks_collaboration_lib::core::tasks::model::CancelToken) {
-    let (id, token) = reg.create(TaskKind::Sleep { ms });
-    reg.clone().spawn_sleep_task(None, id, token.clone(), ms);
-    // 进入 Running (宽松处理：如果任务非常短可能直接 Completed)
-    let _ = wait_predicate(|| reg.snapshot(&id).map(|s| matches!(s.state, TaskState::Running | TaskState::Completed)).unwrap_or(false), enter_running_ms, 15).await;
-    (id, token)
-}
+// spawn_sleep_and_wait 已移除：避免暴露 CancelToken 类型并降低表面积；按需在具体用例内展开。
 
 // ---------------- section_registry_lifecycle ----------------
 mod section_registry_lifecycle { //! 完成 / 列表基础行为
