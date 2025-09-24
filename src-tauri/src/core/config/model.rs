@@ -25,6 +25,9 @@ pub struct TlsCfg {
     #[serde(default)] pub insecure_skip_verify: bool,
     /// 可选：仅跳过自定义 SAN 白名单校验，但仍执行常规的证书链与域名校验（默认关闭）
     #[serde(default)] pub skip_san_whitelist: bool,
+    /// P3.3: Real-Host 验证开关。启用后即便握手使用了 Fake SNI，证书链与主机名验证也以真实目标域名为准；
+    /// 失败时会触发一次回退至 Real SNI 的重握手。默认启用。
+    #[serde(default = "default_true")] pub real_host_verify_enabled: bool,
     /// P3.2: 是否启用自适应 TLS timing 指标采集（connect/tls/firstByte/total）。默认启用；关闭后不记录/不发事件。
     #[serde(default = "default_true")] pub metrics_enabled: bool,
     /// P3.2: 是否启用证书指纹日志与变更检测。默认启用；关闭后不写 cert-fp.log 也不触发指纹变更事件。
@@ -108,7 +111,7 @@ impl Default for AppConfig {
                 max_redirects: default_max_redirects(),
                 large_body_warn_bytes: default_large_body_warn(),
             },
-            tls: TlsCfg { san_whitelist: default_san_whitelist(), insecure_skip_verify: false, skip_san_whitelist: false, metrics_enabled: true, cert_fp_log_enabled: true, cert_fp_max_bytes: default_cert_fp_max_bytes() },
+            tls: TlsCfg { san_whitelist: default_san_whitelist(), insecure_skip_verify: false, skip_san_whitelist: false, real_host_verify_enabled: true, metrics_enabled: true, cert_fp_log_enabled: true, cert_fp_max_bytes: default_cert_fp_max_bytes() },
             logging: LoggingCfg { auth_header_masked: default_true(), log_level: default_log_level() },
             retry: RetryCfg::default(),
             partial_filter_supported: false,
@@ -160,6 +163,7 @@ mod tests {
     assert!(s.contains("\"factor\""));
     assert!(s.contains("\"jitter\""));
     assert!(s.contains("\"partialFilterSupported\""));
+    assert!(s.contains("\"realHostVerifyEnabled\""));
     assert!(s.contains("\"metricsEnabled\""));
     assert!(s.contains("\"certFpLogEnabled\""));
     assert!(s.contains("\"certFpMaxBytes\""));
@@ -185,6 +189,7 @@ mod tests {
         assert!(cfg.http.follow_redirects);
         assert_eq!(cfg.http.max_redirects, 5);
         assert!(cfg.tls.san_whitelist.iter().any(|d| d.ends_with("github.com")));
+    assert!(cfg.tls.real_host_verify_enabled, "realHostVerifyEnabled default true");
     assert!(cfg.tls.metrics_enabled, "metricsEnabled default true");
     assert!(cfg.tls.cert_fp_log_enabled, "certFpLogEnabled default true");
     assert_eq!(cfg.tls.cert_fp_max_bytes, 5*1024*1024);
