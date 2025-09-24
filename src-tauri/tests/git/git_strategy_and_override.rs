@@ -75,7 +75,7 @@ fn __init_env() { init_test_env(); }
 //  - policy 不允许 fake -> 初始 Default，原因为 SkipFakePolicy
 //  - policy 允许 fake -> 初始 Fake，advance 触发完整链路 Fake->Real->Default
 //  - runtime_fake_disabled=true 时行为等同 policy skip
-mod section_transport_fallback_decision { use super::*; use fireworks_collaboration_lib::core::git::transport::{DecisionCtx, FallbackDecision, FallbackStage, FallbackReason};
+mod section_transport_fallback_decision { use fireworks_collaboration_lib::core::git::transport::{DecisionCtx, FallbackDecision, FallbackStage, FallbackReason};
     #[test]
     fn skip_fake_policy_creates_default_stage() {
         let ctx = DecisionCtx { policy_allows_fake: false, runtime_fake_disabled: false };
