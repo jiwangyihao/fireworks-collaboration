@@ -39,6 +39,7 @@ pub mod partial_filter_support; // 支撑能力判定
 pub mod retry_matrix;          // 12.9: push & retry 矩阵
 pub mod http_override_stub;    // 12.10: http override cases & stub
 pub mod pipeline;              // 12.15: pipeline DSL (e2e scaffolding)
+pub mod task_wait;             // 12.18: 任务等待辅助
 
 // （移除 TEST_COMMON_VERSION / init / ensure_init 兼容层）
 
@@ -104,6 +105,7 @@ pub mod prelude {
 	pub use super::git_scenarios::{
 		GitOp,
 		CloneParams, CloneOutcome, run_clone,
+		FetchParams, FetchOutcome, run_fetch,
 		PushRetrySpec, PushRetryOutcome, PushResultKind, run_push_with_retry,
 	};
 	pub use super::retry_matrix::{RetryCase, BackoffKind, PolicyOverride, compute_backoff_sequence, retry_cases};
@@ -139,4 +141,7 @@ pub mod prelude {
 
 	// 通用 Trait / helper
 	pub use super::{CaseDescribe, assert_unique_describe, describe_slug};
+
+	// 任务等待辅助
+	pub use super::task_wait::wait_until_task_done;
 }
