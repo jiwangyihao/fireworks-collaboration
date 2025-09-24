@@ -21,7 +21,7 @@
 //! Post-audit(v1): 初版聚合采用静态 JSON 对比；后续可考虑引入 insta snapshot 或基于字段子集的宽松匹配以降低微字段变更噪音。
 
 #[path = "../common/mod.rs"] mod common;
-use fireworks_collaboration_lib::events::structured::{MemoryEventBus, Event, TaskEvent, PolicyEvent, StrategyEvent, TransportEvent};
+use fireworks_collaboration_lib::events::structured::{MemoryEventBus, Event, TaskEvent, PolicyEvent, StrategyEvent, TransportEvent, EventBus};
 use crate::common::event_assert::{tagify, default_tag_mapper, expect_tags_subsequence, expect_subsequence};
 use crate::common::test_env::init_test_env;
 
