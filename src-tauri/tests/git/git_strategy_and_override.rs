@@ -505,6 +505,42 @@ mod section_adaptive_tls_and_metrics {
     // 在集成测试构建中不可见。这里仅保留事件发布的可观测性验证。
 }
 
+// ---------------- (P3.2 migrated) section_timing_recorder ----------------
+// 覆盖：核心传输层 TimingRecorder 的时间段捕获与 finish 幂等性
+mod section_timing_recorder {
+    use fireworks_collaboration_lib::core::git::transport::TimingRecorder;
+    use std::time::Duration;
+
+    #[test]
+    fn timing_recorder_basic_flow() {
+        let mut rec = TimingRecorder::new();
+        rec.mark_connect_start();
+        std::thread::sleep(Duration::from_millis(5));
+        rec.mark_connect_end();
+        rec.mark_tls_start();
+        std::thread::sleep(Duration::from_millis(5));
+        rec.mark_tls_end();
+        rec.finish();
+        let cap = rec.capture;
+        assert!(cap.connect_ms.is_some(), "connect_ms should be recorded");
+        assert!(cap.tls_ms.is_some(), "tls_ms should be recorded");
+        assert!(cap.total_ms.is_some(), "total_ms should be recorded on finish");
+        assert!(cap.total_ms.unwrap() >= cap.connect_ms.unwrap());
+    }
+
+    #[test]
+    fn finish_idempotent() {
+        let mut rec = TimingRecorder::new();
+        rec.mark_connect_start();
+        rec.mark_connect_end();
+        rec.finish();
+        let first_total = rec.capture.total_ms;
+        std::thread::sleep(Duration::from_millis(2));
+        rec.finish(); // second call shouldn't change stored total
+        assert_eq!(first_total, rec.capture.total_ms, "finish should be idempotent");
+    }
+}
+
 // ---------------- (P3.2 migrated) section_tls_fingerprint_and_logging ----------------
 // 覆盖：证书指纹变更事件/长度、LRU 淘汰后重算、日志轮转/禁用
 mod section_tls_fingerprint_and_logging {
