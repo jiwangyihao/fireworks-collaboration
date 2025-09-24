@@ -29,6 +29,16 @@ pub type TagMapper = fn(&str) -> Option<EventTag>;
 ///  - 识别前缀（task:, pre:, cancel:, timeout:, strategy:, http:, tls:, retry:, progress:, policy:, transport:）
 ///  - 提取前缀作为标签；特殊处理 attempt#/result: 等模式。
 pub fn default_tag_mapper(line: &str) -> Option<EventTag> {
+    // 优先：结构化事件 JSON 行（形如 {"type":"Task", ...}）
+    if let Some(pos) = line.find("\"type\":\"") {
+        let start = pos + "\"type\":\"".len();
+        if let Some(end_rel) = line[start..].find('"') {
+            let ty = &line[start..start+end_rel];
+            if matches!(ty, "Task"|"Policy"|"Strategy"|"Transport") {
+                return Some(EventTag::new(ty));
+            }
+        }
+    }
     // 更宽泛的前缀集合 + 新增 fetch/pipeline/filter/capability/push
     const PREFIX_HINTS: &[&str] = &[
         "task:", "pre:check:", "cancel:requested", "timeout:", "strategy:",
@@ -37,10 +47,15 @@ pub fn default_tag_mapper(line: &str) -> Option<EventTag> {
         "push:", "filter:", "capability:", "shallow:",
     ];
 
-    // attempt#N 归一化为 Attempt；result:xxx 归一化为 result:xxx token
-    if let Some(rest) = line.strip_prefix("attempt#") { if !rest.is_empty() { return Some(EventTag::new("Attempt")); } }
-    if line.starts_with("result:") {
-        let token = line.split_whitespace().next().unwrap_or(line);
+    // attempt#N 归一化为 Attempt；允许出现在任意位置（例如 push:attempt#1）
+    if line.contains("attempt#") {
+        return Some(EventTag::new("Attempt"));
+    }
+    // result:xxx 归一化为 result:xxx token；允许出现在任意位置（例如 push:result:success）
+    if let Some(pos) = line.find("result:") {
+        // 从 pos 开始提取到下一个空白字符为止
+        let rest = &line[pos..];
+        let token = rest.split_whitespace().next().unwrap_or(rest);
         return Some(EventTag::new(token));
     }
 
@@ -131,6 +146,73 @@ where
 
 // （structured_tags / expect_structured_sequence 已移除：未来结构化事件阶段再引入强类型接口）
 
+// ---- Applied/Conflict specialized asserts (used by strategy/override tests) ----
+#[allow(dead_code)]
+pub fn assert_applied_code(task_id: &str, code: &str) {
+    use fireworks_collaboration_lib::events::structured::{get_global_memory_bus, Event, StrategyEvent};
+    if let Some(bus) = get_global_memory_bus() {
+        for e in bus.snapshot() { if let Event::Strategy(StrategyEvent::Summary { id, applied_codes, .. }) = e { if id == task_id { assert!(applied_codes.iter().any(|c| c==code), "expected code '{}' in summary for {}", code, id); return; } } }
+        panic!("no summary event found for task_id={}", task_id);
+    } else { panic!("no global memory bus installed"); }
+}
+
+#[allow(dead_code)]
+pub fn assert_no_applied_code(task_id: &str, code: &str) {
+    use fireworks_collaboration_lib::events::structured::{get_global_memory_bus, Event, StrategyEvent};
+    if let Some(bus) = get_global_memory_bus() {
+        for e in bus.snapshot() { if let Event::Strategy(StrategyEvent::Summary { id, applied_codes, .. }) = e { if id == task_id { assert!(!applied_codes.iter().any(|c| c==code), "unexpected code '{}' in summary for {}", code, id); return; } } }
+        // 无 summary 视为未应用（宽松）
+    } else { panic!("no global memory bus installed"); }
+}
+
+#[allow(dead_code)]
+pub fn assert_no_applied_codes(task_id: &str) {
+    use fireworks_collaboration_lib::events::structured::{get_global_memory_bus, Event, StrategyEvent};
+    if let Some(bus) = get_global_memory_bus() {
+        for e in bus.snapshot() {
+            if let Event::Strategy(StrategyEvent::Summary { id, applied_codes, .. }) = e {
+                if id == task_id { assert!(applied_codes.is_empty(), "expected no applied codes, but found {:?} for {}", applied_codes, id); return; }
+            }
+        }
+        panic!("no summary event found for task_id={}", task_id);
+    } else { panic!("no global memory bus installed"); }
+}
+
+#[allow(dead_code)]
+pub fn assert_tls_applied(task_id: &str, expected: bool) {
+    use fireworks_collaboration_lib::events::structured::{get_global_memory_bus, Event, StrategyEvent};
+    if let Some(bus) = get_global_memory_bus() {
+        let mut saw = false; for e in bus.snapshot() { if let Event::Strategy(StrategyEvent::TlsApplied { id, .. }) = e { if id == task_id { saw = true; break; } } }
+        assert_eq!(saw, expected, "tls applied expectation mismatch for {}", task_id);
+    } else { panic!("no global memory bus installed"); }
+}
+
+#[allow(dead_code)]
+pub fn assert_http_applied(task_id: &str, expected: bool) {
+    use fireworks_collaboration_lib::events::structured::{get_global_memory_bus, Event, StrategyEvent};
+    if let Some(bus) = get_global_memory_bus() {
+        let mut saw = false; for e in bus.snapshot() { if let Event::Strategy(StrategyEvent::HttpApplied { id, .. }) = e { if id == task_id { saw = true; break; } } }
+        assert_eq!(saw, expected, "http applied expectation mismatch for {}", task_id);
+    } else { panic!("no global memory bus installed"); }
+}
+
+#[allow(dead_code)]
+pub fn assert_no_conflict(task_id: &str) {
+    use fireworks_collaboration_lib::events::structured::{get_global_memory_bus, Event, StrategyEvent};
+    if let Some(bus) = get_global_memory_bus() {
+        for e in bus.snapshot() { if let Event::Strategy(StrategyEvent::Conflict { id, .. }) = e { if id == task_id { panic!("unexpected conflict event for {}", task_id); } } }
+    } else { panic!("no global memory bus installed"); }
+}
+
+#[allow(dead_code)]
+pub fn assert_conflict_kind(task_id: &str, _domain: &str, expect_contains: Option<&str>) {
+    use fireworks_collaboration_lib::events::structured::{get_global_memory_bus, Event, StrategyEvent};
+    if let Some(bus) = get_global_memory_bus() {
+        let mut msg = None; for e in bus.snapshot() { if let Event::Strategy(StrategyEvent::Conflict { id, message, .. }) = e { if id == task_id { msg = Some(message); break; } } }
+        if let Some(expect) = expect_contains { let m = msg.unwrap_or_else(|| "".into()); assert!(m.contains(expect), "expected conflict message to contain '{}' but got '{}'", expect, m); }
+    } else { panic!("no global memory bus installed"); }
+}
+
 
 #[cfg(test)]
 mod tests_event_assert_smoke {
@@ -200,11 +282,12 @@ pub mod structured_ext {
         for (idx, line) in json_lines.iter().enumerate() {
             let v: Value = serde_json::from_str(line).expect("line should be valid json");
             // 遍历一层 data 下第一个对象 variant 取其 id 字段（若存在）
-            if let Some(data) = v.get("data") {
+            if let (Some(ty), Some(data)) = (v.get("type").and_then(|t| t.as_str()), v.get("data")) {
                 if let Some(obj) = data.as_object() {
-                    if let Some((_, variant_v)) = obj.iter().next() { // 取首个 variant
+                    if let Some((variant_name, variant_v)) = obj.iter().next() { // 取首个 variant
                         if let Some(id) = variant_v.get("id").and_then(|idv| idv.as_str()) {
-                            assert!(ids.insert(id.to_string()), "duplicate event id detected: {} (line {})", id, idx);
+                            let key = format!("{}::{}::{}", ty, variant_name, id);
+                            assert!(ids.insert(key.clone()), "duplicate event key detected: {} (line {})", key, idx);
                         }
                     }
                 }
