@@ -22,7 +22,7 @@
 
 #[path = "../common/mod.rs"] mod common;
 use fireworks_collaboration_lib::events::structured::{MemoryEventBus, Event, TaskEvent, PolicyEvent, StrategyEvent, TransportEvent, EventBus};
-use crate::common::event_assert::{tagify, default_tag_mapper, expect_tags_subsequence, expect_subsequence};
+use crate::common::event_assert::expect_subsequence;
 use crate::common::test_env::init_test_env;
 
 #[ctor::ctor]
@@ -79,6 +79,7 @@ mod section_legacy_absence {
 mod section_contract_snapshot {
     use super::*;
     use crate::common::event_assert::structured_ext::{serialize_events_to_json_lines, assert_unique_event_ids, map_structured_events_to_type_tags};
+    use crate::common::event_assert::expect_optional_tags_subsequence;
     #[test]
     fn contract_core_snapshot() {
         const SCHEMA_VERSION: u32 = 1; // schema 变更需显式 bump
@@ -100,8 +101,8 @@ mod section_contract_snapshot {
 {"type":"Strategy","data":{"AdaptiveTlsRollout":{"id":"id5","kind":"GitClone","percent_applied":42,"sampled":true}}}"#;
         assert_eq!(joined, expected, "structured event core contract changed; update expected if intentional");
         let lines_vec: Vec<String> = expected.lines().map(|s| s.trim_start().to_string()).collect();
-        let tags = tagify(&lines_vec, default_tag_mapper);
-        if !tags.is_empty() { expect_tags_subsequence(&tags, &["Task", "Policy", "Transport", "Strategy"]); }
+    // 结构化样例序列化为行后也可映射出顶层类型标签
+    expect_optional_tags_subsequence(&lines_vec, &["Task", "Policy", "Transport", "Strategy"]);
         assert_unique_event_ids(&lines_vec);
         let _mapped = map_structured_events_to_type_tags(&samples);
         assert!(SCHEMA_VERSION >= 1);

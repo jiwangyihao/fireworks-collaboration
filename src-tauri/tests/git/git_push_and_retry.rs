@@ -19,12 +19,11 @@
 //!   section_retry_event    -> 事件锚点子序列验证
 
 #[path = "../common/mod.rs"] mod common;
-use common::{retry_matrix::{retry_cases, PolicyOverride}, git_scenarios::{run_push_with_retry, PushRetrySpec, PushResultKind}, event_assert::{expect_subsequence, tagify, default_tag_mapper, expect_tags_subsequence, assert_terminal_exclusive}};
+use common::{retry_matrix::{retry_cases, PolicyOverride}, git_scenarios::{run_push_with_retry, PushRetrySpec, PushResultKind}, event_assert::{expect_subsequence, expect_optional_tags_subsequence, assert_terminal_exclusive}};
 
 // 小辅助：若标签可映射，则断言最小锚点子序列
 fn expect_tag_subseq_min(events: &[String], anchors: &[&str]) {
-    let tags = tagify(events, default_tag_mapper);
-    if !tags.is_empty() { expect_tags_subsequence(&tags, anchors); }
+    expect_optional_tags_subsequence(events, anchors);
 }
 
 // ---------------- section_push_basic ----------------

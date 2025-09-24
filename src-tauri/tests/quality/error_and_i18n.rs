@@ -29,20 +29,19 @@
 //!   - git_* 聚合文件中已经使用 ErrorCategory 进行分类断言
 //!   - events_* 聚合文件中的失败/取消终态映射将在 12.15 之后结合 AppErrorKind 统一
 
-use fireworks_collaboration_lib::core::git::default_impl::helpers::map_git2_error;
-use fireworks_collaboration_lib::core::git::errors::ErrorCategory;
 use crate::common::test_env::init_test_env;
 
 #[path = "../common/mod.rs"] mod common; // 引入 test_env / prelude
-use crate::common::prelude::*; // 统一引入公共工具（i18n/断言/矩阵等）
+// use crate::common::prelude::*; // 此文件内分区各自按需引用，避免未使用导入
 
 #[ctor::ctor]
 fn __init_env() { init_test_env(); }
-use std::collections::HashSet;
+// 顶层不直接使用集合类型
 
 // ---------------- section_error_mapping ----------------
 mod section_error_mapping {
-    use super::*;
+    use fireworks_collaboration_lib::core::git::default_impl::helpers::map_git2_error;
+    use fireworks_collaboration_lib::core::git::errors::ErrorCategory;
     #[test]
     fn chinese_connection_error_classified_as_network() {
         // 构造 git2::Error：中文超时/连接信息应映射为 Network
@@ -54,7 +53,8 @@ mod section_error_mapping {
 
 // ---------------- section_i18n_locale_basic ----------------
 mod section_i18n_locale_basic {
-    use super::*;
+    use std::collections::HashSet;
+    use crate::common::i18n::{translate, locale_keys};
     #[test]
     fn locale_keys_present_in_all_supported_languages() {
         let keys = locale_keys();
@@ -70,7 +70,7 @@ mod section_i18n_locale_basic {
 
 // ---------------- section_i18n_fallback ----------------
 mod section_i18n_fallback {
-    use super::*;
+    use crate::common::i18n::translate;
     #[test]
     fn missing_locale_fallbacks_to_en() {
         let key = "error.network.timeout";
@@ -104,7 +104,6 @@ mod section_i18n_fallback {
 // ---------------- section_strategy_props ----------------
 #[cfg(test)]
 mod section_strategy_props {
-    use super::*;
     use proptest::prelude::*;
     use fireworks_collaboration_lib::core::config::model::AppConfig;
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
@@ -168,7 +167,6 @@ mod section_strategy_props {
 // ---------------- section_retry_props ----------------
 #[cfg(test)]
 mod section_retry_props {
-    use super::*;
     use proptest::prelude::*;
     use fireworks_collaboration_lib::core::config::model::RetryCfg;
     use fireworks_collaboration_lib::core::git::default_impl::opts::StrategyRetryOverride;
@@ -192,7 +190,6 @@ mod section_retry_props {
 // ---------------- section_partial_filter_props ----------------
 #[cfg(test)]
 mod section_partial_filter_props {
-    use super::*;
     use proptest::prelude::*;
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
 
@@ -216,7 +213,6 @@ mod section_partial_filter_props {
 // ---------------- section_tls_props ----------------
 #[cfg(test)]
 mod section_tls_props {
-    use super::*;
     use proptest::prelude::*;
     use fireworks_collaboration_lib::core::config::model::AppConfig;
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;

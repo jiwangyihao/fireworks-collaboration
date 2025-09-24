@@ -133,16 +133,19 @@ pub fn assert_clone_events(label: &str, out: &CloneOutcome) {
 // ---- Fetch (events-oriented placeholder) ----
 /// 基础 fetch 参数（保持与 CloneParams 形状相近，便于组合/迁移）。
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct FetchParams { pub depth: Option<u32>, pub filter: Option<String> }
 
 /// fetch 结果（当前仅需要事件序列用于断言 Tag/marker）。
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 pub struct FetchOutcome { pub events: Vec<String> }
 
 /// 运行一次（占位）fetch：
 /// - 生成标准化事件前缀："fetch:Start" -> [optional filter marker] -> "fetch:Complete"
 /// - 若提供 filter，插入原样字符串（推荐以 "filter:" 前缀传入），便于 `assess_partial_filter` 检测 marker。
 /// - 若提供 depth，插入提示事件（当前仅用于可视化，不参与断言）。
+#[allow(dead_code)]
 pub fn run_fetch(params: &FetchParams) -> FetchOutcome {
     let mut events = Vec::new();
     events.push("fetch:Start".into());

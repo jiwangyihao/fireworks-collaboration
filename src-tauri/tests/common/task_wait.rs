@@ -22,6 +22,7 @@ pub async fn wait_until_task_done(reg: &TaskRegistry, id: uuid::Uuid) {
 }
 
 /// 等待给定谓词在超时之前为 true。
+#[allow(dead_code)]
 pub async fn wait_predicate<F: Fn() -> bool>(pred: F, max_ms: u64, step_ms: u64) -> bool {
     let start = Instant::now();
     while start.elapsed().as_millis() < max_ms as u128 {
@@ -32,6 +33,7 @@ pub async fn wait_predicate<F: Fn() -> bool>(pred: F, max_ms: u64, step_ms: u64)
 }
 
 /// 等待特定任务达到目标状态，返回是否在超时内达到。
+#[allow(dead_code)]
 pub async fn wait_task_state(reg: &TaskRegistry, id: &uuid::Uuid, target: TaskState, max_ms: u64, step_ms: u64) -> bool {
     wait_predicate(|| reg.snapshot(id).map(|s| s.state == target).unwrap_or(false), max_ms, step_ms).await
 }

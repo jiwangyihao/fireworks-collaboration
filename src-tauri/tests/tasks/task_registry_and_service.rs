@@ -48,11 +48,8 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-use std::sync::Arc;
-use tokio::time::{sleep, Duration};
-use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
-use fireworks_collaboration_lib::core::tasks::model::{TaskState, TaskKind};
 // 轻量进度阶段断言辅助（复用到 service_progress 内部，不扩大公共 API）
+
 fn assert_progress_core(phases:&[String]) {
     // 不同实现/快路径下，某些阶段可能被省略（例如本地克隆时 Negotiating/Checkout 可能缺失）。
     // 放宽为：至少包含 Negotiating / Receiving / Resolving / Checkout 中的任意一个核心阶段。
@@ -65,7 +62,6 @@ fn assert_progress_core(phases:&[String]) {
 
 // ---------------- section_registry_lifecycle ----------------
 mod section_registry_lifecycle { //! 完成 / 列表基础行为
-    use super::*;
     use std::sync::Arc;
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
     use fireworks_collaboration_lib::core::tasks::model::TaskKind;
@@ -93,7 +89,6 @@ mod section_registry_lifecycle { //! 完成 / 列表基础行为
 
 // ---------------- section_registry_cancel ----------------
 mod section_registry_cancel { //! 各类取消语义 (运行中 / 完成后 / token)
-    use super::*;
     use std::sync::Arc;
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
     use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
@@ -153,7 +148,6 @@ mod section_registry_cancel { //! 各类取消语义 (运行中 / 完成后 / to
 
 // ---------------- section_registry_concurrency ----------------
 mod section_registry_concurrency { //! 并行与部分取消
-    use super::*;
     use std::sync::Arc;
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
     use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
@@ -194,7 +188,6 @@ mod section_registry_concurrency { //! 并行与部分取消
 
 // ---------------- section_registry_edge ----------------
 mod section_registry_edge { //! snapshot / cancel unknown / list 克隆
-    use super::*;
     use std::sync::Arc;
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
     use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
@@ -233,13 +226,12 @@ mod section_registry_edge { //! snapshot / cancel unknown / list 克隆
 
 // ---------------- section_service_progress ----------------
 mod section_service_progress { //! GitService 正常进度链路 / Negotiating / Completed
-    use super::*;
     use std::sync::atomic::AtomicBool;
     use fireworks_collaboration_lib::core::git::DefaultGitService;
     use fireworks_collaboration_lib::core::git::service::GitService;
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
     use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
-    use tokio::time::{timeout, Duration};
+    // no timeout/Duration used in this section
     use std::sync::Arc;
     use crate::common::fixtures;
 
@@ -332,7 +324,6 @@ mod section_service_progress { //! GitService 正常进度链路 / Negotiating /
 
 // ---------------- section_service_cancel_fast ----------------
 mod section_service_cancel_fast { //! 早期错误 + Cancel flag 快速终止 + registry fast cancel
-    use super::*;
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
     use fireworks_collaboration_lib::core::git::DefaultGitService;

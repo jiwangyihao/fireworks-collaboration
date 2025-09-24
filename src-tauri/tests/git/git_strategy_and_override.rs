@@ -58,12 +58,11 @@
 use common::{
     http_override_stub::{http_override_cases, run_http_override, HttpOverrideCase, FollowMode, IdempotentFlag, MaxEventsCase},
     git_scenarios::GitOp,
-    event_assert::{expect_subsequence, tagify, default_tag_mapper, expect_tags_subsequence, assert_applied_code, assert_no_applied_codes, assert_tls_applied, assert_http_applied},
+    event_assert::{expect_subsequence, expect_optional_tags_subsequence},
     test_env::init_test_env
 };
 
 // 顶层通用：等待任务完成（供多个 section 复用）
-use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
 use crate::common::task_wait::wait_until_task_done as wait_done;
 
 // 统一测试环境初始化（Once 防抖）
@@ -78,10 +77,10 @@ mod section_http_basic { use super::*; #[test] fn http_override_each_case_applie
 // ---------------- section_http_limits ----------------
 mod section_http_limits { use super::*; #[test] fn http_follow_chain_length_with_max() { for c in http_override_cases() { let out = run_http_override(&c); if matches!(c.follow, FollowMode::Follow) { if let MaxEventsCase::Some(m) = c.max_events { assert!(out.follow_chain.len() as u32 <= m.max(1), "follow chain exceeds max for {c}"); } else { assert!(out.follow_chain.len() >= 1, "expected default follow hops"); } } } }}
 // invalid max (=0) 单独测试
-mod section_http_invalid_max { use super::*; #[test] fn http_invalid_max_zero_applied_false() { let case = HttpOverrideCase { op: GitOp::Clone, follow: FollowMode::None, idempotent: IdempotentFlag::No, max_events: MaxEventsCase::Some(0) }; let out = run_http_override(&case); assert!(!out.applied); assert!(out.events.iter().any(|e| e.contains("invalid_max"))); let tags = tagify(&out.events, default_tag_mapper); if !tags.is_empty() { expect_tags_subsequence(&tags, &["http"]); } }}
+mod section_http_invalid_max { use super::*; #[test] fn http_invalid_max_zero_applied_false() { let case = HttpOverrideCase { op: GitOp::Clone, follow: FollowMode::None, idempotent: IdempotentFlag::No, max_events: MaxEventsCase::Some(0) }; let out = run_http_override(&case); assert!(!out.applied); assert!(out.events.iter().any(|e| e.contains("invalid_max"))); expect_optional_tags_subsequence(&out.events, &["http"]); }}
 
 // ---------------- section_http_events ----------------
-mod section_http_events { use super::*; #[test] fn http_event_anchor_sequence() { let any_case = http_override_cases().into_iter().find(|c| matches!(c.follow, FollowMode::Follow)).expect("follow case"); let out = run_http_override(&any_case); expect_subsequence(&out.events, &["http:override:start", "http:override", "http:override:applied"]); let tags = tagify(&out.events, default_tag_mapper); if !tags.is_empty() { expect_tags_subsequence(&tags, &["http", "http"]); } }}
+mod section_http_events { use super::*; #[test] fn http_event_anchor_sequence() { let any_case = http_override_cases().into_iter().find(|c| matches!(c.follow, FollowMode::Follow)).expect("follow case"); let out = run_http_override(&any_case); expect_subsequence(&out.events, &["http:override:start", "http:override", "http:override:applied"]); expect_optional_tags_subsequence(&out.events, &["http", "http"]); }}
 
 // 已移除：自模拟 TLS rollout 事件（与真实结构化事件无关，过时）
 
@@ -96,7 +95,6 @@ mod section_http_events { use super::*; #[test] fn http_event_anchor_sequence() 
 //   - push_summary_event_no_override
 //   - strategy_override_summary_and_gating (summary + 多 appliedCodes 片段，gating 逻辑单列在 section_summary_gating)
 mod section_strategy_summary_multiop {
-    use super::*;
     use fireworks_collaboration_lib::events::structured::{MemoryEventBus, set_global_event_bus, set_test_event_bus, clear_test_event_bus, Event as StructuredEvent, StrategyEvent};
     use fireworks_collaboration_lib::core::tasks::registry::{TaskRegistry, test_emit_clone_with_override};
     use fireworks_collaboration_lib::core::tasks::model::TaskKind;
@@ -159,7 +157,7 @@ mod section_strategy_summary_multiop {
         let ov = serde_json::json!({"retry": {"max": 4}});
         let h = reg.spawn_git_fetch_task_with_opts(Some(AppHandle {}), id, tk, origin.path().to_string_lossy().to_string(), work.path().to_string_lossy().to_string(), None, None, None, Some(ov));
         let _ = h.await;
-        assert_applied_code(&id.to_string(), "retry_strategy_override_applied");
+    crate::common::event_assert::assert_applied_code(&id.to_string(), "retry_strategy_override_applied");
     }
 
     #[tokio::test]
@@ -179,10 +177,10 @@ mod section_strategy_summary_multiop {
         let h = reg.spawn_git_push_task(Some(AppHandle {}), pid, ptk, src.path().to_string_lossy().to_string(), Some("origin".into()), None, None, None, Some(ov));
         let _ = h.await;
         // 断言：summary 含 http/tls codes + 独立 applied 事件存在
-        assert_applied_code(&pid.to_string(), "http_strategy_override_applied");
-        assert_applied_code(&pid.to_string(), "tls_strategy_override_applied");
-        assert_http_applied(&pid.to_string(), true);
-        assert_tls_applied(&pid.to_string(), true);
+    crate::common::event_assert::assert_applied_code(&pid.to_string(), "http_strategy_override_applied");
+    crate::common::event_assert::assert_applied_code(&pid.to_string(), "tls_strategy_override_applied");
+    crate::common::event_assert::assert_http_applied(&pid.to_string(), true);
+    crate::common::event_assert::assert_tls_applied(&pid.to_string(), true);
     }
 
     #[tokio::test]
@@ -194,7 +192,7 @@ mod section_strategy_summary_multiop {
         let work = tempfile::tempdir().unwrap(); let work_repo = git2::Repository::init(work.path()).unwrap(); work_repo.remote("origin", origin.path().to_string_lossy().as_ref()).unwrap();
         let reg = std::sync::Arc::new(TaskRegistry::new()); let (id, tk) = reg.create(TaskKind::GitFetch { repo: origin.path().to_string_lossy().to_string(), dest: work.path().to_string_lossy().to_string(), depth: None, filter: None, strategy_override: None });
         let h = reg.spawn_git_fetch_task_with_opts(Some(AppHandle {}), id, tk, origin.path().to_string_lossy().to_string(), work.path().to_string_lossy().to_string(), None, None, None, None); let _ = h.await;
-        assert_no_applied_codes(&id.to_string());
+    crate::common::event_assert::assert_no_applied_codes(&id.to_string());
     }
 
     #[tokio::test]
@@ -206,7 +204,7 @@ mod section_strategy_summary_multiop {
         let src = tempfile::tempdir().unwrap(); let src_repo = git2::Repository::init(src.path()).unwrap(); std::fs::write(src.path().join("d.txt"), "four").unwrap(); let mut idx2 = src_repo.index().unwrap(); idx2.add_path(std::path::Path::new("d.txt")).unwrap(); idx2.write().unwrap(); let tree_id2 = idx2.write_tree().unwrap(); let tree2 = src_repo.find_tree(tree_id2).unwrap(); let sig2 = src_repo.signature().unwrap(); src_repo.commit(Some("HEAD"), &sig2,&sig2, "c1", &tree2, &[]).unwrap(); src_repo.remote("origin", origin.path().to_string_lossy().as_ref()).unwrap();
         let reg = std::sync::Arc::new(TaskRegistry::new()); let (pid, ptk) = reg.create(TaskKind::GitPush { dest: src.path().to_string_lossy().to_string(), remote: Some("origin".into()), refspecs: None, username: None, password: None, strategy_override: None });
         let h = reg.spawn_git_push_task(Some(AppHandle {}), pid, ptk, src.path().to_string_lossy().to_string(), Some("origin".into()), None, None, None, None); let _ = h.await;
-        assert_no_applied_codes(&pid.to_string());
+    crate::common::event_assert::assert_no_applied_codes(&pid.to_string());
     }
 
     // strategy_override_summary_and_gating 的 summary 多 appliedCodes 片段（http+retry）复用：只验证 summary 含目标 codes
@@ -227,8 +225,8 @@ mod section_strategy_summary_multiop {
             let override_json = serde_json::json!({"http": {"follow_redirects": false}, "retry": {"max": 5}});
             let h = reg.spawn_git_clone_task_with_opts(Some(AppHandle {}), id, token.clone(), tmp_src.path().to_string_lossy().to_string(), dest_dir.path().to_string_lossy().to_string(), None, None, Some(override_json)); let _ = h.await;
             // summary appliedCodes
-            assert_applied_code(&id.to_string(), "http_strategy_override_applied");
-            assert_applied_code(&id.to_string(), "retry_strategy_override_applied");
+            crate::common::event_assert::assert_applied_code(&id.to_string(), "http_strategy_override_applied");
+            crate::common::event_assert::assert_applied_code(&id.to_string(), "retry_strategy_override_applied");
         });
     }
 }
@@ -239,10 +237,9 @@ mod section_strategy_summary_multiop {
 //   - tls_override_changed_and_unchanged (含 clone/fetch/push changed vs unchanged)
 //   - push_tls_insecure_only_event_once
 mod section_override_no_conflict {
-    use super::*;
     use fireworks_collaboration_lib::events::structured::{MemoryEventBus, set_global_event_bus, set_test_event_bus, clear_test_event_bus, Event as StructuredEvent, StrategyEvent};
     use fireworks_collaboration_lib::core::tasks::registry::{TaskRegistry, test_emit_clone_with_override};
-    use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
+    use fireworks_collaboration_lib::core::tasks::model::TaskKind;
     use fireworks_collaboration_lib::events::emitter::AppHandle;
     use super::wait_done;
 
@@ -332,7 +329,7 @@ mod section_override_no_conflict {
 // ---------------- (Phase3) section_override_empty_unknown ----------------
 // 来源函数： clone_with_empty_strategy_object_success / push_with_only_unknown_field_success
 mod section_override_empty_unknown {
-    use super::*; use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry; use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry; use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
     #[tokio::test]
     async fn clone_with_empty_strategy_object_success() {
         let reg = std::sync::Arc::new(TaskRegistry::new());
@@ -356,7 +353,7 @@ mod section_override_empty_unknown {
 // ---------------- (Phase3) section_override_invalid_inputs ----------------
 // push_with_invalid_strategy_override_array_fails / clone_invalid_http_max_redirects_fails / push_invalid_retry_factor_fails
 mod section_override_invalid_inputs {
-    use super::*; use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry; use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry; use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
     #[tokio::test]
     async fn push_with_invalid_strategy_override_array_fails() {
         let reg = std::sync::Arc::new(TaskRegistry::new());
@@ -384,7 +381,7 @@ mod section_override_invalid_inputs {
 // ---------------- (Phase3) section_tls_mixed_scenarios ----------------
 // 来源函数： tls_mixed_scenarios (clone/fetch/push + empty + unknown 字段)
 mod section_tls_mixed_scenarios {
-    use super::*; use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry; use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState}; use fireworks_collaboration_lib::events::emitter::AppHandle; use fireworks_collaboration_lib::events::structured::{MemoryEventBus, set_global_event_bus};
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry; use fireworks_collaboration_lib::core::tasks::model::TaskKind; use fireworks_collaboration_lib::events::emitter::AppHandle; use fireworks_collaboration_lib::events::structured::{MemoryEventBus, set_global_event_bus};
     use super::wait_done;
     #[test]
     fn tls_mixed_scenarios() { let rt = tokio::runtime::Runtime::new().unwrap(); rt.block_on(async {
@@ -414,7 +411,7 @@ mod section_tls_mixed_scenarios {
 // ---------------- (Phase3) section_summary_gating ----------------
 // strategy_override_summary_and_gating / tls_override_summary_and_gating
 mod section_summary_gating {
-    use super::*; use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry; use fireworks_collaboration_lib::core::tasks::model::TaskKind; use fireworks_collaboration_lib::events::structured::{MemoryEventBus, set_global_event_bus}; use fireworks_collaboration_lib::events::emitter::AppHandle; use crate::common::event_assert::{assert_applied_code, assert_tls_applied, assert_conflict_kind};
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry; use fireworks_collaboration_lib::core::tasks::model::TaskKind; use fireworks_collaboration_lib::events::structured::{MemoryEventBus, set_global_event_bus}; use fireworks_collaboration_lib::events::emitter::AppHandle; use crate::common::event_assert::{assert_applied_code, assert_tls_applied, assert_conflict_kind};
     #[test]
     fn strategy_override_summary_and_gating() { let rt = tokio::runtime::Runtime::new().unwrap(); rt.block_on(async {
         std::env::set_var("FWC_STRATEGY_APPLIED_EVENTS", "1"); let _ = set_global_event_bus(std::sync::Arc::new(MemoryEventBus::new()));

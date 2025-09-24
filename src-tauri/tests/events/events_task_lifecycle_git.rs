@@ -24,7 +24,7 @@
 //! 后续潜在升级：接入真实结构化事件枚举后，把字符串模拟替换为强类型构造，再次收敛到公共构造模块。
 
 #[path = "../common/mod.rs"] mod common;
-use common::event_assert::{tagify, default_tag_mapper, expect_tags_subsequence, assert_terminal_exclusive};
+use common::event_assert::{expect_optional_tags_subsequence, assert_terminal_exclusive};
 use common::test_env::init_test_env;
 
 #[ctor::ctor]
@@ -91,8 +91,7 @@ fn assert_lifecycle_core(spec: &LifecycleSpec) -> LifecycleOutcome {
     let (terminal, forbidden) = terminal_anchor(spec.variant);
     assert_terminal_exclusive(&out.events, terminal, forbidden);
     // Tag DSL 序列（最小锚点）
-    let tags = tagify(&out.events, default_tag_mapper);
-    expect_tags_subsequence(&tags, expected_tag_sequence(spec.variant));
+    expect_optional_tags_subsequence(&out.events, expected_tag_sequence(spec.variant));
     out
 }
 

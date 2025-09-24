@@ -18,19 +18,19 @@
 //! Post-audit(v2): 补充说明：后续将把 OutcomeKind 融入统一 TaskStatus/FailureCategory；timeout/cancel 将接入 mock clock + cancellation token；当前字符串事件保持最小锚点前缀以便 12.12 DSL 迁移。
 
 #[path = "../common/mod.rs"] mod common;
-use common::event_assert::{ expect_subsequence, tagify, default_tag_mapper, expect_tags_subsequence, assert_terminal_exclusive };
+use common::event_assert::{ expect_subsequence, expect_optional_tags_subsequence, assert_terminal_exclusive };
 use common::test_env::init_test_env;
 
 // 小辅助：若标签可映射，则断言最小锚点子序列
 fn expect_tag_subseq_min(events: &[String], anchors: &[&str]) {
-    let tags = tagify(events, default_tag_mapper);
-    if !tags.is_empty() { expect_tags_subsequence(&tags, anchors); }
+    expect_optional_tags_subsequence(events, anchors);
 }
 // ---------------- Core domain placeholder types ----------------
 #[derive(Debug, Clone, Copy)]
 enum GitOp { Clone, Fetch }
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 enum PreconditionKind { MissingGitDir, InvalidUrl, NoWritePerm }
 
 #[derive(Debug, Clone, Copy)]
@@ -41,6 +41,7 @@ enum TimeoutScenario { CloneSlow, FetchSlow }
 
 // Outcome enums (placeholder)
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 enum OutcomeKind { Success, FailedPrecondition, Canceled, TimedOut }
 
 #[derive(Debug)]
@@ -85,7 +86,7 @@ mod section_preconditions {
     use super::*;
     #[test]
     fn missing_git_dir_fails_fast() {
-        let out = simulate_precondition(GitOp::Fetch, PreconditionKind::MissingGitDir);
+    let _ = simulate_precondition(GitOp::Fetch, PreconditionKind::MissingGitDir);
         init_test_env();
         // 参数化两种前置失败：缺少 .git / 无效 URL
         let cases = vec![
@@ -108,8 +109,7 @@ mod section_preconditions {
         let out = simulate_precondition(GitOp::Clone, PreconditionKind::InvalidUrl);
         assert_eq!(out.kind, OutcomeKind::FailedPrecondition);
         expect_subsequence(&out.events, &["pre:check:start", "pre:check:failed", "task:end:Clone:precondition_failed"]);
-        let tags = tagify(&out.events, default_tag_mapper);
-        if !tags.is_empty() { expect_tags_subsequence(&tags, &["pre", "task"]); }
+    expect_optional_tags_subsequence(&out.events, &["pre", "task"]);
         assert_terminal_exclusive(&out.events, "task:end:Clone:precondition_failed", &["task:end:cancelled", "task:end:timeout", "task:end:success"]);
     }
 }
@@ -119,7 +119,7 @@ mod section_cancellation {
     use super::*;
     #[test]
     fn clone_immediate_cancel() {
-        let out = simulate_cancellation(GitOp::Clone, CancelPhase::Immediate);
+    let _ = simulate_cancellation(GitOp::Clone, CancelPhase::Immediate);
         init_test_env();
         // 参数化两种取消：立即取消 / 中途取消（含 cleanup）
         let cases = vec![
@@ -149,8 +149,7 @@ mod section_cancellation {
         assert_eq!(out.kind, OutcomeKind::Canceled);
         expect_subsequence(&out.events, &["task:start:Fetch", "progress:10%", "cancel:requested:midway", "cleanup:begin", "task:end:cancelled"]);
         // 标签序列锚点（task -> cancel -> task）
-        let tags = tagify(&out.events, default_tag_mapper);
-        if !tags.is_empty() { expect_tags_subsequence(&tags, &["task", "cancel", "task"]); }
+    expect_optional_tags_subsequence(&out.events, &["task", "cancel", "task"]);
         // 终态互斥：取消不应与其它终态并存
         assert_terminal_exclusive(&out.events, "task:end:cancelled", &["precondition_failed", "task:end:timeout", "task:end:success"]);
     }
@@ -161,7 +160,7 @@ mod section_timeout {
     use super::*;
     #[test]
     fn clone_slow_timeout() {
-        let out = simulate_timeout(TimeoutScenario::CloneSlow);
+    let _ = simulate_timeout(TimeoutScenario::CloneSlow);
         init_test_env();
         for s in [TimeoutScenario::CloneSlow, TimeoutScenario::FetchSlow] {
             let out = simulate_timeout(s);
@@ -178,8 +177,7 @@ mod section_timeout {
         let out = simulate_timeout(TimeoutScenario::FetchSlow);
         assert_eq!(out.kind, OutcomeKind::TimedOut);
         expect_subsequence(&out.events, &["task:start:FetchSlow", "timeout:trigger", "task:end:timeout"]);
-        let tags = tagify(&out.events, default_tag_mapper);
-        if !tags.is_empty() { expect_tags_subsequence(&tags, &["task", "timeout", "task"]); }
+    expect_optional_tags_subsequence(&out.events, &["task", "timeout", "task"]);
         assert_terminal_exclusive(&out.events, "task:end:timeout", &["precondition_failed", "task:end:cancelled", "task:end:success"]);
     }
 }

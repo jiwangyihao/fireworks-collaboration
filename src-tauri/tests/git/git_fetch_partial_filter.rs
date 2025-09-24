@@ -11,7 +11,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-use common::{partial_filter_support::{assess_partial_filter, SupportLevel, warn_if_no_filter_marker}, partial_filter_matrix::{partial_filter_cases_for, PartialFilterOp, PartialFilterKind, PartialFilterCase}, test_env, event_assert::{tagify, default_tag_mapper, expect_tags_subsequence}};
+use common::{partial_filter_support::{assess_partial_filter, SupportLevel, warn_if_no_filter_marker}, partial_filter_matrix::{partial_filter_cases_for, PartialFilterOp, PartialFilterKind, PartialFilterCase}, test_env, event_assert::{expect_optional_tags_subsequence}};
 use common::git_scenarios::{run_fetch, FetchParams};
 
 fn build_label(case: &PartialFilterCase) -> Option<&'static str> {
@@ -89,8 +89,7 @@ mod section_filter_depth {
             if matches!(out.support, SupportLevel::Unsupported | SupportLevel::Invalid) { panic!("[fetch_depth] {kind:?} unexpected support={:?}", out.support); }
             warn_if_no_filter_marker("fetch_depth", &format!("filter:{}", label), &out);
             // 新增：标签子序列最小锚点（fetch + filter 前缀存在 -> strategy/transport 等后续可扩展）
-            let tags = tagify(&events, default_tag_mapper);
-            if !tags.is_empty() { expect_tags_subsequence(&tags, &["fetch"]); }
+            expect_optional_tags_subsequence(&events, &["fetch"]);
             // 占位：暂不对 depth 行为做对象/commit 数量断言
         }
     }

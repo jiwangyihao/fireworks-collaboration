@@ -120,9 +120,9 @@ pub mod prelude {
 
 	// 事件断言 DSL
 	pub use super::event_assert::{
-		EventPhase, EventTag, default_tag_mapper, tagify, tagify_with,
-		expect_subsequence, expect_tags_subsequence,
-		assert_terminal_exclusive, assert_contains_phases, assert_last_phase_contains,
+		EventTag, default_tag_mapper, tagify, tagify_with,
+		expect_subsequence, expect_tags_subsequence, expect_optional_tags_subsequence,
+		assert_terminal_exclusive,
 	};
 
 	// Matrices
