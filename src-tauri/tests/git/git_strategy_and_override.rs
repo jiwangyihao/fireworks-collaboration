@@ -76,6 +76,15 @@ fn __init_env() { init_test_env(); }
 //  - policy 允许 fake -> 初始 Fake，advance 触发完整链路 Fake->Real->Default
 //  - runtime_fake_disabled=true 时行为等同 policy skip
 mod section_transport_fallback_decision { use fireworks_collaboration_lib::core::git::transport::{DecisionCtx, FallbackDecision, FallbackStage, FallbackReason};
+    // 兼容迁移：来自 src-tauri/src/core/git/transport/tests_integration_baseline.rs
+    // 目的：当策略不允许 fake 且 runtime 未禁用时，初始阶段应为 Default
+    #[test]
+    fn initial_stage_default_when_disabled() {
+        let ctx = DecisionCtx { policy_allows_fake: false, runtime_fake_disabled: false };
+        let d = FallbackDecision::initial(&ctx);
+        assert_eq!(d.stage(), FallbackStage::Default);
+    }
+
     #[test]
     fn skip_fake_policy_creates_default_stage() {
         let ctx = DecisionCtx { policy_allows_fake: false, runtime_fake_disabled: false };
