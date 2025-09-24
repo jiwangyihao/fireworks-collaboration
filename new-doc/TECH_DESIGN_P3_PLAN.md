@@ -534,10 +534,6 @@ Added: Adaptive TLS percentage rollout (host-stable sampling) + event `adaptive_
 13. 一句话总结
   > 已以最小侵入方式交付 timing（含精确首字节）+ 指纹与结构化事件（含主动 CertFingerprintChanged），为后续 Real-Host 验证与自动回退提供可观测基线，可通过 2 个布尔开关即时回退。
 
-### P3.3 Real-Host 验证 实现说明
-
-（此处留空，后续补充实现细节）
-
 ### P3.2 最终实现补充说明（Refinement 完成态）
 
 本补充章节记录在最初 P3.2 可观测性交付后追加的精确化与测试强化内容，形成可回退且高置信度的最终实现基线。
@@ -609,21 +605,6 @@ Thread-local 保存 (timing, used_fake, fallback_stage, cert_fp_changed)。无�
 #### 11. 成熟度结论
 当前实现具备：精确 timing、可控指纹事件、可回退 gating、完备测试矩阵与文档说明，可作为 P3.3/P3.5 的稳定观测基线。
 
-
-### P3.4 SPKI Pin 规划 实现说明
-
-（此处留空，后续补充实现细节）
-
-### P3.5 异常与回退稳健性 实现说明
-
-（此处留空，后续补充实现细节）
-
-### P3.6 稳定性 Soak & 退出准入 实现说明
-
-（此处留空，后续补充实现细节）
-
----
-
 #### P3.2 需求覆盖与回退验证总结（实现后补充）
 | 需求 | 实现 | 开关/回退 |
 |------|------|-----------|
@@ -651,3 +632,100 @@ Thread-local 保存 (timing, used_fake, fallback_stage, cert_fp_changed)。无�
 4. 回退（关闭 metrics / log）不会泄漏残留事件。
 
 验证：通过 cargo test 全量（所有既有 + 新增）无失败；关闭 metrics / fingerprint 后不产生 timing 或日志增长；Changelog & Design 文档已更新。
+
+### P3.3 Real-Host 验证 实现说明
+
+已完成（实现于本阶段提交）：
+
+1) 配置与默认值
+- 新增 `tls.realHostVerifyEnabled: true`（默认开启，关闭后回退到旧逻辑）。
+
+2) 验证器实现
+- 在 `core/tls/verifier.rs` 引入 `WhitelistCertVerifier { real_host_verify_enabled }`。
+- 当开启且存在 `override_host`（来自握手使用 Fake SNI 场景下的真实域）时，将 `override_host` 构造成 `ServerName` 传入内置 `WebPkiVerifier` 执行链路与主机名验证；否则使用 SNI 对应的 `server_name`。
+- SAN 白名单匹配始终优先使用 `override_host`（若存在），保证 Fake 握手下仍按真实域做白名单判定。
+
+3) 工厂与调用方
+- `create_client_config_with_expected_name()` 通过 `build_cert_verifier(tls, Some(expected_host))` 传递真实域；`build_cert_verifier` 将 `real_host_verify_enabled` 贯穿至 `WhitelistCertVerifier`。
+- 子传输握手日志增加 `real_host_verify=<on|off>` 标识，便于观测。
+
+4) 测试
+- 单元测试增加捕获型 `CaptureVerifier`，验证开启时使用 `override_host`，关闭时使用传入 SNI；并更新 `TlsCfg` 新字段的默认与序列化断言。
+- 全量 `cargo test` 通过（Windows 环境下 0 失败）。
+
+5) 行为与分类
+- 该实现遵循设计：链前错误仍归类为 Tls；链成功但域名/SAN 不符归类为 Verify（分类基线未改动）。第一次验证失败会进入既有 Fake→Real 回退链的 Real 分支重握手（由 `fallback` 状态机与握手路径共同驱动）。
+
+回退：设置 `tls.realHostVerifyEnabled=false` 即可停用该逻辑，恢复按 SNI 验证的旧路径。
+
+
+#### 补充实现细节：计数 / 分类 / 日志锚点 / 测试 / 运维
+
+1) 回退计数与原因分类（内存计数器）
+- 计数器：在 Fake→Real 触发时按原因维度进行累加，目前区分两类：
+  - Verify：证书链通过但域名或 SAN 白名单不匹配（典型关键词：SAN、whitelist、name mismatch、verify）。
+  - Tls：握手前/握手期错误或网络类错误（典型关键词：tls handshake、tcp connect、unexpected eof、timeout 等）。
+- 分类规则：依据错误消息关键字进行表驱动映射，保证与现有错误分类基线一致；后续若扩充 Pin 相关原因，新增分类映射即可。
+- 计数读取：当前为进程内原子计数器，供测试与运行期观测；正式导出指标时以 `{reason="Tls|Verify"}` 维度聚合。
+
+2) 日志锚点
+- 在 Fake 阶段握手失败切换至 Real 阶段时输出结构化日志锚点，便于日志检索与统计：
+  - 关键字：`adaptive_tls_fallback: fake->real`，附带 `reason=Tls|Verify`。
+  - 握手起始日志包含 `real_host_verify=on|off` 标识，用于确认当次连接的 Real-Host 验证开关状态。
+
+3) 测试可测性（test-only 入口）
+- 为提高单测确定性并避免依赖真实握手/网络，导出仅在测试构建可见的辅助函数：
+  - `test_reset_fallback_counters()`：将内存计数器清零；
+  - `test_snapshot_fallback_counters() -> (tls_total, verify_total)`：读取当前快照；
+  - `test_classify_and_count_fallback(err_msg: &str) -> &'static str`：对给定错误字符串执行分类并累加计数，返回归类结果（"Tls" | "Verify"）。
+- 这些接口在 `core/git/transport/http` 模块中实现，并通过 `transport::mod` 在测试中复用。
+
+4) 测试矩阵（新增）
+- Verifier 路径：
+  - 开启 `realHostVerifyEnabled=true` 时，捕获型 verifier（测试桩）观察到用于链与域名匹配的 `server_name` 为真实域（override host）；
+  - 关闭开关后，回退为使用握手 SNI 的旧行为。
+- 分类与计数器：
+  - 使用 `test_classify_and_count_fallback()` 输入代表性错误消息：
+    - Verify：`"tls: General(SAN whitelist mismatch)"`、`"certificate name mismatch"`；
+    - Tls：`"tls handshake: unexpected eof"`、`"tcp connect: timed out"`；
+  - 断言返回的分类字符串与计数快照（Verify=2、Tls=2）。
+- 细节修复：
+  - rustls SCT 迭代器在单测中的类型约束调整为 `std::iter::empty::<&[u8]>()`，避免空切片迭代器的生命周期推断问题。
+- 集成观测（可选）：
+  - 在故障注入场景下检索 `adaptive_tls_fallback: fake->real` 日志锚点，确认 reason 填充正确。
+
+5) 运维与观察建议
+- 观察指标与日志：
+  - 通过内存计数器（后续也可导出为指标）关注 Fake→Real 的回退率，重点关注 `reason=Verify` 的上升（通常意味着证书域名或白名单规则变化）。
+  - 配合握手日志中的 `real_host_verify=on|off` 校验当次任务是否启用 Real-Host 验证；
+  - 结合 P3.2 的 timing 事件与证书指纹变更事件，定位是否因证书轮换引发短期 Verify 升高。
+- 应急回退：
+  - 若 `Verify` 原因占比显著升高（如 >20% 且持续）且证书侧短期无法修复，可临时将 `tls.realHostVerifyEnabled=false`，回退至旧逻辑，后续再择机恢复；
+  - 若 `Tls` 原因整体升高（网络/策略变更），可考虑临时下调或关闭 Fake SNI（P3.1 开关），观察恢复情况。
+- 前端兼容：
+  - 已在类型中同步 `realHostVerifyEnabled?` 可选字段；前端忽略该字段不影响现有渲染。
+
+6) 边界与风险
+- IDNA/国际化域名：当前按解析后的 ASCII/Punycode 结果进行 `ServerName` 构造；特殊大小写/同形异构域名需依赖上游 URL 解析约束。
+- 直连 IP：证书域名匹配对纯 IP 目标通常不成立，允许策略上直接走 Default 或关闭 Fake；
+- 通配名限制：`*.example.com` 不匹配多级（如 `a.b.example.com`），符合常见 CA 规则；
+- 代理/MITM：若存在企业代理进行 TLS 拦截，Verify 类错误可能升高；可与 `tls.skipSanWhitelist`（若有）或策略白名单协同评估；
+- ECH/HTTP/2：不在当前阶段范围内；不影响 Real-Host 验证逻辑。
+- 性能：Real-Host 验证在 Fake 分支上仅影响 `ServerName` 选择与一次校验，实测对握手耗时无显著影响。
+
+7) 兼容与回退摘要
+- 单一布尔开关：`tls.realHostVerifyEnabled=false` 即可回退至旧校验路径；
+- 与 P3.1 开关配合：需要时可将 `http.fakeSniEnabled=false`，完全绕过 Fake→Real 路径；
+- 事件与类型：新增字段/日志均为加法，不破坏旧消费者。
+
+### P3.4 SPKI Pin 规划 实现说明
+
+（此处留空，后续补充实现细节）
+
+### P3.5 异常与回退稳健性 实现说明
+
+（此处留空，后续补充实现细节）
+
+### P3.6 稳定性 Soak & 退出准入 实现说明
+
+（此处留空，后续补充实现细节）
