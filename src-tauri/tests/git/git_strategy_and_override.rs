@@ -547,21 +547,31 @@ mod section_tls_fingerprint_and_logging {
     use fireworks_collaboration_lib::events::structured::{set_test_event_bus, MemoryEventBus, Event, StrategyEvent};
     use fireworks_collaboration_lib::core::git::transport::record_certificate;
     use rustls::Certificate;
+    use fireworks_collaboration_lib::core::config::{model::AppConfig, loader};
+
+    fn enable_cert_fp_logging_with_limit(max_bytes: usize) {
+        let mut cfg = AppConfig::default();
+        cfg.tls.cert_fp_log_enabled = true;
+        cfg.tls.cert_fp_max_bytes = max_bytes as u64;
+        loader::save(&cfg).expect("save cfg");
+    }
 
     #[test]
     fn fingerprint_changed_event_once() {
+        // 显式启用日志，避免受其他测试禁用影响
+        enable_cert_fp_logging_with_limit(1024);
         let bus = std::sync::Arc::new(MemoryEventBus::new());
         set_test_event_bus(bus.clone());
         // Fake certificates: different DER contents
         let cert_a = Certificate(vec![0x30,0x82,0x01,0x0a,0x01,0xA1,0xB2]);
         let cert_b = Certificate(vec![0x30,0x82,0x01,0x0a,0x02,0xA1,0xB2]);
         let host = "example.test";
-    let r1 = record_certificate(host, &[cert_a.clone()]);
-        assert!(r1.unwrap().0, "first should be changed=true");
-    let r2 = record_certificate(host, &[cert_a.clone()]);
-        assert!(!r2.unwrap().0, "same cert no change");
-    let r3 = record_certificate(host, &[cert_b.clone()]);
-        assert!(r3.unwrap().0, "different cert triggers change");
+        let r1 = record_certificate(host, &[cert_a.clone()]);
+        assert!(r1.is_some() && r1.unwrap().0, "first should be changed=true");
+        let r2 = record_certificate(host, &[cert_a.clone()]);
+        assert!(r2.is_some() && !r2.unwrap().0, "same cert no change");
+        let r3 = record_certificate(host, &[cert_b.clone()]);
+        assert!(r3.is_some() && r3.unwrap().0, "different cert triggers change");
         let events = bus.snapshot();
         let count = events.into_iter().filter(|e| matches!(e, Event::Strategy(StrategyEvent::CertFingerprintChanged { .. }))).count();
         assert_eq!(count, 2, "two change events (initial + different)");
@@ -569,6 +579,8 @@ mod section_tls_fingerprint_and_logging {
 
     #[test]
     fn cert_fingerprint_changed_base64_length() {
+        // 确保开启记录以产生事件
+        enable_cert_fp_logging_with_limit(1024);
         let bus = std::sync::Arc::new(MemoryEventBus::new());
         set_test_event_bus(bus.clone());
         let host = format!("b64.{}.test", uuid::Uuid::new_v4());
@@ -589,6 +601,8 @@ mod section_tls_fingerprint_and_logging {
 
     #[test]
     fn fingerprint_lru_eviction_triggers_rechange() {
+        // 显式启用日志，避免因禁用导致 record 返回 None
+        enable_cert_fp_logging_with_limit(1024);
         let bus = std::sync::Arc::new(MemoryEventBus::new());
         set_test_event_bus(bus.clone());
         // Ensure deterministic eviction by using a unique prefix and inserting 2*MAX+1 entries
@@ -601,26 +615,24 @@ mod section_tls_fingerprint_and_logging {
         }
         // Re-record the first host; it should have been evicted and now count as changed
         let first = format!("{prefix}-0.lru.test");
-        let r = record_certificate(&first, &[Certificate(vec![0x30,0x82,0x00,0x01,0x02,0x03])]).unwrap();
-        assert!(r.0, "evicted host should appear as changed again");
+        let r = record_certificate(&first, &[Certificate(vec![0x30,0x82,0x00,0x01,0x02,0x03])]);
+        assert!(r.is_some() && r.unwrap().0, "evicted host should appear as changed again");
         let events = bus.snapshot();
     assert!(events.iter().any(|e| matches!(e, Event::Strategy(StrategyEvent::CertFingerprintChanged { host, .. }) if *host==first)), "expected change event for reinserted first host");
     }
 
     #[test]
     fn cert_fp_log_rotation_small_limit() {
-        // Set extremely small max bytes
-        let mut cfg = fireworks_collaboration_lib::core::config::model::AppConfig::default();
-        cfg.tls.cert_fp_max_bytes = 64; // very small
-        fireworks_collaboration_lib::core::config::loader::save(&cfg).unwrap();
+        // 强制开启并将阈值设置为极小，确保必然发生轮转
+        enable_cert_fp_logging_with_limit(1);
         let host = "rotate.test";
         // Clean existing log files for deterministic assertion
-        let base = fireworks_collaboration_lib::core::config::loader::base_dir();
+        let base = loader::base_dir();
         let log = base.join("cert-fp.log");
         let rotated = base.join("cert-fp.log.1");
         let _ = std::fs::remove_file(&log);
         let _ = std::fs::remove_file(&rotated);
-        for i in 0..5 {
+        for i in 0..10 {
             let der = vec![0x30,0x81, i as u8, 0x01, 0x02, 0x03];
             let _ = record_certificate(host, &[Certificate(der)]);
         }
