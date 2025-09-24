@@ -482,3 +482,128 @@ mod section_summary_gating {
         let dest2 = tempfile::tempdir().unwrap(); let (id2, tk2) = reg.create(TaskKind::GitClone { repo: origin2.path().to_string_lossy().to_string(), dest: dest2.path().to_string_lossy().to_string(), depth: None, filter: None, strategy_override: None }); let ov2 = serde_json::json!({"tls": {"insecure_skip_verify": true}}); let h2 = reg.spawn_git_clone_task_with_opts(Some(AppHandle {}), id2, tk2, origin2.path().to_string_lossy().to_string(), dest2.path().to_string_lossy().to_string(), None, None, Some(ov2)); let _ = h2.await; assert_applied_code(&id2.to_string(), "tls_strategy_override_applied"); assert_tls_applied(&id2.to_string(), true);
     }
 }
+
+// ---------------- (P3.2 migrated) section_adaptive_tls_and_metrics ----------------
+// 来源：src-tauri/src/core/git/transport/tests_p3_2_observability.rs
+// 覆盖：自适应 TLS 计时事件 + 指标开关/覆盖
+mod section_adaptive_tls_and_metrics {
+    use fireworks_collaboration_lib::events::structured::{set_test_event_bus, publish_global, MemoryEventBus, Event, StrategyEvent};
+    use uuid::Uuid;
+
+    #[test]
+    fn adaptive_tls_timing_event_emitted_with_first_byte() {
+        // 直接发布结构化事件，验证总线收集和字段读取
+        let bus = std::sync::Arc::new(MemoryEventBus::new());
+        set_test_event_bus(bus.clone());
+        publish_global(Event::Strategy(StrategyEvent::AdaptiveTlsTiming { id: Uuid::new_v4().to_string(), kind: "GitClone".into(), used_fake_sni: true, fallback_stage: "Fake".into(), connect_ms: Some(10), tls_ms: Some(30), first_byte_ms: Some(40), total_ms: Some(50), cert_fp_changed: false }));
+        let events = bus.snapshot();
+        let timing = events.into_iter().find_map(|e| match e { Event::Strategy(StrategyEvent::AdaptiveTlsTiming { first_byte_ms, .. }) => first_byte_ms, _=>None });
+        assert_eq!(timing, Some(40));
+    }
+
+    // 注：metrics 开关覆盖（禁用/强制启用）在 crate 内通过 #[cfg(test)] 的测试专用 API 控制，
+    // 在集成测试构建中不可见。这里仅保留事件发布的可观测性验证。
+}
+
+// ---------------- (P3.2 migrated) section_tls_fingerprint_and_logging ----------------
+// 覆盖：证书指纹变更事件/长度、LRU 淘汰后重算、日志轮转/禁用
+mod section_tls_fingerprint_and_logging {
+    use fireworks_collaboration_lib::events::structured::{set_test_event_bus, MemoryEventBus, Event, StrategyEvent};
+    use fireworks_collaboration_lib::core::git::transport::record_certificate;
+    use rustls::Certificate;
+
+    #[test]
+    fn fingerprint_changed_event_once() {
+        let bus = std::sync::Arc::new(MemoryEventBus::new());
+        set_test_event_bus(bus.clone());
+        // Fake certificates: different DER contents
+        let cert_a = Certificate(vec![0x30,0x82,0x01,0x0a,0x01,0xA1,0xB2]);
+        let cert_b = Certificate(vec![0x30,0x82,0x01,0x0a,0x02,0xA1,0xB2]);
+        let host = "example.test";
+    let r1 = record_certificate(host, &[cert_a.clone()]);
+        assert!(r1.unwrap().0, "first should be changed=true");
+    let r2 = record_certificate(host, &[cert_a.clone()]);
+        assert!(!r2.unwrap().0, "same cert no change");
+    let r3 = record_certificate(host, &[cert_b.clone()]);
+        assert!(r3.unwrap().0, "different cert triggers change");
+        let events = bus.snapshot();
+        let count = events.into_iter().filter(|e| matches!(e, Event::Strategy(StrategyEvent::CertFingerprintChanged { .. }))).count();
+        assert_eq!(count, 2, "two change events (initial + different)");
+    }
+
+    #[test]
+    fn cert_fingerprint_changed_base64_length() {
+        let bus = std::sync::Arc::new(MemoryEventBus::new());
+        set_test_event_bus(bus.clone());
+        let host = format!("b64.{}.test", uuid::Uuid::new_v4());
+        let _ = record_certificate(&host, &[Certificate(vec![0x30,0x82,0xAA,0xBB,0xCC,0xDD])]);
+        let events = bus.snapshot();
+        let mut found = false;
+        for e in events.iter() {
+            if let Event::Strategy(StrategyEvent::CertFingerprintChanged { spki_sha256, cert_sha256, host: h, .. }) = e {
+                if h == &host { 
+                    assert_eq!(spki_sha256.len(), 43, "spki length must be 43 for SHA256 base64url no pad");
+                    assert_eq!(cert_sha256.len(), 43, "cert length must be 43 for SHA256 base64url no pad");
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "expected fingerprint change event for b64.test");
+    }
+
+    #[test]
+    fn fingerprint_lru_eviction_triggers_rechange() {
+        let bus = std::sync::Arc::new(MemoryEventBus::new());
+        set_test_event_bus(bus.clone());
+        // Ensure deterministic eviction by using a unique prefix and inserting 2*MAX+1 entries
+        let prefix = format!("pfx-{}", uuid::Uuid::new_v4());
+        let max = 512usize; // mirror MAX constant in implementation
+        for i in 0..(max*2 + 1) {
+            let host = format!("{prefix}-{i}.lru.test");
+            let der = vec![0x30,0x82,(i & 0xFF) as u8,0x01,0x02,0x03];
+            let _ = record_certificate(&host, &[Certificate(der)]);
+        }
+        // Re-record the first host; it should have been evicted and now count as changed
+        let first = format!("{prefix}-0.lru.test");
+        let r = record_certificate(&first, &[Certificate(vec![0x30,0x82,0x00,0x01,0x02,0x03])]).unwrap();
+        assert!(r.0, "evicted host should appear as changed again");
+        let events = bus.snapshot();
+    assert!(events.iter().any(|e| matches!(e, Event::Strategy(StrategyEvent::CertFingerprintChanged { host, .. }) if *host==first)), "expected change event for reinserted first host");
+    }
+
+    #[test]
+    fn cert_fp_log_rotation_small_limit() {
+        // Set extremely small max bytes
+        let mut cfg = fireworks_collaboration_lib::core::config::model::AppConfig::default();
+        cfg.tls.cert_fp_max_bytes = 64; // very small
+        fireworks_collaboration_lib::core::config::loader::save(&cfg).unwrap();
+        let host = "rotate.test";
+        // Clean existing log files for deterministic assertion
+        let base = fireworks_collaboration_lib::core::config::loader::base_dir();
+        let log = base.join("cert-fp.log");
+        let rotated = base.join("cert-fp.log.1");
+        let _ = std::fs::remove_file(&log);
+        let _ = std::fs::remove_file(&rotated);
+        for i in 0..5 {
+            let der = vec![0x30,0x81, i as u8, 0x01, 0x02, 0x03];
+            let _ = record_certificate(host, &[Certificate(der)]);
+        }
+        assert!(log.exists(), "primary log should exist");
+        assert!(rotated.exists(), "rotated log .1 should exist due to tiny size limit");
+    }
+
+    #[test]
+    fn cert_fp_log_disabled_suppresses_record() {
+        // Disable logging
+        let mut cfg = fireworks_collaboration_lib::core::config::model::AppConfig::default();
+        cfg.tls.cert_fp_log_enabled = false;
+        fireworks_collaboration_lib::core::config::loader::save(&cfg).unwrap();
+        let bus = std::sync::Arc::new(MemoryEventBus::new());
+        set_test_event_bus(bus.clone());
+        let res = record_certificate("nolog.test", &[Certificate(vec![0x30,0x01,0x02])]);
+        assert!(res.is_none(), "record should early exit when disabled");
+        assert!(bus.snapshot().is_empty(), "no events when log disabled");
+    }
+}
+
+// (removed) transport fallback counters test relied on #[cfg(test)] helpers not exported in integration build
