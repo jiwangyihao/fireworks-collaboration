@@ -548,6 +548,10 @@ mod section_tls_fingerprint_and_logging {
     use fireworks_collaboration_lib::core::git::transport::record_certificate;
     use rustls::Certificate;
     use fireworks_collaboration_lib::core::config::{model::AppConfig, loader};
+    use rcgen::generate_simple_self_signed;
+    use serde_json::Value;
+    use std::path::Path;
+    use std::sync::{Mutex, OnceLock};
 
     fn enable_cert_fp_logging_with_limit(max_bytes: usize) {
         let mut cfg = AppConfig::default();
@@ -556,8 +560,20 @@ mod section_tls_fingerprint_and_logging {
         loader::save(&cfg).expect("save cfg");
     }
 
+    fn fp_log_guard() -> &'static Mutex<()> {
+        static GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+        GUARD.get_or_init(|| Mutex::new(()))
+    }
+
+    fn read_log_entries(path: &Path) -> Vec<Value> {
+        if !path.exists() { return Vec::new(); }
+        let raw = std::fs::read_to_string(path).expect("read log");
+        raw.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()).collect()
+    }
+
     #[test]
     fn fingerprint_changed_event_once() {
+        let _lock = fp_log_guard().lock().unwrap();
         // 显式启用日志，避免受其他测试禁用影响
         enable_cert_fp_logging_with_limit(1024);
         let bus = std::sync::Arc::new(MemoryEventBus::new());
@@ -579,6 +595,7 @@ mod section_tls_fingerprint_and_logging {
 
     #[test]
     fn cert_fingerprint_changed_base64_length() {
+        let _lock = fp_log_guard().lock().unwrap();
         // 确保开启记录以产生事件
         enable_cert_fp_logging_with_limit(1024);
         let bus = std::sync::Arc::new(MemoryEventBus::new());
@@ -601,6 +618,7 @@ mod section_tls_fingerprint_and_logging {
 
     #[test]
     fn fingerprint_lru_eviction_triggers_rechange() {
+        let _lock = fp_log_guard().lock().unwrap();
         // 显式启用日志，避免因禁用导致 record 返回 None
         enable_cert_fp_logging_with_limit(1024);
         let bus = std::sync::Arc::new(MemoryEventBus::new());
@@ -623,6 +641,7 @@ mod section_tls_fingerprint_and_logging {
 
     #[test]
     fn cert_fp_log_rotation_small_limit() {
+        let _lock = fp_log_guard().lock().unwrap();
         // 强制开启并将阈值设置为极小，确保必然发生轮转
         enable_cert_fp_logging_with_limit(1);
         let host = "rotate.test";
@@ -641,7 +660,42 @@ mod section_tls_fingerprint_and_logging {
     }
 
     #[test]
+    fn fingerprint_logs_include_spki_source_exact_and_fallback() {
+        let _lock = fp_log_guard().lock().unwrap();
+        enable_cert_fp_logging_with_limit(1024);
+        let base = loader::base_dir();
+        let log = base.join("cert-fp.log");
+        let rotated = base.join("cert-fp.log.1");
+        let _ = std::fs::remove_file(&log);
+        let _ = std::fs::remove_file(&rotated);
+
+        // 精确解析：使用 rcgen 生成的有效证书
+        let host_exact = format!("exact-{}.test", uuid::Uuid::new_v4());
+        let cert = generate_simple_self_signed(vec![host_exact.clone()]).unwrap();
+        let der = cert.serialize_der().unwrap();
+        let _ = record_certificate(&host_exact, &[Certificate(der)]);
+
+        let entries = read_log_entries(&log);
+        let exact_entry = entries
+            .iter()
+            .find(|v| v.get("host").and_then(|h| h.as_str()).map(|s| s == host_exact).unwrap_or(false))
+            .expect("exact entry");
+        assert_eq!(exact_entry.get("spkiSource").and_then(|v| v.as_str()), Some("exact"));
+
+        // 解析失败触发 fallback（空 DER）
+        let host_fallback = format!("fallback-{}.test", uuid::Uuid::new_v4());
+        let _ = record_certificate(&host_fallback, &[Certificate(Vec::new())]);
+        let entries = read_log_entries(&log);
+        let fallback_entry = entries
+            .iter()
+            .find(|v| v.get("host").and_then(|h| h.as_str()).map(|s| s == host_fallback).unwrap_or(false))
+            .expect("fallback entry");
+        assert_eq!(fallback_entry.get("spkiSource").and_then(|v| v.as_str()), Some("fallback"));
+    }
+
+    #[test]
     fn cert_fp_log_disabled_suppresses_record() {
+        let _lock = fp_log_guard().lock().unwrap();
         // Disable logging
         let mut cfg = fireworks_collaboration_lib::core::config::model::AppConfig::default();
         cfg.tls.cert_fp_log_enabled = false;
@@ -651,6 +705,145 @@ mod section_tls_fingerprint_and_logging {
         let res = record_certificate("nolog.test", &[Certificate(vec![0x30,0x01,0x02])]);
         assert!(res.is_none(), "record should early exit when disabled");
         assert!(bus.snapshot().is_empty(), "no events when log disabled");
+    }
+}
+
+// ---------------- section_tls_pin_enforcement ----------------
+// 覆盖：Pin mismatch 事件、分类统计与非法 Pin 退化。
+mod section_tls_pin_enforcement {
+    use std::sync::Arc;
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use rcgen::generate_simple_self_signed;
+    use rustls::client::{ServerCertVerified, ServerCertVerifier};
+    use rustls::{Certificate, ServerName};
+    use fireworks_collaboration_lib::events::structured::{set_test_event_bus, MemoryEventBus, Event, StrategyEvent};
+    use fireworks_collaboration_lib::core::tls::verifier::WhitelistCertVerifier;
+    use fireworks_collaboration_lib::core::tls::spki::compute_spki_sha256_b64;
+
+    struct AlwaysOkVerifier;
+    impl ServerCertVerifier for AlwaysOkVerifier {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &Certificate,
+            _intermediates: &[Certificate],
+            _server_name: &ServerName,
+            _scts: &mut dyn Iterator<Item = &[u8]>,
+            _ocsp_response: &[u8],
+            _now: std::time::SystemTime,
+        ) -> Result<ServerCertVerified, rustls::Error> {
+            Ok(ServerCertVerified::assertion())
+        }
+    }
+
+    #[test]
+    fn pin_mismatch_emits_event_and_counts_verify() {
+        let bus = Arc::new(MemoryEventBus::new());
+        set_test_event_bus(bus.clone());
+        let host = format!("pin-mismatch-{}.test", uuid::Uuid::new_v4());
+        let cert = generate_simple_self_signed(vec![host.clone()]).unwrap();
+        let der = cert.serialize_der().unwrap();
+        let leaf = Certificate(der.clone());
+        let (spki_sha256, _) = compute_spki_sha256_b64(&leaf);
+
+        let pins = vec![URL_SAFE_NO_PAD.encode([0u8;32])];
+        let verifier = WhitelistCertVerifier::new_with_override(
+            Arc::new(AlwaysOkVerifier),
+            vec![format!("*.{}", host), host.clone()],
+            Some(host.clone()),
+            true,
+            pins,
+        );
+
+        let mut scts = std::iter::empty::<&[u8]>();
+        let err = verifier
+            .verify_server_cert(
+                &leaf,
+                &[],
+                &ServerName::try_from("fake.sni.example").unwrap(),
+                &mut scts,
+                &[],
+                std::time::SystemTime::now(),
+            )
+            .expect_err("pin mismatch should fail");
+        assert!(format!("{err}").to_ascii_lowercase().contains("pin"));
+
+        let events = bus.snapshot();
+        let mismatch_events: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Strategy(StrategyEvent::CertFpPinMismatch { host, spki_sha256: s, pin_count, .. }) => Some((host.clone(), s.clone(), *pin_count)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(mismatch_events.len(), 1, "expect one pin mismatch event");
+        let (event_host, event_spki, pin_count) = &mismatch_events[0];
+        assert_eq!(event_host, &host);
+        assert_eq!(event_spki, &spki_sha256);
+        assert_eq!(*pin_count, 1);
+
+    }
+
+    #[test]
+    fn pin_match_allows_connection_without_mismatch_event() {
+        let bus = Arc::new(MemoryEventBus::new());
+        set_test_event_bus(bus.clone());
+        let host = format!("pin-match-{}.test", uuid::Uuid::new_v4());
+        let cert = generate_simple_self_signed(vec![host.clone()]).unwrap();
+        let der = cert.serialize_der().unwrap();
+        let leaf = Certificate(der.clone());
+        let (pin, _) = compute_spki_sha256_b64(&leaf);
+
+        let verifier = WhitelistCertVerifier::new_with_override(
+            Arc::new(AlwaysOkVerifier),
+            vec![host.clone()],
+            Some(host.clone()),
+            true,
+            vec![pin],
+        );
+
+        let mut scts = std::iter::empty::<&[u8]>();
+        let result = verifier.verify_server_cert(
+            &leaf,
+            &[],
+            &ServerName::try_from("fake.sni.example").unwrap(),
+            &mut scts,
+            &[],
+            std::time::SystemTime::now(),
+        );
+        assert!(result.is_ok(), "pin match should succeed");
+
+        let events = bus.snapshot();
+        assert!(events.iter().all(|e| !matches!(e, Event::Strategy(StrategyEvent::CertFpPinMismatch { .. }))), "pin match should not emit mismatch events");
+    }
+
+    #[test]
+    fn invalid_pins_disable_enforcement() {
+        let bus = Arc::new(MemoryEventBus::new());
+        set_test_event_bus(bus.clone());
+        let host = format!("pin-invalid-{}.test", uuid::Uuid::new_v4());
+        let cert = generate_simple_self_signed(vec![host.clone()]).unwrap();
+        let der = cert.serialize_der().unwrap();
+        let leaf = Certificate(der);
+
+        let verifier = WhitelistCertVerifier::new_with_override(
+            Arc::new(AlwaysOkVerifier),
+            vec![host.clone()],
+            Some(host.clone()),
+            true,
+            vec!["not-base64!!".into()],
+        );
+
+        let mut scts = std::iter::empty::<&[u8]>();
+        let result = verifier.verify_server_cert(
+            &leaf,
+            &[],
+            &ServerName::try_from("fake.sni.example").unwrap(),
+            &mut scts,
+            &[],
+            std::time::SystemTime::now(),
+        );
+        assert!(result.is_ok(), "invalid pins should disable enforcement");
+        assert!(bus.snapshot().is_empty(), "no events when pins invalid");
     }
 }
 
