@@ -23,4 +23,4 @@ pub use fingerprint::record_certificate;
 
 // Test-only helpers re-export for ease of access in tests modules
 #[cfg(test)]
-pub use http::{test_reset_fallback_counters, test_snapshot_fallback_counters};
+pub use http::{test_classify_and_count_fallback, test_reset_fallback_counters, test_snapshot_fallback_counters};

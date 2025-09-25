@@ -38,6 +38,7 @@ pub enum StrategyEvent {
     ,IgnoredFields { id: String, kind: String, top_level: Vec<String>, nested: Vec<String> }
     ,AdaptiveTlsTiming { id: String, kind: String, used_fake_sni: bool, fallback_stage: String, connect_ms: Option<u32>, tls_ms: Option<u32>, first_byte_ms: Option<u32>, total_ms: Option<u32>, cert_fp_changed: bool }
     ,CertFingerprintChanged { id: String, host: String, spki_sha256: String, cert_sha256: String }
+    ,CertFpPinMismatch { id: String, host: String, spki_sha256: String, pin_count: u8 }
 }
 
 /// 统一顶层事件枚举

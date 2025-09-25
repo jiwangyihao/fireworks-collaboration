@@ -46,7 +46,8 @@ anyhow = "1"
 thiserror = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 base64 = "0.22"
-  ring = { version = "0.17" }
+ring = { version = "0.17" }
+x509-parser = { version = "0.15", default-features = false }
 # 新增异步运行时依赖（修复 tokio / tokio_util 未解析错误）
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
 tokio-util = { version = "0.7", features = ["rt"] }
@@ -75,6 +76,7 @@ once_cell = "1"
 proptest = "1"
 criterion = { version = "0.5", features=["html_reports"] }
 ctor = "0.2"
+rcgen = "0.12"
 
 # Windows specific dependencies for registry access
 [target.'cfg(windows)'.dependencies]

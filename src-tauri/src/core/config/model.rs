@@ -25,6 +25,8 @@ pub struct TlsCfg {
     #[serde(default)] pub insecure_skip_verify: bool,
     /// 可选：仅跳过自定义 SAN 白名单校验，但仍执行常规的证书链与域名校验（默认关闭）
     #[serde(default)] pub skip_san_whitelist: bool,
+    /// P3.4: SPKI Pin 列表（Base64URL 无填充，长度=43）。非空即启用强校验。
+    #[serde(default)] pub spki_pins: Vec<String>,
     /// P3.3: Real-Host 验证开关。启用后即便握手使用了 Fake SNI，证书链与主机名验证也以真实目标域名为准；
     /// 失败时会触发一次回退至 Real SNI 的重握手。默认启用。
     #[serde(default = "default_true")] pub real_host_verify_enabled: bool,
@@ -111,7 +113,7 @@ impl Default for AppConfig {
                 max_redirects: default_max_redirects(),
                 large_body_warn_bytes: default_large_body_warn(),
             },
-            tls: TlsCfg { san_whitelist: default_san_whitelist(), insecure_skip_verify: false, skip_san_whitelist: false, real_host_verify_enabled: true, metrics_enabled: true, cert_fp_log_enabled: true, cert_fp_max_bytes: default_cert_fp_max_bytes() },
+            tls: TlsCfg { san_whitelist: default_san_whitelist(), insecure_skip_verify: false, skip_san_whitelist: false, spki_pins: Vec::new(), real_host_verify_enabled: true, metrics_enabled: true, cert_fp_log_enabled: true, cert_fp_max_bytes: default_cert_fp_max_bytes() },
             logging: LoggingCfg { auth_header_masked: default_true(), log_level: default_log_level() },
             retry: RetryCfg::default(),
             partial_filter_supported: false,
@@ -167,6 +169,7 @@ mod tests {
     assert!(s.contains("\"metricsEnabled\""));
     assert!(s.contains("\"certFpLogEnabled\""));
     assert!(s.contains("\"certFpMaxBytes\""));
+    assert!(s.contains("\"spkiPins\""));
     }
 
     #[test]
@@ -193,5 +196,7 @@ mod tests {
     assert!(cfg.tls.metrics_enabled, "metricsEnabled default true");
     assert!(cfg.tls.cert_fp_log_enabled, "certFpLogEnabled default true");
     assert_eq!(cfg.tls.cert_fp_max_bytes, 5*1024*1024);
+        // P3.4: spkiPins default empty
+        assert!(cfg.tls.spki_pins.is_empty());
     }
 }

@@ -36,10 +36,43 @@ pub fn test_reset_fallback_counters() { FALLBACK_TLS_TOTAL.store(0, Ordering::Re
 #[cfg(test)]
 pub fn test_snapshot_fallback_counters() -> (u64, u64) { (FALLBACK_TLS_TOTAL.load(Ordering::Relaxed), FALLBACK_VERIFY_TOTAL.load(Ordering::Relaxed)) }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn counter_guard() -> &'static Mutex<()> {
+        static GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+        GUARD.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn classify_pin_error_as_verify() {
+        let _lock = counter_guard().lock().unwrap();
+        test_reset_fallback_counters();
+        let category = classify_and_count_fallback("cert_fp_pin_mismatch");
+        assert_eq!(category, "Verify");
+        let (tls_total, verify_total) = test_snapshot_fallback_counters();
+        assert_eq!(tls_total, 0);
+        assert_eq!(verify_total, 1);
+    }
+
+    #[test]
+    fn classify_tls_error_falls_back_to_tls() {
+        let _lock = counter_guard().lock().unwrap();
+        test_reset_fallback_counters();
+        let category = classify_and_count_fallback("handshake failure");
+        assert_eq!(category, "Tls");
+        let (tls_total, verify_total) = test_snapshot_fallback_counters();
+        assert_eq!(tls_total, 1);
+        assert_eq!(verify_total, 0);
+    }
+}
+
 fn classify_and_count_fallback(err_msg: &str) -> &'static str {
     let em = err_msg.to_ascii_lowercase();
     // rustls 错误文本约定：General("SAN whitelist mismatch") 或域名不符等 -> Verify；其他握手/IO -> Tls
-    if em.contains("whitelist") || em.contains("san") || em.contains("name") || em.contains("verify") {
+    if em.contains("whitelist") || em.contains("san") || em.contains("name") || em.contains("verify") || em.contains("pin") {
         FALLBACK_VERIFY_TOTAL.fetch_add(1, Ordering::Relaxed);
         "Verify"
     } else {

@@ -3,8 +3,9 @@ use std::sync::Arc;
 use rustls::client::{ServerCertVerified, ServerCertVerifier};
 use rustls::{Certificate, Error as TlsError, ServerName, RootCertStore, OwnedTrustAnchor};
 use rustls::ClientConfig;
-
+use base64::Engine;
 use crate::core::config::model::TlsCfg;
+use crate::core::tls::spki::{compute_spki_sha256_b64, SpkiSource};
 use super::util::match_domain;
 
 /// 包装 rustls 默认验证器，并在其基础上增加 SAN 白名单域校验。
@@ -16,15 +17,17 @@ pub struct WhitelistCertVerifier {
     // P3.3: Real-Host 验证开关（默认开启）。开启时：即使握手使用了 Fake SNI，链与域名验证也按真实域执行；
     // 关闭时：回退到按 SNI 执行默认验证的旧逻辑（override_host 仅用于白名单匹配）。
     real_host_verify_enabled: bool,
+    // P3.4: SPKI Pin 强校验（Base64URL，无填充，长度=43）。非空时启用。
+    spki_pins: Vec<String>,
 }
 
 impl WhitelistCertVerifier {
     pub fn new(inner: Arc<dyn ServerCertVerifier>, whitelist: Vec<String>) -> Self {
-        Self { inner, whitelist, override_host: None, real_host_verify_enabled: true }
+        Self { inner, whitelist, override_host: None, real_host_verify_enabled: true, spki_pins: Vec::new() }
     }
 
-    pub fn new_with_override(inner: Arc<dyn ServerCertVerifier>, whitelist: Vec<String>, override_host: Option<String>, real_host_verify_enabled: bool) -> Self {
-        Self { inner, whitelist, override_host, real_host_verify_enabled }
+    pub fn new_with_override(inner: Arc<dyn ServerCertVerifier>, whitelist: Vec<String>, override_host: Option<String>, real_host_verify_enabled: bool, spki_pins: Vec<String>) -> Self {
+        Self { inner, whitelist, override_host, real_host_verify_enabled, spki_pins }
     }
 
     fn host_allowed_str(&self, host: &str) -> bool {
@@ -74,6 +77,26 @@ impl ServerCertVerifier for WhitelistCertVerifier {
         };
         if !self.host_allowed_str(host_to_check) {
             return Err(TlsError::General("SAN whitelist mismatch".into()));
+        }
+
+        // P3.4: SPKI Pin 强校验（若配置非空）。在链与主机名验证成功、白名单通过后执行。
+        if !self.spki_pins.is_empty() {
+            // 仅当 pin 列表全部合法时才执行；否则视为禁用（记录一次调试日志）。
+            if let Some(valid_pins) = validate_pins(&self.spki_pins) {
+                let (spki_b64, spki_source) = compute_spki_sha256_b64(end_entity);
+                let pin_count = valid_pins.len() as u8;
+                if !valid_pins.iter().any(|p| p == &spki_b64) {
+                    // 发送结构化事件并返回 Verify 类错误；不触发 Fake->Real 回退。
+                    tracing::warn!(target="git.transport", host=%host_to_check, pin_enforced="on", pin_count=%pin_count, cert_spki=%spki_b64, spki_source=%log_spki_source(spki_source), "pin_mismatch");
+                    use crate::events::structured::{publish_global, Event as StructuredEvent, StrategyEvent as StructuredStrategyEvent};
+                    publish_global(StructuredEvent::Strategy(StructuredStrategyEvent::CertFpPinMismatch { id: host_to_check.to_string(), host: host_to_check.to_string(), spki_sha256: spki_b64.clone(), pin_count }));
+                    return Err(TlsError::General("cert_fp_pin_mismatch".into()));
+                } else {
+                    tracing::debug!(target="git.transport", host=%host_to_check, pin_enforced="on", pin_count=%pin_count, spki_source=%log_spki_source(spki_source), "pin_match");
+                }
+            } else {
+                tracing::warn!(target="git.transport", host=%host_to_check, pin_enforced="off", reason="invalid_pins", "pin_disabled_this_conn");
+            }
         }
         Ok(ServerCertVerified::assertion())
     }
@@ -169,10 +192,12 @@ fn build_cert_verifier(tls: &TlsCfg, override_host: Option<String>) -> Arc<dyn S
         return inner;
     }
     if let Some(h) = override_host {
-        Arc::new(WhitelistCertVerifier::new_with_override(inner, tls.san_whitelist.clone(), Some(h), tls.real_host_verify_enabled))
+        Arc::new(WhitelistCertVerifier::new_with_override(inner, tls.san_whitelist.clone(), Some(h), tls.real_host_verify_enabled, tls.spki_pins.clone()))
     } else {
         // 当未提供 override_host 时，real_host_verify_enabled 与旧逻辑等价（按 SNI 验证），此处保持默认开启值。
-        Arc::new(WhitelistCertVerifier::new(inner, tls.san_whitelist.clone()))
+        let mut v = WhitelistCertVerifier::new(inner, tls.san_whitelist.clone());
+        v.spki_pins = tls.spki_pins.clone();
+        Arc::new(v)
     }
 }
 
@@ -215,11 +240,36 @@ pub fn create_client_config_with_expected_name(tls: &TlsCfg, expected_host: &str
     cfg
 }
 
+// ===== Helpers: SPKI pin parsing & computing =====
+fn validate_pins(pins: &[String]) -> Option<Vec<String>> {
+    // 规则：Base64URL 无填充，长度=43，最多 10 个；非法或超限则返回 None（本次连接禁用 Pin）。
+    if pins.is_empty() { return Some(Vec::new()); }
+    if pins.len() > 10 { return None; }
+    let mut out: Vec<String> = Vec::new();
+    for p in pins {
+        let s = p.trim();
+        if s.len() != 43 { return None; }
+        // 尝试解码以校验合法性（但不使用解码结果）
+        if base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(s).is_err() { return None; }
+        if !out.iter().any(|e| e == s) { out.push(s.to_string()); }
+    }
+    Some(out)
+}
+
+fn log_spki_source(source: SpkiSource) -> &'static str {
+    match source {
+        SpkiSource::Exact => "exact",
+        SpkiSource::WholeCertFallback => "fallback",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rustls::client::{ServerCertVerified, ServerCertVerifier};
     use rustls::{Certificate, ServerName};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use rcgen::generate_simple_self_signed;
 
     #[test]
     fn test_host_allowed_logic() {
@@ -248,14 +298,54 @@ mod tests {
 
     #[test]
     fn test_create_client_config() {
-    let tls = TlsCfg { san_whitelist: vec!["github.com".into(), "*.github.com".into()], insecure_skip_verify: false, skip_san_whitelist: false, real_host_verify_enabled: true, metrics_enabled: true, cert_fp_log_enabled: true, cert_fp_max_bytes: 1024*1024 };
+        let tls = TlsCfg { san_whitelist: vec!["github.com".into(), "*.github.com".into()], insecure_skip_verify: false, skip_san_whitelist: false, spki_pins: Vec::new(), real_host_verify_enabled: true, metrics_enabled: true, cert_fp_log_enabled: true, cert_fp_max_bytes: 1024*1024 };
         let _cfg = create_client_config(&tls);
     }
 
     #[test]
     fn test_create_client_config_insecure() {
-    let tls = TlsCfg { san_whitelist: vec![], insecure_skip_verify: true, skip_san_whitelist: false, real_host_verify_enabled: true, metrics_enabled: true, cert_fp_log_enabled: true, cert_fp_max_bytes: 1024*1024 };
+        let tls = TlsCfg { san_whitelist: vec![], insecure_skip_verify: true, skip_san_whitelist: false, spki_pins: Vec::new(), real_host_verify_enabled: true, metrics_enabled: true, cert_fp_log_enabled: true, cert_fp_max_bytes: 1024*1024 };
         let _cfg = create_client_config(&tls);
+    }
+
+    struct AlwaysOkVerifier;
+    impl ServerCertVerifier for AlwaysOkVerifier {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &Certificate,
+            _intermediates: &[Certificate],
+            _server_name: &ServerName,
+            _scts: &mut dyn Iterator<Item = &[u8]>,
+            _ocsp_response: &[u8],
+            _now: std::time::SystemTime,
+        ) -> Result<ServerCertVerified, TlsError> { Ok(ServerCertVerified::assertion()) }
+    }
+
+    #[test]
+    fn test_pin_mismatch_returns_verify_error() {
+        // Construct verifier with a valid-looking pin (base64url of 32 zero bytes) that won't match the empty-cert hash
+        let pins = vec![URL_SAFE_NO_PAD.encode([0u8;32])];
+        let v = WhitelistCertVerifier { inner: Arc::new(AlwaysOkVerifier), whitelist: vec!["example.com".into()], override_host: Some("example.com".into()), real_host_verify_enabled: true, spki_pins: pins };
+        let ee = Certificate(vec![]); // empty cert -> hash won't be all 'A'
+        let mut scts = std::iter::empty::<&[u8]>();
+        let err = v.verify_server_cert(&ee, &[], &ServerName::try_from("fake.sni.com").unwrap(), &mut scts, &[], std::time::SystemTime::now()).unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.to_ascii_lowercase().contains("pin"));
+    }
+
+    #[test]
+    fn test_pin_match_allows_connection() {
+        let cert = generate_simple_self_signed(vec!["pin.example".into()]).unwrap();
+        let der = cert.serialize_der().unwrap();
+        let rustls_cert = Certificate(der.clone());
+        let (pin, source) = compute_spki_sha256_b64(&rustls_cert);
+        assert_eq!(source, SpkiSource::Exact);
+
+        let pins = vec![pin.clone()];
+        let v = WhitelistCertVerifier { inner: Arc::new(AlwaysOkVerifier), whitelist: vec!["pin.example".into(), "*.example".into()], override_host: Some("pin.example".into()), real_host_verify_enabled: true, spki_pins: pins };
+        let mut scts = std::iter::empty::<&[u8]>();
+        let result = v.verify_server_cert(&rustls_cert, &[], &ServerName::try_from("fake.sni.example").unwrap(), &mut scts, &[], std::time::SystemTime::now());
+        assert!(result.is_ok());
     }
 
     struct CaptureVerifier(std::sync::Mutex<Option<String>>);
@@ -279,7 +369,7 @@ mod tests {
     fn test_real_host_verify_uses_override_when_enabled() {
         let captured = Arc::new(CaptureVerifier(std::sync::Mutex::new(None)));
         let whitelist = vec!["example.com".into()];
-        let v = WhitelistCertVerifier { inner: captured.clone(), whitelist, override_host: Some("real.example.com".into()), real_host_verify_enabled: true };
+    let v = WhitelistCertVerifier { inner: captured.clone(), whitelist, override_host: Some("real.example.com".into()), real_host_verify_enabled: true, spki_pins: Vec::new() };
         let ee = Certificate(vec![]);
         let mut scts = std::iter::empty::<&[u8]>();
         let _ = v.verify_server_cert(&ee, &[], &ServerName::try_from("fake.sni.com").unwrap(), &mut scts, &[], std::time::SystemTime::now());
@@ -291,11 +381,28 @@ mod tests {
     fn test_real_host_verify_disabled_uses_sni() {
         let captured = Arc::new(CaptureVerifier(std::sync::Mutex::new(None)));
         let whitelist = vec!["example.com".into()];
-        let v = WhitelistCertVerifier { inner: captured.clone(), whitelist, override_host: Some("real.example.com".into()), real_host_verify_enabled: false };
+    let v = WhitelistCertVerifier { inner: captured.clone(), whitelist, override_host: Some("real.example.com".into()), real_host_verify_enabled: false, spki_pins: Vec::new() };
         let ee = Certificate(vec![]);
         let mut scts = std::iter::empty::<&[u8]>();
         let _ = v.verify_server_cert(&ee, &[], &ServerName::try_from("fake.sni.com").unwrap(), &mut scts, &[], std::time::SystemTime::now());
         let got = captured.0.lock().unwrap().clone().unwrap();
         assert_eq!(got, "fake.sni.com");
+    }
+
+    #[test]
+    fn test_validate_pins_rules() {
+    // valid length 43 and url-safe characters (encode 32 zero bytes)
+    let valid = vec![URL_SAFE_NO_PAD.encode([0u8;32])];
+        let out = validate_pins(&valid).unwrap();
+        assert_eq!(out.len(), 1);
+        // duplicates are deduplicated but still considered valid
+        let dup = vec![valid[0].clone(), valid[0].clone()];
+        let out_dup = validate_pins(&dup).unwrap();
+        assert_eq!(out_dup.len(), 1);
+        // invalid length
+        assert!(validate_pins(&vec!["short".into()]).is_none());
+        // too many
+        let many: Vec<String> = (0..11).map(|_| "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string()).collect();
+        assert!(validate_pins(&many).is_none());
     }
 }
