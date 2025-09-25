@@ -282,7 +282,7 @@ mod tests {
         let v = WhitelistCertVerifier { inner: captured.clone(), whitelist, override_host: Some("real.example.com".into()), real_host_verify_enabled: true };
         let ee = Certificate(vec![]);
         let mut scts = std::iter::empty::<&[u8]>();
-        let res = v.verify_server_cert(&ee, &[], &ServerName::try_from("fake.sni.com").unwrap(), &mut scts, &[], std::time::SystemTime::now());
+        let _ = v.verify_server_cert(&ee, &[], &ServerName::try_from("fake.sni.com").unwrap(), &mut scts, &[], std::time::SystemTime::now());
         let got = captured.0.lock().unwrap().clone().unwrap();
         assert_eq!(got, "real.example.com");
     }
@@ -294,7 +294,7 @@ mod tests {
         let v = WhitelistCertVerifier { inner: captured.clone(), whitelist, override_host: Some("real.example.com".into()), real_host_verify_enabled: false };
         let ee = Certificate(vec![]);
         let mut scts = std::iter::empty::<&[u8]>();
-        let res = v.verify_server_cert(&ee, &[], &ServerName::try_from("fake.sni.com").unwrap(), &mut scts, &[], std::time::SystemTime::now());
+        let _ = v.verify_server_cert(&ee, &[], &ServerName::try_from("fake.sni.com").unwrap(), &mut scts, &[], std::time::SystemTime::now());
         let got = captured.0.lock().unwrap().clone().unwrap();
         assert_eq!(got, "fake.sni.com");
     }
