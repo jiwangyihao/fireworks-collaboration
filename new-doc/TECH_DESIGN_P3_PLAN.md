@@ -21,7 +21,7 @@
 6. 可回退：单一配置布尔或环境变量即可即时关闭（不需重启）并回到 libgit2 默认传输；指纹与指标逻辑在关闭时自动暂停采集。
 7. 为 P4 准备：在 timing/回退事件中预留可选 `ip`、`ipSource?` 字段（当前恒为空），P4 注入时不需要新增事件代码。 
 8. 引入“真实域名验证”（Real-Host Verification）机制：握手可用 Fake SNI 但证书域名匹配仍针对真实目标域，失败一次即回退 Real SNI；本阶段实现并默认开启（可通过调试开关关闭），为后续 Pin 细化奠定基础。
-9. 预埋 SPKI Pin 规划（Spec Only，不启用）：定义 `tls.spkiPins?: string[]`（Base64URL SPKI SHA256）与匹配策略、失败分类（Verify），P3 仅输出规划文档与解析预留（不触发校验），P7 再正式启用。
+9. 启用 SPKI Pin 强校验：当配置 `tls.spkiPins?: string[]`（Base64URL SPKI SHA256）非空时，握手后将证书 SPKI 指纹与列表匹配；若不匹配则按 Verify 失败直接终止（不触发 Fake→Real），记录 `cert_fp_pin_mismatch` 事件与 `pin_mismatch` 日志；支持并行轮换（多指纹）。
 
 ### 1.3 范围
 - 后端（Rust）：传输层注册与默认启用逻辑、回退决策统一、指标/指纹采集、事件字段扩展、配置与 gating、长时运行稳定性验证脚手架。
@@ -31,7 +31,7 @@
 ### 1.4 不在本阶段
 - IP 池与 IP 优选（P4）。
 - 代理与自动降级（P5）。
-- SPKI Pin 强校验（计划 P7）。
+-（已纳入本阶段：SPKI Pin 强校验）。
 - LFS 支持与指标面板 UI（P7/P8）。
 - 真实 HTTP/2、多路复用、ECH（远期议题）。
 
@@ -56,8 +56,8 @@
 
 ### 1.7 交付物
 - 代码：在现有 subtransport(A) 基础上抽象决策与指标采集层（非破坏性重写）；新增指纹采集与缓存模块；自动禁用（runtime flag）机制。
-- 配置：保持 `http.fakeSniEnabled` 键；新增 `http.fakeSniRolloutPercent?`（0..100，可缺省）；在 `tls` 命名空间增量添加 `metricsEnabled`、`certFpLogEnabled`、`certFpMaxBytes`、`realHostVerifyEnabled`（默认 true）；预埋 `spkiPins?`（解析占位不生效）。
-- 事件：在既有 `task://progress|error` 通道新增可选结构 `{ timing?, usedFakeSni?, fallbackStage?, certFpChanged? }` 与信息型代码 `adaptive_tls_rollout`、`adaptive_tls_fallback`、`cert_fingerprint_changed`。
+- 配置：保持 `http.fakeSniEnabled` 键；新增 `http.fakeSniRolloutPercent?`（0..100，可缺省）；在 `tls` 命名空间增量添加 `metricsEnabled`、`certFpLogEnabled`、`certFpMaxBytes`、`realHostVerifyEnabled`（默认 true）；新增 `spkiPins?`（Base64URL SPKI SHA256 列表，非空即启用强校验，建议 ≤10 个）。
+- 事件：在既有 `task://progress|error` 通道新增可选结构 `{ timing?, usedFakeSni?, fallbackStage?, certFpChanged? }` 与信息型代码 `adaptive_tls_rollout`、`adaptive_tls_fallback`、`cert_fingerprint_changed`，并启用 `cert_fp_pin_mismatch`（Pin 不匹配时发送）。
 - 文档：更新 `TECH_DESIGN_git2rs.md` P3 段落、Changelog 条目、配置示例；保留与 P2 的差异对照表。
 - 测试：故障注入（连接/TLS/读写）、回退路径覆盖、rollout 采样偏差、指纹滚动与重复抑制、性能基线（微基准或统计）。
 
@@ -86,7 +86,7 @@
 | 分类漂移 | 中 | 规则更新致误分类 | 表驱动映射快照 + 单元测试基线 |
 | 性能退化 | 中 | 采集/哈希开销 | 指标开关 + 缓存命中统计 + 基准对比 |
 | 回退开关不一致 | 低 | 部分线程未见新 flag | 原子共享 + 注册时读取 + 任务起始检查 |
-| Pin 规划漂移 | 低 | P3 规划与 P7 实施字段语义偏差 | 规格锁定 + 解析快照测试 + Changelog 高亮 |
+| Pin 强校验误配 | 中 | 配置的 SPKI 列表未覆盖现网证书或轮换 | 渐进发布/灰度域试点 + 快速回退（清空 pins）+ mismatch 事件告警 + 列表上限控制 |
 
 ### 1.11 兼容与迁移
 | 旧配置场景 | 行为（P2/MP1） | P3 迁移策略 | 兼容保障 |
@@ -109,7 +109,7 @@
 | P3.1 | 默认启用与渐进放量 | Gating / %Rollout / 白名单策略 |
 | P3.2 | 可观测性强化（基础） | Timing / Fingerprint / 日志滚动 |
 | P3.3 | Real-Host 验证 | Fake SNI 握手 / 真实域匹配 / 单次回退 |
-| P3.4 | SPKI Pin 规划（Spec） | Pin 字段解析 / 日志 PinInactive / 未来启用路径 |
+| P3.4 | SPKI Pin 强校验（启用） | Pin 列表解析 / 强校验 / pin_match & pin_mismatch 事件与日志 |
 | P3.5 | 异常与回退稳健性 | 故障注入 / 分类一致性 / 自动禁用 Fake |
 | P3.6 | 稳定性 Soak & 退出准入 | 长时运行 / 指标阈值 / 报告 |
 
@@ -156,7 +156,7 @@
 - 日志落地：`cert-fp.log` JSON Lines（字段：ts, host, spkiSha256, certSha256, changed?）——该文件在 earlier 设计中已规划，此阶段正式启用。
 - 安全：文件大小上限（例如 5MB）滚动策略；
 - 性能：fingerprint 计算缓存（LRU host→(spki,hash)）。
-（本阶段暂不引入 Real-Host 验证与 SPKI Pin 校验，二者分别在 P3.3 / P3.4 实施与规划。）
+（本阶段暂不引入 Real-Host 验证与 SPKI Pin 校验，二者分别在 P3.3 / P3.4 实施；P3.4 为强校验。）
 交付物：timing 注入、中间层 wrapper、指纹记录器、LRU 缓存、事件测试、滚动策略。
 接口/配置：`tls.metricsEnabled`、`tls.certFpLogEnabled`、`tls.certFpMaxBytes`；默认 metrics / certFpLog 启用，兼容旧配置无字段视为启用。
 指标：`tls_handshake_ms_bucket`（可后期直方或延迟，仅内部）；`cert_fp_changes_total`；
@@ -206,37 +206,46 @@
 
 实现摘要：自定义 `ServerCertVerifier` 包装 rustls 默认 verifier，传入真实域名生成 `ServerName`，完成链与域名校验后再执行白名单匹配；失败返回 rustls::Error::General 区分语义前缀 (`san_mismatch` / `name_mismatch`) 供分类层解析。
 
-### P3.4 SPKI Pin 规划（Spec Only）
-目标：在不立即强制校验的前提下，统一 SPKI Pin 字段与日志格式，收集潜在部署数据，为 P7 正式启用降低风险。
+### P3.4 SPKI Pin 强校验
+目标：当配置 `tls.spkiPins` 非空时，对服务端证书的 SPKI 指纹进行强制匹配校验；不匹配即按 Verify 失败直接终止连接（不触发 Fake→Real），以提升中间人与证书替换风险的防护能力。
 
 范围：
-- 解析 `tls.spkiPins?: string[]` Base64URL 指纹；
-- 不做握手失败判定，仅输出 `pin_inactive` 日志（含 pin_count / 指纹前缀）；
-- 预留 mismatch 事件代码与回退策略说明（直接失败，不走 Fake→Real）。
+- 解析并校验 `tls.spkiPins?: string[]`：Base64URL（无填充，`-`/`_` 字符集）编码的 SHA256 值，长度固定 43；数量上限 ≤10（超限拒绝配置）。
+- 握手完成后计算 leaf 证书 SPKI SHA256（与 P3.2 指纹体系一致/可替换为精确 ASN.1 提取），与列表做包含匹配。
+- 列表为空或缺失时不启用 Pin 检查；列表非空但全部非法则视为配置错误（记录 Protocol 日志，禁用本次 Pin 检查）。
+- 不匹配：立即返回 Verify 类错误，发送事件 `cert_fp_pin_mismatch`，并输出 `pin_mismatch` 日志；匹配则输出 `pin_match` 日志（含匹配前缀）。
+- 不触发 Fake→Real 回退；Pin 与 Fake/Real 链路独立。
 
-交付物：解析与校验占位代码、日志格式、测试（解析 / 空列表 / 非法格式拒绝）。
+交付物：
+- 强校验实现（verifier 内钩子）：与 Real-Host 验证兼容，先做链与域名验证，再执行 Pin 比对；
+- 日志格式：在握手日志打印 `pin_enforced=on`、`pin_count=<n>`、`pin_match`/`pin_mismatch`；
+- 事件：`cert_fp_pin_mismatch { host, spkiSha256(cert), matched:false, pinCount }`；
+- 测试：解析（合法/非法）、空列表、上限裁剪或拒绝、匹配/不匹配路径、分类为 Verify；与 Fake→Real 回退路径的独立性测试。
 
 验收：
-- 存在 spkiPins 时握手成功（不影响连接）；
-- 非法指纹（长度 / Base64 错）被拒并记录 Protocol 日志，不影响基础功能；
-- 日志可统计潜在指纹覆盖率。
+- 存在合法 `spkiPins` 且包含目标证书 SPKI 时，握手成功（不影响连接）。
+- Pin 不匹配时握手失败并归类 Verify，发 `cert_fp_pin_mismatch` 事件；不发生 Fake→Real 重试。
+- 非法指纹（长度/编码）被拒并记录 Protocol 日志，不影响基础功能（Pin 检查被跳过）。
+- 日志可统计 pin 覆盖率与命中率（pin_count、pin_match/mismatch）。
 
-回退：删除或清空 `spkiPins`；跳过解析路径。
+回退：删除或清空 `spkiPins` 即可；也可在运维层下发空数组临时停用。
 
-风险&缓解：规划与实施漂移 → 规格快照测试；大量指纹导致日志膨胀 → 限制上限（如 ≤10）。
+风险&缓解：
+- 误配导致连接失败 → 分阶段为关键域先行试点；提供快速回退（清空 pins）；记录详细 mismatch 事件便于定位。
+- 日志膨胀 → 限制 Pin 列表上限（≤10），仅在结果（match/mismatch）时输出一次日志与事件。
 
-#### 规划要点表
+#### 要点表
 | 项 | 内容 |
 |----|------|
-| 字段 | `tls.spkiPins?: string[]`（Base64URL SPKI SHA256 列表） |
-| 解析 | P3 解析并记录数量；若存在则在握手日志打印 `pin_count` |
-| 校验策略 | P3 不执行；P7 起：若列表非空则期望证书 SPKI ∈ 列表否则 Verify 失败 |
-| 轮换策略占位 | 支持多指纹并行；后续附加 `pinMetadata` 记录生效时间与计划淘汰时间 |
-| 事件预留 | `cert_fp_pin_mismatch`（P7 启用） |
-| 回退 | 与 Fake/Real 链独立；Pin 不匹配不触发 Fake→Real（直接失败） |
-| 日志 | `pin_inactive` (P3)、`pin_match` / `pin_mismatch` (P7+) |
+| 字段 | `tls.spkiPins?: string[]`（Base64URL SPKI SHA256 列表，43 字符，无填充） |
+| 解析 | 非法值拒绝并记录；合法值去重；上限 ≤10 |
+| 校验策略 | 列表非空则强校验：证书 SPKI 必须 ∈ 列表，否则 Verify 失败 |
+| 轮换策略 | 支持多指纹并行（旧+新）；可后续扩展 `pinMetadata`（可选） |
+| 事件 | `cert_fp_pin_mismatch`（本阶段启用） |
+| 回退 | 与 Fake/Real 链独立；不匹配不触发 Fake→Real（直接失败） |
+| 日志 | `pin_enforced=on`，`pin_count`，`pin_match` / `pin_mismatch` |
 
-设计理由：提前统一字段与日志格式，避免 P7 引入破坏性事件/配置变更；P3 仅提供静默观察与宽容模式验证部署风险。
+设计理由：通过在 P3 即启用强校验，减少后续阶段（P7）引入破坏性变更的风险；配合 Real-Host 验证确保在 Fake SNI 场景也针对真实域执行 Pin；提供明确的回退路径与观测信号以降低运维风险。
 
 ### P3.5 异常与回退稳健性
 目标：通过故障注入与分类验证强化 Fake→Real→Default 路径的稳定性与一致性。
@@ -718,9 +727,39 @@ Thread-local 保存 (timing, used_fake, fallback_stage, cert_fp_changed)。无�
 - 与 P3.1 开关配合：需要时可将 `http.fakeSniEnabled=false`，完全绕过 Fake→Real 路径；
 - 事件与类型：新增字段/日志均为加法，不破坏旧消费者。
 
-### P3.4 SPKI Pin 规划 实现说明
+### P3.4 SPKI Pin 强校验 实现说明
 
-（此处留空，后续补充实现细节）
+1) 配置与默认
+- `tls.spkiPins?: string[]`（Base64URL，无填充，长度 43）；缺省或空数组：不启用 Pin；非空：启用强校验。
+- 上限 ≤10：超过时视为配置错误，记录 Protocol 日志并忽略 Pin（为安全起见可选择“严格模式”下直接失败，默认忽略）。
+
+2) 校验流程（与 Real-Host 兼容）
+- 在 rustls 默认链与域名验证成功后，提取 leaf 证书 SPKI（与 P3.2 指纹相同算法；后续可替换为 ASN.1 精确解析）。
+- 计算 SHA256，Base64URL 编码，与 `spkiPins` 做包含判断。
+- 命中：记录 `pin_match` 日志；未命中：返回 Verify 类错误（`cert_fp_pin_mismatch`），不触发 Fake→Real，直接终止。
+- 与 Real-Host 验证的顺序：链/域名 → Pin；Pin 失败不改变域名匹配结果的分类维度（仍归类 Verify）。
+
+3) 日志与事件
+- 握手起始日志：`pin_enforced=on`（当列表非空），`pin_count=<n>`；
+- 结果日志：`pin_match` 或 `pin_mismatch`（附证书 SPKI 前缀与 count）；
+- 事件：`cert_fp_pin_mismatch { host, spkiSha256(cert), pinCount }`（任务维度信息事件，category=Verify）。
+
+4) 分类与回退
+- 分类：Pin 不匹配 → Verify；
+- 回退：不进入 Fake→Real；Pin 与回退链独立；
+- 即时回退手段：清空/删除 `spkiPins`。
+
+5) 测试矩阵
+- 解析：合法 43 长度 Base64URL（含 `-`/`_`）、去重、大小写不敏感性（Base64URL 大小写敏感，要求严格保持大小写）；
+- 非法：长度≠43、含非 URL 安全字符、超过上限、空字符串；
+- 匹配路径：配置含现证书 SPKI → 成功；
+- 不匹配路径：配置不含现证书 SPKI → 失败，事件与日志齐全；
+- 与 Real-Host：二者同时开启时，域名通过但 Pin 不匹配 → Verify；域名不通过 → Verify（优先级不变）。
+
+6) 运维建议
+- Pin 轮换：同时下发新旧 SPKI；稳定后移除旧；
+- 首次启用：建议对单域灰度验证，观察 `cert_fp_pin_mismatch` 事件是否升高；
+- 监控：统计 pin_count、match/mismatch 比例与 host 维度分布。
 
 ### P3.5 异常与回退稳健性 实现说明
 
