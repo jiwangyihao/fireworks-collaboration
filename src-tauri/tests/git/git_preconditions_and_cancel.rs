@@ -4,9 +4,11 @@
 //! 迁移来源（legacy 将保留占位）：
 //!   - git_preconditions_and_cancel.rs (root old file: clone_cancel_quick_returns_cancel / fetch_missing_git_dir_fails_fast / fetch_cancel_quick_returns_cancel)
 //! 分区结构：
-//!   section_preconditions  -> 前置条件失败（路径不存在 / 缺少 .git 等）
-//!   section_cancellation   -> 立即/中途取消的任务行为模拟
-//!   section_timeout        -> 超时路径（占位模拟，不依赖真实 sleep）
+//!   section_preconditions       -> 前置条件失败（路径不存在 / 缺少 .git 等）
+//!   section_cancellation        -> 立即/中途取消的任务行为模拟
+//!   section_timeout             -> 超时路径（占位模拟，不依赖真实 sleep）
+//!   section_transport_fallback  -> 传输层 Fallback 决策状态机（Fake -> Real -> Default）
+//!   section_transport_timing    -> TimingRecorder 计时捕获与 finish 幂等性
 //! Cross-ref:
 //!   - common/event_assert.rs (expect_subsequence)
 //!   - 后续真实接入：TaskRegistry + cancellation flag + mock timer
@@ -179,5 +181,82 @@ mod section_timeout {
         expect_subsequence(&out.events, &["task:start:FetchSlow", "timeout:trigger", "task:end:timeout"]);
     expect_optional_tags_subsequence(&out.events, &["task", "timeout", "task"]);
         assert_terminal_exclusive(&out.events, "task:end:timeout", &["precondition_failed", "task:end:cancelled", "task:end:success"]);
+    }
+}
+
+// ---------------- section_transport_fallback ----------------
+mod section_transport_fallback {
+    use fireworks_collaboration_lib::core::git::transport::{DecisionCtx, FallbackDecision, FallbackStage, FallbackReason};
+
+    #[test]
+    fn initial_stage_default_when_disabled() {
+        let ctx = DecisionCtx { policy_allows_fake: false, runtime_fake_disabled: false };
+        let d = FallbackDecision::initial(&ctx);
+        assert_eq!(d.stage(), FallbackStage::Default);
+    }
+
+    #[test]
+    fn skip_fake_policy_creates_default_stage() {
+        let ctx = DecisionCtx { policy_allows_fake: false, runtime_fake_disabled: false };
+        let d = FallbackDecision::initial(&ctx);
+        assert_eq!(d.stage(), FallbackStage::Default);
+        let h = d.history();
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].reason, FallbackReason::SkipFakePolicy);
+    }
+
+    #[test]
+    fn full_chain_history_order() {
+        let ctx = DecisionCtx { policy_allows_fake: true, runtime_fake_disabled: false };
+        let mut d = FallbackDecision::initial(&ctx);
+        assert_eq!(d.stage(), FallbackStage::Fake);
+        d.advance_on_error().expect("fake->real");
+        d.advance_on_error().expect("real->default");
+        assert!(d.advance_on_error().is_none());
+        let stages: Vec<_> = d.history().iter().map(|tr| tr.to).collect();
+        assert_eq!(stages, vec![FallbackStage::Fake, FallbackStage::Real, FallbackStage::Default]);
+    }
+
+    #[test]
+    fn runtime_fake_disabled_behaves_like_policy_skip() {
+        let ctx = DecisionCtx { policy_allows_fake: true, runtime_fake_disabled: true };
+        let d = FallbackDecision::initial(&ctx);
+        assert_eq!(d.stage(), FallbackStage::Default);
+        assert_eq!(d.history()[0].reason, FallbackReason::SkipFakePolicy);
+    }
+}
+
+// ---------------- section_transport_timing ----------------
+mod section_transport_timing {
+    use fireworks_collaboration_lib::core::git::transport::TimingRecorder;
+    use std::time::Duration;
+
+    #[test]
+    fn timing_recorder_basic_flow() {
+        let mut rec = TimingRecorder::new();
+        rec.mark_connect_start();
+        std::thread::sleep(Duration::from_millis(5));
+        rec.mark_connect_end();
+        rec.mark_tls_start();
+        std::thread::sleep(Duration::from_millis(5));
+        rec.mark_tls_end();
+        rec.finish();
+        let cap = rec.capture;
+        assert!(cap.connect_ms.is_some(), "connect_ms should be recorded");
+        assert!(cap.tls_ms.is_some(), "tls_ms should be recorded");
+        assert!(cap.total_ms.is_some(), "total_ms should be recorded on finish");
+        assert!(cap.total_ms.unwrap() >= cap.connect_ms.unwrap());
+    }
+
+    #[test]
+    fn finish_idempotent() {
+        let mut rec = TimingRecorder::new();
+        rec.mark_connect_start();
+        rec.mark_connect_end();
+        rec.finish();
+        let first_total = rec.capture.total_ms;
+        std::thread::sleep(Duration::from_millis(2));
+        rec.finish();
+        assert_eq!(first_total, rec.capture.total_ms, "finish should be idempotent");
     }
 }

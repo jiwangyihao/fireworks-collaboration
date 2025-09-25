@@ -209,15 +209,15 @@ prop_tls_override.proptest-regressions  <-- 回归种子 (proptest)
 - 精简机会：backoff 序列断言进一步抽象（currently minimal）
 
 ### git_strategy_and_override.rs
-- 目的：Strategy 组合 + HTTP override 变体 + Adaptive TLS rollout
-- Sections: strategy_combo / http_basic / http_limits / http_events / adaptive_tls / summary_gating
-- 关键断言：策略应用标记、override 数量限制、TLS rollout 标签
+- 目的：Strategy 组合 + HTTP override 变体 + Summary/TLS gating
+- Sections: http_basic / http_limits / http_events / strategy_summary_multiop / override_no_conflict / override_empty_unknown / override_invalid_inputs / tls_mixed_scenarios / summary_gating
+- 关键断言：策略应用标记、override 数量限制、Summary/TLS gating 事件
 - 精简机会：策略与 HTTP case 合并成统一枚举（若后续增加策略）
 
 ### git_preconditions_and_cancel.rs
-- 目的：前置校验失败/取消/超时
-- Sections: preconditions / cancellation / timeout
-- 关键断言：Outcome kind 互斥；不存在 success 终态
+- 目的：前置校验失败/取消/超时/传输层 fallback
+- Sections: preconditions / cancellation / timeout / transport_fallback / transport_timing
+- 关键断言：Outcome kind 互斥；Fallback stage 顺序；TimingRecorder 幂等
 - 精简机会：mock clock 接入（planned）
 
 ### git_tag_and_remote.rs
@@ -227,9 +227,9 @@ prop_tls_override.proptest-regressions  <-- 回归种子 (proptest)
 - 精简机会：refname pattern 表达式集中 `git_helpers`
 
 ### events_structure_and_contract.rs
-- 目的：事件 schema / 序列最小集 / legacy 字段缺失
-- Sections: schema_basic / sequence_minimal / legacy_absence / contract_snapshot
-- 关键断言：字段存在性 + id 唯一 + snapshot diff 报告
+- 目的：事件 schema / 序列最小集 / TLS 结构化观测
+- Sections: schema_basic / sequence_minimal / legacy_absence / contract_snapshot / adaptive_tls_metrics / tls_fingerprint_log / tls_pin_enforcement
+- 关键断言：字段存在性 + id 唯一 + TLS 事件/日志一致性
 - 精简机会：字段白名单/忽略机制参数化
 
 ### events_task_lifecycle_git.rs
