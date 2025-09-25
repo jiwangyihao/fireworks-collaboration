@@ -228,6 +228,12 @@
 - 非法指纹（长度/编码）被拒并记录 Protocol 日志，不影响基础功能（Pin 检查被跳过）。
 - 日志可统计 pin 覆盖率与命中率（pin_count、pin_match/mismatch）。
 
+#### 测试覆盖补充（2025-09-25）
+- `section_tls_fingerprint_and_logging::fingerprint_logs_include_spki_source_exact_and_fallback`：验证精确解析与退化路径均按 `spkiSource` 字段记录日志。
+- `section_tls_pin_enforcement::pin_mismatch_emits_event_and_counts_verify`：断言 Pin 失败事件与 Verify 分类计数。
+- `section_tls_pin_enforcement::pin_match_allows_connection_without_mismatch_event`：新增，确认合法 Pin 匹配时握手成功且不产生 `CertFpPinMismatch` 事件。
+- `core::tls::verifier::tests::test_validate_pins_rules`：补充重复指纹去重的输入校验用例。
+
 回退：删除或清空 `spkiPins` 即可；也可在运维层下发空数组临时停用。
 
 风险&缓解：
@@ -760,6 +766,18 @@ Thread-local 保存 (timing, used_fake, fallback_stage, cert_fp_changed)。无�
 - Pin 轮换：同时下发新旧 SPKI；稳定后移除旧；
 - 首次启用：建议对单域灰度验证，观察 `cert_fp_pin_mismatch` 事件是否升高；
 - 监控：统计 pin_count、match/mismatch 比例与 host 维度分布。
+
+#### 补充实现细节（2025-09-25）
+- 配置与解析：`TlsCfg.spki_pins` 在 `core/config/model.rs` 中默认空数组，并随 `AppConfig` 序列化；每次握手调用 `validate_pins`（`core/tls/verifier.rs`）做去重、长度（43）与 Base64URL 合法性校验，超过 10 个或含非法值立即禁用本次 Pin 检查并记录 `pin_disabled_this_conn` 日志。
+- 指纹提取：新增 `core/tls/spki.rs` 使用 `x509-parser` 精确解析 SPKI DER，失败时退化为整张证书哈希；返回值标记 `SpkiSource`，供日志区分 `exact` 与 `fallback` 路径，与 P3.2 指纹日志格式保持一致。
+- 校验顺序：`WhitelistCertVerifier::verify_server_cert` 先执行链路/域名/白名单校验（Real-Host 开关生效），随后在 Fake→Real 回退之前比对 SPKI；命中时输出 `pin_match` debug 日志，未命中时立即抛出 `cert_fp_pin_mismatch`（归类 Verify），并通过 `StrategyEvent::CertFpPinMismatch` 将 host、SPKI、pin_count 发往全局事件总线。
+- 观测锚点：握手起始日志包含 `pin_enforced` 与 `pin_count` 字段；禁用场景会带 `reason="invalid_pins"`，方便排查配置问题；事件与日志均以 override host（真实域）为准，便于与 Real-Host 验证对齐。
+- 回退与统计：Pin 失败不会触发 Fake→Real，fallback 状态机停留在 Fake 阶段并直接返回错误；Verify 计数与 P3.3 分类表共享，运维可结合 `cert_fp_pin_mismatch` 事件频次与回退计数评估风险。
+
+#### 测试与观测
+- 单元测试：`core::tls::verifier::tests::test_validate_pins_rules` 覆盖长度、字符集、上限与去重；`test_pin_mismatch_returns_verify_error` / `test_pin_match_allows_connection` 验证强校验行为；`core::tls::spki` 模块确保指纹长度与 fallback 路径正确。
+- 集成测试：`tests/git/git_strategy_and_override.rs` 新增三例——`pin_mismatch_emits_event_and_counts_verify` 断言 mismatch 场景触发结构化事件且返回 Verify，`pin_match_allows_connection_without_mismatch_event` 确认合法 Pin 不生成误报，`invalid_pins_disable_enforcement` 验证非法配置仅记录禁用日志不阻断连接。
+- 回归保障：全量 `cargo test` 与 `pnpm test` 均覆盖新逻辑，MemoryEventBus 快照用于确保事件只在预期路径上出现。
 
 ### P3.5 异常与回退稳健性 实现说明
 
