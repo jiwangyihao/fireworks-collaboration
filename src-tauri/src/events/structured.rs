@@ -111,6 +111,20 @@ pub enum StrategyEvent {
         total_ms: Option<u32>,
         cert_fp_changed: bool,
     },
+    AdaptiveTlsFallback {
+        id: String,
+        kind: String,
+        from: String,
+        to: String,
+        reason: String,
+    },
+    AdaptiveTlsAutoDisable {
+        id: String,
+        kind: String,
+        enabled: bool,
+        threshold_pct: u8,
+        cooldown_secs: u32,
+    },
     CertFingerprintChanged {
         id: String,
         host: String,

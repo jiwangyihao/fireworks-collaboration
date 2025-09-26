@@ -32,30 +32,65 @@ impl TaskRegistry {
     ) -> JoinHandle<()> {
         let this = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
-            fn emit_adaptive_tls_timing(id: Uuid, kind: &str) {
-                use crate::core::git::transport::{metrics_enabled, tl_snapshot};
+            fn emit_adaptive_tls_observability(id: Uuid, kind: &str) {
+                use crate::core::git::transport::{
+                    metrics_enabled, tl_snapshot, tl_take_fallback_events, FallbackEventRecord,
+                };
                 use crate::events::structured::{
                     publish_global, Event as StructuredEvent,
                     StrategyEvent as StructuredStrategyEvent,
                 };
-                if !metrics_enabled() {
-                    return;
+                let fallback_events = tl_take_fallback_events();
+                if metrics_enabled() {
+                    let snap = tl_snapshot();
+                    if let Some(t) = snap.timing {
+                        publish_global(StructuredEvent::Strategy(
+                            StructuredStrategyEvent::AdaptiveTlsTiming {
+                                id: id.to_string(),
+                                kind: kind.to_string(),
+                                used_fake_sni: snap.used_fake.unwrap_or(false),
+                                fallback_stage: snap
+                                    .fallback_stage
+                                    .unwrap_or("Unknown")
+                                    .to_string(),
+                                connect_ms: t.connect_ms,
+                                tls_ms: t.tls_ms,
+                                first_byte_ms: t.first_byte_ms,
+                                total_ms: t.total_ms,
+                                cert_fp_changed: snap.cert_fp_changed.unwrap_or(false),
+                            },
+                        ));
+                    }
                 }
-                let snap = tl_snapshot();
-                if let Some(t) = snap.timing {
-                    publish_global(StructuredEvent::Strategy(
-                        StructuredStrategyEvent::AdaptiveTlsTiming {
-                            id: id.to_string(),
-                            kind: kind.to_string(),
-                            used_fake_sni: snap.used_fake.unwrap_or(false),
-                            fallback_stage: snap.fallback_stage.unwrap_or("Unknown").to_string(),
-                            connect_ms: t.connect_ms,
-                            tls_ms: t.tls_ms,
-                            first_byte_ms: t.first_byte_ms,
-                            total_ms: t.total_ms,
-                            cert_fp_changed: snap.cert_fp_changed.unwrap_or(false),
-                        },
-                    ));
+                for evt in fallback_events {
+                    match evt {
+                        FallbackEventRecord::Transition { from, to, reason } => {
+                            publish_global(StructuredEvent::Strategy(
+                                StructuredStrategyEvent::AdaptiveTlsFallback {
+                                    id: id.to_string(),
+                                    kind: kind.to_string(),
+                                    from: from.to_string(),
+                                    to: to.to_string(),
+                                    reason,
+                                },
+                            ));
+                        }
+                        FallbackEventRecord::AutoDisable {
+                            enabled,
+                            threshold_pct,
+                            cooldown_secs,
+                        } => {
+                            publish_global(StructuredEvent::Strategy(
+                                StructuredStrategyEvent::AdaptiveTlsAutoDisable {
+                                    id: id.to_string(),
+                                    kind: kind.to_string(),
+                                    enabled,
+                                    threshold_pct,
+                                    cooldown_secs,
+                                },
+                            ));
+                        }
+                    }
                 }
             }
             match &app {
@@ -413,7 +448,7 @@ impl TaskRegistry {
                             };
                             emit_all(app_ref, EV_PROGRESS, &prog);
                         }
-                        emit_adaptive_tls_timing(id, "GitPush");
+                        emit_adaptive_tls_observability(id, "GitPush");
                         match &app {
                             Some(app_ref) => {
                                 this.set_state_emit(app_ref, &id, TaskState::Completed)
@@ -466,7 +501,7 @@ impl TaskRegistry {
                             std::thread::sleep(std::time::Duration::from_millis(delay));
                             continue;
                         } else {
-                            emit_adaptive_tls_timing(id, "GitPush");
+                            emit_adaptive_tls_observability(id, "GitPush");
                             match &app {
                                 Some(app_ref) => {
                                     this.set_state_emit(app_ref, &id, TaskState::Failed)

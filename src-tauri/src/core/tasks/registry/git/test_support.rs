@@ -174,36 +174,65 @@ pub fn test_emit_clone_with_override(
     );
 }
 
-pub fn test_emit_adaptive_tls_timing(task_id: uuid::Uuid, kind: &str) {
+pub fn test_emit_adaptive_tls_observability(task_id: uuid::Uuid, kind: &str) {
     use crate::core::git::transport::metrics::{
-        metrics_enabled, tl_set_fallback_stage, tl_set_timing, tl_set_used_fake, TimingCapture,
+        metrics_enabled, tl_set_fallback_stage, tl_set_timing, tl_set_used_fake,
+        tl_take_fallback_events, FallbackEventRecord, TimingCapture,
     };
     use crate::events::structured::{
         publish_global, Event as StructuredEvent, StrategyEvent as StructuredStrategyEvent,
     };
-    if !metrics_enabled() {
-        return;
+    let fallback_events = tl_take_fallback_events();
+    if metrics_enabled() {
+        tl_set_used_fake(true);
+        tl_set_fallback_stage("Fake");
+        let cap = TimingCapture {
+            connect_ms: Some(10),
+            tls_ms: Some(30),
+            first_byte_ms: Some(40),
+            total_ms: Some(50),
+        };
+        tl_set_timing(&cap);
+        publish_global(StructuredEvent::Strategy(
+            StructuredStrategyEvent::AdaptiveTlsTiming {
+                id: task_id.to_string(),
+                kind: kind.to_string(),
+                used_fake_sni: true,
+                fallback_stage: "Fake".into(),
+                connect_ms: cap.connect_ms,
+                tls_ms: cap.tls_ms,
+                first_byte_ms: cap.first_byte_ms,
+                total_ms: cap.total_ms,
+                cert_fp_changed: false,
+            },
+        ));
     }
-    tl_set_used_fake(true);
-    tl_set_fallback_stage("Fake");
-    let cap = TimingCapture {
-        connect_ms: Some(10),
-        tls_ms: Some(30),
-        first_byte_ms: Some(40),
-        total_ms: Some(50),
-    };
-    tl_set_timing(&cap);
-    publish_global(StructuredEvent::Strategy(
-        StructuredStrategyEvent::AdaptiveTlsTiming {
-            id: task_id.to_string(),
-            kind: kind.to_string(),
-            used_fake_sni: true,
-            fallback_stage: "Fake".into(),
-            connect_ms: cap.connect_ms,
-            tls_ms: cap.tls_ms,
-            first_byte_ms: cap.first_byte_ms,
-            total_ms: cap.total_ms,
-            cert_fp_changed: false,
-        },
-    ));
+    for evt in fallback_events {
+        match evt {
+            FallbackEventRecord::Transition { from, to, reason } => {
+                publish_global(StructuredEvent::Strategy(
+                    StructuredStrategyEvent::AdaptiveTlsFallback {
+                        id: task_id.to_string(),
+                        kind: kind.to_string(),
+                        from: from.to_string(),
+                        to: to.to_string(),
+                        reason,
+                    },
+                ));
+            }
+            FallbackEventRecord::AutoDisable {
+                enabled,
+                threshold_pct,
+                cooldown_secs,
+            } => publish_global(StructuredEvent::Strategy(
+                StructuredStrategyEvent::AdaptiveTlsAutoDisable {
+                    id: task_id.to_string(),
+                    kind: kind.to_string(),
+                    enabled,
+                    threshold_pct,
+                    cooldown_secs,
+                },
+            )),
+        }
+    }
 }

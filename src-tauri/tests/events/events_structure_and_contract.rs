@@ -225,6 +225,134 @@ mod section_adaptive_tls_metrics {
     }
 }
 
+// ---------------- section_adaptive_tls_fallback ----------------
+mod section_adaptive_tls_fallback {
+    use fireworks_collaboration_lib::core::git::transport::{
+        tl_push_fallback_event, tl_take_fallback_events, FallbackEventRecord,
+    };
+    use fireworks_collaboration_lib::core::tasks::registry::test_emit_adaptive_tls_observability;
+    use fireworks_collaboration_lib::events::structured::{
+        set_test_event_bus, Event, MemoryEventBus, StrategyEvent,
+    };
+    use uuid::Uuid;
+    use std::sync::{Mutex, OnceLock};
+
+    fn metrics_env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct MetricsEnvGuard {
+        prev: Option<String>,
+    }
+
+    impl Drop for MetricsEnvGuard {
+        fn drop(&mut self) {
+            if let Some(prev) = self.prev.take() {
+                std::env::set_var("FWC_TEST_FORCE_METRICS", prev);
+            } else {
+                std::env::remove_var("FWC_TEST_FORCE_METRICS");
+            }
+        }
+    }
+
+    fn set_metrics_env(force: Option<bool>) -> MetricsEnvGuard {
+        let prev = std::env::var("FWC_TEST_FORCE_METRICS").ok();
+        match force {
+            Some(true) => std::env::set_var("FWC_TEST_FORCE_METRICS", "1"),
+            Some(false) => std::env::set_var("FWC_TEST_FORCE_METRICS", "0"),
+            None => std::env::remove_var("FWC_TEST_FORCE_METRICS"),
+        }
+        MetricsEnvGuard { prev }
+    }
+
+    #[test]
+    fn fallback_and_auto_disable_events_emitted() {
+        let bus = std::sync::Arc::new(MemoryEventBus::new());
+        set_test_event_bus(bus.clone());
+        // Ensure clean state
+        tl_take_fallback_events();
+        tl_push_fallback_event(FallbackEventRecord::Transition {
+            from: "Fake",
+            to: "Real",
+            reason: "FakeHandshakeError".into(),
+        });
+        tl_push_fallback_event(FallbackEventRecord::AutoDisable {
+            enabled: true,
+            threshold_pct: 25,
+            cooldown_secs: 45,
+        });
+        test_emit_adaptive_tls_observability(Uuid::nil(), "GitClone");
+        let events = bus.take_all();
+        let has_transition = events.iter().any(|evt| match evt {
+            Event::Strategy(StrategyEvent::AdaptiveTlsFallback {
+                from, to, reason, ..
+            }) => from == "Fake" && to == "Real" && reason == "FakeHandshakeError",
+            _ => false,
+        });
+        assert!(has_transition, "adaptive fallback transition event missing");
+        let has_auto_disable = events.iter().any(|evt| match evt {
+            Event::Strategy(StrategyEvent::AdaptiveTlsAutoDisable {
+                enabled,
+                threshold_pct,
+                cooldown_secs,
+                ..
+            }) => *enabled && *threshold_pct == 25 && *cooldown_secs == 45,
+            _ => false,
+        });
+        assert!(has_auto_disable, "adaptive TLS auto-disable event missing");
+    }
+
+    #[test]
+    fn fallback_events_emit_when_metrics_disabled() {
+        let _lock = metrics_env_lock().lock().unwrap();
+        let _env_guard = set_metrics_env(Some(false));
+
+        let bus = std::sync::Arc::new(MemoryEventBus::new());
+        set_test_event_bus(bus.clone());
+        tl_take_fallback_events();
+        tl_push_fallback_event(FallbackEventRecord::Transition {
+            from: "Fake",
+            to: "Real",
+            reason: "ForcedDisable".into(),
+        });
+        tl_push_fallback_event(FallbackEventRecord::AutoDisable {
+            enabled: true,
+            threshold_pct: 30,
+            cooldown_secs: 120,
+        });
+        test_emit_adaptive_tls_observability(Uuid::nil(), "GitClone");
+        let events = bus.take_all();
+        let has_transition = events.iter().any(|evt| match evt {
+            Event::Strategy(StrategyEvent::AdaptiveTlsFallback { reason, .. }) => {
+                reason == "ForcedDisable"
+            }
+            _ => false,
+        });
+        assert!(has_transition, "fallback event missing when metrics disabled");
+        let has_auto_disable = events.iter().any(|evt| match evt {
+            Event::Strategy(StrategyEvent::AdaptiveTlsAutoDisable {
+                enabled,
+                threshold_pct,
+                cooldown_secs,
+                ..
+            }) => *enabled && *threshold_pct == 30 && *cooldown_secs == 120,
+            _ => false,
+        });
+        assert!(
+            has_auto_disable,
+            "auto-disable event missing when metrics disabled"
+        );
+        let has_timing = events.iter().any(|evt| {
+            matches!(evt, Event::Strategy(StrategyEvent::AdaptiveTlsTiming { .. }))
+        });
+        assert!(
+            !has_timing,
+            "timing event should not emit when metrics forcibly disabled"
+        );
+    }
+}
+
 // ---------------- section_tls_fingerprint_log ----------------
 mod section_tls_fingerprint_log {
     use fireworks_collaboration_lib::core::config::{loader, model::AppConfig};
