@@ -14,11 +14,15 @@ use url::Url;
 
 use crate::core::config::model::AppConfig;
 use crate::core::git::transport::metrics::{
-    finish_and_store, tl_set_cert_fp_changed, tl_set_fallback_stage, tl_set_used_fake,
+    finish_and_store, tl_push_fallback_event, tl_reset, tl_set_cert_fp_changed,
+    tl_set_fallback_stage, tl_set_used_fake, FallbackEventRecord,
 };
 use crate::core::git::transport::metrics_enabled;
 use crate::core::git::transport::record_certificate;
-use crate::core::git::transport::{DecisionCtx, FallbackDecision, FallbackStage, TimingRecorder};
+use crate::core::git::transport::{
+    is_fake_disabled, record_fake_attempt, AutoDisableConfig, AutoDisableEvent, DecisionCtx,
+    FallbackDecision, FallbackReason, FallbackStage, TimingRecorder,
+};
 use crate::core::tls::util::{decide_sni_host_with_proxy, match_domain, proxy_present};
 use crate::core::tls::verifier::{create_client_config, create_client_config_with_expected_name};
 
@@ -33,7 +37,86 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static FALLBACK_TLS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static FALLBACK_VERIFY_TOTAL: AtomicU64 = AtomicU64::new(0);
 
+fn stage_label(stage: FallbackStage) -> &'static str {
+    match stage {
+        FallbackStage::Fake => "Fake",
+        FallbackStage::Real => "Real",
+        FallbackStage::Default => "Default",
+        FallbackStage::None => "None",
+    }
+}
+
+fn reason_label(reason: FallbackReason) -> &'static str {
+    match reason {
+        FallbackReason::EnterFake => "EnterFake",
+        FallbackReason::FakeHandshakeError => "FakeHandshakeError",
+        FallbackReason::SkipFakePolicy => "SkipFakePolicy",
+        FallbackReason::RealFailed => "RealFailed",
+    }
+}
+
 #[cfg(test)]
+mod injection {
+    use super::FallbackStage;
+    use git2::Error;
+    use std::collections::VecDeque;
+    use std::sync::{Mutex, OnceLock};
+
+    fn fake_queue() -> &'static Mutex<VecDeque<String>> {
+        static Q: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
+        Q.get_or_init(|| Mutex::new(VecDeque::new()))
+    }
+
+    fn real_queue() -> &'static Mutex<VecDeque<String>> {
+        static Q: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
+        Q.get_or_init(|| Mutex::new(VecDeque::new()))
+    }
+
+    pub fn inject(stage: FallbackStage, msg: String) {
+        let queue = match stage {
+            FallbackStage::Fake => fake_queue(),
+            FallbackStage::Real => real_queue(),
+            _ => return,
+        };
+        if let Ok(mut guard) = queue.lock() {
+            guard.push_back(msg);
+        }
+    }
+
+    pub fn take(stage: FallbackStage) -> Option<Error> {
+        let queue = match stage {
+            FallbackStage::Fake => fake_queue(),
+            FallbackStage::Real => real_queue(),
+            _ => return None,
+        };
+        let msg = queue.lock().ok().and_then(|mut g| g.pop_front());
+        msg.map(|m| Error::from_str(&m))
+    }
+
+    pub fn reset() {
+        if let Ok(mut g) = fake_queue().lock() {
+            g.clear();
+        }
+        if let Ok(mut g) = real_queue().lock() {
+            g.clear();
+        }
+    }
+}
+
+#[cfg(test)]
+pub fn test_inject_fake_failure(msg: impl Into<String>) {
+    injection::inject(FallbackStage::Fake, msg.into());
+}
+
+#[cfg(test)]
+pub fn test_inject_real_failure(msg: impl Into<String>) {
+    injection::inject(FallbackStage::Real, msg.into());
+}
+
+#[cfg(test)]
+pub fn test_reset_injected_failures() {
+    injection::reset();
+}
 pub fn test_reset_fallback_counters() {
     FALLBACK_TLS_TOTAL.store(0, Ordering::Relaxed);
     FALLBACK_VERIFY_TOTAL.store(0, Ordering::Relaxed);
@@ -49,6 +132,10 @@ pub fn test_snapshot_fallback_counters() -> (u64, u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::git::transport::{
+        is_fake_disabled, test_auto_disable_guard, test_reset_auto_disable,
+        tl_take_fallback_events, AutoDisableConfig, FallbackEventRecord,
+    };
     use std::sync::{Mutex, OnceLock};
 
     fn counter_guard() -> &'static Mutex<()> {
@@ -76,6 +163,55 @@ mod tests {
         let (tls_total, verify_total) = test_snapshot_fallback_counters();
         assert_eq!(tls_total, 1);
         assert_eq!(verify_total, 0);
+    }
+
+    #[test]
+    fn fallback_transition_emits_events_and_triggers_auto_disable() {
+        let _auto_guard = test_auto_disable_guard().lock().unwrap();
+        let _lock = counter_guard().lock().unwrap();
+        test_reset_fallback_counters();
+        test_reset_auto_disable();
+        test_reset_injected_failures();
+        let cfg = AppConfig::default();
+        let sub = CustomHttpsSubtransport::new(cfg.clone());
+        let mut auto_disable_seen = false;
+        for i in 0..5 {
+            test_inject_fake_failure(format!("fake-fail-{i}"));
+            test_inject_real_failure(format!("real-fail-{i}"));
+            let res = sub.connect_tls_with_fallback("github.com", 443);
+            assert!(res.is_err(), "expected injected failure on attempt {i}");
+            let events = tl_take_fallback_events();
+            assert!(
+                events.iter().any(|evt| matches!(
+                    evt,
+                    FallbackEventRecord::Transition { from, to, reason }
+                        if *from == "Fake" && *to == "Real" && reason == "FakeHandshakeError"
+                )),
+                "missing Fake->Real transition on attempt {i}"
+            );
+            if events.iter().any(|evt| {
+                matches!(
+                    evt,
+                    FallbackEventRecord::AutoDisable {
+                        enabled: true,
+                        threshold_pct,
+                        cooldown_secs,
+                    }
+                    if *threshold_pct == cfg.http.auto_disable_fake_threshold_pct
+                        && *cooldown_secs
+                            == cfg.http.auto_disable_fake_cooldown_sec as u32
+                )
+            }) {
+                auto_disable_seen = true;
+            }
+        }
+        assert!(auto_disable_seen, "auto-disable event not observed");
+        let auto_cfg = AutoDisableConfig::from_http_cfg(&cfg.http);
+        assert!(
+            is_fake_disabled(&auto_cfg),
+            "fake SNI should be disabled after trigger"
+        );
+        test_reset_auto_disable();
     }
 }
 
@@ -208,11 +344,57 @@ impl CustomHttpsSubtransport {
         port: u16,
     ) -> Result<(StreamOwned<ClientConnection, TcpStream>, bool, String), Error> {
         let mut timing = TimingRecorder::new();
+        tl_reset();
         tracing::debug!(target="git.transport", host=%host, port=%port, "begin tcp connect");
+        let auto_cfg = AutoDisableConfig::from_http_cfg(&self.cfg.http);
+        let runtime_fake_disabled = is_fake_disabled(&auto_cfg);
+        if runtime_fake_disabled {
+            tracing::warn!(
+                target="git.transport",
+                host=%host,
+                port=%port,
+                "adaptive_tls_fake temporarily disabled by runtime safeguard"
+            );
+        }
         let mut decision = FallbackDecision::initial(&DecisionCtx {
             policy_allows_fake: self.cfg.http.fake_sni_enabled,
-            runtime_fake_disabled: false,
+            runtime_fake_disabled,
         });
+
+        let mut last_error: Option<Error> = None;
+        let emit_auto_disable_event = |evt: AutoDisableEvent| match evt {
+            AutoDisableEvent::Triggered {
+                threshold_pct,
+                cooldown_secs,
+            } => {
+                tracing::warn!(
+                    target="git.transport",
+                    host=%host,
+                    port=%port,
+                    threshold_pct,
+                    cooldown_secs,
+                    "adaptive_tls_fake auto-disable triggered"
+                );
+                tl_push_fallback_event(FallbackEventRecord::AutoDisable {
+                    enabled: true,
+                    threshold_pct,
+                    cooldown_secs,
+                });
+            }
+            AutoDisableEvent::Recovered => {
+                tracing::debug!(
+                    target="git.transport",
+                    host=%host,
+                    port=%port,
+                    "adaptive_tls_fake auto-disable recovered"
+                );
+                tl_push_fallback_event(FallbackEventRecord::AutoDisable {
+                    enabled: false,
+                    threshold_pct: 0,
+                    cooldown_secs: 0,
+                });
+            }
+        };
 
         // single attempt closure reused across Fake / Real
         let mut attempt = |stage: FallbackStage,
@@ -223,6 +405,19 @@ impl CustomHttpsSubtransport {
             Error,
         > {
             timing.mark_connect_start();
+            #[cfg(test)]
+            {
+                if let Some(err) = injection::take(stage) {
+                    tracing::debug!(
+                        target="git.transport",
+                        host=%host,
+                        port=%port,
+                        stage=?stage,
+                        "tls handshake failure injected"
+                    );
+                    return Err(err);
+                }
+            }
             let addr = format!("{host}:{port}");
             let tcp = TcpStream::connect(addr).map_err(|e| {
                 tracing::debug!(target="git.transport", host=%host, port=%port, error=%e.to_string(), stage=?stage, "tcp connect failed");
@@ -272,20 +467,26 @@ impl CustomHttpsSubtransport {
         // Drive attempts based on decision chain
         loop {
             let stage = decision.stage();
+            if matches!(stage, FallbackStage::Default) && last_error.is_some() {
+                tl_set_fallback_stage(stage_label(stage));
+                if metrics_enabled() {
+                    finish_and_store(&mut timing);
+                }
+                return Err(last_error.take().unwrap());
+            }
             match attempt(stage, host, port) {
                 Ok(ok) => {
+                    if matches!(stage, FallbackStage::Fake) {
+                        if let Some(evt) = record_fake_attempt(&auto_cfg, false) {
+                            emit_auto_disable_event(evt);
+                        }
+                    }
                     if metrics_enabled() {
                         finish_and_store(&mut timing);
                     }
                     // record used fake & stage
                     tl_set_used_fake(ok.1);
-                    let stage_str = match decision.stage() {
-                        FallbackStage::Fake => "Fake",
-                        FallbackStage::Real => "Real",
-                        FallbackStage::Default => "Default",
-                        FallbackStage::None => "None",
-                    };
-                    tl_set_fallback_stage(stage_str);
+                    tl_set_fallback_stage(stage_label(stage));
                     // fingerprint recording (best-effort)
                     if let Some(certs) = ok.0.conn.peer_certificates() {
                         if let Some((changed, _spki, _cert)) = record_certificate(host, &certs[..])
@@ -298,9 +499,21 @@ impl CustomHttpsSubtransport {
                     return Ok(ok);
                 }
                 Err(e) => {
-                    if let Some(_tr) = decision.advance_on_error() {
+                    if matches!(stage, FallbackStage::Fake) {
+                        if let Some(evt) = record_fake_attempt(&auto_cfg, true) {
+                            emit_auto_disable_event(evt);
+                        }
+                    }
+                    if let Some(tr) = decision.advance_on_error() {
+                        last_error = Some(e);
+                        tl_push_fallback_event(FallbackEventRecord::Transition {
+                            from: stage_label(tr.from),
+                            to: stage_label(tr.to),
+                            reason: reason_label(tr.reason).to_string(),
+                        });
                         continue;
                     } else {
+                        tl_set_fallback_stage(stage_label(stage));
                         if metrics_enabled() {
                             finish_and_store(&mut timing);
                         }

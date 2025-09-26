@@ -23,6 +23,12 @@ pub struct HttpCfg {
     pub max_redirects: u8,
     #[serde(default = "default_large_body_warn")]
     pub large_body_warn_bytes: u64,
+    /// P3.5: 当 Fake SNI 在窗口内失败率超过阈值时，临时禁用 Fake 的比例阈值（0..=100）。0 表示禁用该功能。
+    #[serde(default = "default_auto_disable_threshold_pct")]
+    pub auto_disable_fake_threshold_pct: u8,
+    /// P3.5: 触发自动禁用后保持禁用状态的冷却秒数。
+    #[serde(default = "default_auto_disable_cooldown_sec")]
+    pub auto_disable_fake_cooldown_sec: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +92,12 @@ fn default_max_redirects() -> u8 {
 fn default_large_body_warn() -> u64 {
     5 * 1024 * 1024
 }
+fn default_auto_disable_threshold_pct() -> u8 {
+    20
+}
+fn default_auto_disable_cooldown_sec() -> u64 {
+    300
+}
 fn default_san_whitelist() -> Vec<String> {
     vec![
         "github.com".into(),
@@ -144,6 +156,8 @@ impl Default for AppConfig {
                 follow_redirects: default_true(),
                 max_redirects: default_max_redirects(),
                 large_body_warn_bytes: default_large_body_warn(),
+                auto_disable_fake_threshold_pct: default_auto_disable_threshold_pct(),
+                auto_disable_fake_cooldown_sec: default_auto_disable_cooldown_sec(),
             },
             tls: TlsCfg {
                 san_whitelist: default_san_whitelist(),
@@ -216,6 +230,8 @@ mod tests {
         assert!(s.contains("\"followRedirects\""));
         assert!(s.contains("\"maxRedirects\""));
         assert!(s.contains("\"largeBodyWarnBytes\""));
+        assert!(s.contains("\"autoDisableFakeThresholdPct\""));
+        assert!(s.contains("\"autoDisableFakeCooldownSec\""));
         assert!(s.contains("\"sanWhitelist\""));
         assert!(s.contains("\"authHeaderMasked\""));
         assert!(s.contains("\"logLevel\""));
@@ -255,6 +271,14 @@ mod tests {
             .san_whitelist
             .iter()
             .any(|d| d.ends_with("github.com")));
+        assert_eq!(
+            cfg.http.auto_disable_fake_threshold_pct,
+            default_auto_disable_threshold_pct()
+        );
+        assert_eq!(
+            cfg.http.auto_disable_fake_cooldown_sec,
+            default_auto_disable_cooldown_sec()
+        );
         assert!(
             cfg.tls.real_host_verify_enabled,
             "realHostVerifyEnabled default true"

@@ -3,6 +3,8 @@
 //! Intentionally minimal: collects coarse timing segments in-memory. No
 //! background export or event emission yet – subsequent P3.x stages will hook
 //! into this.
+use std::cell::RefCell;
+use std::mem;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -102,11 +104,26 @@ fn collector() -> Arc<dyn TransportMetricsCollector> {
 }
 
 // Thread-local staging area for active timing capture of a single transport attempt.
+#[derive(Debug, Clone)]
+pub enum FallbackEventRecord {
+    Transition {
+        from: &'static str,
+        to: &'static str,
+        reason: String,
+    },
+    AutoDisable {
+        enabled: bool,
+        threshold_pct: u8,
+        cooldown_secs: u32,
+    },
+}
+
 thread_local! {
-    static TL_TIMING: std::cell::RefCell<Option<TimingCapture>> = const { std::cell::RefCell::new(None) };
+    static TL_TIMING: RefCell<Option<TimingCapture>> = const { RefCell::new(None) };
     static TL_USED_FAKE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
     static TL_FALLBACK_STAGE: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
     static TL_CERT_FP_CHANGED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    static TL_FALLBACK_EVENTS: RefCell<Vec<FallbackEventRecord>> = const { RefCell::new(Vec::new()) };
 }
 
 pub fn tl_reset() {
@@ -114,6 +131,7 @@ pub fn tl_reset() {
     TL_USED_FAKE.with(|c| c.set(None));
     TL_FALLBACK_STAGE.with(|c| c.set(None));
     TL_CERT_FP_CHANGED.with(|c| c.set(None));
+    TL_FALLBACK_EVENTS.with(|c| c.borrow_mut().clear());
 }
 
 pub fn tl_set_used_fake(v: bool) {
@@ -148,9 +166,24 @@ pub fn tl_snapshot() -> TimingSnapshot {
     }
 }
 
+pub fn tl_push_fallback_event(evt: FallbackEventRecord) {
+    TL_FALLBACK_EVENTS.with(|cell| cell.borrow_mut().push(evt));
+}
+
+pub fn tl_take_fallback_events() -> Vec<FallbackEventRecord> {
+    TL_FALLBACK_EVENTS.with(|cell| mem::take(&mut *cell.borrow_mut()))
+}
+
 /// Convenience: whether metrics should be captured (runtime config flag). We load
 /// config on demand (cheap: small file / memory) – caching is unnecessary here.
 pub fn metrics_enabled() -> bool {
+    if let Ok(v) = std::env::var("FWC_TEST_FORCE_METRICS") {
+        match v.as_str() {
+            "0" | "false" | "False" | "FALSE" => return false,
+            "1" | "true" | "True" | "TRUE" => return true,
+            _ => {}
+        }
+    }
     // Test override (only in test builds) for deterministic gating validation
     #[cfg(test)]
     {
