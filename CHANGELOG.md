@@ -19,14 +19,17 @@ Changed:
 Backward Compatibility:
 - All new fields/events are additive; existing consumers ignoring unknown StrategyEvent variants remain functional.
 - Disabling metrics (`tls.metricsEnabled=false`) fully suppresses timing event emission without altering transport behavior.
+- 运行时环境覆盖 `FWC_TEST_FORCE_METRICS`（test instrumentation），用于在测试中显式强制 metrics 开/关验证事件行为。
 
 Revert Path:
 - Set `tls.metricsEnabled=false` to stop timing; set `tls.certFpLogEnabled=false` to stop fingerprint logging.
 - Remove `fingerprint.rs` & timing emission patches to return to P3.1 baseline (no code path dependency elsewhere).
+- `AdaptiveTlsFallback` / `AdaptiveTlsAutoDisable` 事件在 `tls.metricsEnabled=false` 时也会发射；Timing 事件仍受该开关控制。
 
 Security / Privacy:
 - Fingerprint log excludes SAN list or any credential data; only hashes and host.
 
+- `section_adaptive_tls_fallback` 新增 metrics 关闭场景断言：Fallback 事件继续输出且 Timing 事件受抑制。
 Refinement (post-initial P3.2 patch): implemented precise firstByte capture hook & activated dedicated CertFingerprintChanged structured event.
 
 ### Test Refactor Second Pass
@@ -76,6 +79,32 @@ Refinement (post-initial P3.2 patch): implemented precise firstByte capture hook
 
 ### Front-end
 - strategyOverride 透传深度与 filter 与后端保持兼容；`startGitFetch` 兼容旧 preset 字符串与对象参数新写法。
+
+### P3.5 (Complete) Adaptive TLS Resilience
+Added:
+- Config defaults `http.autoDisableFakeThresholdPct` (20) 与 `http.autoDisableFakeCooldownSec` (300s) 进入 `AppConfig`，序列化/反序列化自动填充。
+- Runtime auto-disable state machine：滑动窗口（120s / 20 样本 / 至少 5 条）跟踪 Fake SNI 成功率；当失败率 ≥ 阈值触发冷却并在恢复后重置。
+- Structured events：
+  - `StrategyEvent::AdaptiveTlsFallback { from, to, reason }`（记录 Fake→Real→Default 转移及原因）。
+  - `StrategyEvent::AdaptiveTlsAutoDisable { enabled, threshold_pct, cooldown_secs }`（记录熔断开/关时刻与配置）。
+  - 任务注册表（Clone/Fetch/Push）统一 Drain thread-local fallback 事件并发布。
+- Test-only helpers：HTTP 传输提供 TLS 失败注入队列；runtime 导出 `test_auto_disable_guard`；事件合约测试扩展至新枚举。
+
+Changed:
+- `connect_tls_with_fallback` 在 Fake 阶段失败时调用 auto-disable 统计，并在进入 Default 前回放最后一次错误，确保注入测试稳定。
+- Thread-local `FallbackEventRecord` 统一保存 Transition/AutoDisable 记录，便于任务端获取。
+- 新增同步互斥锁防止 auto-disable 全局状态在多测试间互相干扰。
+
+Tests:
+- Rust：`core::git::transport::runtime` 覆盖触发、冷却、禁用开关；HTTP 回退测试确认事件与熔断行为；`tests/events/events_structure_and_contract.rs` 校验结构化事件 schema。
+- 前端：`pnpm test`（Vitest）全量通过，错误日志记录保持原有断言。
+
+Backward Compatibility:
+- 默认阈值/冷却为非零；将 `autoDisableFakeThresholdPct` 设为 0 即可禁用熔断并回退至旧行为。
+- 事件消费者若尚未适配新增枚举，可忽略 `StrategyEvent::AdaptiveTlsFallback` / `AdaptiveTlsAutoDisable`。
+
+Revert Path:
+- 移除 runtime auto-disable 逻辑并将线程本地事件 Drain 回退至仅记录 Transition，即恢复至 P3.2 状态；配置字段保留但可标记 deprecated。
 
 
 
