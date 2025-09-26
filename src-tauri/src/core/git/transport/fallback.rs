@@ -36,7 +36,9 @@ pub enum FallbackStage {
 }
 
 impl FallbackStage {
-    pub fn is_terminal(self) -> bool { matches!(self, FallbackStage::Default) }
+    pub fn is_terminal(self) -> bool {
+        matches!(self, FallbackStage::Default)
+    }
 }
 
 /// Categorised technical reason that caused a transition.
@@ -82,18 +84,36 @@ impl FallbackDecision {
     /// Create initial decision based on policy flags.
     pub fn initial(ctx: &DecisionCtx) -> Self {
         if ctx.policy_allows_fake && !ctx.runtime_fake_disabled {
-            let mut d = Self { stage: FallbackStage::Fake, history: Vec::new() };
-            d.history.push(FallbackTransition { from: FallbackStage::None, to: FallbackStage::Fake, reason: FallbackReason::EnterFake });
+            let mut d = Self {
+                stage: FallbackStage::Fake,
+                history: Vec::new(),
+            };
+            d.history.push(FallbackTransition {
+                from: FallbackStage::None,
+                to: FallbackStage::Fake,
+                reason: FallbackReason::EnterFake,
+            });
             d
         } else {
-            let mut d = Self { stage: FallbackStage::Default, history: Vec::new() };
-            d.history.push(FallbackTransition { from: FallbackStage::None, to: FallbackStage::Default, reason: FallbackReason::SkipFakePolicy });
+            let mut d = Self {
+                stage: FallbackStage::Default,
+                history: Vec::new(),
+            };
+            d.history.push(FallbackTransition {
+                from: FallbackStage::None,
+                to: FallbackStage::Default,
+                reason: FallbackReason::SkipFakePolicy,
+            });
             d
         }
     }
 
-    pub fn stage(&self) -> FallbackStage { self.stage }
-    pub fn history(&self) -> &[FallbackTransition] { &self.history }
+    pub fn stage(&self) -> FallbackStage {
+        self.stage
+    }
+    pub fn history(&self) -> &[FallbackTransition] {
+        &self.history
+    }
 
     /// Called when an attempt at the current stage fails (e.g. TLS handshake error).
     /// Returns Some(transition) if a new stage is entered; None if terminal.
@@ -101,13 +121,21 @@ impl FallbackDecision {
         match self.stage {
             FallbackStage::Fake => {
                 // Move to Real
-                let tr = FallbackTransition { from: FallbackStage::Fake, to: FallbackStage::Real, reason: FallbackReason::FakeHandshakeError };
+                let tr = FallbackTransition {
+                    from: FallbackStage::Fake,
+                    to: FallbackStage::Real,
+                    reason: FallbackReason::FakeHandshakeError,
+                };
                 self.stage = FallbackStage::Real;
                 self.history.push(tr.clone());
                 Some(tr)
             }
             FallbackStage::Real => {
-                let tr = FallbackTransition { from: FallbackStage::Real, to: FallbackStage::Default, reason: FallbackReason::RealFailed };
+                let tr = FallbackTransition {
+                    from: FallbackStage::Real,
+                    to: FallbackStage::Default,
+                    reason: FallbackReason::RealFailed,
+                };
                 self.stage = FallbackStage::Default;
                 self.history.push(tr.clone());
                 Some(tr)
@@ -123,7 +151,10 @@ mod tests {
 
     #[test]
     fn initial_fake_path() {
-        let ctx = DecisionCtx { policy_allows_fake: true, runtime_fake_disabled: false };
+        let ctx = DecisionCtx {
+            policy_allows_fake: true,
+            runtime_fake_disabled: false,
+        };
         let d = FallbackDecision::initial(&ctx);
         assert_eq!(d.stage(), FallbackStage::Fake);
         assert_eq!(d.history().len(), 1);
@@ -132,7 +163,10 @@ mod tests {
 
     #[test]
     fn initial_skip_path() {
-        let ctx = DecisionCtx { policy_allows_fake: false, runtime_fake_disabled: false };
+        let ctx = DecisionCtx {
+            policy_allows_fake: false,
+            runtime_fake_disabled: false,
+        };
         let d = FallbackDecision::initial(&ctx);
         assert_eq!(d.stage(), FallbackStage::Default);
         assert_eq!(d.history()[0].reason, FallbackReason::SkipFakePolicy);
@@ -140,7 +174,10 @@ mod tests {
 
     #[test]
     fn advance_chain() {
-        let ctx = DecisionCtx { policy_allows_fake: true, runtime_fake_disabled: false };
+        let ctx = DecisionCtx {
+            policy_allows_fake: true,
+            runtime_fake_disabled: false,
+        };
         let mut d = FallbackDecision::initial(&ctx);
         let tr1 = d.advance_on_error().expect("fake->real");
         assert_eq!(tr1.to, FallbackStage::Real);
@@ -152,10 +189,17 @@ mod tests {
 
     #[test]
     fn default_stage_is_idempotent() {
-        let ctx = DecisionCtx { policy_allows_fake: false, runtime_fake_disabled: false }; // initial -> Default
+        let ctx = DecisionCtx {
+            policy_allows_fake: false,
+            runtime_fake_disabled: false,
+        }; // initial -> Default
         let mut d = FallbackDecision::initial(&ctx);
         assert_eq!(d.stage(), FallbackStage::Default);
         assert!(d.advance_on_error().is_none());
-        assert_eq!(d.history().len(), 1, "history should not grow after terminal advance attempts");
+        assert_eq!(
+            d.history().len(),
+            1,
+            "history should not grow after terminal advance attempts"
+        );
     }
 }

@@ -1,25 +1,53 @@
 #![cfg(feature = "tauri-app")]
-use std::{sync::{Arc, Mutex}, io::{Read, Write}, net::{TcpListener, TcpStream}, thread, path::PathBuf};
-use serde::{Serialize, Deserialize};
-use tauri::{Manager, State};
 use crate::core::{
     config::{loader as cfg_loader, model::AppConfig},
-    tasks::{TaskRegistry, SharedTaskRegistry, TaskSnapshot, TaskKind},
-    http::{types::{HttpRequestInput, HttpResponseOutput, RedirectInfo}, client::HttpClient},
+    http::{
+        client::HttpClient,
+        types::{HttpRequestInput, HttpResponseOutput, RedirectInfo},
+    },
+    tasks::{SharedTaskRegistry, TaskKind, TaskRegistry, TaskSnapshot},
     tls::util::match_domain,
 };
 use crate::logging;
 use dirs_next as dirs;
+use serde::{Deserialize, Serialize};
+use std::{
+    io::{Read, Write},
+    net::{TcpListener, TcpStream},
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    thread,
+};
+use tauri::{Manager, State};
 
 // ===== State Types =====
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct OAuthCallbackData { pub code: Option<String>, pub state: Option<String>, pub error: Option<String>, pub error_description: Option<String> }
+pub struct OAuthCallbackData {
+    pub code: Option<String>,
+    pub state: Option<String>,
+    pub error: Option<String>,
+    pub error_description: Option<String>,
+}
 
 type OAuthState = Arc<Mutex<Option<OAuthCallbackData>>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SystemProxy { pub enabled: bool, pub host: String, pub port: u16, pub bypass: String }
-impl Default for SystemProxy { fn default() -> Self { Self { enabled:false, host:"".into(), port:0, bypass:"".into() } } }
+pub struct SystemProxy {
+    pub enabled: bool,
+    pub host: String,
+    pub port: u16,
+    pub bypass: String,
+}
+impl Default for SystemProxy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: "".into(),
+            port: 0,
+            bypass: "".into(),
+        }
+    }
+}
 
 type SharedConfig = Arc<Mutex<AppConfig>>;
 type ConfigBaseDir = PathBuf;
@@ -27,66 +55,256 @@ type TaskRegistryState = SharedTaskRegistry;
 
 // ===== Commands =====
 #[tauri::command]
-fn greet(name:&str)->String{ format!("Hello, {}! You've been greeted from Rust!", name) }
+fn greet(name: &str) -> String {
+    format!("Hello, {}! You've been greeted from Rust!", name)
+}
 
 #[tauri::command]
-async fn get_config(cfg: State<'_, SharedConfig>) -> Result<AppConfig,String>{ cfg.lock().map(|c|c.clone()).map_err(|e|e.to_string()) }
+async fn get_config(cfg: State<'_, SharedConfig>) -> Result<AppConfig, String> {
+    cfg.lock().map(|c| c.clone()).map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 #[allow(non_snake_case)]
-async fn set_config(newCfg: AppConfig, cfg: State<'_, SharedConfig>, base: State<'_, ConfigBaseDir>) -> Result<(),String>{ { let mut g = cfg.lock().map_err(|e|e.to_string())?; *g = newCfg.clone(); } cfg_loader::save_at(&newCfg, &*base).map_err(|e|e.to_string()) }
+async fn set_config(
+    newCfg: AppConfig,
+    cfg: State<'_, SharedConfig>,
+    base: State<'_, ConfigBaseDir>,
+) -> Result<(), String> {
+    {
+        let mut g = cfg.lock().map_err(|e| e.to_string())?;
+        *g = newCfg.clone();
+    }
+    cfg_loader::save_at(&newCfg, &*base).map_err(|e| e.to_string())
+}
 
 #[tauri::command]
-async fn start_oauth_server(state: State<'_, OAuthState>) -> Result<String,String>{ let oauth_state = Arc::clone(&*state); thread::spawn(move||{ if let Ok(listener)=TcpListener::bind("127.0.0.1:3429"){ for stream in listener.incoming(){ if let Ok(s)=stream { let st=Arc::clone(&oauth_state); thread::spawn(move|| handle_oauth_request(s, st)); } } } }); Ok("OAuth server started".into()) }
+async fn start_oauth_server(state: State<'_, OAuthState>) -> Result<String, String> {
+    let oauth_state = Arc::clone(&*state);
+    thread::spawn(move || {
+        if let Ok(listener) = TcpListener::bind("127.0.0.1:3429") {
+            for stream in listener.incoming() {
+                if let Ok(s) = stream {
+                    let st = Arc::clone(&oauth_state);
+                    thread::spawn(move || handle_oauth_request(s, st));
+                }
+            }
+        }
+    });
+    Ok("OAuth server started".into())
+}
 
-fn handle_oauth_request(mut stream: TcpStream, oauth_state: OAuthState){ let mut buf=[0u8;4096]; if let Ok(n)=stream.read(&mut buf){ let req = String::from_utf8_lossy(&buf[..n]); if req.starts_with("GET /auth/callback") { let mut data=OAuthCallbackData{code:None,state:None,error:None,error_description:None}; if let Some(q_pos)=req.find('?'){ let tail=&req[q_pos+1..]; let end=tail.find(' ').unwrap_or(tail.len()); for kv in tail[..end].split('&'){ if let Some(eq)=kv.find('='){ let (k,v)=(&kv[..eq], &kv[eq+1..]); let v= urlencoding::decode(v).unwrap_or_default().to_string(); match k {"code"=>data.code=Some(v),"state"=>data.state=Some(v),"error"=>data.error=Some(v),"error_description"=>data.error_description=Some(v), _=>{} } } } } if let Ok(mut s)=oauth_state.lock(){ *s=Some(data); } let body="<html><body>OK</body></html>"; let resp=format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body); let _=stream.write_all(resp.as_bytes()); } else { let _=stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length:0\r\n\r\n"); } } }
+fn handle_oauth_request(mut stream: TcpStream, oauth_state: OAuthState) {
+    let mut buf = [0u8; 4096];
+    if let Ok(n) = stream.read(&mut buf) {
+        let req = String::from_utf8_lossy(&buf[..n]);
+        if req.starts_with("GET /auth/callback") {
+            let mut data = OAuthCallbackData {
+                code: None,
+                state: None,
+                error: None,
+                error_description: None,
+            };
+            if let Some(q_pos) = req.find('?') {
+                let tail = &req[q_pos + 1..];
+                let end = tail.find(' ').unwrap_or(tail.len());
+                for kv in tail[..end].split('&') {
+                    if let Some(eq) = kv.find('=') {
+                        let (k, v) = (&kv[..eq], &kv[eq + 1..]);
+                        let v = urlencoding::decode(v).unwrap_or_default().to_string();
+                        match k {
+                            "code" => data.code = Some(v),
+                            "state" => data.state = Some(v),
+                            "error" => data.error = Some(v),
+                            "error_description" => data.error_description = Some(v),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            if let Ok(mut s) = oauth_state.lock() {
+                *s = Some(data);
+            }
+            let body = "<html><body>OK</body></html>";
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(resp.as_bytes());
+        } else {
+            let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length:0\r\n\r\n");
+        }
+    }
+}
 
 #[tauri::command]
-async fn get_oauth_callback_data(state: State<'_, OAuthState>) -> Result<Option<OAuthCallbackData>,String>{ if let Ok(mut s)=state.lock(){ Ok(s.take()) } else { Err("lock".into()) } }
+async fn get_oauth_callback_data(
+    state: State<'_, OAuthState>,
+) -> Result<Option<OAuthCallbackData>, String> {
+    if let Ok(mut s) = state.lock() {
+        Ok(s.take())
+    } else {
+        Err("lock".into())
+    }
+}
 #[tauri::command]
-async fn clear_oauth_state(state: State<'_, OAuthState>) -> Result<(),String>{ if let Ok(mut s)=state.lock(){ *s=None; Ok(()) } else { Err("lock".into()) } }
+async fn clear_oauth_state(state: State<'_, OAuthState>) -> Result<(), String> {
+    if let Ok(mut s) = state.lock() {
+        *s = None;
+        Ok(())
+    } else {
+        Err("lock".into())
+    }
+}
 
-#[cfg(windows)] fn inner_get_system_proxy()->SystemProxy{ SystemProxy::default() }
-#[cfg(not(windows))] fn inner_get_system_proxy()->SystemProxy{ SystemProxy::default() }
-#[tauri::command] fn get_system_proxy()->Result<SystemProxy,String>{ Ok(inner_get_system_proxy()) }
+#[cfg(windows)]
+fn inner_get_system_proxy() -> SystemProxy {
+    SystemProxy::default()
+}
+#[cfg(not(windows))]
+fn inner_get_system_proxy() -> SystemProxy {
+    SystemProxy::default()
+}
+#[tauri::command]
+fn get_system_proxy() -> Result<SystemProxy, String> {
+    Ok(inner_get_system_proxy())
+}
 
 // Task commands
 #[tauri::command]
-async fn task_list(reg: State<'_, TaskRegistryState>) -> Result<Vec<TaskSnapshot>,String>{ Ok(reg.list()) }
+async fn task_list(reg: State<'_, TaskRegistryState>) -> Result<Vec<TaskSnapshot>, String> {
+    Ok(reg.list())
+}
 #[tauri::command]
-async fn task_snapshot(id:String, reg: State<'_, TaskRegistryState>) -> Result<Option<TaskSnapshot>,String>{ let uuid=uuid::Uuid::parse_str(&id).map_err(|e|e.to_string())?; Ok(reg.snapshot(&uuid)) }
+async fn task_snapshot(
+    id: String,
+    reg: State<'_, TaskRegistryState>,
+) -> Result<Option<TaskSnapshot>, String> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+    Ok(reg.snapshot(&uuid))
+}
 #[tauri::command]
-async fn task_cancel(id:String, reg: State<'_, TaskRegistryState>) -> Result<bool,String>{ let uuid=uuid::Uuid::parse_str(&id).map_err(|e|e.to_string())?; Ok(reg.cancel(&uuid)) }
+async fn task_cancel(id: String, reg: State<'_, TaskRegistryState>) -> Result<bool, String> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+    Ok(reg.cancel(&uuid))
+}
 #[tauri::command]
-async fn task_start_sleep(ms:u64, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String,String>{ let (id, token)=reg.create(TaskKind::Sleep { ms }); reg.clone().spawn_sleep_task(Some(app), id, token, ms); Ok(id.to_string()) }
+async fn task_start_sleep(
+    ms: u64,
+    reg: State<'_, TaskRegistryState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::Sleep { ms });
+    reg.clone().spawn_sleep_task(Some(app), id, token, ms);
+    Ok(id.to_string())
+}
 
 // Git 命令：启动克隆任务
 #[tauri::command]
-async fn git_clone(repo: String, dest: String, depth: Option<serde_json::Value>, filter: Option<String>, strategy_override: Option<serde_json::Value>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
-    let (id, token) = reg.create(TaskKind::GitClone { repo: repo.clone(), dest: dest.clone(), depth: depth.clone().and_then(|v| v.as_u64().map(|x| x as u32)), filter: filter.clone(), strategy_override: strategy_override.clone() });
-    reg.clone().spawn_git_clone_task_with_opts(Some(app), id, token, repo, dest, depth, filter, strategy_override);
+async fn git_clone(
+    repo: String,
+    dest: String,
+    depth: Option<serde_json::Value>,
+    filter: Option<String>,
+    strategy_override: Option<serde_json::Value>,
+    reg: State<'_, TaskRegistryState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitClone {
+        repo: repo.clone(),
+        dest: dest.clone(),
+        depth: depth.clone().and_then(|v| v.as_u64().map(|x| x as u32)),
+        filter: filter.clone(),
+        strategy_override: strategy_override.clone(),
+    });
+    reg.clone().spawn_git_clone_task_with_opts(
+        Some(app),
+        id,
+        token,
+        repo,
+        dest,
+        depth,
+        filter,
+        strategy_override,
+    );
     Ok(id.to_string())
 }
 
 // Git 命令：启动 Fetch 任务
 #[tauri::command]
-async fn git_fetch(repo: String, dest: String, preset: Option<String>, depth: Option<serde_json::Value>, filter: Option<String>, strategy_override: Option<serde_json::Value>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
-    let (id, token) = reg.create(TaskKind::GitFetch { repo: repo.clone(), dest: dest.clone(), depth: depth.clone().and_then(|v| v.as_u64().map(|x| x as u32)), filter: filter.clone(), strategy_override: strategy_override.clone() });
-    reg.clone().spawn_git_fetch_task_with_opts(Some(app), id, token, repo, dest, preset, depth, filter, strategy_override);
+async fn git_fetch(
+    repo: String,
+    dest: String,
+    preset: Option<String>,
+    depth: Option<serde_json::Value>,
+    filter: Option<String>,
+    strategy_override: Option<serde_json::Value>,
+    reg: State<'_, TaskRegistryState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitFetch {
+        repo: repo.clone(),
+        dest: dest.clone(),
+        depth: depth.clone().and_then(|v| v.as_u64().map(|x| x as u32)),
+        filter: filter.clone(),
+        strategy_override: strategy_override.clone(),
+    });
+    reg.clone().spawn_git_fetch_task_with_opts(
+        Some(app),
+        id,
+        token,
+        repo,
+        dest,
+        preset,
+        depth,
+        filter,
+        strategy_override,
+    );
     Ok(id.to_string())
 }
 
 // Git 命令：启动 Push 任务（HTTPS 基础）
 #[tauri::command]
-async fn git_push(dest: String, remote: Option<String>, refspecs: Option<Vec<String>>, username: Option<String>, password: Option<String>, strategy_override: Option<serde_json::Value>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
-    let (id, token) = reg.create(TaskKind::GitPush { dest: dest.clone(), remote: remote.clone(), refspecs: refspecs.clone(), username: username.clone(), password: password.clone(), strategy_override: strategy_override.clone() });
-    reg.clone().spawn_git_push_task(Some(app), id, token, dest, remote, refspecs, username, password, strategy_override);
+async fn git_push(
+    dest: String,
+    remote: Option<String>,
+    refspecs: Option<Vec<String>>,
+    username: Option<String>,
+    password: Option<String>,
+    strategy_override: Option<serde_json::Value>,
+    reg: State<'_, TaskRegistryState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitPush {
+        dest: dest.clone(),
+        remote: remote.clone(),
+        refspecs: refspecs.clone(),
+        username: username.clone(),
+        password: password.clone(),
+        strategy_override: strategy_override.clone(),
+    });
+    reg.clone().spawn_git_push_task(
+        Some(app),
+        id,
+        token,
+        dest,
+        remote,
+        refspecs,
+        username,
+        password,
+        strategy_override,
+    );
     Ok(id.to_string())
 }
 
 // Git 命令：初始化仓库
 #[tauri::command]
-async fn git_init(dest: String, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+async fn git_init(
+    dest: String,
+    reg: State<'_, TaskRegistryState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
     let (id, token) = reg.create(TaskKind::GitInit { dest: dest.clone() });
     reg.clone().spawn_git_init_task(Some(app), id, token, dest);
     Ok(id.to_string())
@@ -94,77 +312,192 @@ async fn git_init(dest: String, reg: State<'_, TaskRegistryState>, app: tauri::A
 
 // Git 命令：暂存文件（paths 为相对路径列表）
 #[tauri::command]
-async fn git_add(dest: String, paths: Vec<String>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
-    let (id, token) = reg.create(TaskKind::GitAdd { dest: dest.clone(), paths: paths.clone() });
-    reg.clone().spawn_git_add_task(Some(app), id, token, dest, paths);
+async fn git_add(
+    dest: String,
+    paths: Vec<String>,
+    reg: State<'_, TaskRegistryState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitAdd {
+        dest: dest.clone(),
+        paths: paths.clone(),
+    });
+    reg.clone()
+        .spawn_git_add_task(Some(app), id, token, dest, paths);
     Ok(id.to_string())
 }
 
 // Git 命令：提交（allow_empty: 是否允许空提交；author_name/author_email 可选）
 #[tauri::command]
-async fn git_commit(dest: String, message: String, allow_empty: Option<bool>, author_name: Option<String>, author_email: Option<String>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+async fn git_commit(
+    dest: String,
+    message: String,
+    allow_empty: Option<bool>,
+    author_name: Option<String>,
+    author_email: Option<String>,
+    reg: State<'_, TaskRegistryState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
     let allow_empty_flag = allow_empty.unwrap_or(false);
-    let (id, token) = reg.create(TaskKind::GitCommit { dest: dest.clone(), message: message.clone(), allow_empty: allow_empty_flag, author_name: author_name.clone(), author_email: author_email.clone() });
-    reg.clone().spawn_git_commit_task(Some(app), id, token, dest, message, allow_empty_flag, author_name, author_email);
+    let (id, token) = reg.create(TaskKind::GitCommit {
+        dest: dest.clone(),
+        message: message.clone(),
+        allow_empty: allow_empty_flag,
+        author_name: author_name.clone(),
+        author_email: author_email.clone(),
+    });
+    reg.clone().spawn_git_commit_task(
+        Some(app),
+        id,
+        token,
+        dest,
+        message,
+        allow_empty_flag,
+        author_name,
+        author_email,
+    );
     Ok(id.to_string())
 }
 
 // Git 命令：创建/更新分支（可选立即切换）
 #[tauri::command]
-async fn git_branch(dest: String, name: String, checkout: Option<bool>, force: Option<bool>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+async fn git_branch(
+    dest: String,
+    name: String,
+    checkout: Option<bool>,
+    force: Option<bool>,
+    reg: State<'_, TaskRegistryState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
     let checkout_flag = checkout.unwrap_or(false);
     let force_flag = force.unwrap_or(false);
-    let (id, token) = reg.create(TaskKind::GitBranch { dest: dest.clone(), name: name.clone(), checkout: checkout_flag, force: force_flag });
-    reg.clone().spawn_git_branch_task(Some(app), id, token, dest, name, checkout_flag, force_flag);
+    let (id, token) = reg.create(TaskKind::GitBranch {
+        dest: dest.clone(),
+        name: name.clone(),
+        checkout: checkout_flag,
+        force: force_flag,
+    });
+    reg.clone()
+        .spawn_git_branch_task(Some(app), id, token, dest, name, checkout_flag, force_flag);
     Ok(id.to_string())
 }
 
 // Git 命令：切换分支（或创建后切换）
 #[tauri::command]
-async fn git_checkout(dest: String, reference: String, create: Option<bool>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+async fn git_checkout(
+    dest: String,
+    reference: String,
+    create: Option<bool>,
+    reg: State<'_, TaskRegistryState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
     let create_flag = create.unwrap_or(false);
-    let (id, token) = reg.create(TaskKind::GitCheckout { dest: dest.clone(), reference: reference.clone(), create: create_flag });
-    reg.clone().spawn_git_checkout_task(Some(app), id, token, dest, reference, create_flag);
+    let (id, token) = reg.create(TaskKind::GitCheckout {
+        dest: dest.clone(),
+        reference: reference.clone(),
+        create: create_flag,
+    });
+    reg.clone()
+        .spawn_git_checkout_task(Some(app), id, token, dest, reference, create_flag);
     Ok(id.to_string())
 }
 
 // Git 命令：创建/更新标签
 #[tauri::command]
-async fn git_tag(dest: String, name: String, message: Option<String>, annotated: Option<bool>, force: Option<bool>, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
+async fn git_tag(
+    dest: String,
+    name: String,
+    message: Option<String>,
+    annotated: Option<bool>,
+    force: Option<bool>,
+    reg: State<'_, TaskRegistryState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
     let annotated_flag = annotated.unwrap_or(false);
     let force_flag = force.unwrap_or(false);
-    let (id, token) = reg.create(TaskKind::GitTag { dest: dest.clone(), name: name.clone(), message: message.clone(), annotated: annotated_flag, force: force_flag });
-    reg.clone().spawn_git_tag_task(Some(app), id, token, dest, name, message, annotated_flag, force_flag);
+    let (id, token) = reg.create(TaskKind::GitTag {
+        dest: dest.clone(),
+        name: name.clone(),
+        message: message.clone(),
+        annotated: annotated_flag,
+        force: force_flag,
+    });
+    reg.clone().spawn_git_tag_task(
+        Some(app),
+        id,
+        token,
+        dest,
+        name,
+        message,
+        annotated_flag,
+        force_flag,
+    );
     Ok(id.to_string())
 }
 
 // Git 命令：设置已有 remote 的 URL
 #[tauri::command]
-async fn git_remote_set(dest: String, name: String, url: String, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
-    let (id, token) = reg.create(TaskKind::GitRemoteSet { dest: dest.clone(), name: name.clone(), url: url.clone() });
-    reg.clone().spawn_git_remote_set_task(Some(app), id, token, dest, name, url);
+async fn git_remote_set(
+    dest: String,
+    name: String,
+    url: String,
+    reg: State<'_, TaskRegistryState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitRemoteSet {
+        dest: dest.clone(),
+        name: name.clone(),
+        url: url.clone(),
+    });
+    reg.clone()
+        .spawn_git_remote_set_task(Some(app), id, token, dest, name, url);
     Ok(id.to_string())
 }
 
 // Git 命令：添加 remote
 #[tauri::command]
-async fn git_remote_add(dest: String, name: String, url: String, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
-    let (id, token) = reg.create(TaskKind::GitRemoteAdd { dest: dest.clone(), name: name.clone(), url: url.clone() });
-    reg.clone().spawn_git_remote_add_task(Some(app), id, token, dest, name, url);
+async fn git_remote_add(
+    dest: String,
+    name: String,
+    url: String,
+    reg: State<'_, TaskRegistryState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitRemoteAdd {
+        dest: dest.clone(),
+        name: name.clone(),
+        url: url.clone(),
+    });
+    reg.clone()
+        .spawn_git_remote_add_task(Some(app), id, token, dest, name, url);
     Ok(id.to_string())
 }
 
 // Git 命令：移除 remote
 #[tauri::command]
-async fn git_remote_remove(dest: String, name: String, reg: State<'_, TaskRegistryState>, app: tauri::AppHandle) -> Result<String, String> {
-    let (id, token) = reg.create(TaskKind::GitRemoteRemove { dest: dest.clone(), name: name.clone() });
-    reg.clone().spawn_git_remote_remove_task(Some(app), id, token, dest, name);
+async fn git_remote_remove(
+    dest: String,
+    name: String,
+    reg: State<'_, TaskRegistryState>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let (id, token) = reg.create(TaskKind::GitRemoteRemove {
+        dest: dest.clone(),
+        name: name.clone(),
+    });
+    reg.clone()
+        .spawn_git_remote_remove_task(Some(app), id, token, dest, name);
     Ok(id.to_string())
 }
 
 // ========== P0.5 http_fake_request ==========
-fn redact_auth_in_headers(mut h: std::collections::HashMap<String, String>, mask: bool) -> std::collections::HashMap<String, String> {
-    if !mask { return h; }
+fn redact_auth_in_headers(
+    mut h: std::collections::HashMap<String, String>,
+    mask: bool,
+) -> std::collections::HashMap<String, String> {
+    if !mask {
+        return h;
+    }
     // 大小写不敏感匹配 Authorization
     for (k, v) in h.clone().iter() {
         if k.eq_ignore_ascii_case("authorization") {
@@ -177,17 +510,31 @@ fn redact_auth_in_headers(mut h: std::collections::HashMap<String, String>, mask
 
 fn host_in_whitelist(host: &str, cfg: &AppConfig) -> bool {
     let wl = &cfg.tls.san_whitelist;
-    if wl.is_empty() { return false; }
+    if wl.is_empty() {
+        return false;
+    }
     wl.iter().any(|p| match_domain(p, host))
 }
 
 fn classify_error_msg(e: &str) -> (&'static str, String) {
     let msg = e.to_string();
-    if msg.contains("SAN whitelist mismatch") { ("Verify", msg) }
-    else if msg.contains("tls handshake") { ("Tls", msg) }
-    else if msg.contains("connect timeout") || msg.contains("connect error") || msg.contains("read body") { ("Network", msg) }
-    else if msg.contains("only https") || msg.contains("invalid URL") || msg.contains("url host missing") { ("Input", msg) }
-    else { ("Internal", msg) }
+    if msg.contains("SAN whitelist mismatch") {
+        ("Verify", msg)
+    } else if msg.contains("tls handshake") {
+        ("Tls", msg)
+    } else if msg.contains("connect timeout")
+        || msg.contains("connect error")
+        || msg.contains("read body")
+    {
+        ("Network", msg)
+    } else if msg.contains("only https")
+        || msg.contains("invalid URL")
+        || msg.contains("url host missing")
+    {
+        ("Input", msg)
+    } else {
+        ("Internal", msg)
+    }
 }
 
 #[cfg(test)]
@@ -251,7 +598,10 @@ mod tests {
 }
 
 #[tauri::command]
-async fn http_fake_request(input: HttpRequestInput, cfg: State<'_, SharedConfig>) -> Result<HttpResponseOutput, String> {
+async fn http_fake_request(
+    input: HttpRequestInput,
+    cfg: State<'_, SharedConfig>,
+) -> Result<HttpResponseOutput, String> {
     // 将 MutexGuard 限定在局部作用域，避免跨 await 持有非 Send 的锁
     let cfg_val = {
         let g = cfg.lock().map_err(|e| e.to_string())?;
@@ -260,15 +610,22 @@ async fn http_fake_request(input: HttpRequestInput, cfg: State<'_, SharedConfig>
 
     // 早期校验 URL 与 host 白名单
     let mut current_url = input.url.clone();
-    let parsed = current_url.parse::<hyper::Uri>().map_err(|e| format!("Input: invalid URL - {}", e))?;
-    if parsed.scheme_str() != Some("https") { return Err("Input: only https is supported".into()); }
-    let host = parsed.host().ok_or_else(|| "Input: url host missing".to_string())?;
+    let parsed = current_url
+        .parse::<hyper::Uri>()
+        .map_err(|e| format!("Input: invalid URL - {}", e))?;
+    if parsed.scheme_str() != Some("https") {
+        return Err("Input: only https is supported".into());
+    }
+    let host = parsed
+        .host()
+        .ok_or_else(|| "Input: url host missing".to_string())?;
     if !host_in_whitelist(host, &cfg_val) {
         return Err("Verify: SAN whitelist mismatch (precheck)".into());
     }
 
     // 日志脱敏后记录一次请求概览
-    let redacted = redact_auth_in_headers(input.headers.clone(), cfg_val.logging.auth_header_masked);
+    let redacted =
+        redact_auth_in_headers(input.headers.clone(), cfg_val.logging.auth_header_masked);
     tracing::info!(target = "http", method = %input.method, url = %input.url, headers = ?redacted, "http_fake_request start");
 
     // 构造 client
@@ -288,7 +645,8 @@ async fn http_fake_request(input: HttpRequestInput, cfg: State<'_, SharedConfig>
                 // 检查是否需要继续跳转
                 let status = out.status;
                 let is_redirect = matches!(status, 301 | 302 | 303 | 307 | 308);
-                if !is_redirect || !follow { // 不跟随或非跳转
+                if !is_redirect || !follow {
+                    // 不跟随或非跳转
                     // 合并收集的 redirect 链并返回
                     out.redirects = redirects;
                     return Ok(out);
@@ -302,16 +660,32 @@ async fn http_fake_request(input: HttpRequestInput, cfg: State<'_, SharedConfig>
                 let loc = location.unwrap();
 
                 // 解析并构造下一跳 URL（相对路径基于 current_url）
-                let base = current_url.parse::<url::Url>().map_err(|e| format!("Internal: url parse {}", e))?;
-                let next_url = base.join(&loc).map_err(|e| format!("Input: bad redirect location - {}", e))?.to_string();
+                let base = current_url
+                    .parse::<url::Url>()
+                    .map_err(|e| format!("Internal: url parse {}", e))?;
+                let next_url = base
+                    .join(&loc)
+                    .map_err(|e| format!("Input: bad redirect location - {}", e))?
+                    .to_string();
 
                 // 白名单预检下一跳 host
-                let next_host = url::Url::parse(&next_url).map_err(|e| format!("Internal: url parse {}", e))?
-                    .host_str().ok_or_else(|| "Input: redirect host missing".to_string())?.to_string();
-                if !host_in_whitelist(&next_host, &cfg_val) { return Err("Verify: SAN whitelist mismatch (redirect)".into()); }
+                let next_host = url::Url::parse(&next_url)
+                    .map_err(|e| format!("Internal: url parse {}", e))?
+                    .host_str()
+                    .ok_or_else(|| "Input: redirect host missing".to_string())?
+                    .to_string();
+                if !host_in_whitelist(&next_host, &cfg_val) {
+                    return Err("Verify: SAN whitelist mismatch (redirect)".into());
+                }
 
-                redirects.push(RedirectInfo { status, location: next_url.clone(), count: (i as u8) + 1 });
-                if i as u8 >= max_redirects { return Err(format!("Network: too many redirects (>{})", max_redirects)); }
+                redirects.push(RedirectInfo {
+                    status,
+                    location: next_url.clone(),
+                    count: (i as u8) + 1,
+                });
+                if i as u8 >= max_redirects {
+                    return Err(format!("Network: too many redirects (>{})", max_redirects));
+                }
 
                 // 方法与 body 处理
                 let mut next_input = attempt_input.clone();
@@ -342,7 +716,7 @@ async fn http_fake_request(input: HttpRequestInput, cfg: State<'_, SharedConfig>
     Err("Network: redirect loop reached without resolution".into())
 }
 
-pub fn run(){
+pub fn run() {
     logging::init_logging();
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
@@ -352,15 +726,40 @@ pub fn run(){
         .manage(OAuthState::new(Mutex::new(None)))
         .manage(Arc::new(TaskRegistry::new()) as TaskRegistryState)
         .invoke_handler(tauri::generate_handler![
-            greet,start_oauth_server,get_oauth_callback_data,clear_oauth_state,get_system_proxy,
-            get_config,set_config,task_list,task_cancel,task_start_sleep,task_snapshot,git_clone,git_fetch,git_push,git_init,git_add,
-            git_commit, git_branch, git_checkout, git_tag, git_remote_set, git_remote_add, git_remote_remove,
+            greet,
+            start_oauth_server,
+            get_oauth_callback_data,
+            clear_oauth_state,
+            get_system_proxy,
+            get_config,
+            set_config,
+            task_list,
+            task_cancel,
+            task_start_sleep,
+            task_snapshot,
+            git_clone,
+            git_fetch,
+            git_push,
+            git_init,
+            git_add,
+            git_commit,
+            git_branch,
+            git_checkout,
+            git_tag,
+            git_remote_set,
+            git_remote_add,
+            git_remote_remove,
             http_fake_request
         ]);
     builder = builder.setup(|app| {
         let base_dir: PathBuf = app.path().app_config_dir().unwrap_or_else(|_| {
             let identifier = "top.jwyihao.fireworks-collaboration";
-            if let Some(mut dir) = dirs::config_dir() { dir.push(identifier); dir } else { std::env::current_dir().unwrap() }
+            if let Some(mut dir) = dirs::config_dir() {
+                dir.push(identifier);
+                dir
+            } else {
+                std::env::current_dir().unwrap()
+            }
         });
         // 注入全局配置基目录，确保后续动态加载（如 Git 子传输）与应用一致
         cfg_loader::set_global_base_dir(&base_dir);
@@ -369,5 +768,7 @@ pub fn run(){
         app.manage::<ConfigBaseDir>(base_dir);
         Ok(())
     });
-    builder.run(tauri::generate_context!()).expect("error while running tauri application");
+    builder
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
 }

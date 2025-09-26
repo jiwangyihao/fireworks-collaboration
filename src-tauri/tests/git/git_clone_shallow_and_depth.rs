@@ -18,67 +18,152 @@ mod common;
 
 // ---------------- helpers ----------------
 mod helpers {
-    use std::path::PathBuf; use std::sync::atomic::AtomicBool; use std::time::Duration;
-    use fireworks_collaboration_lib::core::git::{DefaultGitService, service::GitService};
-    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use crate::common::{
+        fixtures::{path_slug, shallow_file_lines},
+        repo_factory::rev_count,
+        repo_factory::RepoBuilder,
+    };
+    use fireworks_collaboration_lib::core::git::{service::GitService, DefaultGitService};
     use fireworks_collaboration_lib::core::tasks::model::TaskState;
-    use crate::common::{repo_factory::RepoBuilder, fixtures::{path_slug, shallow_file_lines}, repo_factory::rev_count};
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use std::path::PathBuf;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
 
-    pub fn build_linear_repo(commits:u32) -> PathBuf {
+    pub fn build_linear_repo(commits: u32) -> PathBuf {
         let mut b = RepoBuilder::new();
-        for i in 1..=commits { b = b.with_commit(format!("f{i}.txt"), format!("{i}"), format!("c{i}")); }
+        for i in 1..=commits {
+            b = b.with_commit(format!("f{i}.txt"), format!("{i}"), format!("c{i}"));
+        }
         b.build().path
     }
 
-    pub fn shallow_clone(origin:&PathBuf, depth:Option<u32>) -> PathBuf {
-        let dest = std::env::temp_dir().join(format!("fwc-shallow-{}-{}", depth.map(|d| d.to_string()).unwrap_or("full".into()), path_slug(uuid::Uuid::new_v4().to_string())));
-        let svc = DefaultGitService::new(); let cancel = AtomicBool::new(false);
-        svc.clone_blocking(origin.to_string_lossy().as_ref(), &dest, depth, &cancel, |_p| {}).expect("clone"); dest
+    pub fn shallow_clone(origin: &PathBuf, depth: Option<u32>) -> PathBuf {
+        let dest = std::env::temp_dir().join(format!(
+            "fwc-shallow-{}-{}",
+            depth.map(|d| d.to_string()).unwrap_or("full".into()),
+            path_slug(uuid::Uuid::new_v4().to_string())
+        ));
+        let svc = DefaultGitService::new();
+        let cancel = AtomicBool::new(false);
+        svc.clone_blocking(
+            origin.to_string_lossy().as_ref(),
+            &dest,
+            depth,
+            &cancel,
+            |_p| {},
+        )
+        .expect("clone");
+        dest
     }
 
-    pub fn deepen_once(origin:&PathBuf, dest:&PathBuf, to:u32) {
-        let svc = DefaultGitService::new(); let cancel = AtomicBool::new(false);
-        svc.fetch_blocking(origin.to_string_lossy().as_ref(), dest, Some(to), &cancel, |_p| {}).expect("deepen fetch");
+    pub fn deepen_once(origin: &PathBuf, dest: &PathBuf, to: u32) {
+        let svc = DefaultGitService::new();
+        let cancel = AtomicBool::new(false);
+        svc.fetch_blocking(
+            origin.to_string_lossy().as_ref(),
+            dest,
+            Some(to),
+            &cancel,
+            |_p| {},
+        )
+        .expect("deepen fetch");
     }
 
-    pub fn revs(dest:&PathBuf) -> u32 { rev_count(dest) }
-    pub fn shallow_lines(dest:&PathBuf) -> Vec<String> { shallow_file_lines(dest) }
+    pub fn revs(dest: &PathBuf) -> u32 {
+        rev_count(dest)
+    }
+    pub fn shallow_lines(dest: &PathBuf) -> Vec<String> {
+        shallow_file_lines(dest)
+    }
 
-    pub fn wait_state(reg:&TaskRegistry, id:uuid::Uuid, target:TaskState, max_ms:u64)->bool { let mut elapsed=0; while elapsed<max_ms { if let Some(s)=reg.snapshot(&id){ if s.state==target { return true; }} std::thread::sleep(Duration::from_millis(25)); elapsed+=25;} false }
+    pub fn wait_state(reg: &TaskRegistry, id: uuid::Uuid, target: TaskState, max_ms: u64) -> bool {
+        let mut elapsed = 0;
+        while elapsed < max_ms {
+            if let Some(s) = reg.snapshot(&id) {
+                if s.state == target {
+                    return true;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(25));
+            elapsed += 25;
+        }
+        false
+    }
 }
 
 // ---------------- section_basic_shallow ----------------
 mod section_basic_shallow {
-    use crate::common::test_env; use super::helpers::*;
+    use super::helpers::*;
+    use crate::common::test_env;
     #[test]
     fn shallow_vs_full_parameterized() {
         test_env::init_test_env();
         let origin = build_linear_repo(5);
-        for (depth, min_commits, note) in [ (Some(1u32), 1u32, "shallow"), (None, 5u32, "full") ] {
+        for (depth, min_commits, note) in [(Some(1u32), 1u32, "shallow"), (None, 5u32, "full")] {
             let dest = shallow_clone(&origin, depth);
             let c = revs(&dest);
-            if let Some(d) = depth { assert!(c >= 1 && c <= 5, "[basic:{note}] depth={} commits bounds got {}", d, c); }
-            else { assert!(c >= min_commits, "[basic:{note}] expected >= {} got {}", min_commits, c); }
+            if let Some(d) = depth {
+                assert!(
+                    c >= 1 && c <= 5,
+                    "[basic:{note}] depth={} commits bounds got {}",
+                    d,
+                    c
+                );
+            } else {
+                assert!(
+                    c >= min_commits,
+                    "[basic:{note}] expected >= {} got {}",
+                    min_commits,
+                    c
+                );
+            }
         }
     }
 }
 
 // ---------------- section_invalid_depth ----------------
 mod section_invalid_depth {
-    use std::sync::Arc; use serde_json::json; use crate::common::test_env; use crate::common::shallow_matrix::{invalid_depth_cases, ShallowCase};
-    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry; use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
     use super::helpers::{build_linear_repo, wait_state};
+    use crate::common::shallow_matrix::{invalid_depth_cases, ShallowCase};
+    use crate::common::test_env;
+    use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use serde_json::json;
+    use std::sync::Arc;
 
-    #[tokio::test(flavor="current_thread")]
+    #[tokio::test(flavor = "current_thread")]
     async fn invalid_depth_fail_fast() {
         test_env::init_test_env();
         let reg = Arc::new(TaskRegistry::new());
         let origin = build_linear_repo(1).to_string_lossy().to_string();
         for case in invalid_depth_cases() {
             if let ShallowCase::Invalid { raw, .. } = case {
-                let dest = std::env::temp_dir().join(format!("fwc-shallow-invalid-{}-{}", case.describe(), uuid::Uuid::new_v4())).to_string_lossy().to_string();
-                let (id, token) = reg.create(TaskKind::GitClone { repo: origin.clone(), dest: dest.clone(), depth: None, filter: None, strategy_override: None });
-                let handle = reg.clone().spawn_git_clone_task_with_opts(None, id, token, origin.clone(), dest.clone(), Some(json!(raw)), None, None);
+                let dest = std::env::temp_dir()
+                    .join(format!(
+                        "fwc-shallow-invalid-{}-{}",
+                        case.describe(),
+                        uuid::Uuid::new_v4()
+                    ))
+                    .to_string_lossy()
+                    .to_string();
+                let (id, token) = reg.create(TaskKind::GitClone {
+                    repo: origin.clone(),
+                    dest: dest.clone(),
+                    depth: None,
+                    filter: None,
+                    strategy_override: None,
+                });
+                let handle = reg.clone().spawn_git_clone_task_with_opts(
+                    None,
+                    id,
+                    token,
+                    origin.clone(),
+                    dest.clone(),
+                    Some(json!(raw)),
+                    None,
+                    None,
+                );
                 let failed = wait_state(&reg, id, TaskState::Failed, 2000);
                 assert!(failed, "[invalid-depth] expected fail-fast for {case}");
                 handle.await.unwrap();
@@ -89,7 +174,9 @@ mod section_invalid_depth {
 
 // ---------------- section_deepen ----------------
 mod section_deepen {
-    use crate::common::test_env; use crate::common::shallow_matrix::deepen_cases; use super::helpers::*;
+    use super::helpers::*;
+    use crate::common::shallow_matrix::deepen_cases;
+    use crate::common::test_env;
     #[test]
     fn deepen_sequences_monotonic() {
         test_env::init_test_env();
@@ -104,7 +191,12 @@ mod section_deepen {
                 assert!(c2 >= c1, "[deepen] history non-decreasing {from}->{to}");
                 let shallow_after = shallow_lines(&dest);
                 if !shallow_before.is_empty() && !shallow_after.is_empty() {
-                    assert!(shallow_after.len() <= shallow_before.len(), "[deepen] shallow file lines should not increase ({} -> {})", shallow_before.len(), shallow_after.len());
+                    assert!(
+                        shallow_after.len() <= shallow_before.len(),
+                        "[deepen] shallow file lines should not increase ({} -> {})",
+                        shallow_before.len(),
+                        shallow_after.len()
+                    );
                 }
             }
         }
@@ -113,7 +205,11 @@ mod section_deepen {
 
 // ---------------- section_local_ignore ----------------
 mod section_local_ignore {
-    use crate::common::test_env; use crate::common::shallow_matrix::{ignore_cases, ShallowCase}; use super::helpers::*; use fireworks_collaboration_lib::core::git::{DefaultGitService, service::GitService}; use std::sync::atomic::AtomicBool;
+    use super::helpers::*;
+    use crate::common::shallow_matrix::{ignore_cases, ShallowCase};
+    use crate::common::test_env;
+    use fireworks_collaboration_lib::core::git::{service::GitService, DefaultGitService};
+    use std::sync::atomic::AtomicBool;
     #[test]
     fn local_ignore_depth_behaviors() {
         test_env::init_test_env();
@@ -122,15 +218,29 @@ mod section_local_ignore {
             match case {
                 ShallowCase::LocalIgnoreClone { depth } => {
                     let dest = shallow_clone(&origin, Some(depth));
-                    assert!(!dest.join(".git").join("shallow").exists(), "[local-ignore] clone should not create shallow file");
+                    assert!(
+                        !dest.join(".git").join("shallow").exists(),
+                        "[local-ignore] clone should not create shallow file"
+                    );
                 }
                 ShallowCase::LocalIgnoreFetch { depth } => {
                     let dest = shallow_clone(&origin, None); // full clone
-                    let svc = DefaultGitService::new(); let cancel = AtomicBool::new(false);
-                    svc.fetch_blocking(origin.to_string_lossy().as_ref(), &dest, Some(depth), &cancel, |_p| {}).expect("local depth fetch");
-                    assert!(!dest.join(".git").join("shallow").exists(), "[local-ignore] fetch should not create shallow file");
+                    let svc = DefaultGitService::new();
+                    let cancel = AtomicBool::new(false);
+                    svc.fetch_blocking(
+                        origin.to_string_lossy().as_ref(),
+                        &dest,
+                        Some(depth),
+                        &cancel,
+                        |_p| {},
+                    )
+                    .expect("local depth fetch");
+                    assert!(
+                        !dest.join(".git").join("shallow").exists(),
+                        "[local-ignore] fetch should not create shallow file"
+                    );
                 }
-                _ => unreachable!()
+                _ => unreachable!(),
             }
         }
     }

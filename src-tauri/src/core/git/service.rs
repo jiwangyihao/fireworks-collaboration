@@ -5,8 +5,8 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct ProgressPayload {
     pub task_id: Uuid,
-    pub kind: String,      // GitClone | GitFetch | GitPush
-    pub phase: String,     // Negotiating | Receiving | Checkout | ...
+    pub kind: String,  // GitClone | GitFetch | GitPush
+    pub phase: String, // Negotiating | Receiving | Checkout | ...
     pub percent: u32,
     pub objects: Option<u64>,
     pub bytes: Option<u64>,

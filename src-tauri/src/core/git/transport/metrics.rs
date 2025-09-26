@@ -19,7 +19,9 @@ pub struct TimingCapture {
 }
 
 impl TimingCapture {
-    fn dur_to_ms(d: Duration) -> u32 { d.as_millis().min(u128::from(u32::MAX)) as u32 }
+    fn dur_to_ms(d: Duration) -> u32 {
+        d.as_millis().min(u128::from(u32::MAX)) as u32
+    }
 }
 
 /// Builder style recorder – not thread safe (owned per request/stream).
@@ -33,13 +35,44 @@ pub struct TimingRecorder {
 }
 
 impl TimingRecorder {
-    pub fn new() -> Self { Self { start: Instant::now(), connect_start: None, tls_start: None, first_byte_at: None, finished: false, capture: TimingCapture::default() } }
-    pub fn mark_connect_start(&mut self) { self.connect_start = Some(Instant::now()); }
-    pub fn mark_connect_end(&mut self) { if let Some(s) = self.connect_start { self.capture.connect_ms = Some(TimingCapture::dur_to_ms(s.elapsed())); } }
-    pub fn mark_tls_start(&mut self) { self.tls_start = Some(Instant::now()); }
-    pub fn mark_tls_end(&mut self) { if let Some(s) = self.tls_start { self.capture.tls_ms = Some(TimingCapture::dur_to_ms(s.elapsed())); } }
-    pub fn mark_first_byte(&mut self) { if self.first_byte_at.is_none() { self.first_byte_at = Some(Instant::now()); self.capture.first_byte_ms = Some(TimingCapture::dur_to_ms(self.start.elapsed())); } }
-    pub fn finish(&mut self) { if !self.finished { self.capture.total_ms = Some(TimingCapture::dur_to_ms(self.start.elapsed())); self.finished = true; } }
+    pub fn new() -> Self {
+        Self {
+            start: Instant::now(),
+            connect_start: None,
+            tls_start: None,
+            first_byte_at: None,
+            finished: false,
+            capture: TimingCapture::default(),
+        }
+    }
+    pub fn mark_connect_start(&mut self) {
+        self.connect_start = Some(Instant::now());
+    }
+    pub fn mark_connect_end(&mut self) {
+        if let Some(s) = self.connect_start {
+            self.capture.connect_ms = Some(TimingCapture::dur_to_ms(s.elapsed()));
+        }
+    }
+    pub fn mark_tls_start(&mut self) {
+        self.tls_start = Some(Instant::now());
+    }
+    pub fn mark_tls_end(&mut self) {
+        if let Some(s) = self.tls_start {
+            self.capture.tls_ms = Some(TimingCapture::dur_to_ms(s.elapsed()));
+        }
+    }
+    pub fn mark_first_byte(&mut self) {
+        if self.first_byte_at.is_none() {
+            self.first_byte_at = Some(Instant::now());
+            self.capture.first_byte_ms = Some(TimingCapture::dur_to_ms(self.start.elapsed()));
+        }
+    }
+    pub fn finish(&mut self) {
+        if !self.finished {
+            self.capture.total_ms = Some(TimingCapture::dur_to_ms(self.start.elapsed()));
+            self.finished = true;
+        }
+    }
 }
 
 /// Trait for a collector sink (future: aggregate / stats). P3.0 only keeps
@@ -62,7 +95,10 @@ pub fn set_global_collector(c: Arc<dyn TransportMetricsCollector>) {
 }
 
 fn collector() -> Arc<dyn TransportMetricsCollector> {
-    GLOBAL_COLLECTOR.get().cloned().unwrap_or_else(|| Arc::new(NoopCollector))
+    GLOBAL_COLLECTOR
+        .get()
+        .cloned()
+        .unwrap_or_else(|| Arc::new(NoopCollector))
 }
 
 // Thread-local staging area for active timing capture of a single transport attempt.
@@ -80,10 +116,18 @@ pub fn tl_reset() {
     TL_CERT_FP_CHANGED.with(|c| c.set(None));
 }
 
-pub fn tl_set_used_fake(v: bool) { TL_USED_FAKE.with(|c| c.set(Some(v))); }
-pub fn tl_set_fallback_stage(s: &'static str) { TL_FALLBACK_STAGE.with(|c| c.set(Some(s))); }
-pub fn tl_set_cert_fp_changed(changed: bool) { TL_CERT_FP_CHANGED.with(|c| c.set(Some(changed))); }
-pub fn tl_set_timing(cap: &TimingCapture) { TL_TIMING.with(|c| *c.borrow_mut() = Some(*cap)); }
+pub fn tl_set_used_fake(v: bool) {
+    TL_USED_FAKE.with(|c| c.set(Some(v)));
+}
+pub fn tl_set_fallback_stage(s: &'static str) {
+    TL_FALLBACK_STAGE.with(|c| c.set(Some(s)));
+}
+pub fn tl_set_cert_fp_changed(changed: bool) {
+    TL_CERT_FP_CHANGED.with(|c| c.set(Some(changed)));
+}
+pub fn tl_set_timing(cap: &TimingCapture) {
+    TL_TIMING.with(|c| *c.borrow_mut() = Some(*cap));
+}
 pub fn tl_mark_first_byte() {
     TL_TIMING.with(|_c| { /* marker for potential future inline updates (currently no-op) */ });
 }
@@ -116,15 +160,23 @@ pub fn metrics_enabled() -> bool {
             static TEST_METRICS_OVERRIDE: AtomicU8;
         }
         let v = unsafe { TEST_METRICS_OVERRIDE.load(Ordering::Relaxed) };
-        if v == 1 { return false; }
-        if v == 2 { return true; }
+        if v == 1 {
+            return false;
+        }
+        if v == 2 {
+            return true;
+        }
     }
-    load_or_init().map(|c:AppConfig| c.tls.metrics_enabled).unwrap_or(true)
+    load_or_init()
+        .map(|c: AppConfig| c.tls.metrics_enabled)
+        .unwrap_or(true)
 }
 
 /// Record and store into thread-local only if enabled.
 pub fn finish_and_store(rec: &mut TimingRecorder) {
-    if !metrics_enabled() { return; }
+    if !metrics_enabled() {
+        return;
+    }
     rec.finish();
     tl_set_timing(&rec.capture);
     collector().record(&rec.capture);

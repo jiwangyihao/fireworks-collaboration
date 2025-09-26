@@ -14,22 +14,37 @@
 //!
 //! 兼容性：`shallow_cases()` 与枚举变体保持不变；已有调用无需修改。
 
-use std::fmt::{Display, Formatter};
 use crate::common::CaseDescribe;
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone)]
 pub enum ShallowCase {
     /// 初始浅克隆 depth=N
-    Depth { depth: u32 },
+    Depth {
+        depth: u32,
+    },
     /// 非法 depth：0 / 负值 / 过大
-    Invalid { raw: i64, label: &'static str },
+    Invalid {
+        raw: i64,
+        label: &'static str,
+    },
     /// 递进 deepen：从 from -> to
-    Deepen { from: u32, to: u32 },
+    Deepen {
+        from: u32,
+        to: u32,
+    },
     /// 本地路径（clone/fetch）忽略 depth
-    LocalIgnoreClone { depth: u32 },
-    LocalIgnoreFetch { depth: u32 },
+    LocalIgnoreClone {
+        depth: u32,
+    },
+    LocalIgnoreFetch {
+        depth: u32,
+    },
     /// file:// URL 方案（当前实现可能不支持，保留占位）
-    FileUrlSequence { initial: u32, second: u32 },
+    FileUrlSequence {
+        initial: u32,
+        second: u32,
+    },
 }
 
 impl Display for ShallowCase {
@@ -38,9 +53,15 @@ impl Display for ShallowCase {
             ShallowCase::Depth { depth } => write!(f, "Depth({})", depth),
             ShallowCase::Invalid { raw, label } => write!(f, "Invalid({}, {})", raw, label),
             ShallowCase::Deepen { from, to } => write!(f, "Deepen({}->{})", from, to),
-            ShallowCase::LocalIgnoreClone { depth } => write!(f, "LocalIgnoreClone(depth={})", depth),
-            ShallowCase::LocalIgnoreFetch { depth } => write!(f, "LocalIgnoreFetch(depth={})", depth),
-            ShallowCase::FileUrlSequence { initial, second } => write!(f, "FileUrlSequence({}->{})", initial, second),
+            ShallowCase::LocalIgnoreClone { depth } => {
+                write!(f, "LocalIgnoreClone(depth={})", depth)
+            }
+            ShallowCase::LocalIgnoreFetch { depth } => {
+                write!(f, "LocalIgnoreFetch(depth={})", depth)
+            }
+            ShallowCase::FileUrlSequence { initial, second } => {
+                write!(f, "FileUrlSequence({}->{})", initial, second)
+            }
         }
     }
 }
@@ -80,32 +101,61 @@ impl ShallowCase {
             ShallowCase::Deepen { from, to } => format!("deepen-{}-{}", from, to),
             ShallowCase::LocalIgnoreClone { depth } => format!("ignore-clone-{}", depth),
             ShallowCase::LocalIgnoreFetch { depth } => format!("ignore-fetch-{}", depth),
-            ShallowCase::FileUrlSequence { initial, second } => format!("file-url-{}-{}", initial, second),
+            ShallowCase::FileUrlSequence { initial, second } => {
+                format!("file-url-{}-{}", initial, second)
+            }
         }
     }
 }
 
-impl CaseDescribe for ShallowCase { fn describe(&self) -> String { self.describe() } }
+impl CaseDescribe for ShallowCase {
+    fn describe(&self) -> String {
+        self.describe()
+    }
+}
 
 // -------------------------- 子集合生成函数 --------------------------
 
-pub fn depth_cases() -> Vec<ShallowCase> { vec![ShallowCase::Depth { depth: 1 }, ShallowCase::Depth { depth: 2 }] }
-pub fn invalid_depth_cases() -> Vec<ShallowCase> { vec![
-    ShallowCase::Invalid { raw: 0, label: "zero" },
-    ShallowCase::Invalid { raw: -3, label: "negative" },
-    ShallowCase::Invalid { raw: (i32::MAX as i64) + 1, label: "too-large" },
-] }
-pub fn deepen_cases() -> Vec<ShallowCase> { vec![
-    ShallowCase::Deepen { from: 1, to: 2 },
-    ShallowCase::Deepen { from: 2, to: 4 },
-] }
-pub fn ignore_cases() -> Vec<ShallowCase> { vec![
-    ShallowCase::LocalIgnoreClone { depth: 1 },
-    ShallowCase::LocalIgnoreFetch { depth: 1 },
-] }
-pub fn file_url_cases() -> Vec<ShallowCase> { vec![
-    ShallowCase::FileUrlSequence { initial: 1, second: 2 },
-] }
+pub fn depth_cases() -> Vec<ShallowCase> {
+    vec![
+        ShallowCase::Depth { depth: 1 },
+        ShallowCase::Depth { depth: 2 },
+    ]
+}
+pub fn invalid_depth_cases() -> Vec<ShallowCase> {
+    vec![
+        ShallowCase::Invalid {
+            raw: 0,
+            label: "zero",
+        },
+        ShallowCase::Invalid {
+            raw: -3,
+            label: "negative",
+        },
+        ShallowCase::Invalid {
+            raw: (i32::MAX as i64) + 1,
+            label: "too-large",
+        },
+    ]
+}
+pub fn deepen_cases() -> Vec<ShallowCase> {
+    vec![
+        ShallowCase::Deepen { from: 1, to: 2 },
+        ShallowCase::Deepen { from: 2, to: 4 },
+    ]
+}
+pub fn ignore_cases() -> Vec<ShallowCase> {
+    vec![
+        ShallowCase::LocalIgnoreClone { depth: 1 },
+        ShallowCase::LocalIgnoreFetch { depth: 1 },
+    ]
+}
+pub fn file_url_cases() -> Vec<ShallowCase> {
+    vec![ShallowCase::FileUrlSequence {
+        initial: 1,
+        second: 2,
+    }]
+}
 
 /// 代表性用例集合（可依据等价类增删）
 pub fn shallow_cases() -> Vec<ShallowCase> {
@@ -122,14 +172,14 @@ pub fn shallow_cases() -> Vec<ShallowCase> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::{HashSet, HashMap};
+    use std::collections::{HashMap, HashSet};
 
     #[test]
     fn describe_uniqueness_and_kind_coverage() {
         let cases = shallow_cases();
         let _ = crate::common::assert_unique_describe(&cases);
         let mut kinds = HashSet::new();
-        for c in &cases { 
+        for c in &cases {
             kinds.insert(c.kind());
         }
         // 所有 kind 应被覆盖
@@ -138,22 +188,35 @@ mod tests {
 
     #[test]
     fn deepen_from_to_invariant() {
-        for c in deepen_cases() { if let ShallowCase::Deepen { from, to } = c { assert!(from < to, "deepen from < to violated: {} >= {}", from, to); } }
+        for c in deepen_cases() {
+            if let ShallowCase::Deepen { from, to } = c {
+                assert!(from < to, "deepen from < to violated: {} >= {}", from, to);
+            }
+        }
     }
 
     #[test]
     fn invalid_labels_map_to_distinct_raw() {
         let mut map: HashMap<&'static str, i64> = HashMap::new();
-        for c in invalid_depth_cases() { if let ShallowCase::Invalid { raw, label } = c { let prev = map.insert(label, raw); assert!(prev.is_none(), "duplicate invalid label: {}", label); } }
+        for c in invalid_depth_cases() {
+            if let ShallowCase::Invalid { raw, label } = c {
+                let prev = map.insert(label, raw);
+                assert!(prev.is_none(), "duplicate invalid label: {}", label);
+            }
+        }
         assert_eq!(map.len(), 3);
     }
 
     #[test]
     fn slug_helper_smoke() {
         // 取一个 case 生成 slug，验证仅含允许字符
-        let case = ShallowCase::Deepen { from:1, to:2 };
+        let case = ShallowCase::Deepen { from: 1, to: 2 };
         let slug = crate::common::describe_slug(&case);
-        assert!(slug.chars().all(|ch| ch.is_ascii_alphanumeric() || ch=='-' || ch=='_'), "slug contains unexpected char: {slug}");
+        assert!(
+            slug.chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'),
+            "slug contains unexpected char: {slug}"
+        );
         assert!(slug.contains("deepen"));
     }
 }

@@ -27,8 +27,8 @@ pub enum SpkiError {
 }
 
 fn try_extract_spki_der<'a>(cert_der: &'a [u8]) -> Result<&'a [u8], SpkiError> {
-    let (_, cert) = X509Certificate::from_der(cert_der)
-        .map_err(|e| SpkiError::Parse(e.to_string()))?;
+    let (_, cert) =
+        X509Certificate::from_der(cert_der).map_err(|e| SpkiError::Parse(e.to_string()))?;
     let spki = cert.tbs_certificate.subject_pki;
     // subject_pki.raw 包含完整 DER 片段
     Ok(spki.raw)
@@ -43,7 +43,10 @@ pub fn compute_spki_sha256_b64(cert: &Certificate) -> (String, SpkiSource) {
         }
         Err(_) => {
             let sha = digest(&SHA256, &cert.0);
-            (URL_SAFE_NO_PAD.encode(sha.as_ref()), SpkiSource::WholeCertFallback)
+            (
+                URL_SAFE_NO_PAD.encode(sha.as_ref()),
+                SpkiSource::WholeCertFallback,
+            )
         }
     }
 }
@@ -53,19 +56,23 @@ pub fn compute_fingerprint_bundle(cert: &Certificate) -> FingerprintBundle {
     let (spki_sha256, spki_source) = compute_spki_sha256_b64(cert);
     let cert_sha = digest(&SHA256, &cert.0);
     let cert_sha256 = URL_SAFE_NO_PAD.encode(cert_sha.as_ref());
-    FingerprintBundle { spki_sha256, cert_sha256, spki_source }
+    FingerprintBundle {
+        spki_sha256,
+        cert_sha256,
+        spki_source,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcgen::generate_simple_self_signed;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use rcgen::generate_simple_self_signed;
     use ring::digest::SHA256;
 
     #[test]
     fn test_extract_spki_exact() {
-    let cert = generate_simple_self_signed(vec!["example.com".into()]).unwrap();
+        let cert = generate_simple_self_signed(vec!["example.com".into()]).unwrap();
         let der = cert.serialize_der().unwrap();
         let rustls_cert = Certificate(der.clone());
 

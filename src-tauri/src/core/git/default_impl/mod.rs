@@ -4,26 +4,33 @@ use crate::core::git::transport::{ensure_registered, maybe_rewrite_https_to_cust
 // adaptive_tls_rollout 事件在任务注册层发射；此处不直接发射以便获取真实 task id。
 // (helpers module handles SNI decision and config loading when needed)
 
-use super::{errors::{GitError, ErrorCategory}, service::{GitService, ProgressPayload}};
+use super::{
+    errors::{ErrorCategory, GitError},
+    service::{GitService, ProgressPayload},
+};
 
-pub mod helpers; // made public for test visibility of map_git2_error (i18n classification)
-mod ops;
-pub mod clone;
-pub mod fetch;
-pub mod push;
-pub mod init;
 pub mod add;
-pub mod commit;
 pub mod branch;
 pub mod checkout;
-pub mod tag;
-pub mod remote;
+pub mod clone;
+pub mod commit;
+pub mod fetch;
+pub mod helpers; // made public for test visibility of map_git2_error (i18n classification)
+pub mod init;
+mod ops;
+pub mod opts;
+pub mod push;
 pub mod refname;
-pub mod opts; // P2.2a: depth/filter/strategyOverride parsing placeholder
+pub mod remote;
+pub mod tag; // P2.2a: depth/filter/strategyOverride parsing placeholder
 
 pub struct DefaultGitService;
 
-impl DefaultGitService { pub fn new() -> Self { Self } }
+impl DefaultGitService {
+    pub fn new() -> Self {
+        Self
+    }
+}
 
 impl GitService for DefaultGitService {
     fn clone_blocking<F: FnMut(ProgressPayload)>(
@@ -57,14 +64,23 @@ impl GitService for DefaultGitService {
                 if let Ok(parsed) = url::Url::parse(repo_trim) {
                     let scheme_ok = matches!(parsed.scheme(), "http" | "https");
                     if !scheme_ok {
-                        return Err(GitError::new(ErrorCategory::Internal, format!("unsupported url scheme: {}", parsed.scheme())));
+                        return Err(GitError::new(
+                            ErrorCategory::Internal,
+                            format!("unsupported url scheme: {}", parsed.scheme()),
+                        ));
                     }
                 } else {
-                    return Err(GitError::new(ErrorCategory::Internal, "invalid repository url format"));
+                    return Err(GitError::new(
+                        ErrorCategory::Internal,
+                        "invalid repository url format",
+                    ));
                 }
             } else if !looks_like_scp {
                 // 既不像本地路径，也不像 http(s) 或 scp-like，视为明显无效，快速失败
-                return Err(GitError::new(ErrorCategory::Internal, "invalid repository path or url"));
+                return Err(GitError::new(
+                    ErrorCategory::Internal,
+                    "invalid repository path or url",
+                ));
             }
         }
         // SNI 状态
@@ -73,7 +89,10 @@ impl GitService for DefaultGitService {
         let cfg = crate::core::config::loader::load_or_init()
             .map_err(|e| GitError::new(ErrorCategory::Internal, format!("load config: {}", e)))?;
         if let Err(e) = ensure_registered(&cfg) {
-            return Err(GitError::new(ErrorCategory::Internal, format!("register custom transport: {}", e.message())));
+            return Err(GitError::new(
+                ErrorCategory::Internal,
+                format!("register custom transport: {}", e.message()),
+            ));
         }
         let rewritten = maybe_rewrite_https_to_custom(&cfg, repo);
         let adaptive_used = rewritten.is_some();
@@ -81,9 +100,22 @@ impl GitService for DefaultGitService {
         // 若是本地路径克隆，git2/libgit2 不支持 depth 参数；忽略之以保持兼容（后续可发回退事件）。
         let effective_depth = if looks_like_path { None } else { depth };
         // Bridge to dedicated module (P2.0). Internals currently delegate to ops.rs.
-    let r = clone::do_clone(repo_url_final.as_str(), dest, effective_depth, should_interrupt, on_progress);
-    if adaptive_used { tracing::debug!(target="git.clone", adaptive_tls_rollout=true, percent=cfg.http.fake_sni_rollout_percent, "adaptive tls applied for clone"); }
-    r
+        let r = clone::do_clone(
+            repo_url_final.as_str(),
+            dest,
+            effective_depth,
+            should_interrupt,
+            on_progress,
+        );
+        if adaptive_used {
+            tracing::debug!(
+                target = "git.clone",
+                adaptive_tls_rollout = true,
+                percent = cfg.http.fake_sni_rollout_percent,
+                "adaptive tls applied for clone"
+            );
+        }
+        r
     }
 
     fn fetch_blocking<F: FnMut(ProgressPayload)>(
@@ -96,39 +128,70 @@ impl GitService for DefaultGitService {
     ) -> Result<(), GitError> {
         // 校验目标路径
         if !dest.join(".git").exists() {
-            return Err(GitError::new(ErrorCategory::Internal, "dest is not a git repository (missing .git)"));
+            return Err(GitError::new(
+                ErrorCategory::Internal,
+                "dest is not a git repository (missing .git)",
+            ));
         }
         // 预发与取消检查
         helpers::preflight_generic("GitFetch", should_interrupt, &mut on_progress)?;
         // SNI 状态
         let repo_url_trimmed = repo_url.trim();
-        if !repo_url_trimmed.is_empty() { helpers::emit_sni_status("GitFetch", Some(repo_url_trimmed), &mut on_progress); }
-        else { helpers::emit_sni_status("GitFetch", None, &mut on_progress); }
+        if !repo_url_trimmed.is_empty() {
+            helpers::emit_sni_status("GitFetch", Some(repo_url_trimmed), &mut on_progress);
+        } else {
+            helpers::emit_sni_status("GitFetch", None, &mut on_progress);
+        }
         // 注册与改写准备
         let cfg = crate::core::config::loader::load_or_init()
             .map_err(|e| GitError::new(ErrorCategory::Internal, format!("load config: {}", e)))?;
         if let Err(e) = ensure_registered(&cfg) {
-            return Err(GitError::new(ErrorCategory::Internal, format!("register custom transport: {}", e.message())));
+            return Err(GitError::new(
+                ErrorCategory::Internal,
+                format!("register custom transport: {}", e.message()),
+            ));
         }
         // Bridge to dedicated module (P2.0). Internals currently delegate to ops.rs.
         // 若 repo_url 为空表示使用已配置远程；depth 在本地 fetch 上仍可生效（libgit2 支持针对远端协商）。
         // 本地路径（通过 repo_url 指向本地目录且非空）不应应用 depth（与 clone 行为一致），避免误解含义。
-        let looks_like_local_input = if repo_url_trimmed.is_empty() { false } else { helpers::is_local_path_candidate(repo_url_trimmed) };
+        let looks_like_local_input = if repo_url_trimmed.is_empty() {
+            false
+        } else {
+            helpers::is_local_path_candidate(repo_url_trimmed)
+        };
         // 如果输入不是显式本地路径，也可能通过 remote 名称指向本地路径（例如 origin -> C:/path）。尝试解析远程 URL。
         let mut looks_like_local_remote = false;
-        if depth.is_some() { // 仅在需要时执行开销
+        if depth.is_some() {
+            // 仅在需要时执行开销
             if let Ok(repo) = git2::Repository::open(dest) {
                 // 优先使用 repo_url_trimmed 作为远程名；为空则尝试 origin
-                let candidate_name = if repo_url_trimmed.is_empty() { "origin" } else { repo_url_trimmed };
+                let candidate_name = if repo_url_trimmed.is_empty() {
+                    "origin"
+                } else {
+                    repo_url_trimmed
+                };
                 if let Ok(r) = repo.find_remote(candidate_name) {
                     if let Some(u) = r.url() {
-                        if helpers::is_local_path_candidate(u) { looks_like_local_remote = true; }
+                        if helpers::is_local_path_candidate(u) {
+                            looks_like_local_remote = true;
+                        }
                     }
                 }
             }
         }
-        let effective_depth = if looks_like_local_input || looks_like_local_remote { None } else { depth };
-        fetch::do_fetch(repo_url, dest, effective_depth, &cfg, should_interrupt, on_progress)
+        let effective_depth = if looks_like_local_input || looks_like_local_remote {
+            None
+        } else {
+            depth
+        };
+        fetch::do_fetch(
+            repo_url,
+            dest,
+            effective_depth,
+            &cfg,
+            should_interrupt,
+            on_progress,
+        )
     }
 
     fn push_blocking<F: FnMut(ProgressPayload)>(

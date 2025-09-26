@@ -12,7 +12,9 @@ use crate::core::tls::util::{proxy_present, set_last_good_sni};
 use crate::core::tls::verifier::{create_client_config, create_client_config_with_expected_name};
 
 use super::auth::get_push_auth_header;
-use super::util::{find_crlf, find_double_crlf, log_body_preview, parse_http_header_first_line_and_host};
+use super::util::{
+    find_crlf, find_double_crlf, log_body_preview, parse_http_header_first_line_and_host,
+};
 use super::{HttpOp, TransferKind};
 use crate::core::git::transport::metrics::tl_mark_first_byte;
 
@@ -105,7 +107,9 @@ impl SniffingStream {
     }
 
     fn try_log_request(&mut self) {
-        if self.wrote_logged { return; }
+        if self.wrote_logged {
+            return;
+        }
         let cap = 2048usize;
         let upto = self.wrote_buf.len().min(cap);
         let slice = &self.wrote_buf[..upto];
@@ -125,7 +129,9 @@ impl SniffingStream {
     }
 
     fn try_log_response(&mut self) {
-        if self.read_logged { return; }
+        if self.read_logged {
+            return;
+        }
         let cap = 2048usize;
         let upto = self.read_buf.len().min(cap);
         let slice = &self.read_buf[..upto];
@@ -154,9 +160,17 @@ impl SniffingStream {
                         _ => unreachable!(),
                     };
                     let path = format!("{}/info/refs?service={}", self.path, service);
-                    let host_hdr = if self.port == 443 { self.host.clone() } else { format!("{}:{}", self.host, self.port) };
+                    let host_hdr = if self.port == 443 {
+                        self.host.clone()
+                    } else {
+                        format!("{}:{}", self.host, self.port)
+                    };
                     // 仅在 receive-pack 的 info/refs 阶段尝试注入 Authorization
-                    let auth_line = if matches!(self.op, HttpOp::InfoRefsReceive) { get_push_auth_header().map(|v| format!("Authorization: {}\r\n", v)) } else { None };
+                    let auth_line = if matches!(self.op, HttpOp::InfoRefsReceive) {
+                        get_push_auth_header().map(|v| format!("Authorization: {}\r\n", v))
+                    } else {
+                        None
+                    };
                     let req = if let Some(al) = auth_line.as_deref() {
                         format!(
                             concat!(
@@ -223,9 +237,17 @@ impl SniffingStream {
             ),
             _ => unreachable!(),
         };
-        let host_hdr = if self.port == 443 { self.host.clone() } else { format!("{}:{}", self.host, self.port) };
+        let host_hdr = if self.port == 443 {
+            self.host.clone()
+        } else {
+            format!("{}:{}", self.host, self.port)
+        };
         let len = self.post_buf.len();
-        let auth_line = if matches!(self.op, HttpOp::ReceivePack) { get_push_auth_header().map(|v| format!("Authorization: {}\r\n", v)) } else { None };
+        let auth_line = if matches!(self.op, HttpOp::ReceivePack) {
+            get_push_auth_header().map(|v| format!("Authorization: {}\r\n", v))
+        } else {
+            None
+        };
         let headers = if let Some(al) = auth_line.as_deref() {
             format!(
                 concat!(
@@ -268,7 +290,9 @@ impl SniffingStream {
         }
         self.wrote_buf.extend_from_slice(headers.as_bytes());
         self.inner.write_all(headers.as_bytes())?;
-        if len > 0 { self.inner.write_all(&self.post_buf)?; }
+        if len > 0 {
+            self.inner.write_all(&self.post_buf)?;
+        }
         self.inner.flush()?;
         self.posted = true;
         self.try_log_request();
@@ -276,7 +300,9 @@ impl SniffingStream {
     }
 
     fn parse_headers_and_setup(&mut self) -> std::io::Result<()> {
-        if self.headers_parsed { return Ok(()); }
+        if self.headers_parsed {
+            return Ok(());
+        }
         loop {
             if let Some(pos) = find_double_crlf(&self.header_buf) {
                 let header = self.header_buf[..pos].to_vec();
@@ -293,17 +319,31 @@ impl SniffingStream {
                         if i == 0 {
                             status_line = line.to_string();
                             let parts: Vec<&str> = line.split_whitespace().collect();
-                            if parts.len() >= 2 { if let Ok(code) = parts[1].parse::<u16>() { status_code = Some(code); } }
+                            if parts.len() >= 2 {
+                                if let Ok(code) = parts[1].parse::<u16>() {
+                                    status_code = Some(code);
+                                }
+                            }
                             continue;
                         }
                         let mut parts = line.splitn(2, ':');
                         if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
                             let k_l = k.trim().to_ascii_lowercase();
                             let v_t = v.trim();
-                            if k_l == "content-length" { if let Ok(n) = v_t.parse::<usize>() { content_len = Some(n); } }
-                            if k_l == "transfer-encoding" && v_t.eq_ignore_ascii_case("chunked") { is_chunked = true; }
-                            if k_l == "content-type" { content_type = v_t.to_string(); }
-                            if k_l == "www-authenticate" { www_authenticate = Some(v_t.to_string()); }
+                            if k_l == "content-length" {
+                                if let Ok(n) = v_t.parse::<usize>() {
+                                    content_len = Some(n);
+                                }
+                            }
+                            if k_l == "transfer-encoding" && v_t.eq_ignore_ascii_case("chunked") {
+                                is_chunked = true;
+                            }
+                            if k_l == "content-type" {
+                                content_type = v_t.to_string();
+                            }
+                            if k_l == "www-authenticate" {
+                                www_authenticate = Some(v_t.to_string());
+                            }
                         }
                     }
                 }
@@ -328,7 +368,14 @@ impl SniffingStream {
                     if let Some(403) = status_code {
                         if self.cfg.http.sni_rotate_on_403 && !self.rotated_once {
                             tracing::debug!(target="git.transport.http", host=%self.host, sni=%self.current_sni, "received 403, try rotate SNI and retry once");
-                            if let Ok((new_stream, new_used_fake, new_sni)) = Self::reconnect_with_rotated_sni(&self.cfg, &self.host, self.port, &self.current_sni) {
+                            if let Ok((new_stream, new_used_fake, new_sni)) =
+                                Self::reconnect_with_rotated_sni(
+                                    &self.cfg,
+                                    &self.host,
+                                    self.port,
+                                    &self.current_sni,
+                                )
+                            {
                                 self.inner = new_stream;
                                 self.used_fake_sni = new_used_fake;
                                 self.current_sni = new_sni;
@@ -353,7 +400,11 @@ impl SniffingStream {
                             }
                         }
                     }
-                    if let Some(code) = status_code { if (200..300).contains(&code) && self.used_fake_sni { set_last_good_sni(&self.host, &self.current_sni); } }
+                    if let Some(code) = status_code {
+                        if (200..300).contains(&code) && self.used_fake_sni {
+                            set_last_good_sni(&self.host, &self.current_sni);
+                        }
+                    }
                 }
                 if is_chunked {
                     self.transfer = Some(TransferKind::Chunked);
@@ -382,8 +433,12 @@ impl SniffingStream {
     }
 
     fn fill_decoded(&mut self) -> std::io::Result<()> {
-        if self.eof { return Ok(()); }
-        if !self.headers_parsed { self.parse_headers_and_setup()?; }
+        if self.eof {
+            return Ok(());
+        }
+        if !self.headers_parsed {
+            self.parse_headers_and_setup()?;
+        }
         match self.transfer {
             Some(TransferKind::Chunked) => self.decode_chunked(),
             Some(TransferKind::Length) => self.decode_content_length(),
@@ -395,7 +450,9 @@ impl SniffingStream {
     fn read_more(&mut self) -> std::io::Result<usize> {
         let mut tmp = [0u8; 8192];
         let n = self.inner.read(&mut tmp)?;
-        if n > 0 { self.inbuf.extend_from_slice(&tmp[..n]); }
+        if n > 0 {
+            self.inbuf.extend_from_slice(&tmp[..n]);
+        }
         Ok(n)
     }
 
@@ -408,27 +465,41 @@ impl SniffingStream {
                     return Ok(());
                 }
                 let n = self.read_more()?;
-                if n == 0 { self.eof = true; return Ok(()); }
+                if n == 0 {
+                    self.eof = true;
+                    return Ok(());
+                }
                 continue;
             }
             if self.reading_chunk_size {
                 if let Some(idx) = find_crlf(&self.inbuf) {
                     let line = self.inbuf.drain(..idx + 2).collect::<Vec<u8>>();
                     let line_no_crlf = &line[..line.len() - 2];
-                    let hex_part = match line_no_crlf.split(|&b| b == b';').next() { Some(h) => h, None => line_no_crlf };
+                    let hex_part = match line_no_crlf.split(|&b| b == b';').next() {
+                        Some(h) => h,
+                        None => line_no_crlf,
+                    };
                     let hex_str = std::str::from_utf8(hex_part).unwrap_or("");
                     let size = usize::from_str_radix(hex_str.trim(), 16).unwrap_or(0);
                     self.chunk_remaining = size;
                     self.reading_chunk_size = false;
-                    if size == 0 { self.trailer_mode = true; }
+                    if size == 0 {
+                        self.trailer_mode = true;
+                    }
                     continue;
                 }
-                let n = self.read_more()?; if n == 0 { return Ok(()); }
+                let n = self.read_more()?;
+                if n == 0 {
+                    return Ok(());
+                }
                 continue;
             }
             if self.chunk_remaining > 0 {
                 if self.inbuf.is_empty() {
-                    let n = self.read_more()?; if n == 0 { return Ok(()); }
+                    let n = self.read_more()?;
+                    if n == 0 {
+                        return Ok(());
+                    }
                 }
                 let take = self.chunk_remaining.min(self.inbuf.len());
                 if take > 0 {
@@ -436,9 +507,17 @@ impl SniffingStream {
                     self.decoded.extend_from_slice(&data);
                     self.chunk_remaining -= take;
                 }
-                if self.chunk_remaining > 0 { return Ok(()); }
-                if self.inbuf.len() < 2 { let _ = self.read_more()?; }
-                if self.inbuf.len() >= 2 { if &self.inbuf[..2] == b"\r\n" { self.inbuf.drain(..2); } }
+                if self.chunk_remaining > 0 {
+                    return Ok(());
+                }
+                if self.inbuf.len() < 2 {
+                    let _ = self.read_more()?;
+                }
+                if self.inbuf.len() >= 2 {
+                    if &self.inbuf[..2] == b"\r\n" {
+                        self.inbuf.drain(..2);
+                    }
+                }
                 self.reading_chunk_size = true;
                 continue;
             }
@@ -446,21 +525,33 @@ impl SniffingStream {
     }
 
     fn decode_content_length(&mut self) -> std::io::Result<()> {
-        if self.content_remaining == 0 { self.eof = true; return Ok(()); }
-        if self.inbuf.is_empty() { let _ = self.read_more()?; }
-        if self.inbuf.is_empty() { return Ok(()); }
+        if self.content_remaining == 0 {
+            self.eof = true;
+            return Ok(());
+        }
+        if self.inbuf.is_empty() {
+            let _ = self.read_more()?;
+        }
+        if self.inbuf.is_empty() {
+            return Ok(());
+        }
         let take = self.content_remaining.min(self.inbuf.len());
         let data = self.inbuf.drain(..take).collect::<Vec<u8>>();
         self.decoded.extend_from_slice(&data);
         self.content_remaining -= take;
-        if self.content_remaining == 0 { self.eof = true; }
+        if self.content_remaining == 0 {
+            self.eof = true;
+        }
         Ok(())
     }
 
     fn decode_to_eof(&mut self) -> std::io::Result<()> {
         if self.inbuf.is_empty() {
             let n = self.read_more()?;
-            if n == 0 { self.eof = true; return Ok(()); }
+            if n == 0 {
+                self.eof = true;
+                return Ok(());
+            }
         }
         if !self.inbuf.is_empty() {
             let data = self.inbuf.drain(..).collect::<Vec<u8>>();
@@ -479,13 +570,18 @@ impl SniffingStream {
         let cfg_now = load_or_init().unwrap_or_else(|_| AppConfig::default());
         let present = proxy_present();
         if present || !cfg_now.http.fake_sni_enabled {
-            let server_name = ServerName::try_from(host).map_err(|_| Error::from_str("invalid real host"))?;
-            let tls_cfg: std::sync::Arc<ClientConfig> = std::sync::Arc::new(create_client_config(&cfg_now.tls));
+            let server_name =
+                ServerName::try_from(host).map_err(|_| Error::from_str("invalid real host"))?;
+            let tls_cfg: std::sync::Arc<ClientConfig> =
+                std::sync::Arc::new(create_client_config(&cfg_now.tls));
             let addr = format!("{host}:{port}");
-            let tcp = TcpStream::connect(addr).map_err(|e| Error::from_str(&format!("tcp connect: {e}")))?;
+            let tcp = TcpStream::connect(addr)
+                .map_err(|e| Error::from_str(&format!("tcp connect: {e}")))?;
             tcp.set_nodelay(true).ok();
-            let mut conn = ClientConnection::new(tls_cfg, server_name).map_err(|e| Error::from_str(&format!("tls client: {e}")))?;
-            conn.complete_io(&mut &tcp).map_err(|e| Error::from_str(&format!("tls handshake: {e}")))?;
+            let mut conn = ClientConnection::new(tls_cfg, server_name)
+                .map_err(|e| Error::from_str(&format!("tls client: {e}")))?;
+            conn.complete_io(&mut &tcp)
+                .map_err(|e| Error::from_str(&format!("tls handshake: {e}")))?;
             let mut stream = StreamOwned::new(conn, tcp);
             let _ = stream.flush();
             tracing::debug!(target="git.transport.http", host=%host, new_sni=%host, used_fake=false, "reconnect with real SNI due to proxy/disabled");
@@ -495,31 +591,46 @@ impl SniffingStream {
         let mut candidates: Vec<String> = Vec::new();
         for h in cfg_now.http.fake_sni_hosts.iter() {
             let h = h.trim();
-            if !h.is_empty() && h != current_sni { candidates.push(h.to_string()); }
+            if !h.is_empty() && h != current_sni {
+                candidates.push(h.to_string());
+            }
         }
         if candidates.is_empty() {
-            let server_name = ServerName::try_from(host).map_err(|_| Error::from_str("invalid real host"))?;
-            let tls_cfg: std::sync::Arc<ClientConfig> = std::sync::Arc::new(create_client_config(&cfg_now.tls));
+            let server_name =
+                ServerName::try_from(host).map_err(|_| Error::from_str("invalid real host"))?;
+            let tls_cfg: std::sync::Arc<ClientConfig> =
+                std::sync::Arc::new(create_client_config(&cfg_now.tls));
             let addr = format!("{host}:{port}");
-            let tcp = TcpStream::connect(addr).map_err(|e| Error::from_str(&format!("tcp connect: {e}")))?;
+            let tcp = TcpStream::connect(addr)
+                .map_err(|e| Error::from_str(&format!("tcp connect: {e}")))?;
             tcp.set_nodelay(true).ok();
-            let mut conn = ClientConnection::new(tls_cfg, server_name).map_err(|e| Error::from_str(&format!("tls client: {e}")))?;
-            conn.complete_io(&mut &tcp).map_err(|e| Error::from_str(&format!("tls handshake: {e}")))?;
+            let mut conn = ClientConnection::new(tls_cfg, server_name)
+                .map_err(|e| Error::from_str(&format!("tls client: {e}")))?;
+            conn.complete_io(&mut &tcp)
+                .map_err(|e| Error::from_str(&format!("tls handshake: {e}")))?;
             let mut stream = StreamOwned::new(conn, tcp);
             let _ = stream.flush();
             tracing::debug!(target="git.transport.http", host=%host, new_sni=%host, used_fake=false, "no alternative fake SNI, fallback real");
             return Ok((stream, false, host.to_string()));
         }
         let mut rng = rand::thread_rng();
-        let pick = candidates.choose(&mut rng).cloned().unwrap_or_else(|| candidates[0].clone());
+        let pick = candidates
+            .choose(&mut rng)
+            .cloned()
+            .unwrap_or_else(|| candidates[0].clone());
 
-        let server_name = ServerName::try_from(pick.as_str()).map_err(|_| Error::from_str("invalid sni host"))?;
-        let tls_cfg: std::sync::Arc<ClientConfig> = std::sync::Arc::new(create_client_config_with_expected_name(&cfg_now.tls, host));
+        let server_name =
+            ServerName::try_from(pick.as_str()).map_err(|_| Error::from_str("invalid sni host"))?;
+        let tls_cfg: std::sync::Arc<ClientConfig> =
+            std::sync::Arc::new(create_client_config_with_expected_name(&cfg_now.tls, host));
         let addr = format!("{host}:{port}");
-        let tcp = TcpStream::connect(addr).map_err(|e| Error::from_str(&format!("tcp connect: {e}")))?;
+        let tcp =
+            TcpStream::connect(addr).map_err(|e| Error::from_str(&format!("tcp connect: {e}")))?;
         tcp.set_nodelay(true).ok();
-        let mut conn = ClientConnection::new(tls_cfg, server_name).map_err(|e| Error::from_str(&format!("tls client: {e}")))?;
-        conn.complete_io(&mut &tcp).map_err(|e| Error::from_str(&format!("tls handshake: {e}")))?;
+        let mut conn = ClientConnection::new(tls_cfg, server_name)
+            .map_err(|e| Error::from_str(&format!("tls client: {e}")))?;
+        conn.complete_io(&mut &tcp)
+            .map_err(|e| Error::from_str(&format!("tls handshake: {e}")))?;
         let mut stream = StreamOwned::new(conn, tcp);
         let _ = stream.flush();
         tracing::debug!(target="git.transport.http", host=%host, new_sni=%pick, used_fake=true, "reconnect with rotated SNI ok");
@@ -531,38 +642,79 @@ impl Read for SniffingStream {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         tracing::debug!(target="git.transport", host=%self.host, read_buf_len=%buf.len(), "stream read attempt");
         self.ensure_request_sent()?;
-        if !self.headers_parsed { self.parse_headers_and_setup()?; }
+        if !self.headers_parsed {
+            self.parse_headers_and_setup()?;
+        }
         if let Some(msg) = self.fatal_error.clone() {
-            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, msg));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                msg,
+            ));
         }
         if !self.decoded.is_empty() {
             let n = self.decoded.len().min(buf.len());
-            if !self.read_body_logged { log_body_preview(&self.decoded[..n.min(32)], &self.host, "first decoded bytes"); self.read_body_logged = true; tl_mark_first_byte(); }
+            if !self.read_body_logged {
+                log_body_preview(
+                    &self.decoded[..n.min(32)],
+                    &self.host,
+                    "first decoded bytes",
+                );
+                self.read_body_logged = true;
+                tl_mark_first_byte();
+            }
             buf[..n].copy_from_slice(&self.decoded[..n]);
             self.decoded.drain(..n);
-            if !self.read_logged { let cap = 2048usize; let upto = self.header_buf.len().min(cap); self.read_buf.extend_from_slice(&self.header_buf[..upto]); self.try_log_response(); }
+            if !self.read_logged {
+                let cap = 2048usize;
+                let upto = self.header_buf.len().min(cap);
+                self.read_buf.extend_from_slice(&self.header_buf[..upto]);
+                self.try_log_response();
+            }
             return Ok(n);
         }
         self.fill_decoded()?;
         if !self.decoded.is_empty() {
             let n = self.decoded.len().min(buf.len());
-            if !self.read_body_logged { log_body_preview(&self.decoded[..n.min(32)], &self.host, "first decoded bytes"); self.read_body_logged = true; tl_mark_first_byte(); }
+            if !self.read_body_logged {
+                log_body_preview(
+                    &self.decoded[..n.min(32)],
+                    &self.host,
+                    "first decoded bytes",
+                );
+                self.read_body_logged = true;
+                tl_mark_first_byte();
+            }
             buf[..n].copy_from_slice(&self.decoded[..n]);
             self.decoded.drain(..n);
-            if !self.read_logged { let cap = 2048usize; let upto = self.header_buf.len().min(cap); self.read_buf.extend_from_slice(&self.header_buf[..upto]); self.try_log_response(); }
+            if !self.read_logged {
+                let cap = 2048usize;
+                let upto = self.header_buf.len().min(cap);
+                self.read_buf.extend_from_slice(&self.header_buf[..upto]);
+                self.try_log_response();
+            }
             return Ok(n);
         }
-        if self.eof { return Ok(0); }
+        if self.eof {
+            return Ok(0);
+        }
         loop {
             self.fill_decoded()?;
             if !self.decoded.is_empty() {
                 let n = self.decoded.len().min(buf.len());
                 buf[..n].copy_from_slice(&self.decoded[..n]);
                 self.decoded.drain(..n);
-                if !self.read_logged { let cap = 2048usize; let upto = self.header_buf.len().min(cap); self.read_buf.extend_from_slice(&self.header_buf[..upto]); self.try_log_response(); tl_mark_first_byte(); }
+                if !self.read_logged {
+                    let cap = 2048usize;
+                    let upto = self.header_buf.len().min(cap);
+                    self.read_buf.extend_from_slice(&self.header_buf[..upto]);
+                    self.try_log_response();
+                    tl_mark_first_byte();
+                }
                 return Ok(n);
             }
-            if self.eof { return Ok(0); }
+            if self.eof {
+                return Ok(0);
+            }
             let _ = self.read_more()?;
         }
     }
@@ -573,17 +725,27 @@ impl Write for SniffingStream {
         tracing::debug!(target="git.transport", host=%self.host, write_len=%buf.len(), "stream write attempt");
         match self.op {
             HttpOp::InfoRefsUpload | HttpOp::InfoRefsReceive => Ok(buf.len()),
-            HttpOp::UploadPack | HttpOp::ReceivePack => { self.post_buf.extend_from_slice(buf); Ok(buf.len()) }
+            HttpOp::UploadPack | HttpOp::ReceivePack => {
+                self.post_buf.extend_from_slice(buf);
+                Ok(buf.len())
+            }
         }
     }
     fn flush(&mut self) -> std::io::Result<()> {
-        if matches!(self.op, HttpOp::UploadPack | HttpOp::ReceivePack) { if !self.posted { self.send_post()?; } }
+        if matches!(self.op, HttpOp::UploadPack | HttpOp::ReceivePack) {
+            if !self.posted {
+                self.send_post()?;
+            }
+        }
         Ok(())
     }
 }
 
 impl std::io::Seek for SniffingStream {
     fn seek(&mut self, _pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "seek is not supported on a network stream"))
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "seek is not supported on a network stream",
+        ))
     }
 }

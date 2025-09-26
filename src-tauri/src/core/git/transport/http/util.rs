@@ -39,7 +39,11 @@ pub(super) fn log_body_preview(body: &[u8], host: &str, msg: &str) {
     let ascii = body
         .iter()
         .map(|&b| {
-            if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' }
+            if b.is_ascii_graphic() || b == b' ' {
+                b as char
+            } else {
+                '.'
+            }
         })
         .collect::<String>();
     tracing::debug!(target="git.transport.http", host=%host, bytes=%n, hex=%hex, ascii=%ascii, "{}", msg);

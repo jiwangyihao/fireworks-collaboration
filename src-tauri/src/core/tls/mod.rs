@@ -1,3 +1,3 @@
-pub mod verifier;
-pub mod util;
 pub mod spki;
+pub mod util;
+pub mod verifier;

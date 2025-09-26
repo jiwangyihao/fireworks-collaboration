@@ -3,4 +3,4 @@ pub mod registry;
 pub mod retry;
 
 pub use model::{TaskKind, TaskSnapshot};
-pub use registry::{TaskRegistry, SharedTaskRegistry};
+pub use registry::{SharedTaskRegistry, TaskRegistry};

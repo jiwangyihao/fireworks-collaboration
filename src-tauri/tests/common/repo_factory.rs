@@ -6,11 +6,13 @@
 //!  * 保持向后兼容：原有 `repo_with_branches` / `repo_with_linear_commits` API 未删除
 //! 未来扩展：标签创建、复杂拓扑（分叉/合并）、基于对象计数的 shallow 验证支撑。
 
+use fireworks_collaboration_lib::core::git::default_impl::{
+    add::git_add, branch::git_branch, commit::git_commit, init::git_init,
+};
+use fireworks_collaboration_lib::core::git::service::ProgressPayload;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use uuid::Uuid;
-use fireworks_collaboration_lib::core::git::default_impl::{init::git_init, commit::git_commit, add::git_add, branch::git_branch};
-use fireworks_collaboration_lib::core::git::service::ProgressPayload;
 
 // ---- 内部通用 Helper ----
 fn init_empty_repo(path: &Path) {
@@ -25,7 +27,9 @@ fn commit_file(repo: &Path, file: &str, content: &str, msg: &str) {
     git_commit(repo, msg, None, false, &cancel, |_p| {}).expect("git commit");
 }
 
-fn create_temp(prefix: &str) -> PathBuf { std::env::temp_dir().join(format!("fwc-{prefix}-{}", Uuid::new_v4())) }
+fn create_temp(prefix: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("fwc-{prefix}-{}", Uuid::new_v4()))
+}
 
 /// 仓库结构描述（最小摘要，可用于断言或调试输出）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,27 +48,46 @@ pub struct RepoBuilder {
     additional_commits: Vec<(String, String, String)>,
 }
 impl RepoBuilder {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
     /// 初始线性提交（依次创建）。
     pub fn with_base_commit<S: Into<String>>(mut self, file: S, content: S, msg: S) -> Self {
         let (file, content, msg) = (file.into(), content.into(), msg.into());
-        self.base_commits.push((file, content, msg)); self }
+        self.base_commits.push((file, content, msg));
+        self
+    }
     /// 在构建后追加的额外线性提交（构造完成后按顺序追加）。
     pub fn with_commit<S: Into<String>>(mut self, file: S, content: S, msg: S) -> Self {
         let (file, content, msg) = (file.into(), content.into(), msg.into());
-        self.additional_commits.push((file, content, msg)); self }
+        self.additional_commits.push((file, content, msg));
+        self
+    }
     /// 添加需要创建的分支（指向最终 HEAD，不自动 checkout）。
-    pub fn with_branch<S: Into<String>>(mut self, name: S) -> Self { self.branches.push(name.into()); self }
+    pub fn with_branch<S: Into<String>>(mut self, name: S) -> Self {
+        self.branches.push(name.into());
+        self
+    }
     pub fn build(self) -> RepoDescriptor {
         let path = create_temp("repo-bld");
         init_empty_repo(&path);
-        for (file, content, msg) in &self.base_commits { commit_file(&path, file, content, msg); }
-        for (file, content, msg) in &self.additional_commits { commit_file(&path, file, content, msg); }
+        for (file, content, msg) in &self.base_commits {
+            commit_file(&path, file, content, msg);
+        }
+        for (file, content, msg) in &self.additional_commits {
+            commit_file(&path, file, content, msg);
+        }
         let cancel = AtomicBool::new(false);
-        for b in &self.branches { git_branch(&path, b, false, false, &cancel, |_p| {}).expect("git branch"); }
+        for b in &self.branches {
+            git_branch(&path, b, false, false, &cancel, |_p| {}).expect("git branch");
+        }
         let branches = list_local_branches(&path);
         let commit_count = rev_count(&path) as usize;
-        RepoDescriptor { path, branches, commit_count }
+        RepoDescriptor {
+            path,
+            branches,
+            commit_count,
+        }
     }
 }
 
@@ -73,21 +96,31 @@ pub fn rev_count(path: &Path) -> u32 {
     let repo = git2::Repository::open(path).expect("open repo for rev_count");
     let mut revwalk = repo.revwalk().expect("revwalk");
     revwalk.push_head().expect("push head");
-    let mut c = 0u32; for _ in revwalk { c += 1; } c
+    let mut c = 0u32;
+    for _ in revwalk {
+        c += 1;
+    }
+    c
 }
 
 fn list_local_branches(path: &Path) -> Vec<String> {
     let repo = git2::Repository::open(path).expect("open repo");
     let mut out = Vec::new();
-    let branches = repo.branches(Some(git2::BranchType::Local)).expect("branches");
-    for b in branches { if let Ok((branch, _ty)) = b { if let Some(name) = branch.name().ok().flatten() { out.push(name.to_string()); } } }
-    out.sort(); out
+    let branches = repo
+        .branches(Some(git2::BranchType::Local))
+        .expect("branches");
+    for b in branches {
+        if let Ok((branch, _ty)) = b {
+            if let Some(name) = branch.name().ok().flatten() {
+                out.push(name.to_string());
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
-
 // (branches_from_slice removed; builder now takes owned Strings directly)
-
-
 
 // ---- HEAD / 分支状态工具：保持原有函数，仅微调实现 (无需改) ----
 
@@ -107,5 +140,4 @@ mod tests_repo_factory {
         assert!(desc.branches.iter().any(|b| b == "dev"));
         assert!(desc.branches.iter().any(|b| b == "release"));
     }
-
 }

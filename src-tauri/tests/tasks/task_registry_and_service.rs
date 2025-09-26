@@ -14,7 +14,7 @@
 //!   * git_impl_tests.rs (仅 progress / fast cancel / negotiating anchor 用例，本阶段不裁剪原文件)
 //!
 //! Section 划分（附录 B Phase 2 定义）与预期测试分布 (初始分类结果)：
-//!   section_registry_lifecycle      -> 2 tests (基本完成 & list 包含) 
+//!   section_registry_lifecycle      -> 2 tests (基本完成 & list 包含)
 //!   section_registry_cancel         -> 6 tests (正常取消 / 立即取消 / idempotent / 完成后取消语义 / 启动前取消 / registry 内 git clone token cancel)
 //!   section_registry_concurrency    -> 3 tests (多任务并行 / 高并行短任务 / 部分取消混合)
 //!   section_registry_edge           -> 3 tests (snapshot unknown / cancel unknown / list 克隆独立性)
@@ -50,22 +50,27 @@ mod common;
 
 // 轻量进度阶段断言辅助（复用到 service_progress 内部，不扩大公共 API）
 
-fn assert_progress_core(phases:&[String]) {
+fn assert_progress_core(phases: &[String]) {
     // 不同实现/快路径下，某些阶段可能被省略（例如本地克隆时 Negotiating/Checkout 可能缺失）。
     // 放宽为：至少包含 Negotiating / Receiving / Resolving / Checkout 中的任意一个核心阶段。
-    let has_core = ["Negotiating", "Receiving", "Resolving", "Checkout"].iter()
+    let has_core = ["Negotiating", "Receiving", "Resolving", "Checkout"]
+        .iter()
         .any(|need| phases.iter().any(|p| p == need));
-    assert!(has_core, "should contain at least one core phase (Negotiating/Receiving/Resolving/Checkout)");
+    assert!(
+        has_core,
+        "should contain at least one core phase (Negotiating/Receiving/Resolving/Checkout)"
+    );
 }
 
 // 统一通过 common::test_env / common::task_wait 提供环境与等待工具。
 
 // ---------------- section_registry_lifecycle ----------------
-mod section_registry_lifecycle { //! 完成 / 列表基础行为
-    use std::sync::Arc;
-    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+mod section_registry_lifecycle {
+    //! 完成 / 列表基础行为
     use fireworks_collaboration_lib::core::tasks::model::TaskKind;
     use fireworks_collaboration_lib::core::tasks::model::TaskState;
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_sleep_task_complete_integration() {
@@ -73,7 +78,16 @@ mod section_registry_lifecycle { //! 完成 / 列表基础行为
         let reg = Arc::new(TaskRegistry::new());
         let (id, token) = reg.create(TaskKind::Sleep { ms: 150 });
         reg.clone().spawn_sleep_task(None, id, token, 150);
-        let ok = super::common::task_wait::wait_predicate(|| reg.snapshot(&id).map(|s| matches!(s.state, TaskState::Completed)).unwrap_or(false), 2_000, 30).await;
+        let ok = super::common::task_wait::wait_predicate(
+            || {
+                reg.snapshot(&id)
+                    .map(|s| matches!(s.state, TaskState::Completed))
+                    .unwrap_or(false)
+            },
+            2_000,
+            30,
+        )
+        .await;
         assert!(ok, "sleep task should complete within timeout");
     }
 
@@ -82,16 +96,21 @@ mod section_registry_lifecycle { //! 完成 / 列表基础行为
         super::common::test_env::init_test_env();
         let reg = Arc::new(TaskRegistry::new());
         let mut ids = vec![];
-        for i in 0..3 { let (id, token) = reg.create(TaskKind::Sleep { ms: 50 + i * 10 }); reg.clone().spawn_sleep_task(None, id, token, 50 + i * 10); ids.push(id);}        
+        for i in 0..3 {
+            let (id, token) = reg.create(TaskKind::Sleep { ms: 50 + i * 10 });
+            reg.clone().spawn_sleep_task(None, id, token, 50 + i * 10);
+            ids.push(id);
+        }
         assert_eq!(reg.list().len(), 3, "list should contain all tasks");
     }
 }
 
 // ---------------- section_registry_cancel ----------------
-mod section_registry_cancel { //! 各类取消语义 (运行中 / 完成后 / token)
-    use std::sync::Arc;
-    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+mod section_registry_cancel {
+    //! 各类取消语义 (运行中 / 完成后 / token)
     use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use std::sync::Arc;
     use tokio::time::{sleep, Duration};
 
     #[tokio::test]
@@ -100,11 +119,32 @@ mod section_registry_cancel { //! 各类取消语义 (运行中 / 完成后 / to
         let reg = Arc::new(TaskRegistry::new());
         let (id, token) = reg.create(TaskKind::Sleep { ms: 1_000 });
         reg.clone().spawn_sleep_task(None, id, token.clone(), 1_000);
-        let running = super::common::task_wait::wait_predicate(|| reg.snapshot(&id).map(|s| matches!(s.state, TaskState::Running)).unwrap_or(false), 1_000, 20).await;
+        let running = super::common::task_wait::wait_predicate(
+            || {
+                reg.snapshot(&id)
+                    .map(|s| matches!(s.state, TaskState::Running))
+                    .unwrap_or(false)
+            },
+            1_000,
+            20,
+        )
+        .await;
         assert!(running, "task should enter running state");
         token.cancel();
-        let canceled = super::common::task_wait::wait_predicate(|| reg.snapshot(&id).map(|s| matches!(s.state, TaskState::Canceled)).unwrap_or(false), 1_000, 30).await;
-        assert!(canceled, "task should transition to canceled after token.cancel()");
+        let canceled = super::common::task_wait::wait_predicate(
+            || {
+                reg.snapshot(&id)
+                    .map(|s| matches!(s.state, TaskState::Canceled))
+                    .unwrap_or(false)
+            },
+            1_000,
+            30,
+        )
+        .await;
+        assert!(
+            canceled,
+            "task should transition to canceled after token.cancel()"
+        );
     }
 
     #[tokio::test]
@@ -113,10 +153,28 @@ mod section_registry_cancel { //! 各类取消语义 (运行中 / 完成后 / to
         let reg = Arc::new(TaskRegistry::new());
         let (id, token) = reg.create(TaskKind::Sleep { ms: 400 });
         reg.clone().spawn_sleep_task(None, id, token.clone(), 400);
-        let running = super::common::task_wait::wait_predicate(|| reg.snapshot(&id).map(|s| matches!(s.state, TaskState::Running)).unwrap_or(false), 500, 25).await;
+        let running = super::common::task_wait::wait_predicate(
+            || {
+                reg.snapshot(&id)
+                    .map(|s| matches!(s.state, TaskState::Running))
+                    .unwrap_or(false)
+            },
+            500,
+            25,
+        )
+        .await;
         assert!(running, "task should reach running state");
         token.cancel();
-        let canceled = super::common::task_wait::wait_predicate(|| reg.snapshot(&id).map(|s| matches!(s.state, TaskState::Canceled)).unwrap_or(false), 1_000, 30).await;
+        let canceled = super::common::task_wait::wait_predicate(
+            || {
+                reg.snapshot(&id)
+                    .map(|s| matches!(s.state, TaskState::Canceled))
+                    .unwrap_or(false)
+            },
+            1_000,
+            30,
+        )
+        .await;
         assert!(canceled, "task should cancel");
     }
 
@@ -126,7 +184,8 @@ mod section_registry_cancel { //! 各类取消语义 (运行中 / 完成后 / to
         let reg = Arc::new(TaskRegistry::new());
         let (id, token) = reg.create(TaskKind::Sleep { ms: 200 });
         reg.clone().spawn_sleep_task(None, id, token.clone(), 200);
-        let _ = super::common::task_wait::wait_task_state(&reg, &id, TaskState::Running, 1_000, 25).await; // 宽松等待
+        let _ = super::common::task_wait::wait_task_state(&reg, &id, TaskState::Running, 1_000, 25)
+            .await; // 宽松等待
         assert!(reg.cancel(&id));
         assert!(reg.cancel(&id));
     }
@@ -137,7 +196,14 @@ mod section_registry_cancel { //! 各类取消语义 (运行中 / 完成后 / to
         let reg = Arc::new(TaskRegistry::new());
         let (id, token) = reg.create(TaskKind::Sleep { ms: 80 });
         reg.clone().spawn_sleep_task(None, id, token, 80);
-        for _ in 0..80 { if let Some(s)=reg.snapshot(&id){ if matches!(s.state, TaskState::Completed){ break; } } sleep(Duration::from_millis(10)).await; }
+        for _ in 0..80 {
+            if let Some(s) = reg.snapshot(&id) {
+                if matches!(s.state, TaskState::Completed) {
+                    break;
+                }
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
         let before = reg.snapshot(&id).expect("snapshot");
         assert!(matches!(before.state, TaskState::Completed));
         assert!(reg.cancel(&id));
@@ -147,20 +213,34 @@ mod section_registry_cancel { //! 各类取消语义 (运行中 / 完成后 / to
 }
 
 // ---------------- section_registry_concurrency ----------------
-mod section_registry_concurrency { //! 并行与部分取消
-    use std::sync::Arc;
-    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+mod section_registry_concurrency {
+    //! 并行与部分取消
     use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_multi_tasks_parallel() {
         super::common::test_env::init_test_env();
         let reg = Arc::new(TaskRegistry::new());
         let mut ids = vec![];
-        for _ in 0..5 { let (id, token) = reg.create(TaskKind::Sleep { ms: 120 }); reg.clone().spawn_sleep_task(None, id, token, 120); ids.push(id); }
-        let all_done = super::common::task_wait::wait_predicate(|| {
-            ids.iter().all(|id| reg.snapshot(id).map(|s| matches!(s.state, TaskState::Completed)).unwrap_or(false))
-        }, 3_000, 40).await;
+        for _ in 0..5 {
+            let (id, token) = reg.create(TaskKind::Sleep { ms: 120 });
+            reg.clone().spawn_sleep_task(None, id, token, 120);
+            ids.push(id);
+        }
+        let all_done = super::common::task_wait::wait_predicate(
+            || {
+                ids.iter().all(|id| {
+                    reg.snapshot(id)
+                        .map(|s| matches!(s.state, TaskState::Completed))
+                        .unwrap_or(false)
+                })
+            },
+            3_000,
+            40,
+        )
+        .await;
         assert!(all_done, "all parallel tasks should complete");
     }
 
@@ -169,8 +249,23 @@ mod section_registry_concurrency { //! 并行与部分取消
         super::common::test_env::init_test_env();
         let reg = Arc::new(TaskRegistry::new());
         let mut ids = vec![];
-        for _ in 0..20 { let (id, token) = reg.create(TaskKind::Sleep { ms: 90 }); reg.clone().spawn_sleep_task(None, id, token, 90); ids.push(id); }
-        let all_completed = super::common::task_wait::wait_predicate(|| ids.iter().all(|id| reg.snapshot(id).map(|s| matches!(s.state, TaskState::Completed)).unwrap_or(false)), 3_000, 30).await;
+        for _ in 0..20 {
+            let (id, token) = reg.create(TaskKind::Sleep { ms: 90 });
+            reg.clone().spawn_sleep_task(None, id, token, 90);
+            ids.push(id);
+        }
+        let all_completed = super::common::task_wait::wait_predicate(
+            || {
+                ids.iter().all(|id| {
+                    reg.snapshot(id)
+                        .map(|s| matches!(s.state, TaskState::Completed))
+                        .unwrap_or(false)
+                })
+            },
+            3_000,
+            30,
+        )
+        .await;
         assert!(all_completed, "all short tasks should complete in parallel");
     }
 
@@ -178,19 +273,41 @@ mod section_registry_concurrency { //! 并行与部分取消
     async fn test_partial_cancel_mixture() {
         super::common::test_env::init_test_env();
         let reg = Arc::new(TaskRegistry::new());
-        let mut cancel_tokens = vec![]; let mut ids = vec![];
-        for i in 0..10 { let (id, token) = reg.create(TaskKind::Sleep { ms: 300 }); reg.clone().spawn_sleep_task(None, id, token.clone(), 300); if i % 2 == 0 { cancel_tokens.push(token.clone()); } ids.push(id); }
-        for t in cancel_tokens { t.cancel(); }
-        let done = super::common::task_wait::wait_predicate(|| ids.iter().all(|id| reg.snapshot(id).map(|s| matches!(s.state, TaskState::Completed | TaskState::Canceled)).unwrap_or(false)), 2_500, 35).await;
+        let mut cancel_tokens = vec![];
+        let mut ids = vec![];
+        for i in 0..10 {
+            let (id, token) = reg.create(TaskKind::Sleep { ms: 300 });
+            reg.clone().spawn_sleep_task(None, id, token.clone(), 300);
+            if i % 2 == 0 {
+                cancel_tokens.push(token.clone());
+            }
+            ids.push(id);
+        }
+        for t in cancel_tokens {
+            t.cancel();
+        }
+        let done = super::common::task_wait::wait_predicate(
+            || {
+                ids.iter().all(|id| {
+                    reg.snapshot(id)
+                        .map(|s| matches!(s.state, TaskState::Completed | TaskState::Canceled))
+                        .unwrap_or(false)
+                })
+            },
+            2_500,
+            35,
+        )
+        .await;
         assert!(done, "all tasks should end in completed or canceled");
     }
 }
 
 // ---------------- section_registry_edge ----------------
-mod section_registry_edge { //! snapshot / cancel unknown / list 克隆
-    use std::sync::Arc;
-    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+mod section_registry_edge {
+    //! snapshot / cancel unknown / list 克隆
     use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn snapshot_unknown_returns_none() {
@@ -216,24 +333,30 @@ mod section_registry_edge { //! snapshot / cancel unknown / list 克隆
         reg.clone().spawn_sleep_task(None, id, token, 50);
         let list_before = reg.list();
         assert_eq!(list_before.len(), 1);
-        let _ = super::common::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 1_000, 25).await;
+        let _ =
+            super::common::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 1_000, 25)
+                .await;
         let list_after = reg.list();
         assert_eq!(list_after.len(), 1);
         let new_state = &list_after[0].state;
-        assert!(matches!(new_state, TaskState::Completed | TaskState::Canceled));
+        assert!(matches!(
+            new_state,
+            TaskState::Completed | TaskState::Canceled
+        ));
     }
 }
 
 // ---------------- section_service_progress ----------------
-mod section_service_progress { //! GitService 正常进度链路 / Negotiating / Completed
-    use std::sync::atomic::AtomicBool;
-    use fireworks_collaboration_lib::core::git::DefaultGitService;
+mod section_service_progress {
+    //! GitService 正常进度链路 / Negotiating / Completed
     use fireworks_collaboration_lib::core::git::service::GitService;
-    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use fireworks_collaboration_lib::core::git::DefaultGitService;
     use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use std::sync::atomic::AtomicBool;
     // no timeout/Duration used in this section
-    use std::sync::Arc;
     use crate::common::fixtures;
+    use std::sync::Arc;
 
     #[test]
     fn clone_reports_initial_negotiating_progress() {
@@ -247,7 +370,11 @@ mod section_service_progress { //! GitService 正常进度链路 / Negotiating /
             &dest,
             None,
             &flag,
-            |p| { if p.phase == "Negotiating" { saw_negotiating = true; } },
+            |p| {
+                if p.phase == "Negotiating" {
+                    saw_negotiating = true;
+                }
+            },
         );
         assert!(saw_negotiating, "should emit Negotiating phase at start");
     }
@@ -259,14 +386,23 @@ mod section_service_progress { //! GitService 正常进度链路 / Negotiating /
         let service = DefaultGitService::new();
         let dest = fixtures::create_empty_dir();
         let flag = AtomicBool::new(false);
-        let mut completed = false; let mut last_percent = 0; let mut percents: Vec<u32> = vec![]; let mut phases: Vec<String> = vec![];
-        let out = service.clone_blocking(
-            work.to_string_lossy().as_ref(), &dest, None, &flag,
-            |p| { last_percent = p.percent; percents.push(p.percent); phases.push(p.phase.clone()); if p.phase == "Completed" { completed = true; } }
-        );
+        let mut completed = false;
+        let mut last_percent = 0;
+        let mut percents: Vec<u32> = vec![];
+        let mut phases: Vec<String> = vec![];
+        let out =
+            service.clone_blocking(work.to_string_lossy().as_ref(), &dest, None, &flag, |p| {
+                last_percent = p.percent;
+                percents.push(p.percent);
+                phases.push(p.phase.clone());
+                if p.phase == "Completed" {
+                    completed = true;
+                }
+            });
         assert!(out.is_ok(), "local clone should succeed");
         assert!(completed, "should emit Completed phase");
-        assert_eq!(last_percent, 100); assert!(percents.iter().all(|p| *p <= 100));
+        assert_eq!(last_percent, 100);
+        assert!(percents.iter().all(|p| *p <= 100));
         super::assert_progress_core(&phases);
         assert!(dest.join(".git").exists());
     }
@@ -277,18 +413,60 @@ mod section_service_progress { //! GitService 正常进度链路 / Negotiating /
         use std::process::Command;
         let src = fixtures::create_empty_dir();
         std::fs::create_dir_all(&src).unwrap();
-        let run_src = |args: &[&str]| { let st = Command::new("git").current_dir(&src).args(args).status().unwrap(); assert!(st.success(), "git {:?} (src) should succeed", args); };
-        run_src(&["init", "--quiet"]); run_src(&["config", "user.email", "you@example.com"]); run_src(&["config", "user.name", "You"]);
-        std::fs::write(src.join("f.txt"), "1").unwrap(); run_src(&["add", "."]); run_src(&["commit", "-m", "c1"]);
+        let run_src = |args: &[&str]| {
+            let st = Command::new("git")
+                .current_dir(&src)
+                .args(args)
+                .status()
+                .unwrap();
+            assert!(st.success(), "git {:?} (src) should succeed", args);
+        };
+        run_src(&["init", "--quiet"]);
+        run_src(&["config", "user.email", "you@example.com"]);
+        run_src(&["config", "user.name", "You"]);
+        std::fs::write(src.join("f.txt"), "1").unwrap();
+        run_src(&["add", "."]);
+        run_src(&["commit", "-m", "c1"]);
         let dst = fixtures::create_empty_dir();
-        let st = Command::new("git").args(["clone", "--quiet", src.to_string_lossy().as_ref(), dst.to_string_lossy().as_ref()]).status().expect("git clone");
+        let st = Command::new("git")
+            .args([
+                "clone",
+                "--quiet",
+                src.to_string_lossy().as_ref(),
+                dst.to_string_lossy().as_ref(),
+            ])
+            .status()
+            .expect("git clone");
         assert!(st.success(), "initial clone should succeed");
-        std::fs::write(src.join("f.txt"), "2").unwrap(); run_src(&["add", "."]); run_src(&["commit", "-m", "c2"]);
-        let src_head = { let out = Command::new("git").current_dir(&src).args(["rev-parse", "HEAD"]).output().unwrap(); assert!(out.status.success()); String::from_utf8_lossy(&out.stdout).trim().to_string() };
-        let service = DefaultGitService::new(); let flag = AtomicBool::new(false);
-        let got = service.fetch_blocking("", &dst, None, &flag, |_p| {}); assert!(got.is_ok(), "fetch should succeed");
-        let dst_remote_head = { let out = Command::new("git").current_dir(&dst).args(["rev-parse", "refs/remotes/origin/master"]).output().unwrap(); assert!(out.status.success()); String::from_utf8_lossy(&out.stdout).trim().to_string() };
-        assert_eq!(dst_remote_head, src_head, "remote-tracking ref should match source HEAD after fetch");
+        std::fs::write(src.join("f.txt"), "2").unwrap();
+        run_src(&["add", "."]);
+        run_src(&["commit", "-m", "c2"]);
+        let src_head = {
+            let out = Command::new("git")
+                .current_dir(&src)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        let service = DefaultGitService::new();
+        let flag = AtomicBool::new(false);
+        let got = service.fetch_blocking("", &dst, None, &flag, |_p| {});
+        assert!(got.is_ok(), "fetch should succeed");
+        let dst_remote_head = {
+            let out = Command::new("git")
+                .current_dir(&dst)
+                .args(["rev-parse", "refs/remotes/origin/master"])
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        assert_eq!(
+            dst_remote_head, src_head,
+            "remote-tracking ref should match source HEAD after fetch"
+        );
     }
 
     #[tokio::test]
@@ -297,9 +475,24 @@ mod section_service_progress { //! GitService 正常进度链路 / Negotiating /
         let src = fixtures::create_repo_with_initial_commit("init").path;
         let reg = Arc::new(TaskRegistry::new());
         let dest = fixtures::create_empty_dir().to_string_lossy().to_string();
-        let (id, token) = reg.create(TaskKind::GitClone { repo: src.to_string_lossy().to_string(), dest: dest.clone(), depth: None, filter: None, strategy_override: None });
-        let handle = reg.clone().spawn_git_clone_task(None, id, token, src.to_string_lossy().to_string(), dest.clone());
-        let completed = super::common::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 10_000, 25).await; assert!(completed, "local clone task should complete");
+        let (id, token) = reg.create(TaskKind::GitClone {
+            repo: src.to_string_lossy().to_string(),
+            dest: dest.clone(),
+            depth: None,
+            filter: None,
+            strategy_override: None,
+        });
+        let handle = reg.clone().spawn_git_clone_task(
+            None,
+            id,
+            token,
+            src.to_string_lossy().to_string(),
+            dest.clone(),
+        );
+        let completed =
+            super::common::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 10_000, 25)
+                .await;
+        assert!(completed, "local clone task should complete");
         let _ = handle.await;
     }
 
@@ -309,27 +502,60 @@ mod section_service_progress { //! GitService 正常进度链路 / Negotiating /
         use std::process::Command;
         let src = fixtures::create_repo_with_initial_commit("init").path;
         let dst = fixtures::create_empty_dir();
-        let st = Command::new("git").args(["clone", "--quiet", src.to_string_lossy().as_ref(), dst.to_string_lossy().as_ref()]).status().expect("git clone");
+        let st = Command::new("git")
+            .args([
+                "clone",
+                "--quiet",
+                src.to_string_lossy().as_ref(),
+                dst.to_string_lossy().as_ref(),
+            ])
+            .status()
+            .expect("git clone");
         assert!(st.success());
         std::fs::write(src.join("a.txt"), "2").unwrap();
-        let run_src = |args: &[&str]| { let st = Command::new("git").current_dir(&src).args(args).status().unwrap(); assert!(st.success(), "git {:?} (src) should succeed", args); };
-        run_src(&["add", "."]); run_src(&["commit", "-m", "more"]);
+        let run_src = |args: &[&str]| {
+            let st = Command::new("git")
+                .current_dir(&src)
+                .args(args)
+                .status()
+                .unwrap();
+            assert!(st.success(), "git {:?} (src) should succeed", args);
+        };
+        run_src(&["add", "."]);
+        run_src(&["commit", "-m", "more"]);
         let reg = Arc::new(TaskRegistry::new());
-        let (id, token) = reg.create(TaskKind::GitFetch { repo: "".into(), dest: dst.to_string_lossy().to_string(), depth: None, filter: None, strategy_override: None });
-        let handle = reg.clone().spawn_git_fetch_task(None, id, token, "".into(), dst.to_string_lossy().to_string(), None);
-        let completed = super::common::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 10_000, 25).await; assert!(completed, "local fetch task should complete");
+        let (id, token) = reg.create(TaskKind::GitFetch {
+            repo: "".into(),
+            dest: dst.to_string_lossy().to_string(),
+            depth: None,
+            filter: None,
+            strategy_override: None,
+        });
+        let handle = reg.clone().spawn_git_fetch_task(
+            None,
+            id,
+            token,
+            "".into(),
+            dst.to_string_lossy().to_string(),
+            None,
+        );
+        let completed =
+            super::common::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 10_000, 25)
+                .await;
+        assert!(completed, "local fetch task should complete");
         let _ = handle.await;
     }
 }
 
 // ---------------- section_service_cancel_fast ----------------
-mod section_service_cancel_fast { //! 早期错误 + Cancel flag 快速终止 + registry fast cancel
+mod section_service_cancel_fast {
+    //! 早期错误 + Cancel flag 快速终止 + registry fast cancel
+    use fireworks_collaboration_lib::core::git::service::GitService;
+    use fireworks_collaboration_lib::core::git::DefaultGitService;
+    use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
-    use fireworks_collaboration_lib::core::git::DefaultGitService;
-    use fireworks_collaboration_lib::core::git::service::GitService;
-    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
-    use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
     use tokio::time::{timeout, Duration};
 
     use crate::common::fixtures;
@@ -341,8 +567,12 @@ mod section_service_cancel_fast { //! 早期错误 + Cancel flag 快速终止 + 
         let service = DefaultGitService::new();
         let dest = fixtures::create_empty_dir();
         let flag = AtomicBool::new(true);
-        let out = service.clone_blocking("https://example.com/any.git", &dest, None, &flag, |_p| {});
-        assert!(matches!(out, Err(e) if matches!(e, fireworks_collaboration_lib::core::git::errors::GitError::Categorized { category: fireworks_collaboration_lib::core::git::errors::ErrorCategory::Cancel, .. })), "cancel should map to Cancel category");
+        let out =
+            service.clone_blocking("https://example.com/any.git", &dest, None, &flag, |_p| {});
+        assert!(
+            matches!(out, Err(e) if matches!(e, fireworks_collaboration_lib::core::git::errors::GitError::Categorized { category: fireworks_collaboration_lib::core::git::errors::ErrorCategory::Cancel, .. })),
+            "cancel should map to Cancel category"
+        );
     }
 
     #[test]
@@ -351,11 +581,26 @@ mod section_service_cancel_fast { //! 早期错误 + Cancel flag 快速终止 + 
         use std::process::Command;
         let target = fixtures::create_empty_dir();
         std::fs::create_dir_all(&target).unwrap();
-        let run_in = |dir: &std::path::PathBuf, args: &[&str]| { let st = Command::new("git").current_dir(dir).args(args).status().unwrap(); assert!(st.success()); };
-        run_in(&target, &["init", "--quiet"]); run_in(&target, &["remote", "add", "origin", target.to_string_lossy().as_ref()]);
-        let service = DefaultGitService::new(); let flag = AtomicBool::new(true);
+        let run_in = |dir: &std::path::PathBuf, args: &[&str]| {
+            let st = Command::new("git")
+                .current_dir(dir)
+                .args(args)
+                .status()
+                .unwrap();
+            assert!(st.success());
+        };
+        run_in(&target, &["init", "--quiet"]);
+        run_in(
+            &target,
+            &["remote", "add", "origin", target.to_string_lossy().as_ref()],
+        );
+        let service = DefaultGitService::new();
+        let flag = AtomicBool::new(true);
         let out = service.fetch_blocking("", &target, None, &flag, |_p| {});
-        assert!(matches!(out, Err(e) if matches!(e, fireworks_collaboration_lib::core::git::errors::GitError::Categorized { category: fireworks_collaboration_lib::core::git::errors::ErrorCategory::Cancel, .. })), "cancel should map to Cancel category");
+        assert!(
+            matches!(out, Err(e) if matches!(e, fireworks_collaboration_lib::core::git::errors::GitError::Categorized { category: fireworks_collaboration_lib::core::git::errors::ErrorCategory::Cancel, .. })),
+            "cancel should map to Cancel category"
+        );
     }
 
     #[test]
@@ -365,7 +610,8 @@ mod section_service_cancel_fast { //! 早期错误 + Cancel flag 快速终止 + 
         let dest = fixtures::create_empty_dir();
         let repo = std::path::PathBuf::from("C:/this-path-should-not-exist-xyz/repo");
         let flag = AtomicBool::new(false);
-        let out = service.clone_blocking(repo.to_string_lossy().as_ref(), &dest, None, &flag, |_p| {});
+        let out =
+            service.clone_blocking(repo.to_string_lossy().as_ref(), &dest, None, &flag, |_p| {});
         assert!(out.is_err(), "invalid local path should fail fast");
     }
 
@@ -375,9 +621,25 @@ mod section_service_cancel_fast { //! 早期错误 + Cancel flag 快速终止 + 
         let res = timeout(Duration::from_secs(5), async {
             let dest = fixtures::create_empty_dir();
             let flag = AtomicBool::new(true);
-            let out = tokio::task::spawn_blocking(move || { let svc = DefaultGitService::new(); svc.clone_blocking("https://invalid-host.invalid/repo.git", &dest, None, &flag, |_p| {}) }).await.expect("join");
-            assert!(out.is_err(), "interrupt should cause clone to error quickly");
-        }).await; assert!(res.is_ok(), "test exceeded timeout window");
+            let out = tokio::task::spawn_blocking(move || {
+                let svc = DefaultGitService::new();
+                svc.clone_blocking(
+                    "https://invalid-host.invalid/repo.git",
+                    &dest,
+                    None,
+                    &flag,
+                    |_p| {},
+                )
+            })
+            .await
+            .expect("join");
+            assert!(
+                out.is_err(),
+                "interrupt should cause clone to error quickly"
+            );
+        })
+        .await;
+        assert!(res.is_ok(), "test exceeded timeout window");
     }
 
     #[tokio::test]
@@ -385,10 +647,18 @@ mod section_service_cancel_fast { //! 早期错误 + Cancel flag 快速终止 + 
         let res = timeout(Duration::from_secs(5), async {
             let dest = fixtures::create_empty_dir();
             let flag = AtomicBool::new(false);
-            let out = tokio::task::spawn_blocking(move || { let svc = DefaultGitService::new(); svc.clone_blocking("not-a-valid-url!!!", &dest, None, &flag, |_p| {}) }).await.expect("spawn_blocking join");
+            let out = tokio::task::spawn_blocking(move || {
+                let svc = DefaultGitService::new();
+                svc.clone_blocking("not-a-valid-url!!!", &dest, None, &flag, |_p| {})
+            })
+            .await
+            .expect("spawn_blocking join");
             assert!(out.is_err(), "invalid input should error");
-            let msg = format!("{}", out.err().unwrap()); assert!(!msg.is_empty());
-        }).await; assert!(res.is_ok(), "test exceeded timeout window");
+            let msg = format!("{}", out.err().unwrap());
+            assert!(!msg.is_empty());
+        })
+        .await;
+        assert!(res.is_ok(), "test exceeded timeout window");
     }
 
     #[tokio::test]
@@ -396,30 +666,103 @@ mod section_service_cancel_fast { //! 早期错误 + Cancel flag 快速终止 + 
         let res = timeout(Duration::from_secs(8), async {
             let reg = Arc::new(TaskRegistry::new());
             let repo = "https://invalid-host.invalid/repo.git".to_string();
-            let dest = crate::common::fixtures::create_empty_dir().to_string_lossy().to_string();
-            let (id, token) = reg.create(TaskKind::GitClone { repo: repo.clone(), dest: dest.clone(), depth: None, filter: None, strategy_override: None });
-            let handle = reg.clone().spawn_git_clone_task(None, id, token.clone(), repo, dest);
-            let running = super::common::task_wait::wait_predicate(|| reg.snapshot(&id).map(|s| matches!(s.state, TaskState::Running)).unwrap_or(false), 2_000, 20).await; assert!(running, "task should enter running state");
+            let dest = crate::common::fixtures::create_empty_dir()
+                .to_string_lossy()
+                .to_string();
+            let (id, token) = reg.create(TaskKind::GitClone {
+                repo: repo.clone(),
+                dest: dest.clone(),
+                depth: None,
+                filter: None,
+                strategy_override: None,
+            });
+            let handle = reg
+                .clone()
+                .spawn_git_clone_task(None, id, token.clone(), repo, dest);
+            let running = super::common::task_wait::wait_predicate(
+                || {
+                    reg.snapshot(&id)
+                        .map(|s| matches!(s.state, TaskState::Running))
+                        .unwrap_or(false)
+                },
+                2_000,
+                20,
+            )
+            .await;
+            assert!(running, "task should enter running state");
             token.cancel();
-            let canceled = super::common::task_wait::wait_predicate(|| reg.snapshot(&id).map(|s| matches!(s.state, TaskState::Canceled)).unwrap_or(false), 5_000, 50).await; assert!(canceled, "task should transition to canceled after token.cancel()");
-            let _ = timeout(Duration::from_secs(2), async { let _ = handle.await; }).await;
-        }).await; assert!(res.is_ok(), "test exceeded timeout window");
+            let canceled = super::common::task_wait::wait_predicate(
+                || {
+                    reg.snapshot(&id)
+                        .map(|s| matches!(s.state, TaskState::Canceled))
+                        .unwrap_or(false)
+                },
+                5_000,
+                50,
+            )
+            .await;
+            assert!(
+                canceled,
+                "task should transition to canceled after token.cancel()"
+            );
+            let _ = timeout(Duration::from_secs(2), async {
+                let _ = handle.await;
+            })
+            .await;
+        })
+        .await;
+        assert!(res.is_ok(), "test exceeded timeout window");
     }
 
     #[tokio::test]
     async fn test_registry_invalid_repo_fails_fast() {
         let res = timeout(Duration::from_secs(8), async {
             let reg = Arc::new(TaskRegistry::new());
-            let repo = std::path::PathBuf::from("C:/this-path-should-not-exist-xyz/repo").to_string_lossy().to_string();
-            let dest = crate::common::fixtures::create_empty_dir().to_string_lossy().to_string();
-            let (id, token) = reg.create(TaskKind::GitClone { repo: repo.clone(), dest: dest.clone(), depth: None, filter: None, strategy_override: None });
-            let handle = reg.clone().spawn_git_clone_task(None, id, token, repo, dest);
-            let running = super::common::task_wait::wait_task_state(&reg, &id, TaskState::Running, 1_000, 25).await; assert!(running, "should enter running");
-            let failed_quick = super::common::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25).await;
+            let repo = std::path::PathBuf::from("C:/this-path-should-not-exist-xyz/repo")
+                .to_string_lossy()
+                .to_string();
+            let dest = crate::common::fixtures::create_empty_dir()
+                .to_string_lossy()
+                .to_string();
+            let (id, token) = reg.create(TaskKind::GitClone {
+                repo: repo.clone(),
+                dest: dest.clone(),
+                depth: None,
+                filter: None,
+                strategy_override: None,
+            });
+            let handle = reg
+                .clone()
+                .spawn_git_clone_task(None, id, token, repo, dest);
+            let running =
+                super::common::task_wait::wait_task_state(&reg, &id, TaskState::Running, 1_000, 25)
+                    .await;
+            assert!(running, "should enter running");
+            let failed_quick =
+                super::common::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25)
+                    .await;
             let _ = reg.cancel(&id);
-            if !failed_quick { let canceled = super::common::task_wait::wait_task_state(&reg, &id, TaskState::Canceled, 4_000, 25).await; assert!(canceled, "invalid repo should fail or be canceled within timeout"); }
-            let _ = timeout(Duration::from_secs(2), async { let _ = handle.await; }).await;
-        }).await; assert!(res.is_ok(), "test exceeded timeout window");
+            if !failed_quick {
+                let canceled = super::common::task_wait::wait_task_state(
+                    &reg,
+                    &id,
+                    TaskState::Canceled,
+                    4_000,
+                    25,
+                )
+                .await;
+                assert!(
+                    canceled,
+                    "invalid repo should fail or be canceled within timeout"
+                );
+            }
+            let _ = timeout(Duration::from_secs(2), async {
+                let _ = handle.await;
+            })
+            .await;
+        })
+        .await;
+        assert!(res.is_ok(), "test exceeded timeout window");
     }
 
     #[tokio::test]
@@ -427,13 +770,36 @@ mod section_service_cancel_fast { //! 早期错误 + Cancel flag 快速终止 + 
         let res = timeout(Duration::from_secs(4), async {
             let reg = Arc::new(TaskRegistry::new());
             let repo = "C:/unused".to_string();
-            let dest = crate::common::fixtures::create_empty_dir().to_string_lossy().to_string();
-            let (id, token) = reg.create(TaskKind::GitClone { repo: repo.clone(), dest: dest.clone(), depth: None, filter: None, strategy_override: None });
+            let dest = crate::common::fixtures::create_empty_dir()
+                .to_string_lossy()
+                .to_string();
+            let (id, token) = reg.create(TaskKind::GitClone {
+                repo: repo.clone(),
+                dest: dest.clone(),
+                depth: None,
+                filter: None,
+                strategy_override: None,
+            });
             token.cancel();
-            let handle = reg.clone().spawn_git_clone_task(None, id, token, repo, dest);
-            let canceled = super::common::task_wait::wait_task_state(&reg, &id, TaskState::Canceled, 1_000, 25).await; assert!(canceled, "should be canceled immediately");
-            let _ = timeout(Duration::from_secs(2), async { let _ = handle.await; }).await;
-        }).await; assert!(res.is_ok(), "test exceeded timeout window");
+            let handle = reg
+                .clone()
+                .spawn_git_clone_task(None, id, token, repo, dest);
+            let canceled = super::common::task_wait::wait_task_state(
+                &reg,
+                &id,
+                TaskState::Canceled,
+                1_000,
+                25,
+            )
+            .await;
+            assert!(canceled, "should be canceled immediately");
+            let _ = timeout(Duration::from_secs(2), async {
+                let _ = handle.await;
+            })
+            .await;
+        })
+        .await;
+        assert!(res.is_ok(), "test exceeded timeout window");
     }
 
     #[tokio::test]
@@ -441,14 +807,35 @@ mod section_service_cancel_fast { //! 早期错误 + Cancel flag 快速终止 + 
         let res = timeout(Duration::from_secs(6), async {
             let reg = Arc::new(TaskRegistry::new());
             let repo = "not-a-valid-url!!!".to_string();
-            let dest = crate::common::fixtures::create_empty_dir().to_string_lossy().to_string();
-            let (id, token) = reg.create(TaskKind::GitClone { repo: repo.clone(), dest: dest.clone(), depth: None, filter: None, strategy_override: None });
-            let handle = reg.clone().spawn_git_clone_task(None, id, token, repo, dest);
-            let running = super::common::task_wait::wait_task_state(&reg, &id, TaskState::Running, 800, 25).await; assert!(running, "should enter running");
-            let failed = super::common::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25).await; assert!(failed, "invalid url should fail quickly");
+            let dest = crate::common::fixtures::create_empty_dir()
+                .to_string_lossy()
+                .to_string();
+            let (id, token) = reg.create(TaskKind::GitClone {
+                repo: repo.clone(),
+                dest: dest.clone(),
+                depth: None,
+                filter: None,
+                strategy_override: None,
+            });
+            let handle = reg
+                .clone()
+                .spawn_git_clone_task(None, id, token, repo, dest);
+            let running =
+                super::common::task_wait::wait_task_state(&reg, &id, TaskState::Running, 800, 25)
+                    .await;
+            assert!(running, "should enter running");
+            let failed =
+                super::common::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25)
+                    .await;
+            assert!(failed, "invalid url should fail quickly");
             let _ = reg.cancel(&id);
-            let _ = timeout(Duration::from_secs(2), async { let _ = handle.await; }).await;
-        }).await; assert!(res.is_ok(), "test exceeded timeout window");
+            let _ = timeout(Duration::from_secs(2), async {
+                let _ = handle.await;
+            })
+            .await;
+        })
+        .await;
+        assert!(res.is_ok(), "test exceeded timeout window");
     }
 
     #[tokio::test]
@@ -456,14 +843,35 @@ mod section_service_cancel_fast { //! 早期错误 + Cancel flag 快速终止 + 
         let res = timeout(Duration::from_secs(6), async {
             let reg = Arc::new(TaskRegistry::new());
             let repo = "ftp://example.com/repo.git".to_string();
-            let dest = crate::common::fixtures::create_empty_dir().to_string_lossy().to_string();
-            let (id, token) = reg.create(TaskKind::GitClone { repo: repo.clone(), dest: dest.clone(), depth: None, filter: None, strategy_override: None });
-            let handle = reg.clone().spawn_git_clone_task(None, id, token, repo, dest);
-            let running = super::common::task_wait::wait_task_state(&reg, &id, TaskState::Running, 800, 25).await; assert!(running, "should enter running");
-            let failed = super::common::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25).await; assert!(failed, "invalid scheme should fail quickly");
+            let dest = crate::common::fixtures::create_empty_dir()
+                .to_string_lossy()
+                .to_string();
+            let (id, token) = reg.create(TaskKind::GitClone {
+                repo: repo.clone(),
+                dest: dest.clone(),
+                depth: None,
+                filter: None,
+                strategy_override: None,
+            });
+            let handle = reg
+                .clone()
+                .spawn_git_clone_task(None, id, token, repo, dest);
+            let running =
+                super::common::task_wait::wait_task_state(&reg, &id, TaskState::Running, 800, 25)
+                    .await;
+            assert!(running, "should enter running");
+            let failed =
+                super::common::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25)
+                    .await;
+            assert!(failed, "invalid scheme should fail quickly");
             let _ = reg.cancel(&id);
-            let _ = timeout(Duration::from_secs(2), async { let _ = handle.await; }).await;
-        }).await; assert!(res.is_ok(), "test exceeded timeout window");
+            let _ = timeout(Duration::from_secs(2), async {
+                let _ = handle.await;
+            })
+            .await;
+        })
+        .await;
+        assert!(res.is_ok(), "test exceeded timeout window");
     }
 
     #[tokio::test]
@@ -472,9 +880,15 @@ mod section_service_cancel_fast { //! 早期错误 + Cancel flag 快速终止 + 
             let dest = fixtures::create_empty_dir();
             let flag = AtomicBool::new(false);
             let repo = format!("./fwc-not-a-git-repo-{}", uuid::Uuid::new_v4());
-            let out = tokio::task::spawn_blocking(move || { let svc = DefaultGitService::new(); svc.clone_blocking(&repo, &dest, None, &flag, |_p| {}) }).await.expect("spawn_blocking join");
+            let out = tokio::task::spawn_blocking(move || {
+                let svc = DefaultGitService::new();
+                svc.clone_blocking(&repo, &dest, None, &flag, |_p| {})
+            })
+            .await
+            .expect("spawn_blocking join");
             assert!(out.is_err(), "relative non-repo path should error quickly");
-        }).await; assert!(res.is_ok(), "test exceeded timeout window");
+        })
+        .await;
+        assert!(res.is_ok(), "test exceeded timeout window");
     }
 }
-

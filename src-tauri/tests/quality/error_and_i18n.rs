@@ -31,11 +31,14 @@
 
 use crate::common::test_env::init_test_env;
 
-#[path = "../common/mod.rs"] mod common; // 引入 test_env / prelude
-// use crate::common::prelude::*; // 此文件内分区各自按需引用，避免未使用导入
+#[path = "../common/mod.rs"]
+mod common; // 引入 test_env / prelude
+            // use crate::common::prelude::*; // 此文件内分区各自按需引用，避免未使用导入
 
 #[ctor::ctor]
-fn __init_env() { init_test_env(); }
+fn __init_env() {
+    init_test_env();
+}
 // 顶层不直接使用集合类型
 
 // ---------------- section_error_mapping ----------------
@@ -48,40 +51,113 @@ mod section_error_mapping {
         // 构造 git2::Error：中文超时/连接信息应映射为 Network
         let err = git2::Error::from_str("无法 连接 到 服务器: 超时");
         let cat = map_git2_error(&err);
-        assert!(matches!(cat, ErrorCategory::Network), "expected Network got {:?}", cat);
+        assert!(
+            matches!(cat, ErrorCategory::Network),
+            "expected Network got {:?}",
+            cat
+        );
     }
 
     #[test]
     fn mapping_snapshot_matrix() {
-        fn mk_err(code: ErrorCode, class: ErrorClass, msg: &str) -> Error { Error::new(code, class, msg) }
+        fn mk_err(code: ErrorCode, class: ErrorClass, msg: &str) -> Error {
+            Error::new(code, class, msg)
+        }
         let cases = vec![
-            (mk_err(ErrorCode::User, ErrorClass::None, "user canceled"), ErrorCategory::Cancel, "cancel"),
-            (mk_err(ErrorCode::GenericError, ErrorClass::Net, "connection timed out"), ErrorCategory::Network, "timeout"),
-            (mk_err(ErrorCode::GenericError, ErrorClass::Net, "连接 超时"), ErrorCategory::Network, "cn-timeout"),
-            (mk_err(ErrorCode::GenericError, ErrorClass::Ssl, "tls handshake failure"), ErrorCategory::Tls, "tls"),
-            (mk_err(ErrorCode::GenericError, ErrorClass::Ssl, "certificate verify failed"), ErrorCategory::Verify, "cert"),
-            (mk_err(ErrorCode::GenericError, ErrorClass::Http, "HTTP 501"), ErrorCategory::Protocol, "http-class"),
-            (mk_err(ErrorCode::Auth, ErrorClass::Http, "401 Unauthorized"), ErrorCategory::Auth, "401"),
-            (mk_err(ErrorCode::Auth, ErrorClass::Http, "permission denied"), ErrorCategory::Auth, "perm"),
-            (mk_err(ErrorCode::GenericError, ErrorClass::Config, "some internal weird"), ErrorCategory::Internal, "internal"),
+            (
+                mk_err(ErrorCode::User, ErrorClass::None, "user canceled"),
+                ErrorCategory::Cancel,
+                "cancel",
+            ),
+            (
+                mk_err(
+                    ErrorCode::GenericError,
+                    ErrorClass::Net,
+                    "connection timed out",
+                ),
+                ErrorCategory::Network,
+                "timeout",
+            ),
+            (
+                mk_err(ErrorCode::GenericError, ErrorClass::Net, "连接 超时"),
+                ErrorCategory::Network,
+                "cn-timeout",
+            ),
+            (
+                mk_err(
+                    ErrorCode::GenericError,
+                    ErrorClass::Ssl,
+                    "tls handshake failure",
+                ),
+                ErrorCategory::Tls,
+                "tls",
+            ),
+            (
+                mk_err(
+                    ErrorCode::GenericError,
+                    ErrorClass::Ssl,
+                    "certificate verify failed",
+                ),
+                ErrorCategory::Verify,
+                "cert",
+            ),
+            (
+                mk_err(ErrorCode::GenericError, ErrorClass::Http, "HTTP 501"),
+                ErrorCategory::Protocol,
+                "http-class",
+            ),
+            (
+                mk_err(ErrorCode::Auth, ErrorClass::Http, "401 Unauthorized"),
+                ErrorCategory::Auth,
+                "401",
+            ),
+            (
+                mk_err(ErrorCode::Auth, ErrorClass::Http, "permission denied"),
+                ErrorCategory::Auth,
+                "perm",
+            ),
+            (
+                mk_err(
+                    ErrorCode::GenericError,
+                    ErrorClass::Config,
+                    "some internal weird",
+                ),
+                ErrorCategory::Internal,
+                "internal",
+            ),
         ];
         for (err, expect, tag) in cases {
-            assert_eq!(map_git2_error(&err), expect, "case tag={tag} msg={}", err.message());
+            assert_eq!(
+                map_git2_error(&err),
+                expect,
+                "case tag={tag} msg={}",
+                err.message()
+            );
         }
     }
 }
 
 // ---------------- section_i18n_locale_basic ----------------
 mod section_i18n_locale_basic {
+    use crate::common::i18n::{locale_keys, translate};
     use std::collections::HashSet;
-    use crate::common::i18n::{translate, locale_keys};
     #[test]
     fn locale_keys_present_in_all_supported_languages() {
         let keys = locale_keys();
         assert!(!keys.is_empty(), "fixture keys empty");
         // 支持语言集合（后续扩展时仅在此添加）
         let langs = ["en", "zh"];
-        for k in &keys { for lang in &langs { let t = translate(k, lang).unwrap_or_default(); assert!(!t.is_empty(), "missing translation for key={} lang={}", k, lang); } }
+        for k in &keys {
+            for lang in &langs {
+                let t = translate(k, lang).unwrap_or_default();
+                assert!(
+                    !t.is_empty(),
+                    "missing translation for key={} lang={}",
+                    k,
+                    lang
+                );
+            }
+        }
         // key 去重校验
         let set: HashSet<&str> = keys.iter().copied().collect();
         assert_eq!(set.len(), keys.len(), "duplicate locale key detected");
@@ -124,9 +200,9 @@ mod section_i18n_fallback {
 // ---------------- section_strategy_props ----------------
 #[cfg(test)]
 mod section_strategy_props {
-    use proptest::prelude::*;
     use fireworks_collaboration_lib::core::config::model::AppConfig;
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use proptest::prelude::*;
     use uuid::Uuid;
 
     proptest! {
@@ -187,10 +263,10 @@ mod section_strategy_props {
 // ---------------- section_retry_props ----------------
 #[cfg(test)]
 mod section_retry_props {
-    use proptest::prelude::*;
     use fireworks_collaboration_lib::core::config::model::RetryCfg;
     use fireworks_collaboration_lib::core::git::default_impl::opts::StrategyRetryOverride;
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use proptest::prelude::*;
 
     proptest! {
         #[test]
@@ -210,8 +286,8 @@ mod section_retry_props {
 // ---------------- section_partial_filter_props ----------------
 #[cfg(test)]
 mod section_partial_filter_props {
-    use proptest::prelude::*;
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use proptest::prelude::*;
 
     proptest! {
         #[test]
@@ -233,9 +309,9 @@ mod section_partial_filter_props {
 // ---------------- section_tls_props ----------------
 #[cfg(test)]
 mod section_tls_props {
-    use proptest::prelude::*;
     use fireworks_collaboration_lib::core::config::model::AppConfig;
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use proptest::prelude::*;
     use uuid::Uuid;
 
     proptest! {
@@ -262,4 +338,3 @@ mod section_tls_props {
         }
     }
 }
-

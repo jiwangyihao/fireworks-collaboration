@@ -2,7 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 #[cfg(feature = "tauri-app")]
-fn main() { fireworks_collaboration_lib::app::run(); }
+fn main() {
+    fireworks_collaboration_lib::app::run();
+}
 
 #[cfg(not(feature = "tauri-app"))]
-fn main() { /* core tests: no tauri runtime */ }
+fn main() { /* core tests: no tauri runtime */
+}

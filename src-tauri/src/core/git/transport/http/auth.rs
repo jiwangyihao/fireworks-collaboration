@@ -4,7 +4,9 @@ use std::cell::RefCell;
 thread_local! { static PUSH_AUTH: RefCell<Option<String>> = RefCell::new(None); }
 
 pub fn set_push_auth_header_value(v: Option<String>) {
-    PUSH_AUTH.with(|h| { *h.borrow_mut() = v; });
+    PUSH_AUTH.with(|h| {
+        *h.borrow_mut() = v;
+    });
 }
 
 pub(super) fn get_push_auth_header() -> Option<String> {

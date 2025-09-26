@@ -20,10 +20,10 @@ mod common;
 
 // ---------------- section_add_basic ----------------
 mod section_add_basic {
-    use std::sync::atomic::AtomicBool;
-    use fireworks_collaboration_lib::core::git::default_impl::{init::git_init, add::git_add};
+    use crate::common::{fixtures, git_helpers, test_env};
+    use fireworks_collaboration_lib::core::git::default_impl::{add::git_add, init::git_init};
     use fireworks_collaboration_lib::core::git::service::ProgressPayload;
-    use crate::common::{fixtures, test_env, git_helpers};
+    use std::sync::atomic::AtomicBool;
 
     #[test]
     fn add_success_with_dir_and_dedup_and_progress() {
@@ -37,12 +37,27 @@ mod section_add_basic {
         std::fs::write(dest.join("dir/sub/b.txt"), "world").unwrap();
         // duplicate path included intentionally
         let mut percents = Vec::new();
-        git_add(&dest, &["a.txt", "a.txt", "dir"], &flag, |p: ProgressPayload| { percents.push(p.percent); }).expect("[add-basic] add ok");
+        git_add(
+            &dest,
+            &["a.txt", "a.txt", "dir"],
+            &flag,
+            |p: ProgressPayload| {
+                percents.push(p.percent);
+            },
+        )
+        .expect("[add-basic] add ok");
         git_helpers::assert_progress_monotonic("add-basic", &percents);
         let repo = git2::Repository::open(&dest).unwrap();
         let idx = repo.index().unwrap();
-        assert!(idx.get_path(std::path::Path::new("a.txt"), 0).is_some(), "[add-basic] a.txt staged");
-        assert!(idx.get_path(std::path::Path::new("dir/sub/b.txt"), 0).is_some(), "[add-basic] nested file staged");
+        assert!(
+            idx.get_path(std::path::Path::new("a.txt"), 0).is_some(),
+            "[add-basic] a.txt staged"
+        );
+        assert!(
+            idx.get_path(std::path::Path::new("dir/sub/b.txt"), 0)
+                .is_some(),
+            "[add-basic] nested file staged"
+        );
     }
 }
 
@@ -53,10 +68,10 @@ mod section_add_basic {
 /// * 取消
 /// 改进：统一使用 `git_helpers` 的错误分类断言，移除本地 `cat` 重复逻辑。
 mod section_add_edge {
-    use std::sync::atomic::AtomicBool;
-    use fireworks_collaboration_lib::core::git::default_impl::{init::git_init, add::git_add};
+    use crate::common::{fixtures, git_helpers, test_env};
+    use fireworks_collaboration_lib::core::git::default_impl::{add::git_add, init::git_init};
     use fireworks_collaboration_lib::core::git::errors::ErrorCategory;
-    use crate::common::{fixtures, test_env, git_helpers};
+    use std::sync::atomic::AtomicBool;
 
     #[test]
     fn add_rejects_empty_list() {
@@ -64,9 +79,13 @@ mod section_add_edge {
         let dest = fixtures::temp_dir();
         let flag = AtomicBool::new(false);
         git_init(&dest, &flag, |_p| {}).unwrap();
-    let out = git_add(&dest, &[], &flag, |_p| {});
-    assert!(out.is_err(), "[add-edge] expect error empty list");
-    git_helpers::assert_err_category("add-edge empty list", out.err().unwrap(), ErrorCategory::Protocol);
+        let out = git_add(&dest, &[], &flag, |_p| {});
+        assert!(out.is_err(), "[add-edge] expect error empty list");
+        git_helpers::assert_err_category(
+            "add-edge empty list",
+            out.err().unwrap(),
+            ErrorCategory::Protocol,
+        );
     }
 
     #[test]
@@ -77,14 +96,25 @@ mod section_add_edge {
         git_init(&dest, &flag, |_p| {}).unwrap();
         std::fs::write(dest.join("a.txt"), "hi").unwrap();
         // outside via ..
-    let out = git_add(&dest, &["../outside.txt"], &flag, |_p| {});
-    assert!(out.is_err(), "[add-edge] expect protocol for outside path");
-    git_helpers::assert_err_category("add-edge outside", out.err().unwrap(), ErrorCategory::Protocol);
+        let out = git_add(&dest, &["../outside.txt"], &flag, |_p| {});
+        assert!(out.is_err(), "[add-edge] expect protocol for outside path");
+        git_helpers::assert_err_category(
+            "add-edge outside",
+            out.err().unwrap(),
+            ErrorCategory::Protocol,
+        );
         // absolute path
         let abs = if cfg!(windows) { "C:/Windows" } else { "/etc" };
-    let out2 = git_add(&dest, &[abs], &flag, |_p| {});
-    assert!(out2.is_err(), "[add-edge] expect protocol for absolute path");
-    git_helpers::assert_err_category("add-edge absolute", out2.err().unwrap(), ErrorCategory::Protocol);
+        let out2 = git_add(&dest, &[abs], &flag, |_p| {});
+        assert!(
+            out2.is_err(),
+            "[add-edge] expect protocol for absolute path"
+        );
+        git_helpers::assert_err_category(
+            "add-edge absolute",
+            out2.err().unwrap(),
+            ErrorCategory::Protocol,
+        );
     }
 
     #[test]
@@ -94,18 +124,25 @@ mod section_add_edge {
         let flag = AtomicBool::new(true); // already canceled
         let out = git_add(&dest, &["a.txt"], &flag, |_p| {});
         assert!(out.is_err(), "[add-edge] expect cancel error");
-        git_helpers::assert_err_category("add-edge cancel", out.err().unwrap(), ErrorCategory::Cancel);
+        git_helpers::assert_err_category(
+            "add-edge cancel",
+            out.err().unwrap(),
+            ErrorCategory::Cancel,
+        );
     }
 }
 
 // ---------------- section_commit_basic ----------------
 mod section_commit_basic {
-    use std::sync::atomic::AtomicBool;
+    use crate::common::{fixtures, git_helpers, test_env};
     use fireworks_collaboration_lib::core::git::default_impl::commit::{git_commit, Author};
-    use crate::common::{test_env, fixtures, git_helpers};
     use fireworks_collaboration_lib::core::git::errors::ErrorCategory;
+    use std::sync::atomic::AtomicBool;
 
-    fn repo_with_single_file(name: &str, content: &str) -> std::path::PathBuf { let dir = fixtures::repo_with_staged(&[(name, content)]); dir }
+    fn repo_with_single_file(name: &str, content: &str) -> std::path::PathBuf {
+        let dir = fixtures::repo_with_staged(&[(name, content)]);
+        dir
+    }
 
     #[test]
     fn commit_success_then_empty_reject_then_allow() {
@@ -113,10 +150,12 @@ mod section_commit_basic {
         std::env::set_var("FWC_E2E_DISABLE", "true");
         let repo_dir = repo_with_single_file("a.txt", "hello");
         let flag = AtomicBool::new(false);
-        git_commit(&repo_dir, "feat: add a.txt", None, false, &flag, |_p| {}).expect("[commit-basic] first commit ok");
+        git_commit(&repo_dir, "feat: add a.txt", None, false, &flag, |_p| {})
+            .expect("[commit-basic] first commit ok");
         let err = git_commit(&repo_dir, "chore: empty", None, false, &flag, |_p| {}).unwrap_err();
         git_helpers::assert_err_category("commit-basic empty", err, ErrorCategory::Protocol);
-        git_commit(&repo_dir, "chore: force empty", None, true, &flag, |_p| {}).expect("[commit-basic] allow empty");
+        git_commit(&repo_dir, "chore: force empty", None, true, &flag, |_p| {})
+            .expect("[commit-basic] allow empty");
     }
 
     #[test]
@@ -125,22 +164,41 @@ mod section_commit_basic {
         std::env::set_var("FWC_E2E_DISABLE", "true");
         let repo_dir = repo_with_single_file("g.txt", "g");
         let flag = AtomicBool::new(false);
-        git_commit(&repo_dir, "  feat: trim  \n", Some(Author { name: Some("Alice"), email: Some("alice@example.com") }), false, &flag, |_p| {}).expect("[commit-basic] trimmed commit");
+        git_commit(
+            &repo_dir,
+            "  feat: trim  \n",
+            Some(Author {
+                name: Some("Alice"),
+                email: Some("alice@example.com"),
+            }),
+            false,
+            &flag,
+            |_p| {},
+        )
+        .expect("[commit-basic] trimmed commit");
         let repo2 = git2::Repository::open(&repo_dir).unwrap();
         let head = repo2.head().unwrap();
         let commit = repo2.find_commit(head.target().unwrap()).unwrap();
-        assert_eq!(commit.message().unwrap().trim(), "feat: trim", "[commit-basic] message trimmed");
+        assert_eq!(
+            commit.message().unwrap().trim(),
+            "feat: trim",
+            "[commit-basic] message trimmed"
+        );
     }
 }
 
 // ---------------- section_commit_edge ----------------
 mod section_commit_edge {
-    use std::sync::atomic::AtomicBool;
+    use crate::common::{fixtures, git_helpers, test_env};
     use fireworks_collaboration_lib::core::git::default_impl::commit::{git_commit, Author};
-    use crate::common::{test_env, fixtures, git_helpers};
     use fireworks_collaboration_lib::core::git::errors::ErrorCategory;
+    use std::sync::atomic::AtomicBool;
 
-    fn empty_repo() -> std::path::PathBuf { let p = fixtures::temp_dir(); git2::Repository::init(&p).unwrap(); p }
+    fn empty_repo() -> std::path::PathBuf {
+        let p = fixtures::temp_dir();
+        git2::Repository::init(&p).unwrap();
+        p
+    }
 
     #[test]
     fn commit_requires_non_empty_message() {
@@ -175,20 +233,34 @@ mod section_commit_edge {
             let repo_dir = empty_repo();
             fixtures::stage_files(&repo_dir, &[("f.txt", "f")]);
             let flag = AtomicBool::new(false);
-            let err = git_commit(&repo_dir, &format!("feat: invalid author {label}"), Some(Author { name, email }), false, &flag, |_p| {}).unwrap_err();
-            git_helpers::assert_err_category(&format!("commit-edge author {label}"), err, ErrorCategory::Protocol);
+            let err = git_commit(
+                &repo_dir,
+                &format!("feat: invalid author {label}"),
+                Some(Author { name, email }),
+                false,
+                &flag,
+                |_p| {},
+            )
+            .unwrap_err();
+            git_helpers::assert_err_category(
+                &format!("commit-edge author {label}"),
+                err,
+                ErrorCategory::Protocol,
+            );
         }
     }
 }
 
 // ---------------- section_task_wrapper ----------------
 mod section_task_wrapper {
-    use fireworks_collaboration_lib::core::tasks::{TaskRegistry, TaskKind};
-    use fireworks_collaboration_lib::core::tasks::model::TaskState;
-    use crate::common::{test_env, fixtures};
     use crate::common::task_wait::wait_until_task_done;
+    use crate::common::{fixtures, test_env};
+    use fireworks_collaboration_lib::core::tasks::model::TaskState;
+    use fireworks_collaboration_lib::core::tasks::{TaskKind, TaskRegistry};
 
-    fn staged_repo(name: &str) -> std::path::PathBuf { fixtures::repo_with_staged(&[(name, "x")]) }
+    fn staged_repo(name: &str) -> std::path::PathBuf {
+        fixtures::repo_with_staged(&[(name, "x")])
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn commit_task_completes() {
@@ -196,11 +268,32 @@ mod section_task_wrapper {
         std::env::set_var("FWC_E2E_DISABLE", "true");
         let reg = std::sync::Arc::new(TaskRegistry::new());
         let repo_dir = staged_repo("z.txt");
-        let (id, token) = reg.create(TaskKind::GitCommit { dest: repo_dir.to_string_lossy().to_string(), message: "feat: z".into(), allow_empty: false, author_name: None, author_email: None });
-        let handle = reg.spawn_git_commit_task(None, id, token, repo_dir.to_string_lossy().to_string(), "feat: z".into(), false, None, None);
+        let (id, token) = reg.create(TaskKind::GitCommit {
+            dest: repo_dir.to_string_lossy().to_string(),
+            message: "feat: z".into(),
+            allow_empty: false,
+            author_name: None,
+            author_email: None,
+        });
+        let handle = reg.spawn_git_commit_task(
+            None,
+            id,
+            token,
+            repo_dir.to_string_lossy().to_string(),
+            "feat: z".into(),
+            false,
+            None,
+            None,
+        );
         wait_until_task_done(&reg, id).await;
-        let state = reg.snapshot(&id).map(|s| s.state).unwrap_or(TaskState::Failed);
-        assert!(matches!(state, TaskState::Completed), "[task-wrapper] commit task should complete");
+        let state = reg
+            .snapshot(&id)
+            .map(|s| s.state)
+            .unwrap_or(TaskState::Failed);
+        assert!(
+            matches!(state, TaskState::Completed),
+            "[task-wrapper] commit task should complete"
+        );
         handle.await.unwrap();
     }
 
@@ -210,12 +303,33 @@ mod section_task_wrapper {
         std::env::set_var("FWC_E2E_DISABLE", "true");
         let reg = std::sync::Arc::new(TaskRegistry::new());
         let repo_dir = staged_repo("c.txt");
-        let (id, token) = reg.create(TaskKind::GitCommit { dest: repo_dir.to_string_lossy().to_string(), message: "feat: c".into(), allow_empty: false, author_name: None, author_email: None });
+        let (id, token) = reg.create(TaskKind::GitCommit {
+            dest: repo_dir.to_string_lossy().to_string(),
+            message: "feat: c".into(),
+            allow_empty: false,
+            author_name: None,
+            author_email: None,
+        });
         token.cancel();
-        let handle = reg.spawn_git_commit_task(None, id, token.clone(), repo_dir.to_string_lossy().to_string(), "feat: c".into(), false, None, None);
+        let handle = reg.spawn_git_commit_task(
+            None,
+            id,
+            token.clone(),
+            repo_dir.to_string_lossy().to_string(),
+            "feat: c".into(),
+            false,
+            None,
+            None,
+        );
         wait_until_task_done(&reg, id).await;
-        let state = reg.snapshot(&id).map(|s| s.state).unwrap_or(TaskState::Failed);
-        assert!(matches!(state, TaskState::Canceled), "[task-wrapper] should cancel early");
+        let state = reg
+            .snapshot(&id)
+            .map(|s| s.state)
+            .unwrap_or(TaskState::Failed);
+        assert!(
+            matches!(state, TaskState::Canceled),
+            "[task-wrapper] should cancel early"
+        );
         handle.await.unwrap();
     }
 }

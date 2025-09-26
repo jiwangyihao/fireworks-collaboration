@@ -25,12 +25,12 @@
 mod common;
 
 mod section_basic_init {
-    use std::sync::atomic::AtomicBool;
     use fireworks_collaboration_lib::core::git::default_impl::init::git_init;
     use fireworks_collaboration_lib::core::git::errors::ErrorCategory;
+    use std::sync::atomic::AtomicBool;
 
-    use crate::common::{fixtures, test_env};
     use crate::common::git_helpers;
+    use crate::common::{fixtures, test_env};
 
     #[test]
     fn git_init_success_and_idempotent() {
@@ -38,7 +38,10 @@ mod section_basic_init {
         let dest = fixtures::temp_dir();
         let flag = AtomicBool::new(false);
         git_init(&dest, &flag, |_p| {}).expect("[init-basic] init ok");
-        assert!(dest.join(".git").exists(), "[init-basic] expect .git dir after init");
+        assert!(
+            dest.join(".git").exists(),
+            "[init-basic] expect .git dir after init"
+        );
         // second time should be idempotent
         git_init(&dest, &flag, |_p| {}).expect("[init-basic] idempotent");
     }
@@ -52,16 +55,20 @@ mod section_basic_init {
         let flag = AtomicBool::new(true); // already canceled
         let out = git_init(&dest, &flag, |_p| {});
         assert!(out.is_err(), "[init-basic] expect cancel error");
-        git_helpers::assert_err_category("init-basic cancel", out.err().unwrap(), ErrorCategory::Cancel);
+        git_helpers::assert_err_category(
+            "init-basic cancel",
+            out.err().unwrap(),
+            ErrorCategory::Cancel,
+        );
     }
 }
 
 // 预留：本地 preflight 场景（后续扩展时添加）
 mod section_preflight {
-    use std::sync::atomic::AtomicBool;
+    use crate::common::{fixtures, test_env};
     use fireworks_collaboration_lib::core::git::default_impl::init::git_init;
     use fireworks_collaboration_lib::core::git::errors::ErrorCategory;
-    use crate::common::{fixtures, test_env};
+    use std::sync::atomic::AtomicBool;
 
     use crate::common::git_helpers;
 
@@ -74,8 +81,15 @@ mod section_preflight {
         std::fs::write(&file_path, "hi").unwrap();
         let cancel = AtomicBool::new(false);
         let out = git_init(&file_path, &cancel, |_p| {});
-        assert!(out.is_err(), "[preflight] expect protocol error for file path");
-        git_helpers::assert_err_category("preflight path-is-file", out.err().unwrap(), ErrorCategory::Protocol);
+        assert!(
+            out.is_err(),
+            "[preflight] expect protocol error for file path"
+        );
+        git_helpers::assert_err_category(
+            "preflight path-is-file",
+            out.err().unwrap(),
+            ErrorCategory::Protocol,
+        );
     }
 }
 

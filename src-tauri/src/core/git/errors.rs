@@ -15,11 +15,17 @@ pub enum ErrorCategory {
 #[derive(Error, Debug)]
 pub enum GitError {
     #[error("{category:?}: {message}")]
-    Categorized { category: ErrorCategory, message: String },
+    Categorized {
+        category: ErrorCategory,
+        message: String,
+    },
 }
 
 impl GitError {
     pub fn new(category: ErrorCategory, message: impl Into<String>) -> Self {
-        GitError::Categorized { category, message: message.into() }
+        GitError::Categorized {
+            category,
+            message: message.into(),
+        }
     }
 }

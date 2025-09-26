@@ -1,8 +1,8 @@
+use crate::core::git::errors::ErrorCategory;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-use crate::core::git::errors::ErrorCategory;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -17,20 +17,81 @@ pub enum TaskState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum TaskKind {
-    GitClone { repo: String, dest: String, depth: Option<u32>, filter: Option<String>, strategy_override: Option<serde_json::Value> },
-    GitFetch { repo: String, dest: String, depth: Option<u32>, filter: Option<String>, strategy_override: Option<serde_json::Value> },
-    GitPush { dest: String, remote: Option<String>, refspecs: Option<Vec<String>>, username: Option<String>, password: Option<String>, strategy_override: Option<serde_json::Value> },
-    GitInit { dest: String },
-    GitAdd { dest: String, paths: Vec<String> },
-    GitCommit { dest: String, message: String, allow_empty: bool, author_name: Option<String>, author_email: Option<String> },
-    GitBranch { dest: String, name: String, checkout: bool, force: bool },
-    GitCheckout { dest: String, reference: String, create: bool },
-    GitTag { dest: String, name: String, message: Option<String>, annotated: bool, force: bool },
-    GitRemoteSet { dest: String, name: String, url: String },
-    GitRemoteAdd { dest: String, name: String, url: String },
-    GitRemoteRemove { dest: String, name: String },
-    HttpFake { url: String, method: String },
-    Sleep { ms: u64 },
+    GitClone {
+        repo: String,
+        dest: String,
+        depth: Option<u32>,
+        filter: Option<String>,
+        strategy_override: Option<serde_json::Value>,
+    },
+    GitFetch {
+        repo: String,
+        dest: String,
+        depth: Option<u32>,
+        filter: Option<String>,
+        strategy_override: Option<serde_json::Value>,
+    },
+    GitPush {
+        dest: String,
+        remote: Option<String>,
+        refspecs: Option<Vec<String>>,
+        username: Option<String>,
+        password: Option<String>,
+        strategy_override: Option<serde_json::Value>,
+    },
+    GitInit {
+        dest: String,
+    },
+    GitAdd {
+        dest: String,
+        paths: Vec<String>,
+    },
+    GitCommit {
+        dest: String,
+        message: String,
+        allow_empty: bool,
+        author_name: Option<String>,
+        author_email: Option<String>,
+    },
+    GitBranch {
+        dest: String,
+        name: String,
+        checkout: bool,
+        force: bool,
+    },
+    GitCheckout {
+        dest: String,
+        reference: String,
+        create: bool,
+    },
+    GitTag {
+        dest: String,
+        name: String,
+        message: Option<String>,
+        annotated: bool,
+        force: bool,
+    },
+    GitRemoteSet {
+        dest: String,
+        name: String,
+        url: String,
+    },
+    GitRemoteAdd {
+        dest: String,
+        name: String,
+        url: String,
+    },
+    GitRemoteRemove {
+        dest: String,
+        name: String,
+    },
+    HttpFake {
+        url: String,
+        method: String,
+    },
+    Sleep {
+        ms: u64,
+    },
     Unknown,
 }
 
@@ -137,7 +198,8 @@ pub struct TaskProgressEvent {
     pub bytes: Option<u64>,
     pub total_hint: Option<u64>,
     /// MP1.4: 可选的重试计数（仅在重试事件中出现）
-    #[serde(skip_serializing_if = "Option::is_none")] pub retried_times: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retried_times: Option<u32>,
 }
 
 /// MP1.5: 标准化错误事件负载
@@ -149,14 +211,22 @@ pub struct TaskErrorEvent {
     /// 统一字符串分类：Network|Tls|Verify|Protocol|Proxy|Auth|Cancel|Internal
     pub category: String,
     /// 可选的错误代码（预留，当前为空）
-    #[serde(skip_serializing_if = "Option::is_none")] pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
     pub message: String,
     /// 已重试次数（若有重试逻辑）
-    #[serde(skip_serializing_if = "Option::is_none")] pub retried_times: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retried_times: Option<u32>,
 }
 
 impl TaskErrorEvent {
-    pub fn from_parts(task_id: Uuid, kind: &str, category: ErrorCategory, message: impl Into<String>, retried_times: Option<u32>) -> Self {
+    pub fn from_parts(
+        task_id: Uuid,
+        kind: &str,
+        category: ErrorCategory,
+        message: impl Into<String>,
+        retried_times: Option<u32>,
+    ) -> Self {
         Self {
             task_id,
             kind: kind.to_string(),

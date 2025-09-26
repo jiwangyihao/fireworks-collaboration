@@ -17,8 +17,12 @@
 pub struct EventTag(pub String);
 
 impl EventTag {
-    pub fn new<S: Into<String>>(s: S) -> Self { Self(s.into()) }
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn new<S: Into<String>>(s: S) -> Self {
+        Self(s.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// 将原始字符串事件映射为标签的函数类型。
@@ -32,18 +36,34 @@ pub fn default_tag_mapper(line: &str) -> Option<EventTag> {
     if let Some(pos) = line.find("\"type\":\"") {
         let start = pos + "\"type\":\"".len();
         if let Some(end_rel) = line[start..].find('"') {
-            let ty = &line[start..start+end_rel];
-            if matches!(ty, "Task"|"Policy"|"Strategy"|"Transport") {
+            let ty = &line[start..start + end_rel];
+            if matches!(ty, "Task" | "Policy" | "Strategy" | "Transport") {
                 return Some(EventTag::new(ty));
             }
         }
     }
     // 更宽泛的前缀集合 + 新增 fetch/pipeline/filter/capability/push
     const PREFIX_HINTS: &[&str] = &[
-        "task:", "pre:check:", "cancel:requested", "timeout:", "strategy:",
-        "http:override", "tls:", "attempt#", "result:", "progress:",
-        "retry", "policy:", "transport:", "metric:", "fetch:", "pipeline:",
-        "push:", "filter:", "capability:", "shallow:",
+        "task:",
+        "pre:check:",
+        "cancel:requested",
+        "timeout:",
+        "strategy:",
+        "http:override",
+        "tls:",
+        "attempt#",
+        "result:",
+        "progress:",
+        "retry",
+        "policy:",
+        "transport:",
+        "metric:",
+        "fetch:",
+        "pipeline:",
+        "push:",
+        "filter:",
+        "capability:",
+        "shallow:",
     ];
 
     // attempt#N 归一化为 Attempt；允许出现在任意位置（例如 push:attempt#1）
@@ -62,24 +82,31 @@ pub fn default_tag_mapper(line: &str) -> Option<EventTag> {
     if let Some(idx) = line.find(':') {
         let head = &line[..=idx]; // 含冒号，利于与提示列表对齐
         if PREFIX_HINTS.iter().any(|p| head.starts_with(p)) {
-            return Some(EventTag::new(&head[..head.len()-1])); // 去掉尾随冒号
+            return Some(EventTag::new(&head[..head.len() - 1])); // 去掉尾随冒号
         }
     }
 
     // contains 兜底：某些 tag 可能在中部（例如 pre:check:failed）
-    for p in PREFIX_HINTS { if line.contains(p) { return Some(EventTag::new(p.trim_end_matches(':'))); } }
+    for p in PREFIX_HINTS {
+        if line.contains(p) {
+            return Some(EventTag::new(p.trim_end_matches(':')));
+        }
+    }
     None
 }
 
 /// 批量将事件行映射为标签；忽略映射失败的行。
-pub fn tagify<'a, I: IntoIterator<Item=&'a String>>(events: I, mapper: TagMapper) -> Vec<EventTag> {
+pub fn tagify<'a, I: IntoIterator<Item = &'a String>>(
+    events: I,
+    mapper: TagMapper,
+) -> Vec<EventTag> {
     events.into_iter().filter_map(|e| mapper(e)).collect()
 }
 
 /// 自定义闭包版本，便于一次性捕获上下文（例如基于正则或外部映射表）
 pub fn tagify_with<'a, I, F>(events: I, mut f: F) -> Vec<EventTag>
 where
-    I: IntoIterator<Item=&'a String>,
+    I: IntoIterator<Item = &'a String>,
     F: FnMut(&str) -> Option<EventTag>,
 {
     events.into_iter().filter_map(|e| f(e)).collect()
@@ -94,14 +121,27 @@ pub fn expect_tags_subsequence(tags: &[EventTag], anchors: &[&str]) {
 /// 若映射为空（例如运行在未启用结构化/打点场景），则跳过以降低脆弱性。
 pub fn expect_optional_tags_subsequence(events: &[String], anchors: &[&str]) {
     let tags = tagify(events, default_tag_mapper);
-    if !tags.is_empty() { expect_tags_subsequence(&tags, anchors); }
+    if !tags.is_empty() {
+        expect_tags_subsequence(&tags, anchors);
+    }
 }
 
 /// 终态互斥断言：确保 expected 子串至少出现一次，且 forbidden 任意一个都不出现。
 pub fn assert_terminal_exclusive(events: &[String], expected: &str, forbidden: &[&str]) {
     let has_expected = events.iter().any(|e| e.contains(expected));
-    assert!(has_expected, "[event-assert] expected terminal '{}' missing", expected);
-    for f in forbidden { assert!(!events.iter().any(|e| e.contains(f)), "[event-assert] forbidden terminal '{}' found alongside '{}'", f, expected); }
+    assert!(
+        has_expected,
+        "[event-assert] expected terminal '{}' missing",
+        expected
+    );
+    for f in forbidden {
+        assert!(
+            !events.iter().any(|e| e.contains(f)),
+            "[event-assert] forbidden terminal '{}' found alongside '{}'",
+            f,
+            expected
+        );
+    }
 }
 
 /// 简单子序列匹配：按顺序确认每个锚点字符串在后续事件中第一次出现。
@@ -119,14 +159,24 @@ where
     for (ai, &anchor) in anchors.iter().enumerate() {
         let mut found = None;
         for (idx, it) in items.iter().enumerate().skip(pos) {
-            if project(it).contains(anchor) { found = Some(idx); break; }
+            if project(it).contains(anchor) {
+                found = Some(idx);
+                break;
+            }
         }
         match found {
-            Some(i) => { pos = i + 1; },
+            Some(i) => {
+                pos = i + 1;
+            }
             None => {
                 // 提供上下文窗口：前后各2个元素展示 & 已匹配锚点数
                 let window_start = pos.saturating_sub(2);
-                let window_slice: Vec<_> = items.iter().skip(window_start).take(5).map(|it| project(it)).collect();
+                let window_slice: Vec<_> = items
+                    .iter()
+                    .skip(window_start)
+                    .take(5)
+                    .map(|it| project(it))
+                    .collect();
                 panic!(
                     "[event-assert] {kind} subsequence mismatch: missing anchor '{anchor}' at step {ai} after index {}. Context(before+after)={:?} anchors={:?}",
                     pos.saturating_sub(1), window_slice, anchors
@@ -141,70 +191,184 @@ where
 // ---- Applied/Conflict specialized asserts (used by strategy/override tests) ----
 #[allow(dead_code)]
 pub fn assert_applied_code(task_id: &str, code: &str) {
-    use fireworks_collaboration_lib::events::structured::{get_global_memory_bus, Event, StrategyEvent};
+    use fireworks_collaboration_lib::events::structured::{
+        get_global_memory_bus, Event, StrategyEvent,
+    };
     if let Some(bus) = get_global_memory_bus() {
-        for e in bus.snapshot() { if let Event::Strategy(StrategyEvent::Summary { id, applied_codes, .. }) = e { if id == task_id { assert!(applied_codes.iter().any(|c| c==code), "expected code '{}' in summary for {}", code, id); return; } } }
+        for e in bus.snapshot() {
+            if let Event::Strategy(StrategyEvent::Summary {
+                id, applied_codes, ..
+            }) = e
+            {
+                if id == task_id {
+                    assert!(
+                        applied_codes.iter().any(|c| c == code),
+                        "expected code '{}' in summary for {}",
+                        code,
+                        id
+                    );
+                    return;
+                }
+            }
+        }
         panic!("no summary event found for task_id={}", task_id);
-    } else { panic!("no global memory bus installed"); }
+    } else {
+        panic!("no global memory bus installed");
+    }
 }
 
 #[allow(dead_code)]
 pub fn assert_no_applied_code(task_id: &str, code: &str) {
-    use fireworks_collaboration_lib::events::structured::{get_global_memory_bus, Event, StrategyEvent};
+    use fireworks_collaboration_lib::events::structured::{
+        get_global_memory_bus, Event, StrategyEvent,
+    };
     if let Some(bus) = get_global_memory_bus() {
-        for e in bus.snapshot() { if let Event::Strategy(StrategyEvent::Summary { id, applied_codes, .. }) = e { if id == task_id { assert!(!applied_codes.iter().any(|c| c==code), "unexpected code '{}' in summary for {}", code, id); return; } } }
+        for e in bus.snapshot() {
+            if let Event::Strategy(StrategyEvent::Summary {
+                id, applied_codes, ..
+            }) = e
+            {
+                if id == task_id {
+                    assert!(
+                        !applied_codes.iter().any(|c| c == code),
+                        "unexpected code '{}' in summary for {}",
+                        code,
+                        id
+                    );
+                    return;
+                }
+            }
+        }
         // 无 summary 视为未应用（宽松）
-    } else { panic!("no global memory bus installed"); }
+    } else {
+        panic!("no global memory bus installed");
+    }
 }
 
 #[allow(dead_code)]
 pub fn assert_no_applied_codes(task_id: &str) {
-    use fireworks_collaboration_lib::events::structured::{get_global_memory_bus, Event, StrategyEvent};
+    use fireworks_collaboration_lib::events::structured::{
+        get_global_memory_bus, Event, StrategyEvent,
+    };
     if let Some(bus) = get_global_memory_bus() {
         for e in bus.snapshot() {
-            if let Event::Strategy(StrategyEvent::Summary { id, applied_codes, .. }) = e {
-                if id == task_id { assert!(applied_codes.is_empty(), "expected no applied codes, but found {:?} for {}", applied_codes, id); return; }
+            if let Event::Strategy(StrategyEvent::Summary {
+                id, applied_codes, ..
+            }) = e
+            {
+                if id == task_id {
+                    assert!(
+                        applied_codes.is_empty(),
+                        "expected no applied codes, but found {:?} for {}",
+                        applied_codes,
+                        id
+                    );
+                    return;
+                }
             }
         }
         panic!("no summary event found for task_id={}", task_id);
-    } else { panic!("no global memory bus installed"); }
+    } else {
+        panic!("no global memory bus installed");
+    }
 }
 
 #[allow(dead_code)]
 pub fn assert_tls_applied(task_id: &str, expected: bool) {
-    use fireworks_collaboration_lib::events::structured::{get_global_memory_bus, Event, StrategyEvent};
+    use fireworks_collaboration_lib::events::structured::{
+        get_global_memory_bus, Event, StrategyEvent,
+    };
     if let Some(bus) = get_global_memory_bus() {
-        let mut saw = false; for e in bus.snapshot() { if let Event::Strategy(StrategyEvent::TlsApplied { id, .. }) = e { if id == task_id { saw = true; break; } } }
-        assert_eq!(saw, expected, "tls applied expectation mismatch for {}", task_id);
-    } else { panic!("no global memory bus installed"); }
+        let mut saw = false;
+        for e in bus.snapshot() {
+            if let Event::Strategy(StrategyEvent::TlsApplied { id, .. }) = e {
+                if id == task_id {
+                    saw = true;
+                    break;
+                }
+            }
+        }
+        assert_eq!(
+            saw, expected,
+            "tls applied expectation mismatch for {}",
+            task_id
+        );
+    } else {
+        panic!("no global memory bus installed");
+    }
 }
 
 #[allow(dead_code)]
 pub fn assert_http_applied(task_id: &str, expected: bool) {
-    use fireworks_collaboration_lib::events::structured::{get_global_memory_bus, Event, StrategyEvent};
+    use fireworks_collaboration_lib::events::structured::{
+        get_global_memory_bus, Event, StrategyEvent,
+    };
     if let Some(bus) = get_global_memory_bus() {
-        let mut saw = false; for e in bus.snapshot() { if let Event::Strategy(StrategyEvent::HttpApplied { id, .. }) = e { if id == task_id { saw = true; break; } } }
-        assert_eq!(saw, expected, "http applied expectation mismatch for {}", task_id);
-    } else { panic!("no global memory bus installed"); }
+        let mut saw = false;
+        for e in bus.snapshot() {
+            if let Event::Strategy(StrategyEvent::HttpApplied { id, .. }) = e {
+                if id == task_id {
+                    saw = true;
+                    break;
+                }
+            }
+        }
+        assert_eq!(
+            saw, expected,
+            "http applied expectation mismatch for {}",
+            task_id
+        );
+    } else {
+        panic!("no global memory bus installed");
+    }
 }
 
 #[allow(dead_code)]
 pub fn assert_no_conflict(task_id: &str) {
-    use fireworks_collaboration_lib::events::structured::{get_global_memory_bus, Event, StrategyEvent};
+    use fireworks_collaboration_lib::events::structured::{
+        get_global_memory_bus, Event, StrategyEvent,
+    };
     if let Some(bus) = get_global_memory_bus() {
-        for e in bus.snapshot() { if let Event::Strategy(StrategyEvent::Conflict { id, .. }) = e { if id == task_id { panic!("unexpected conflict event for {}", task_id); } } }
-    } else { panic!("no global memory bus installed"); }
+        for e in bus.snapshot() {
+            if let Event::Strategy(StrategyEvent::Conflict { id, .. }) = e {
+                if id == task_id {
+                    panic!("unexpected conflict event for {}", task_id);
+                }
+            }
+        }
+    } else {
+        panic!("no global memory bus installed");
+    }
 }
 
 #[allow(dead_code)]
 pub fn assert_conflict_kind(task_id: &str, _domain: &str, expect_contains: Option<&str>) {
-    use fireworks_collaboration_lib::events::structured::{get_global_memory_bus, Event, StrategyEvent};
+    use fireworks_collaboration_lib::events::structured::{
+        get_global_memory_bus, Event, StrategyEvent,
+    };
     if let Some(bus) = get_global_memory_bus() {
-        let mut msg = None; for e in bus.snapshot() { if let Event::Strategy(StrategyEvent::Conflict { id, message, .. }) = e { if id == task_id { msg = Some(message); break; } } }
-        if let Some(expect) = expect_contains { let m = msg.unwrap_or_else(|| "".into()); assert!(m.contains(expect), "expected conflict message to contain '{}' but got '{}'", expect, m); }
-    } else { panic!("no global memory bus installed"); }
+        let mut msg = None;
+        for e in bus.snapshot() {
+            if let Event::Strategy(StrategyEvent::Conflict { id, message, .. }) = e {
+                if id == task_id {
+                    msg = Some(message);
+                    break;
+                }
+            }
+        }
+        if let Some(expect) = expect_contains {
+            let m = msg.unwrap_or_else(|| "".into());
+            assert!(
+                m.contains(expect),
+                "expected conflict message to contain '{}' but got '{}'",
+                expect,
+                m
+            );
+        }
+    } else {
+        panic!("no global memory bus installed");
+    }
 }
-
 
 #[cfg(test)]
 mod tests_event_assert_smoke {
@@ -231,8 +395,13 @@ mod tests_event_assert_smoke {
     #[test]
     fn tagify_with_custom_mapper() {
         let events = vec!["alpha:one".into(), "beta:two".into(), "alpha:three".into()];
-        let tags = tagify_with(&events, |l| l.strip_prefix("alpha:").map(|_| EventTag::new("alpha")));
-        assert_eq!(tags.iter().map(|t| t.as_str()).collect::<Vec<_>>(), vec!["alpha", "alpha"]);
+        let tags = tagify_with(&events, |l| {
+            l.strip_prefix("alpha:").map(|_| EventTag::new("alpha"))
+        });
+        assert_eq!(
+            tags.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
+            vec!["alpha", "alpha"]
+        );
         expect_tags_subsequence(&tags, &["alpha", "alpha"]);
     }
 
@@ -247,7 +416,11 @@ mod tests_event_assert_smoke {
     #[test]
     fn terminal_exclusive_smoke_usage() {
         let events = vec!["result:success".into()];
-        assert_terminal_exclusive(&events, "result:success", &["result:exhausted", "result:abort"]);
+        assert_terminal_exclusive(
+            &events,
+            "result:success",
+            &["result:exhausted", "result:abort"],
+        );
     }
 }
 
@@ -257,12 +430,13 @@ mod tests_event_assert_smoke {
 
 #[allow(dead_code)] // 多个集成测试 crate 未同时使用全部 helper，避免重复 dead_code 噪音
 pub mod structured_ext {
-    use std::collections::HashSet;
     use fireworks_collaboration_lib::events::structured::Event;
+    use std::collections::HashSet;
 
     /// 将结构化事件序列序列化为 JSON 行（稳定排序按输入顺序）。
     pub fn serialize_events_to_json_lines(events: &[Event]) -> Vec<String> {
-        events.iter()
+        events
+            .iter()
             .map(|e| serde_json::to_string(e).expect("serialize structured event"))
             .collect()
     }
@@ -274,12 +448,19 @@ pub mod structured_ext {
         for (idx, line) in json_lines.iter().enumerate() {
             let v: Value = serde_json::from_str(line).expect("line should be valid json");
             // 遍历一层 data 下第一个对象 variant 取其 id 字段（若存在）
-            if let (Some(ty), Some(data)) = (v.get("type").and_then(|t| t.as_str()), v.get("data")) {
+            if let (Some(ty), Some(data)) = (v.get("type").and_then(|t| t.as_str()), v.get("data"))
+            {
                 if let Some(obj) = data.as_object() {
-                    if let Some((variant_name, variant_v)) = obj.iter().next() { // 取首个 variant
+                    if let Some((variant_name, variant_v)) = obj.iter().next() {
+                        // 取首个 variant
                         if let Some(id) = variant_v.get("id").and_then(|idv| idv.as_str()) {
                             let key = format!("{}::{}::{}", ty, variant_name, id);
-                            assert!(ids.insert(key.clone()), "duplicate event key detected: {} (line {})", key, idx);
+                            assert!(
+                                ids.insert(key.clone()),
+                                "duplicate event key detected: {} (line {})",
+                                key,
+                                idx
+                            );
                         }
                     }
                 }
@@ -289,13 +470,18 @@ pub mod structured_ext {
 
     /// 将结构化事件映射为顶层类型标签（Task/Policy/Strategy/Transport/...）。
     pub fn map_structured_events_to_type_tags(events: &[Event]) -> Vec<String> {
-        events.iter().map(|e| {
-            match e { // 依赖 Display/Debug 之外的稳定 variant 名称
-                Event::Task(_) => "Task",
-                Event::Policy(_) => "Policy",
-                Event::Strategy(_) => "Strategy",
-                Event::Transport(_) => "Transport",
-            }.to_string()
-        }).collect()
+        events
+            .iter()
+            .map(|e| {
+                match e {
+                    // 依赖 Display/Debug 之外的稳定 variant 名称
+                    Event::Task(_) => "Task",
+                    Event::Policy(_) => "Policy",
+                    Event::Strategy(_) => "Strategy",
+                    Event::Transport(_) => "Transport",
+                }
+                .to_string()
+            })
+            .collect()
     }
 }

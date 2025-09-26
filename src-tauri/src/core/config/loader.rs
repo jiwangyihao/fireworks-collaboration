@@ -1,7 +1,11 @@
-use std::{fs, io::Write, path::{Path, PathBuf}};
-use std::sync::OnceLock;
 use anyhow::{Context, Result};
 use dirs_next as dirs;
+use std::sync::OnceLock;
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use super::model::AppConfig;
 
@@ -43,7 +47,11 @@ fn config_path() -> PathBuf {
 /// 返回配置基目录（包含 config 子目录的上一级）。仅用于派生其它观测文件（如 cert-fp.log）。
 pub fn base_dir() -> PathBuf {
     let p = config_path();
-    p.parent().unwrap_or_else(|| std::path::Path::new(".")).parent().unwrap_or_else(|| std::path::Path::new(".")).to_path_buf()
+    p.parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .to_path_buf()
 }
 
 pub fn load_or_init() -> Result<AppConfig> {
@@ -77,9 +85,12 @@ fn load_or_init_at_path(path: &Path) -> Result<AppConfig> {
 }
 
 fn save_at_path(cfg: &AppConfig, path: &Path) -> Result<()> {
-    if let Some(dir) = path.parent() { fs::create_dir_all(dir).ok(); }
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).ok();
+    }
     let json = serde_json::to_string_pretty(cfg).context("serialize config")?;
-    let mut f = fs::File::create(path).with_context(|| format!("create config: {}", path.display()))?;
+    let mut f =
+        fs::File::create(path).with_context(|| format!("create config: {}", path.display()))?;
     f.write_all(json.as_bytes()).context("write config")?;
     tracing::info!(target = "config", path = %path.display(), "config saved");
     Ok(())
@@ -91,7 +102,7 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     fn test_guard() -> &'static Mutex<()> {
-        static G: OnceLock<Mutex<()> > = OnceLock::new();
+        static G: OnceLock<Mutex<()>> = OnceLock::new();
         G.get_or_init(|| Mutex::new(()))
     }
 
@@ -111,11 +122,16 @@ mod tests {
     fn test_load_or_init_creates_default_at_base() {
         with_temp_cwd("create-default", || {
             assert!(!std::path::Path::new("config/config.json").exists());
-            let cfg = load_or_init_at(Path::new(".")).expect("should create default config at base");
+            let cfg =
+                load_or_init_at(Path::new(".")).expect("should create default config at base");
             assert!(std::path::Path::new("config/config.json").exists());
             // 校验部分默认值
             assert!(cfg.http.fake_sni_enabled);
-            assert!(cfg.tls.san_whitelist.iter().any(|d| d.contains("github.com")));
+            assert!(cfg
+                .tls
+                .san_whitelist
+                .iter()
+                .any(|d| d.contains("github.com")));
             assert_eq!(cfg.logging.log_level, "info");
         });
     }

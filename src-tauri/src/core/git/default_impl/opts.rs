@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::core::git::errors::{GitError, ErrorCategory};
+use crate::core::git::errors::{ErrorCategory, GitError};
 
 /// Supported partial clone filters (initial P2.2 scope)
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,7 +17,12 @@ impl PartialFilter {
             _ => None,
         }
     }
-    pub fn as_str(&self) -> &'static str { match self { Self::BlobNone => "blob:none", Self::TreeZero => "tree:0" } }
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::BlobNone => "blob:none",
+            Self::TreeZero => "tree:0",
+        }
+    }
 }
 
 /// Strategy override white-listed subsets (P2.3 future). We only parse structure now;
@@ -25,22 +30,27 @@ impl PartialFilter {
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct StrategyHttpOverride {
-    #[serde(alias = "follow_redirects")] pub follow_redirects: Option<bool>,
-    #[serde(alias = "max_redirects")] pub max_redirects: Option<u32>,
+    #[serde(alias = "follow_redirects")]
+    pub follow_redirects: Option<bool>,
+    #[serde(alias = "max_redirects")]
+    pub max_redirects: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct StrategyTlsOverride {
-    #[serde(alias = "insecureSkipVerify", alias = "insecure_skip_verify")] pub insecure_skip_verify: Option<bool>,
-    #[serde(alias = "skipSanWhitelist", alias = "skip_san_whitelist")] pub skip_san_whitelist: Option<bool>,
+    #[serde(alias = "insecureSkipVerify", alias = "insecure_skip_verify")]
+    pub insecure_skip_verify: Option<bool>,
+    #[serde(alias = "skipSanWhitelist", alias = "skip_san_whitelist")]
+    pub skip_san_whitelist: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct StrategyRetryOverride {
     pub max: Option<u32>,
-    #[serde(alias = "baseMs")] pub base_ms: Option<u32>,
+    #[serde(alias = "baseMs")]
+    pub base_ms: Option<u32>,
     pub factor: Option<f32>,
     pub jitter: Option<bool>,
 }
@@ -63,11 +73,19 @@ pub struct GitDepthFilterOpts {
     /// P2.3e: ignored top-level keys (unknown)
     pub ignored_top_level: Vec<String>,
     /// P2.3e: ignored nested keys (section.key)
-    pub ignored_nested: Vec<(String,String)>,
+    pub ignored_nested: Vec<(String, String)>,
 }
 
 impl GitDepthFilterOpts {
-    pub fn empty() -> Self { Self { depth: None, filter: None, strategy_override: None, ignored_top_level: vec![], ignored_nested: vec![] } }
+    pub fn empty() -> Self {
+        Self {
+            depth: None,
+            filter: None,
+            strategy_override: None,
+            ignored_top_level: vec![],
+            ignored_nested: vec![],
+        }
+    }
 }
 
 /// Result for strategy override parse including ignored (unknown) field names (P2.3e)。
@@ -81,28 +99,53 @@ pub struct StrategyOverrideParseResult {
 }
 
 impl StrategyOverrideParseResult {
-    pub fn is_empty(&self) -> bool { self.ignored_top_level.is_empty() && self.ignored_nested.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.ignored_top_level.is_empty() && self.ignored_nested.is_empty()
+    }
 }
 
 /// Internal helper: parse only the strategyOverride JSON value with unknown field detection.
 /// Now returns a structured result包含被忽略字段列表，供任务层决定是否发事件。
-pub fn parse_strategy_override(strategy_override: Option<serde_json::Value>) -> Result<StrategyOverrideParseResult, GitError> {
+pub fn parse_strategy_override(
+    strategy_override: Option<serde_json::Value>,
+) -> Result<StrategyOverrideParseResult, GitError> {
     if let Some(raw) = strategy_override {
-        if raw.is_null() { return Ok(StrategyOverrideParseResult::default()); }
-        if !raw.is_object() { return Err(GitError::new(ErrorCategory::Protocol, "invalid strategyOverride: not an object")); }
+        if raw.is_null() {
+            return Ok(StrategyOverrideParseResult::default());
+        }
+        if !raw.is_object() {
+            return Err(GitError::new(
+                ErrorCategory::Protocol,
+                "invalid strategyOverride: not an object",
+            ));
+        }
         let obj = raw.as_object().unwrap();
         let top_keys: Vec<String> = obj.keys().cloned().collect();
-        let parsed: StrategyOverrideInput = serde_json::from_value(raw.clone())
-            .map_err(|e| GitError::new(ErrorCategory::Protocol, format!("invalid strategyOverride: {}", e)))?;
-        let mut res = StrategyOverrideParseResult { parsed: Some(parsed), ignored_top_level: vec![], ignored_nested: vec![] };
+        let parsed: StrategyOverrideInput = serde_json::from_value(raw.clone()).map_err(|e| {
+            GitError::new(
+                ErrorCategory::Protocol,
+                format!("invalid strategyOverride: {}", e),
+            )
+        })?;
+        let mut res = StrategyOverrideParseResult {
+            parsed: Some(parsed),
+            ignored_top_level: vec![],
+            ignored_nested: vec![],
+        };
         // detect unknown top-level keys
         for k in &top_keys {
-            if k != "http" && k != "tls" && k != "retry" { tracing::warn!(target="strategy", key=%k, "unknown top-level strategyOverride key ignored"); res.ignored_top_level.push(k.clone()); }
+            if k != "http" && k != "tls" && k != "retry" {
+                tracing::warn!(target="strategy", key=%k, "unknown top-level strategyOverride key ignored");
+                res.ignored_top_level.push(k.clone());
+            }
         }
         // detect unknown nested keys (best-effort; ignore errors)
         if let Some(http) = obj.get("http").and_then(|v| v.as_object()) {
             for k in http.keys() {
-                if !matches!(k.as_str(), "followRedirects"|"follow_redirects"|"maxRedirects"|"max_redirects") {
+                if !matches!(
+                    k.as_str(),
+                    "followRedirects" | "follow_redirects" | "maxRedirects" | "max_redirects"
+                ) {
                     tracing::warn!(target="strategy", section="http", key=%k, "unknown http override field ignored");
                     res.ignored_nested.push(("http".into(), k.clone()));
                 }
@@ -110,7 +153,13 @@ pub fn parse_strategy_override(strategy_override: Option<serde_json::Value>) -> 
         }
         if let Some(tls) = obj.get("tls").and_then(|v| v.as_object()) {
             for k in tls.keys() {
-                if !matches!(k.as_str(), "insecureSkipVerify"|"skipSanWhitelist"|"insecure_skip_verify"|"skip_san_whitelist") {
+                if !matches!(
+                    k.as_str(),
+                    "insecureSkipVerify"
+                        | "skipSanWhitelist"
+                        | "insecure_skip_verify"
+                        | "skip_san_whitelist"
+                ) {
                     tracing::warn!(target="strategy", section="tls", key=%k, "unknown tls override field ignored");
                     res.ignored_nested.push(("tls".into(), k.clone()));
                 }
@@ -118,7 +167,10 @@ pub fn parse_strategy_override(strategy_override: Option<serde_json::Value>) -> 
         }
         if let Some(retry) = obj.get("retry").and_then(|v| v.as_object()) {
             for k in retry.keys() {
-                if !matches!(k.as_str(), "max"|"baseMs"|"factor"|"jitter"|"base_ms") {
+                if !matches!(
+                    k.as_str(),
+                    "max" | "baseMs" | "factor" | "jitter" | "base_ms"
+                ) {
                     tracing::warn!(target="strategy", section="retry", key=%k, "unknown retry override field ignored");
                     res.ignored_nested.push(("retry".into(), k.clone()));
                 }
@@ -127,12 +179,40 @@ pub fn parse_strategy_override(strategy_override: Option<serde_json::Value>) -> 
 
         // value/range validation (P2.3a enhancement)
         if let Some(http) = &res.parsed.as_ref().unwrap().http {
-            if let Some(max_r) = http.max_redirects { if max_r > 20 { return Err(GitError::new(ErrorCategory::Protocol, "http.maxRedirects too large (max 20)")); } }
+            if let Some(max_r) = http.max_redirects {
+                if max_r > 20 {
+                    return Err(GitError::new(
+                        ErrorCategory::Protocol,
+                        "http.maxRedirects too large (max 20)",
+                    ));
+                }
+            }
         }
         if let Some(retry) = &res.parsed.as_ref().unwrap().retry {
-            if let Some(m) = retry.max { if m == 0 || m > 20 { return Err(GitError::new(ErrorCategory::Protocol, "retry.max must be 1..=20")); } }
-            if let Some(base) = retry.base_ms { if base < 10 || base > 60_000 { return Err(GitError::new(ErrorCategory::Protocol, "retry.baseMs out of range (10..60000)")); } }
-            if let Some(f) = retry.factor { if !(0.5..=10.0).contains(&f) { return Err(GitError::new(ErrorCategory::Protocol, "retry.factor out of range (0.5..=10.0)")); } }
+            if let Some(m) = retry.max {
+                if m == 0 || m > 20 {
+                    return Err(GitError::new(
+                        ErrorCategory::Protocol,
+                        "retry.max must be 1..=20",
+                    ));
+                }
+            }
+            if let Some(base) = retry.base_ms {
+                if base < 10 || base > 60_000 {
+                    return Err(GitError::new(
+                        ErrorCategory::Protocol,
+                        "retry.baseMs out of range (10..60000)",
+                    ));
+                }
+            }
+            if let Some(f) = retry.factor {
+                if !(0.5..=10.0).contains(&f) {
+                    return Err(GitError::new(
+                        ErrorCategory::Protocol,
+                        "retry.factor out of range (0.5..=10.0)",
+                    ));
+                }
+            }
         }
         return Ok(res);
     }
@@ -153,11 +233,23 @@ pub fn parse_depth_filter_opts(
             let as_i64 = if dv.is_number() { dv.as_i64() } else { None };
             match as_i64 {
                 Some(v) if v > 0 => {
-                    if v > i32::MAX as i64 { return Err(GitError::new(ErrorCategory::Protocol, "depth too large")); }
+                    if v > i32::MAX as i64 {
+                        return Err(GitError::new(ErrorCategory::Protocol, "depth too large"));
+                    }
                     out.depth = Some(v as u32);
                 }
-                Some(v) if v <= 0 => { return Err(GitError::new(ErrorCategory::Protocol, "depth must be positive")); }
-                None => { return Err(GitError::new(ErrorCategory::Protocol, "depth must be a number")); }
+                Some(v) if v <= 0 => {
+                    return Err(GitError::new(
+                        ErrorCategory::Protocol,
+                        "depth must be positive",
+                    ));
+                }
+                None => {
+                    return Err(GitError::new(
+                        ErrorCategory::Protocol,
+                        "depth must be a number",
+                    ));
+                }
                 _ => {}
             }
         }
@@ -168,7 +260,12 @@ pub fn parse_depth_filter_opts(
         if !f_str.trim().is_empty() {
             match PartialFilter::parse(f_str.trim()) {
                 Some(pf) => out.filter = Some(pf),
-                None => return Err(GitError::new(ErrorCategory::Protocol, format!("unsupported filter: {}", f_str))),
+                None => {
+                    return Err(GitError::new(
+                        ErrorCategory::Protocol,
+                        format!("unsupported filter: {}", f_str),
+                    ))
+                }
             }
         }
     }
@@ -196,21 +293,27 @@ mod tests {
 
     #[test]
     fn test_depth_zero_invalid() {
-        let err = parse_depth_filter_opts(Some(json!(0)), None, None).err().unwrap();
+        let err = parse_depth_filter_opts(Some(json!(0)), None, None)
+            .err()
+            .unwrap();
         let msg = err.to_string();
         assert!(msg.contains("depth must be positive"));
     }
 
     #[test]
     fn test_negative_depth_invalid() {
-        let err = parse_depth_filter_opts(Some(json!(-5)), None, None).err().unwrap();
+        let err = parse_depth_filter_opts(Some(json!(-5)), None, None)
+            .err()
+            .unwrap();
         let msg = err.to_string();
         assert!(msg.contains("depth must be positive"));
     }
 
     #[test]
     fn test_filter_invalid() {
-        let err = parse_depth_filter_opts(None, Some("weird:rule".into()), None).err().unwrap();
+        let err = parse_depth_filter_opts(None, Some("weird:rule".into()), None)
+            .err()
+            .unwrap();
         let msg = err.to_string();
         assert!(msg.contains("unsupported filter"));
     }
@@ -233,7 +336,9 @@ mod tests {
     #[test]
     fn test_depth_too_large() {
         let big = (u64::from(u32::MAX) + 10) as i64;
-        let err = parse_depth_filter_opts(Some(json!(big)), None, None).err().unwrap();
+        let err = parse_depth_filter_opts(Some(json!(big)), None, None)
+            .err()
+            .unwrap();
         assert!(err.to_string().contains("depth too large"));
     }
 
@@ -273,9 +378,13 @@ mod tests {
     #[test]
     fn test_invalid_filters_variants() {
         // unsupported forms: uppercase, tree:1, stray whitespace inside
-        for f in ["BLOB:NONE", "tree:1", "blob: none"] { 
+        for f in ["BLOB:NONE", "tree:1", "blob: none"] {
             let err = parse_depth_filter_opts(None, Some(f.into()), None).unwrap_err();
-            assert!(err.to_string().contains("unsupported filter"), "{} should be rejected", f);
+            assert!(
+                err.to_string().contains("unsupported filter"),
+                "{} should be rejected",
+                f
+            );
         }
     }
 
@@ -289,17 +398,32 @@ mod tests {
     #[test]
     fn test_strategy_override_each_section_individually() {
         let http_only = json!({"http":{"followRedirects":true}});
-        let tls_only  = json!({"tls":{"insecureSkipVerify":true}});
-        let retry_only= json!({"retry":{"max":4,"factor":1.1}});
-        assert!(parse_depth_filter_opts(None,None,Some(http_only)).unwrap().strategy_override.unwrap().http.is_some());
-        assert!(parse_depth_filter_opts(None,None,Some(tls_only)).unwrap().strategy_override.unwrap().tls.is_some());
-        assert!(parse_depth_filter_opts(None,None,Some(retry_only)).unwrap().strategy_override.unwrap().retry.is_some());
+        let tls_only = json!({"tls":{"insecureSkipVerify":true}});
+        let retry_only = json!({"retry":{"max":4,"factor":1.1}});
+        assert!(parse_depth_filter_opts(None, None, Some(http_only))
+            .unwrap()
+            .strategy_override
+            .unwrap()
+            .http
+            .is_some());
+        assert!(parse_depth_filter_opts(None, None, Some(tls_only))
+            .unwrap()
+            .strategy_override
+            .unwrap()
+            .tls
+            .is_some());
+        assert!(parse_depth_filter_opts(None, None, Some(retry_only))
+            .unwrap()
+            .strategy_override
+            .unwrap()
+            .retry
+            .is_some());
     }
 
     #[test]
     fn test_strategy_override_invalid_type() {
         // strategyOverride must be an object; an array should fail
-        let arr = json!([1,2,3]);
+        let arr = json!([1, 2, 3]);
         let err = parse_depth_filter_opts(None, None, Some(arr)).unwrap_err();
         assert!(err.to_string().contains("invalid strategyOverride"));
     }
@@ -384,7 +508,11 @@ mod tests {
         let err = parse_depth_filter_opts(None, None, Some(raw)).unwrap_err();
         let msg = err.to_string();
         // Implementation detail may validate http first; accept either violation text.
-        assert!(msg.contains("retry.max") || msg.contains("http.maxRedirects"), "error message should contain one of the violations, got: {}", msg);
+        assert!(
+            msg.contains("retry.max") || msg.contains("http.maxRedirects"),
+            "error message should contain one of the violations, got: {}",
+            msg
+        );
     }
 
     #[test]

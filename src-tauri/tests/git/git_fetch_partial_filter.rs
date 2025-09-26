@@ -11,8 +11,15 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-use common::{partial_filter_support::{assess_partial_filter, SupportLevel, warn_if_no_filter_marker}, partial_filter_matrix::{partial_filter_cases_for, PartialFilterOp, PartialFilterKind, PartialFilterCase}, test_env, event_assert::{expect_optional_tags_subsequence}};
 use common::git_scenarios::{run_fetch, FetchParams};
+use common::{
+    event_assert::expect_optional_tags_subsequence,
+    partial_filter_matrix::{
+        partial_filter_cases_for, PartialFilterCase, PartialFilterKind, PartialFilterOp,
+    },
+    partial_filter_support::{assess_partial_filter, warn_if_no_filter_marker, SupportLevel},
+    test_env,
+};
 
 fn build_label(case: &PartialFilterCase) -> Option<&'static str> {
     use PartialFilterKind::*;
@@ -35,15 +42,23 @@ mod section_capability {
         test_env::init_test_env();
         for case in partial_filter_cases_for(PartialFilterOp::Fetch) {
             let label_opt = build_label(&case);
-            let params = FetchParams { depth: case.depth, filter: label_opt.map(|l| format!("filter:{}", l)) };
+            let params = FetchParams {
+                depth: case.depth,
+                filter: label_opt.map(|l| format!("filter:{}", l)),
+            };
             let events = run_fetch(&params).events;
-            assert!(!events.is_empty(), "[fetch_capability] events non-empty for {case}");
+            assert!(
+                !events.is_empty(),
+                "[fetch_capability] events non-empty for {case}"
+            );
             let f_label = label_opt.unwrap_or("");
             let out = assess_partial_filter(&format!("filter:{}", f_label), case.depth, &events);
             if matches!(out.support, SupportLevel::Unsupported) {
                 panic!("[fetch_capability] case {case} unexpectedly Unsupported");
             }
-            if label_opt.is_some() { warn_if_no_filter_marker("fetch_capability", &format!("filter:{}", f_label), &out); }
+            if label_opt.is_some() {
+                warn_if_no_filter_marker("fetch_capability", &format!("filter:{}", f_label), &out);
+            }
         }
     }
 }
@@ -54,19 +69,45 @@ mod section_filter_variants {
     #[test]
     fn fetch_event_code_structure_no_filter_variants() {
         test_env::init_test_env();
-        let variants = [PartialFilterKind::EventOnly, PartialFilterKind::CodeOnly, PartialFilterKind::Structure, PartialFilterKind::NoFilter];
+        let variants = [
+            PartialFilterKind::EventOnly,
+            PartialFilterKind::CodeOnly,
+            PartialFilterKind::Structure,
+            PartialFilterKind::NoFilter,
+        ];
         for kind in variants {
-            let case = PartialFilterCase { op: PartialFilterOp::Fetch, kind, depth: None };
+            let case = PartialFilterCase {
+                op: PartialFilterOp::Fetch,
+                kind,
+                depth: None,
+            };
             let label_opt = build_label(&case);
-            let params = FetchParams { depth: None, filter: label_opt.map(|l| format!("filter:{}", l)) };
+            let params = FetchParams {
+                depth: None,
+                filter: label_opt.map(|l| format!("filter:{}", l)),
+            };
             let events = run_fetch(&params).events;
-            assert!(!events.is_empty(), "[fetch_variants] events non-empty for {kind:?}");
-            let filter_expr = label_opt.as_deref().map(|l| format!("filter:{}", l)).unwrap_or_else(|| "".into());
+            assert!(
+                !events.is_empty(),
+                "[fetch_variants] events non-empty for {kind:?}"
+            );
+            let filter_expr = label_opt
+                .as_deref()
+                .map(|l| format!("filter:{}", l))
+                .unwrap_or_else(|| "".into());
             let out = assess_partial_filter(&filter_expr, None, &events);
-            if matches!(out.support, SupportLevel::Unsupported | SupportLevel::Invalid) {
-                panic!("[fetch_variants] kind {kind:?} unexpected support={:?}", out.support);
+            if matches!(
+                out.support,
+                SupportLevel::Unsupported | SupportLevel::Invalid
+            ) {
+                panic!(
+                    "[fetch_variants] kind {kind:?} unexpected support={:?}",
+                    out.support
+                );
             }
-            if label_opt.is_some() { warn_if_no_filter_marker("fetch_variants", &filter_expr, &out); }
+            if label_opt.is_some() {
+                warn_if_no_filter_marker("fetch_variants", &filter_expr, &out);
+            }
         }
     }
 }
@@ -77,16 +118,37 @@ mod section_filter_depth {
     #[test]
     fn fetch_code_and_event_with_depth() {
         test_env::init_test_env();
-        let depth_cases = [PartialFilterKind::CodeWithDepth, PartialFilterKind::EventWithDepth];
+        let depth_cases = [
+            PartialFilterKind::CodeWithDepth,
+            PartialFilterKind::EventWithDepth,
+        ];
         for kind in depth_cases {
-            let case = PartialFilterCase { op: PartialFilterOp::Fetch, kind, depth: Some(1) };
+            let case = PartialFilterCase {
+                op: PartialFilterOp::Fetch,
+                kind,
+                depth: Some(1),
+            };
             let label_opt = build_label(&case);
-            let params = FetchParams { depth: case.depth, filter: label_opt.map(|l| format!("filter:{}", l)) };
+            let params = FetchParams {
+                depth: case.depth,
+                filter: label_opt.map(|l| format!("filter:{}", l)),
+            };
             let events = run_fetch(&params).events;
-            assert!(!events.is_empty(), "[fetch_depth] events non-empty for {kind:?}");
+            assert!(
+                !events.is_empty(),
+                "[fetch_depth] events non-empty for {kind:?}"
+            );
             let label = label_opt.unwrap();
             let out = assess_partial_filter(&format!("filter:{}", label), case.depth, &events);
-            if matches!(out.support, SupportLevel::Unsupported | SupportLevel::Invalid) { panic!("[fetch_depth] {kind:?} unexpected support={:?}", out.support); }
+            if matches!(
+                out.support,
+                SupportLevel::Unsupported | SupportLevel::Invalid
+            ) {
+                panic!(
+                    "[fetch_depth] {kind:?} unexpected support={:?}",
+                    out.support
+                );
+            }
             warn_if_no_filter_marker("fetch_depth", &format!("filter:{}", label), &out);
             // 新增：标签子序列最小锚点（fetch + filter 前缀存在 -> strategy/transport 等后续可扩展）
             expect_optional_tags_subsequence(&events, &["fetch"]);
@@ -101,13 +163,24 @@ mod section_invalid {
     #[test]
     fn fetch_invalid_filter_support_level_invalid() {
         test_env::init_test_env();
-        let case = PartialFilterCase { op: PartialFilterOp::Fetch, kind: PartialFilterKind::InvalidFilter, depth: None };
+        let case = PartialFilterCase {
+            op: PartialFilterOp::Fetch,
+            kind: PartialFilterKind::InvalidFilter,
+            depth: None,
+        };
         let label_opt = build_label(&case);
-        let params = FetchParams { depth: None, filter: label_opt.map(|l| format!("filter:{}", l)) };
+        let params = FetchParams {
+            depth: None,
+            filter: label_opt.map(|l| format!("filter:{}", l)),
+        };
         let events = run_fetch(&params).events;
         assert!(!events.is_empty(), "[fetch_invalid] events non-empty");
         let out = assess_partial_filter("filter:bad:filter", None, &events);
-        assert!(matches!(out.support, SupportLevel::Invalid), "invalid filter should map to Invalid support (got {:?})", out.support);
+        assert!(
+            matches!(out.support, SupportLevel::Invalid),
+            "invalid filter should map to Invalid support (got {:?})",
+            out.support
+        );
         warn_if_no_filter_marker("fetch_invalid", "filter:bad:filter", &out);
     }
 }
@@ -118,11 +191,18 @@ mod section_fallback {
     #[test]
     fn fetch_unsupported_filter_yields_unsupported() {
         test_env::init_test_env();
-        let params = FetchParams { depth: None, filter: Some("filter:unsupported-case".into()) };
+        let params = FetchParams {
+            depth: None,
+            filter: Some("filter:unsupported-case".into()),
+        };
         let events = run_fetch(&params).events;
         assert!(!events.is_empty(), "[fetch_fallback] events non-empty");
         let out = assess_partial_filter("filter:unsupported-case", None, &events);
-        assert!(matches!(out.support, SupportLevel::Unsupported), "expected Unsupported got {:?}", out.support);
+        assert!(
+            matches!(out.support, SupportLevel::Unsupported),
+            "expected Unsupported got {:?}",
+            out.support
+        );
         warn_if_no_filter_marker("fetch_fallback", "filter:unsupported-case", &out);
     }
 }

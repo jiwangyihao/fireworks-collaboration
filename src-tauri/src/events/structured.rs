@@ -1,44 +1,128 @@
-use serde::{Serialize, Deserialize};
-use std::sync::{Arc, Mutex};
 use once_cell::sync::OnceCell;
+use serde::{Deserialize, Serialize};
 use std::any::Any;
+use std::sync::{Arc, Mutex};
 
 /// 任务相关事件（示例：最小子集，后续可扩展）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskEvent {
-    Started { id: String, kind: String },
-    Completed { id: String },
-    Canceled { id: String },
-    Failed { id: String, category: String, code: Option<String>, message: String },
+    Started {
+        id: String,
+        kind: String,
+    },
+    Completed {
+        id: String,
+    },
+    Canceled {
+        id: String,
+    },
+    Failed {
+        id: String,
+        category: String,
+        code: Option<String>,
+        message: String,
+    },
 }
 
 /// 策略相关事件
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PolicyEvent {
-    RetryApplied { id: String, code: String, changed: Vec<String> },
+    RetryApplied {
+        id: String,
+        code: String,
+        changed: Vec<String>,
+    },
 }
 
 /// 传输/能力相关事件（预留）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TransportEvent {
-    CapabilityDetected { id: String, caps: Vec<String> },
-    PartialFilterFallback { id: String, shallow: bool, message: String },
-    PartialFilterUnsupported { id: String, requested: String },
-    PartialFilterCapability { id: String, supported: bool },
+    CapabilityDetected {
+        id: String,
+        caps: Vec<String>,
+    },
+    PartialFilterFallback {
+        id: String,
+        shallow: bool,
+        message: String,
+    },
+    PartialFilterUnsupported {
+        id: String,
+        requested: String,
+    },
+    PartialFilterCapability {
+        id: String,
+        supported: bool,
+    },
 }
 
 /// 策略相关事件：覆盖 HTTP/TLS/冲突/汇总
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum StrategyEvent {
-    HttpApplied { id: String, follow: bool, max_redirects: u8 },
-    TlsApplied { id: String, insecure_skip_verify: bool, skip_san_whitelist: bool },
-    Conflict { id: String, kind: String, message: String },
-    Summary { id: String, kind: String, http_follow: bool, http_max: u8, retry_max: u32, retry_base_ms: u64, retry_factor: f64, retry_jitter: bool, tls_insecure: bool, tls_skip_san: bool, applied_codes: Vec<String>, filter_requested: bool }
-    ,AdaptiveTlsRollout { id: String, kind: String, percent_applied: u8, sampled: bool }
-    ,IgnoredFields { id: String, kind: String, top_level: Vec<String>, nested: Vec<String> }
-    ,AdaptiveTlsTiming { id: String, kind: String, used_fake_sni: bool, fallback_stage: String, connect_ms: Option<u32>, tls_ms: Option<u32>, first_byte_ms: Option<u32>, total_ms: Option<u32>, cert_fp_changed: bool }
-    ,CertFingerprintChanged { id: String, host: String, spki_sha256: String, cert_sha256: String }
-    ,CertFpPinMismatch { id: String, host: String, spki_sha256: String, pin_count: u8 }
+    HttpApplied {
+        id: String,
+        follow: bool,
+        max_redirects: u8,
+    },
+    TlsApplied {
+        id: String,
+        insecure_skip_verify: bool,
+        skip_san_whitelist: bool,
+    },
+    Conflict {
+        id: String,
+        kind: String,
+        message: String,
+    },
+    Summary {
+        id: String,
+        kind: String,
+        http_follow: bool,
+        http_max: u8,
+        retry_max: u32,
+        retry_base_ms: u64,
+        retry_factor: f64,
+        retry_jitter: bool,
+        tls_insecure: bool,
+        tls_skip_san: bool,
+        applied_codes: Vec<String>,
+        filter_requested: bool,
+    },
+    AdaptiveTlsRollout {
+        id: String,
+        kind: String,
+        percent_applied: u8,
+        sampled: bool,
+    },
+    IgnoredFields {
+        id: String,
+        kind: String,
+        top_level: Vec<String>,
+        nested: Vec<String>,
+    },
+    AdaptiveTlsTiming {
+        id: String,
+        kind: String,
+        used_fake_sni: bool,
+        fallback_stage: String,
+        connect_ms: Option<u32>,
+        tls_ms: Option<u32>,
+        first_byte_ms: Option<u32>,
+        total_ms: Option<u32>,
+        cert_fp_changed: bool,
+    },
+    CertFingerprintChanged {
+        id: String,
+        host: String,
+        spki_sha256: String,
+        cert_sha256: String,
+    },
+    CertFpPinMismatch {
+        id: String,
+        host: String,
+        spki_sha256: String,
+        pin_count: u8,
+    },
 }
 
 /// 统一顶层事件枚举
@@ -67,14 +151,32 @@ pub struct MemoryEventBus {
 }
 
 impl MemoryEventBus {
-    pub fn new() -> Self { Self::default() }
-    pub fn take_all(&self) -> Vec<Event> { if let Ok(mut g)=self.inner.lock(){ let out=g.clone(); g.clear(); out } else { Vec::new() } }
-    pub fn snapshot(&self) -> Vec<Event> { if let Ok(g)=self.inner.lock(){ g.clone() } else { Vec::new() } }
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn take_all(&self) -> Vec<Event> {
+        if let Ok(mut g) = self.inner.lock() {
+            let out = g.clone();
+            g.clear();
+            out
+        } else {
+            Vec::new()
+        }
+    }
+    pub fn snapshot(&self) -> Vec<Event> {
+        if let Ok(g) = self.inner.lock() {
+            g.clone()
+        } else {
+            Vec::new()
+        }
+    }
 }
 
 impl EventBus for MemoryEventBus {
     fn publish(&self, evt: Event) {
-        if let Ok(mut g)=self.inner.lock(){ g.push(evt); }
+        if let Ok(mut g) = self.inner.lock() {
+            g.push(evt);
+        }
     }
 }
 
@@ -82,13 +184,19 @@ impl EventBus for MemoryEventBus {
 static GLOBAL_BUS: OnceCell<Arc<dyn EventBusAny>> = OnceCell::new();
 
 pub fn set_global_event_bus(bus: Arc<dyn EventBusAny>) -> Result<(), &'static str> {
-    GLOBAL_BUS.set(bus).map_err(|_| "global event bus already set")
+    GLOBAL_BUS
+        .set(bus)
+        .map_err(|_| "global event bus already set")
 }
 
 pub fn publish_global(evt: Event) {
     // 允许线程局部覆盖（集成测试 crate 也可使用）
-    if let Some(bus) = TEST_OVERRIDE_BUS.with(|cell| cell.borrow().clone()) { bus.publish(evt.clone()); }
-    if let Some(bus) = GLOBAL_BUS.get() { bus.publish(evt); }
+    if let Some(bus) = TEST_OVERRIDE_BUS.with(|cell| cell.borrow().clone()) {
+        bus.publish(evt.clone());
+    }
+    if let Some(bus) = GLOBAL_BUS.get() {
+        bus.publish(evt);
+    }
 }
 
 /// 若全局已设置且为 MemoryEventBus，获取其克隆副本（共享同一内部存储）。
@@ -120,8 +228,15 @@ mod tests {
     #[test]
     fn memory_event_bus_basic() {
         let bus = MemoryEventBus::new();
-        bus.publish(Event::Task(TaskEvent::Started { id: "1".into(), kind: "GitClone".into() }));
-    bus.publish(Event::Policy(PolicyEvent::RetryApplied { id: "1".into(), code: "retry_strategy_override_applied".to_string(), changed: vec!["max".to_string()] }));
+        bus.publish(Event::Task(TaskEvent::Started {
+            id: "1".into(),
+            kind: "GitClone".into(),
+        }));
+        bus.publish(Event::Policy(PolicyEvent::RetryApplied {
+            id: "1".into(),
+            code: "retry_strategy_override_applied".to_string(),
+            changed: vec!["max".to_string()],
+        }));
         let snapshot = bus.snapshot();
         assert_eq!(snapshot.len(), 2);
         // take_all should clear

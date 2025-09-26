@@ -3,8 +3,8 @@
 // - struct CustomHttpsSubtransport (used by register.rs)
 // - fn set_push_auth_header_value (re-exported to transport::)
 
-use std::net::TcpStream;
 use std::io::Write;
+use std::net::TcpStream;
 use std::sync::Arc;
 
 use git2::Error;
@@ -13,16 +13,18 @@ use rustls::{ClientConfig, ClientConnection, ServerName};
 use url::Url;
 
 use crate::core::config::model::AppConfig;
-use crate::core::tls::util::{decide_sni_host_with_proxy, match_domain, proxy_present};
-use crate::core::git::transport::{FallbackDecision, DecisionCtx, FallbackStage, TimingRecorder};
-use crate::core::git::transport::{metrics_enabled};
-use crate::core::git::transport::metrics::{finish_and_store, tl_set_used_fake, tl_set_fallback_stage, tl_set_cert_fp_changed};
+use crate::core::git::transport::metrics::{
+    finish_and_store, tl_set_cert_fp_changed, tl_set_fallback_stage, tl_set_used_fake,
+};
+use crate::core::git::transport::metrics_enabled;
 use crate::core::git::transport::record_certificate;
+use crate::core::git::transport::{DecisionCtx, FallbackDecision, FallbackStage, TimingRecorder};
+use crate::core::tls::util::{decide_sni_host_with_proxy, match_domain, proxy_present};
 use crate::core::tls::verifier::{create_client_config, create_client_config_with_expected_name};
 
 mod auth;
-mod util;
 mod stream;
+mod util;
 
 pub use auth::set_push_auth_header_value;
 
@@ -32,9 +34,17 @@ static FALLBACK_TLS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static FALLBACK_VERIFY_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(test)]
-pub fn test_reset_fallback_counters() { FALLBACK_TLS_TOTAL.store(0, Ordering::Relaxed); FALLBACK_VERIFY_TOTAL.store(0, Ordering::Relaxed); }
+pub fn test_reset_fallback_counters() {
+    FALLBACK_TLS_TOTAL.store(0, Ordering::Relaxed);
+    FALLBACK_VERIFY_TOTAL.store(0, Ordering::Relaxed);
+}
 #[cfg(test)]
-pub fn test_snapshot_fallback_counters() -> (u64, u64) { (FALLBACK_TLS_TOTAL.load(Ordering::Relaxed), FALLBACK_VERIFY_TOTAL.load(Ordering::Relaxed)) }
+pub fn test_snapshot_fallback_counters() -> (u64, u64) {
+    (
+        FALLBACK_TLS_TOTAL.load(Ordering::Relaxed),
+        FALLBACK_VERIFY_TOTAL.load(Ordering::Relaxed),
+    )
+}
 
 #[cfg(test)]
 mod tests {
@@ -72,7 +82,12 @@ mod tests {
 fn classify_and_count_fallback(err_msg: &str) -> &'static str {
     let em = err_msg.to_ascii_lowercase();
     // rustls 错误文本约定：General("SAN whitelist mismatch") 或域名不符等 -> Verify；其他握手/IO -> Tls
-    if em.contains("whitelist") || em.contains("san") || em.contains("name") || em.contains("verify") || em.contains("pin") {
+    if em.contains("whitelist")
+        || em.contains("san")
+        || em.contains("name")
+        || em.contains("verify")
+        || em.contains("pin")
+    {
         FALLBACK_VERIFY_TOTAL.fetch_add(1, Ordering::Relaxed);
         "Verify"
     } else {
@@ -82,7 +97,9 @@ fn classify_and_count_fallback(err_msg: &str) -> &'static str {
 }
 
 #[cfg(test)]
-pub fn test_classify_and_count_fallback(err_msg: &str) -> &'static str { classify_and_count_fallback(err_msg) }
+pub fn test_classify_and_count_fallback(err_msg: &str) -> &'static str {
+    classify_and_count_fallback(err_msg)
+}
 
 /// 自定义 HTTPS 子传输：仅接管 TCP/TLS 建立与可选伪 SNI；HTTP 语义仍由 libgit2 智能传输处理。
 pub(super) struct CustomHttpsSubtransport {
@@ -164,7 +181,9 @@ impl git2::transport::SmartSubtransport for CustomHttpsSubtransport {
         Ok(Box::new(wrapped))
     }
 
-    fn close(&self) -> Result<(), Error> { Ok(()) }
+    fn close(&self) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 impl CustomHttpsSubtransport {
@@ -188,12 +207,21 @@ impl CustomHttpsSubtransport {
         host: &str,
         port: u16,
     ) -> Result<(StreamOwned<ClientConnection, TcpStream>, bool, String), Error> {
-    let mut timing = TimingRecorder::new();
+        let mut timing = TimingRecorder::new();
         tracing::debug!(target="git.transport", host=%host, port=%port, "begin tcp connect");
-        let mut decision = FallbackDecision::initial(&DecisionCtx { policy_allows_fake: self.cfg.http.fake_sni_enabled, runtime_fake_disabled: false });
+        let mut decision = FallbackDecision::initial(&DecisionCtx {
+            policy_allows_fake: self.cfg.http.fake_sni_enabled,
+            runtime_fake_disabled: false,
+        });
 
         // single attempt closure reused across Fake / Real
-    let mut attempt = |stage: FallbackStage, host: &str, port: u16| -> Result<(StreamOwned<ClientConnection, TcpStream>, bool, String), Error> {
+        let mut attempt = |stage: FallbackStage,
+                           host: &str,
+                           port: u16|
+         -> Result<
+            (StreamOwned<ClientConnection, TcpStream>, bool, String),
+            Error,
+        > {
             timing.mark_connect_start();
             let addr = format!("{host}:{port}");
             let tcp = TcpStream::connect(addr).map_err(|e| {
@@ -203,13 +231,24 @@ impl CustomHttpsSubtransport {
             tcp.set_nodelay(true).ok();
             timing.mark_connect_end();
 
-            let (sni, used_fake) = match stage { FallbackStage::Fake => self.compute_sni(host), FallbackStage::Real | FallbackStage::Default | FallbackStage::None => (host.to_string(), false) };
+            let (sni, used_fake) = match stage {
+                FallbackStage::Fake => self.compute_sni(host),
+                FallbackStage::Real | FallbackStage::Default | FallbackStage::None => {
+                    (host.to_string(), false)
+                }
+            };
             timing.mark_tls_start();
-            let server_name = ServerName::try_from(sni.as_str()).map_err(|_| Error::from_str("invalid sni host"))?;
-            let tls_cfg: Arc<ClientConfig> = if used_fake { Arc::new(create_client_config_with_expected_name(&self.cfg.tls, host)) } else { self.tls.clone() };
+            let server_name = ServerName::try_from(sni.as_str())
+                .map_err(|_| Error::from_str("invalid sni host"))?;
+            let tls_cfg: Arc<ClientConfig> = if used_fake {
+                Arc::new(create_client_config_with_expected_name(&self.cfg.tls, host))
+            } else {
+                self.tls.clone()
+            };
             let rhv = self.cfg.tls.real_host_verify_enabled;
             tracing::debug!(target="git.transport", host=%host, port=%port, sni=%sni, used_fake=%used_fake, stage=?stage, real_host_verify=%rhv, "start tls handshake");
-            let mut conn = ClientConnection::new(tls_cfg.clone(), server_name).map_err(|e| Error::from_str(&format!("tls client: {e}")))?;
+            let mut conn = ClientConnection::new(tls_cfg.clone(), server_name)
+                .map_err(|e| Error::from_str(&format!("tls client: {e}")))?;
             match conn.complete_io(&mut &tcp) {
                 Ok(_) => {
                     timing.mark_tls_end();
@@ -235,19 +274,38 @@ impl CustomHttpsSubtransport {
             let stage = decision.stage();
             match attempt(stage, host, port) {
                 Ok(ok) => {
-                    if metrics_enabled() { finish_and_store(&mut timing); }
+                    if metrics_enabled() {
+                        finish_and_store(&mut timing);
+                    }
                     // record used fake & stage
                     tl_set_used_fake(ok.1);
-                    let stage_str = match decision.stage() { FallbackStage::Fake => "Fake", FallbackStage::Real => "Real", FallbackStage::Default => "Default", FallbackStage::None => "None" };
+                    let stage_str = match decision.stage() {
+                        FallbackStage::Fake => "Fake",
+                        FallbackStage::Real => "Real",
+                        FallbackStage::Default => "Default",
+                        FallbackStage::None => "None",
+                    };
                     tl_set_fallback_stage(stage_str);
                     // fingerprint recording (best-effort)
                     if let Some(certs) = ok.0.conn.peer_certificates() {
-                        if let Some((changed, _spki, _cert)) = record_certificate(host, &certs[..]) { if changed { tl_set_cert_fp_changed(true); } }
+                        if let Some((changed, _spki, _cert)) = record_certificate(host, &certs[..])
+                        {
+                            if changed {
+                                tl_set_cert_fp_changed(true);
+                            }
+                        }
                     }
                     return Ok(ok);
                 }
                 Err(e) => {
-                    if let Some(_tr) = decision.advance_on_error() { continue; } else { if metrics_enabled() { finish_and_store(&mut timing); } return Err(e); }
+                    if let Some(_tr) = decision.advance_on_error() {
+                        continue;
+                    } else {
+                        if metrics_enabled() {
+                            finish_and_store(&mut timing);
+                        }
+                        return Err(e);
+                    }
                 }
             }
         }
