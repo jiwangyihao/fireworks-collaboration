@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use dirs_next as dirs;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::{
     fs,
     io::Write,
@@ -17,12 +17,25 @@ fn join_default_path(base: &Path) -> PathBuf {
 }
 
 // 全局配置基目录（用于 Tauri 应用在 setup 阶段注入 app_config_dir）
-static GLOBAL_BASE_DIR: OnceLock<PathBuf> = OnceLock::new();
+static GLOBAL_BASE_DIR: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+
+fn global_base_dir() -> Option<PathBuf> {
+    if let Some(lock) = GLOBAL_BASE_DIR.get() {
+        if let Ok(guard) = lock.lock() {
+            return guard.clone();
+        }
+    }
+    None
+}
 
 /// 由应用在启动时设置配置基目录，一旦设置将作为默认配置路径的来源。
 /// 重复设置将被忽略（保持第一次设置的值）。
 pub fn set_global_base_dir<P: AsRef<Path>>(base: P) {
-    let _ = GLOBAL_BASE_DIR.set(base.as_ref().to_path_buf());
+    let cell = GLOBAL_BASE_DIR.get_or_init(|| Mutex::new(None));
+    let mut guard = cell.lock().unwrap();
+    if guard.is_none() {
+        *guard = Some(base.as_ref().to_path_buf());
+    }
 }
 
 fn config_path() -> PathBuf {
@@ -30,7 +43,7 @@ fn config_path() -> PathBuf {
     // Windows: %APPDATA%\<identifier>
     // macOS: ~/Library/Application Support/<identifier>
     // Linux: ~/.config/<identifier>
-    let base = GLOBAL_BASE_DIR.get().cloned().unwrap_or_else(|| {
+    let base = global_base_dir().unwrap_or_else(|| {
         // 与 tauri.conf.json 中的 identifier 保持一致
         let identifier = "top.jwyihao.fireworks-collaboration";
         if let Some(mut dir) = dirs::config_dir() {
@@ -52,6 +65,21 @@ pub fn base_dir() -> PathBuf {
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
         .to_path_buf()
+}
+
+#[cfg(test)]
+pub fn test_override_global_base_dir<P: AsRef<Path>>(base: P) {
+    let cell = GLOBAL_BASE_DIR.get_or_init(|| Mutex::new(None));
+    let mut guard = cell.lock().unwrap();
+    *guard = Some(base.as_ref().to_path_buf());
+}
+
+#[cfg(test)]
+pub fn test_clear_global_base_dir() {
+    if let Some(cell) = GLOBAL_BASE_DIR.get() {
+        let mut guard = cell.lock().unwrap();
+        *guard = None;
+    }
 }
 
 pub fn load_or_init() -> Result<AppConfig> {
