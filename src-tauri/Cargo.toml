@@ -78,6 +78,10 @@ criterion = { version = "0.5", features=["html_reports"] }
 ctor = "0.2"
 rcgen = "0.12"
 
+[[bin]]
+name = "adaptive_tls_soak"
+path = "soak/main.rs"
+
 # Windows specific dependencies for registry access
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winreg", "winnt", "minwindef"] }

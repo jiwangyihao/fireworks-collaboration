@@ -6,6 +6,7 @@ pub mod app;
 pub mod core;
 pub mod events;
 pub mod logging; // 新增：暴露 app 模块供 main.rs 调用
+pub mod soak;
 
 // 便于测试直接使用任务模块
 pub use core::tasks;
