@@ -845,4 +845,31 @@ Thread-local 保存 (timing, used_fake, fallback_stage, cert_fp_changed)。无�
 
 ### P3.6 稳定性 Soak & 退出准入 实现说明
 
-（此处留空，后续补充实现细节）
+- 新增 `core::soak` 模块封装 Soak Runner，并在 `src-tauri/soak/` 下提供独立可执行入口 `adaptive_tls_soak`（Cargo `[[bin]]`）。
+- Runner 通过环境变量控制：启用需 `FWC_ADAPTIVE_TLS_SOAK=1`，可选参数包括 `FWC_SOAK_ITERATIONS`（默认 10）、`FWC_SOAK_KEEP_CLONES`、`FWC_SOAK_REPORT_PATH`、`FWC_SOAK_BASE_DIR`，以及 `FWC_SOAK_BASELINE_REPORT`（传入上一轮报告路径以生成对比摘要）。
+- 运行流程：初始化临时 bare 仓库（origin）、producer（负责 push）与 consumer（长期 fetch），在每轮执行 push→fetch→clone；所有任务通过现有 `TaskRegistry` 派生，事件统一注入 `MemoryEventBus` 聚合。
+- 采集指标：
+  - `TimingSummary`：connect/tls/firstByte/total 的 min/avg/p50/p95/样本数，区分 Fake 使用与最终阶段；
+  - `FallbackSummary`：Fake→Real、Real→Default 计数以及原因分布；
+  - `AutoDisableSummary` 与证书指纹变更次数（事件+样本）统一汇总。
+- 阈值校验：生成报告内置 `ThresholdSummary`，当前默认要求成功率 ≥99%、Fake→Real 回退占比 ≤5%，低于指标自动标记 `pass=false` 以供外部准入脚本拦截。
+- 报告落盘：`soak-report.json`（可配置）包含运行时间戳、选项快照、各类统计与阈值结果，便于长时 Soak 归档与后续分析；若提供 baseline，会附加 `comparison` 段列出成功率 / 回退占比 / 证书变更 / AutoDisable 触发次数的差异及回归标记。
+- 清理策略：默认删除 per-iteration clone 与 runtime 工作目录，保留配置目录以便复盘；`FWC_SOAK_KEEP_CLONES=1` 时保留克隆目录用于诊断。
+- 文档补充 `src-tauri/soak/README.md`，说明运行方式、报告结构与运维注意项。
+- 测试覆盖：
+  - `soak::tests::soak_runs_minimal_iterations` 做 1 轮快速冒烟，验证真实 Git 操作闭环可运行且生成报告；
+  - `soak::tests::aggregator_threshold_detects_high_fallback_ratio` 构造事件验证阈值判定逻辑（成功率通过、Fake→Real 超标时触发失败）。
+  - `soak::tests::soak_attaches_comparison_when_baseline_available` / `soak::tests::soak_ignores_invalid_baseline_report`：验证在提供合法基线报表时会生成 `comparison` 差异摘要（含成功率/回退率/指纹事件/自动禁用计数变化），遇到解析失败的基线则降级继续运行并保持报告结构稳定。
+
+#### P3.6 后续补强（2025-09-28）
+
+- Soak Runner 增强：
+  - `load_baseline_report` 增加错误处理与降级日志（路径、错误原因）并继续生成当前报告，确保长跑脚本不会因缺失或损坏基线报表中断；
+  - `ComparisonSummary` 新增自动禁用触发与恢复计数差值，配合回退标记列表 `regression_flags`，可直接在准入检查脚本中识别成功率下降、回退率上升或熔断次数增加等风险；
+  - 生成报告时快照 `SoakOptions`（含 baseline 路径），便于复现同一配置。
+- 自动禁用指标可测化：
+  - 在 `core::git::transport::runtime` 引入测试专用原子计数器钩子，记录触发/恢复次数；单元测试断言阈值触发与冷却恢复路径均会递增计数，并保持在功能开关关闭时不产生误报；
+  - 对熔断关闭 (`threshold_pct=0`) 的场景补充用例，确保计数保持 0。
+- 阈值与准入：
+  - 报告对比会标记 `success_rate.pass_regressed`、`fake_fallback_rate.pass_regressed`、`auto_disable.triggered_increase` 等标识，为后续 P4 准入脚本提供直接可消费的信号；
+  - 手册建议在 CI/运维脚本中对 `regression_flags` 列表做白名单判断，发现关键指标回归时自动阻断进入下一阶段。
