@@ -8,6 +8,12 @@ const SAMPLE_CAP: usize = 20;
 const SAMPLE_WINDOW_SECS: u64 = 120;
 const MIN_SAMPLES: usize = 5;
 
+use metrics::{describe_counter, register_counter};
+use once_cell::sync::OnceCell;
+
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, Ordering};
+
 #[derive(Debug, Clone, Copy)]
 pub struct AutoDisableConfig {
     pub threshold_pct: u8,
@@ -53,6 +59,63 @@ fn state() -> &'static Mutex<AutoDisableState> {
     STATE.get_or_init(|| Mutex::new(AutoDisableState::default()))
 }
 
+fn triggered_counter() -> &'static metrics::Counter {
+    static COUNTER: OnceCell<metrics::Counter> = OnceCell::new();
+    COUNTER.get_or_init(|| {
+        describe_counter!(
+            "adaptive_tls_auto_disable_triggered_total",
+            "Number of times adaptive TLS fake SNI was temporarily disabled"
+        );
+        register_counter!("adaptive_tls_auto_disable_triggered_total")
+    })
+}
+
+fn recovered_counter() -> &'static metrics::Counter {
+    static COUNTER: OnceCell<metrics::Counter> = OnceCell::new();
+    COUNTER.get_or_init(|| {
+        describe_counter!(
+            "adaptive_tls_auto_disable_recovered_total",
+            "Number of times adaptive TLS fake SNI auto-disable recovered"
+        );
+        register_counter!("adaptive_tls_auto_disable_recovered_total")
+    })
+}
+
+#[cfg(test)]
+static TRIGGERED_METRIC_CALLS: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+static RECOVERED_METRIC_CALLS: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+fn note_triggered_metric() {
+    TRIGGERED_METRIC_CALLS.fetch_add(1, Ordering::SeqCst);
+}
+
+#[cfg(not(test))]
+fn note_triggered_metric() {}
+
+#[cfg(test)]
+fn note_recovered_metric() {
+    RECOVERED_METRIC_CALLS.fetch_add(1, Ordering::SeqCst);
+}
+
+#[cfg(not(test))]
+fn note_recovered_metric() {}
+
+#[cfg(test)]
+pub fn test_reset_metric_counters() {
+    TRIGGERED_METRIC_CALLS.store(0, Ordering::SeqCst);
+    RECOVERED_METRIC_CALLS.store(0, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub fn test_metric_counter_values() -> (u64, u64) {
+    (
+        TRIGGERED_METRIC_CALLS.load(Ordering::SeqCst),
+        RECOVERED_METRIC_CALLS.load(Ordering::SeqCst),
+    )
+}
+
 fn window_duration() -> Duration {
     Duration::from_secs(SAMPLE_WINDOW_SECS)
 }
@@ -90,6 +153,8 @@ fn record_fake_attempt_with_now(
         if deadline <= now {
             guard.disabled_until = None;
             guard.samples.clear();
+            recovered_counter().increment(1);
+            note_recovered_metric();
             return Some(AutoDisableEvent::Recovered);
         }
         guard.samples.clear();
@@ -112,6 +177,8 @@ fn record_fake_attempt_with_now(
         let cooldown = Duration::from_secs(cfg.cooldown_sec);
         guard.disabled_until = Some(now + cooldown);
         guard.samples.clear();
+        triggered_counter().increment(1);
+        note_triggered_metric();
         return Some(AutoDisableEvent::Triggered {
             threshold_pct: cfg.threshold_pct,
             cooldown_secs: cfg.cooldown_sec as u32,
@@ -167,6 +234,7 @@ mod tests {
     fn auto_disable_triggers_when_ratio_exceeds_threshold() {
         let _guard = super::test_auto_disable_guard().lock().unwrap();
         test_reset_auto_disable();
+        super::test_reset_metric_counters();
         let cfg = cfg(50, 30);
         let mut now = Instant::now();
         for _ in 0..4 {
@@ -189,12 +257,16 @@ mod tests {
             now += Duration::from_secs(1);
         }
         assert!(is_fake_disabled(&cfg));
+        let (triggered, recovered) = super::test_metric_counter_values();
+        assert_eq!(triggered, 1);
+        assert_eq!(recovered, 0);
     }
 
     #[test]
     fn auto_disable_recovers_after_cooldown() {
         let _guard = super::test_auto_disable_guard().lock().unwrap();
         test_reset_auto_disable();
+        super::test_reset_metric_counters();
         let cfg = cfg(50, 1);
         let base = Instant::now();
         let mut triggered_at: Option<Instant> = None;
@@ -215,14 +287,21 @@ mod tests {
             Some(AutoDisableEvent::Recovered)
         ));
         assert!(!is_fake_disabled(&cfg));
+        let (triggered, recovered) = super::test_metric_counter_values();
+        assert_eq!(triggered, 1);
+        assert_eq!(recovered, 1);
     }
 
     #[test]
     fn disabled_feature_returns_none() {
         let _guard = super::test_auto_disable_guard().lock().unwrap();
         test_reset_auto_disable();
+        super::test_reset_metric_counters();
         let cfg = cfg(0, 30);
         assert!(!is_fake_disabled(&cfg));
         assert!(record_fake_attempt(&cfg, true).is_none());
+        let (triggered, recovered) = super::test_metric_counter_values();
+        assert_eq!(triggered, 0);
+        assert_eq!(recovered, 0);
     }
 }
