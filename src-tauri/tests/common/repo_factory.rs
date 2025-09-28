@@ -18,6 +18,13 @@ use uuid::Uuid;
 fn init_empty_repo(path: &Path) {
     let cancel = AtomicBool::new(false);
     git_init(path, &cancel, |_p: ProgressPayload| {}).expect("init repo");
+    if let Ok(repo) = git2::Repository::open(path) {
+        if let Ok(mut cfg) = repo.config() {
+            let _ = cfg.set_bool("core.autocrlf", false);
+            let _ = cfg.set_bool("core.safecrlf", false);
+            let _ = cfg.set_str("core.eol", "lf");
+        }
+    }
 }
 
 fn commit_file(repo: &Path, file: &str, content: &str, msg: &str) {

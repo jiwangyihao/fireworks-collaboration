@@ -13,6 +13,7 @@
 //!  * 支持超时、取消、错误注入 (fault injection)
 //!  * 事件收集改为结构化枚举 + tag DSL
 
+use super::test_env;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -284,6 +285,7 @@ pub fn run_pipeline_with(spec: &PipelineSpec, cfg: &PipelineConfig) -> PipelineO
     if !cfg.enable_real {
         return run_pipeline(spec);
     }
+    test_env::init_test_env();
     let mut out = PipelineOutcome::default();
     // 准备远端
     let remote = create_bare_remote_with_commits(cfg.remote_commits);
@@ -328,13 +330,21 @@ pub fn run_pipeline_with(spec: &PipelineSpec, cfg: &PipelineConfig) -> PipelineO
                     .any(|f| matches!(f, FaultKind::ForcePushFailure));
                 if let Some(l) = &local {
                     if force_fail {
-                        // 改 remote URL 指向不存在以触发失败
-                        run(Command::new("git").current_dir(l).args([
-                            "remote",
-                            "set-url",
-                            "origin",
-                            "file:///non/existent/remote",
-                        ]));
+                        // 改 remote URL 指向临时不存在的路径以触发失败，避免依赖环境特定路径
+                        let bogus_remote = std::env::temp_dir().join(format!(
+                            "fwc-missing-remote-{}",
+                            uuid::Uuid::new_v4()
+                        ));
+                        let _ = std::fs::remove_dir_all(&bogus_remote);
+                        let bogus_remote_str = bogus_remote.to_string_lossy().replace('\\', "/");
+                        let mut set_remote = Command::new("git");
+                        set_remote
+                            .current_dir(l)
+                            .arg("remote")
+                            .arg("set-url")
+                            .arg("origin")
+                            .arg(&bogus_remote_str);
+                        run(&mut set_remote);
                     }
                     emit(&mut out.events, EV_PUSH_START);
                     let status = Command::new("git")

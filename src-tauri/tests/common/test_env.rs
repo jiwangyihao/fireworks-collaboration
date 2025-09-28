@@ -1,4 +1,4 @@
-use std::sync::Once;
+use std::{fs, path::PathBuf, sync::Once};
 
 static INIT: Once = Once::new();
 
@@ -20,7 +20,17 @@ pub fn init_test_env() {
         std::env::set_var("GIT_AUTHOR_EMAIL", "fwc-test@example.com");
         std::env::set_var("GIT_COMMITTER_NAME", "fwc-test");
         std::env::set_var("GIT_COMMITTER_EMAIL", "fwc-test@example.com");
+
+        // Git 全局配置：禁用 CRLF 转换，避免测试运行时产生警告。
+        std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
+        let cfg_path = git_test_config_path();
+        fs::write(&cfg_path, "[core]\n\tautocrlf = false\n\tsafecrlf = false\n").expect("write git test config");
+        std::env::set_var("GIT_CONFIG_GLOBAL", cfg_path.to_string_lossy().to_string());
     });
+}
+
+fn git_test_config_path() -> PathBuf {
+    std::env::temp_dir().join("fwc-test-gitconfig")
 }
 
 #[cfg(test)]
