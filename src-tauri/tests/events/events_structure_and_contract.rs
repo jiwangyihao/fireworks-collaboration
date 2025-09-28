@@ -234,8 +234,8 @@ mod section_adaptive_tls_fallback {
     use fireworks_collaboration_lib::events::structured::{
         set_test_event_bus, Event, MemoryEventBus, StrategyEvent,
     };
-    use uuid::Uuid;
     use std::sync::{Mutex, OnceLock};
+    use uuid::Uuid;
 
     fn metrics_env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -329,7 +329,10 @@ mod section_adaptive_tls_fallback {
             }
             _ => false,
         });
-        assert!(has_transition, "fallback event missing when metrics disabled");
+        assert!(
+            has_transition,
+            "fallback event missing when metrics disabled"
+        );
         let has_auto_disable = events.iter().any(|evt| match evt {
             Event::Strategy(StrategyEvent::AdaptiveTlsAutoDisable {
                 enabled,
@@ -344,7 +347,10 @@ mod section_adaptive_tls_fallback {
             "auto-disable event missing when metrics disabled"
         );
         let has_timing = events.iter().any(|evt| {
-            matches!(evt, Event::Strategy(StrategyEvent::AdaptiveTlsTiming { .. }))
+            matches!(
+                evt,
+                Event::Strategy(StrategyEvent::AdaptiveTlsTiming { .. })
+            )
         });
         assert!(
             !has_timing,

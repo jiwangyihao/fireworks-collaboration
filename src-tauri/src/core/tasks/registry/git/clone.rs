@@ -296,18 +296,16 @@ impl TaskRegistry {
                     applied_codes.clone(),
                     filter_requested.is_some(),
                 );
-                if let Some(rewritten) = crate::core::git::transport::maybe_rewrite_https_to_custom(
-                    &global_cfg,
-                    repo.as_str(),
-                ) {
-                    let _ = rewritten;
+                let rollout =
+                    crate::core::git::transport::decide_https_to_custom(&global_cfg, repo.as_str());
+                if rollout.eligible {
                     let percent = global_cfg.http.fake_sni_rollout_percent;
                     publish_global(StructuredEvent::Strategy(
                         StructuredStrategyEvent::AdaptiveTlsRollout {
                             id: id.to_string(),
                             kind: "GitClone".into(),
                             percent_applied: percent as u8,
-                            sampled: true,
+                            sampled: rollout.sampled,
                         },
                     ));
                 }

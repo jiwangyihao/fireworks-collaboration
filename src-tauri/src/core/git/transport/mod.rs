@@ -17,7 +17,7 @@ pub use fallback::{DecisionCtx, FallbackDecision, FallbackReason, FallbackStage}
 pub use http::set_push_auth_header_value;
 pub use metrics::{NoopCollector, TimingCapture, TimingRecorder, TransportMetricsCollector};
 pub use register::ensure_registered;
-pub use rewrite::maybe_rewrite_https_to_custom;
+pub use rewrite::{decide_https_to_custom, maybe_rewrite_https_to_custom, RewriteDecision};
 pub use runtime::{is_fake_disabled, record_fake_attempt, AutoDisableConfig, AutoDisableEvent};
 // P3.2: expose selective metrics thread-local helpers for task registry emission
 pub use fingerprint::record_certificate;

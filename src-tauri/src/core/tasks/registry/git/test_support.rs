@@ -9,15 +9,14 @@ use crate::core::tasks::model::TaskErrorEvent;
 pub fn test_emit_clone_strategy_and_rollout(repo: &str, task_id: uuid::Uuid) {
     let _app = AppHandle;
     let global_cfg = TaskRegistry::runtime_config();
-    if let Some(_rewritten) =
-        crate::core::git::transport::maybe_rewrite_https_to_custom(&global_cfg, repo)
-    {
+    let decision = crate::core::git::transport::decide_https_to_custom(&global_cfg, repo);
+    if decision.eligible {
         publish_global(StructuredEvent::Strategy(
             StructuredStrategyEvent::AdaptiveTlsRollout {
                 id: task_id.to_string(),
                 kind: "GitClone".into(),
                 percent_applied: global_cfg.http.fake_sni_rollout_percent as u8,
-                sampled: true,
+                sampled: decision.sampled,
             },
         ));
     }
@@ -234,5 +233,66 @@ pub fn test_emit_adaptive_tls_observability(task_id: uuid::Uuid, kind: &str) {
                 },
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::config::{loader, model::AppConfig};
+    use crate::events::structured::{
+        clear_test_event_bus, set_test_event_bus, Event, MemoryEventBus, StrategyEvent,
+    };
+    use std::sync::{Mutex, OnceLock};
+    use tempfile::tempdir;
+    use uuid::Uuid;
+
+    fn config_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn setup_config(percent: u8) -> tempfile::TempDir {
+        let dir = tempdir().expect("temp config dir");
+        loader::test_override_global_base_dir(dir.path());
+        let mut cfg = AppConfig::default();
+        cfg.http.fake_sni_enabled = true;
+        cfg.http.fake_sni_rollout_percent = percent;
+        loader::save_at(&cfg, dir.path()).expect("save config");
+        dir
+    }
+
+    fn collect_rollout(percent: u8) -> bool {
+        let _guard = config_lock().lock().unwrap();
+        let temp = setup_config(percent);
+        let bus = std::sync::Arc::new(MemoryEventBus::new());
+        set_test_event_bus(bus.clone());
+
+        let repo = "https://github.com/owner/repo";
+        let id = Uuid::new_v4();
+        let expected_id = id.to_string();
+        test_emit_clone_strategy_and_rollout(repo, id);
+        let events = bus.take_all();
+        clear_test_event_bus();
+        loader::test_clear_global_base_dir();
+        drop(temp);
+        events
+            .into_iter()
+            .find_map(|evt| match evt {
+                Event::Strategy(StrategyEvent::AdaptiveTlsRollout { id, sampled, .. })
+                    if id == expected_id => Some(sampled),
+                _ => None,
+            })
+            .expect("rollout event")
+    }
+
+    #[test]
+    fn rollout_event_reflects_sampled_true_when_percent_100() {
+        assert!(collect_rollout(100));
+    }
+
+    #[test]
+    fn rollout_event_reflects_sampled_false_when_percent_zero() {
+        assert!(!collect_rollout(0));
     }
 }

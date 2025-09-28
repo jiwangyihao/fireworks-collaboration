@@ -132,12 +132,13 @@ impl TaskRegistry {
                 return;
             }
 
-            let mut effective_follow_redirects = None;
-            let mut effective_max_redirects = None;
+            let global_cfg = TaskRegistry::runtime_config();
+            let mut effective_follow_redirects: bool = global_cfg.http.follow_redirects;
+            let mut effective_max_redirects: u8 = global_cfg.http.max_redirects;
             let mut retry_plan: crate::core::tasks::retry::RetryPlan =
-                TaskRegistry::runtime_config().retry.clone().into();
-            let mut effective_insecure_skip_verify: Option<bool> = None;
-            let mut effective_skip_san_whitelist: Option<bool> = None;
+                global_cfg.retry.clone().into();
+            let mut effective_insecure_skip_verify: bool = global_cfg.tls.insecure_skip_verify;
+            let mut effective_skip_san_whitelist: bool = global_cfg.tls.skip_san_whitelist;
             let mut applied_codes: Vec<String> = vec![];
             if let Some(raw) = strategy_override.clone() {
                 use crate::core::git::default_impl::opts::parse_strategy_override;
@@ -177,7 +178,6 @@ impl TaskRegistry {
                             ));
                         }
                         if let Some(parsed) = parsed_res.parsed {
-                            let global_cfg = TaskRegistry::runtime_config();
                             if let Some(http_over) = parsed.http.as_ref() {
                                 let (f, m, changed, conflict) = TaskRegistry::apply_http_override(
                                     "GitPush",
@@ -185,8 +185,8 @@ impl TaskRegistry {
                                     &global_cfg,
                                     Some(http_over),
                                 );
-                                effective_follow_redirects = Some(f);
-                                effective_max_redirects = Some(m);
+                                effective_follow_redirects = f;
+                                effective_max_redirects = m;
                                 if changed {
                                     publish_global(StructuredEvent::Strategy(
                                         StructuredStrategyEvent::HttpApplied {
@@ -219,8 +219,8 @@ impl TaskRegistry {
                                         &global_cfg,
                                         Some(tls_over),
                                     );
-                                effective_insecure_skip_verify = Some(ins);
-                                effective_skip_san_whitelist = Some(skip);
+                                effective_insecure_skip_verify = ins;
+                                effective_skip_san_whitelist = skip;
                                 if changed {
                                     publish_global(StructuredEvent::Strategy(
                                         StructuredStrategyEvent::TlsApplied {
@@ -303,38 +303,28 @@ impl TaskRegistry {
                 applied_codes = ?applied_codes,
                 "emit push strategy summary"
             );
-            let global_after = TaskRegistry::runtime_config();
-            let eff_follow =
-                effective_follow_redirects.unwrap_or(global_after.http.follow_redirects);
-            let eff_max = effective_max_redirects.unwrap_or(global_after.http.max_redirects);
-            let eff_insecure =
-                effective_insecure_skip_verify.unwrap_or(global_after.tls.insecure_skip_verify);
-            let eff_skip =
-                effective_skip_san_whitelist.unwrap_or(global_after.tls.skip_san_whitelist);
-            let mut dedup_codes = applied_codes.clone();
-            dedup_codes.sort();
-            dedup_codes.dedup();
+            applied_codes.sort();
+            applied_codes.dedup();
             TaskRegistry::emit_strategy_summary(
                 &app,
                 id,
                 "GitPush",
-                (eff_follow, eff_max),
+                (effective_follow_redirects, effective_max_redirects),
                 &retry_plan,
-                (eff_insecure, eff_skip),
-                dedup_codes,
+                (effective_insecure_skip_verify, effective_skip_san_whitelist),
+                applied_codes.clone(),
                 false,
             );
-            if let Some(rewritten) = crate::core::git::transport::maybe_rewrite_https_to_custom(
-                &global_after,
-                dest.as_str(),
-            ) {
-                let _ = rewritten;
+            let rollout =
+                crate::core::git::transport::decide_https_to_custom(&global_cfg, dest.as_str());
+            if rollout.eligible {
+                let percent = global_cfg.http.fake_sni_rollout_percent;
                 publish_global(StructuredEvent::Strategy(
                     StructuredStrategyEvent::AdaptiveTlsRollout {
                         id: id.to_string(),
                         kind: "GitPush".into(),
-                        percent_applied: global_after.http.fake_sni_rollout_percent as u8,
-                        sampled: true,
+                        percent_applied: percent as u8,
+                        sampled: rollout.sampled,
                     },
                 ));
             }
