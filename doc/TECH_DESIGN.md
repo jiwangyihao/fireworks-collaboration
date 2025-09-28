@@ -129,7 +129,7 @@ Tauri Backend (Rust)
   │   ├─ git:: (gitoxide integration / progress)
   │   ├─ http:: (unified client + hyper + rustls)
   │   ├─ tls:: (SAN verifier / SPKI pin)
-  │   ├─ ip_pool:: (sources + probe + score)
+  │   ├─ ip_pool:: (sources + probe + latency score)
   │   ├─ proxy:: (HTTP CONNECT / SOCKS5)
   │   ├─ tasks:: (registry / cancellation / dispatch)
   │   ├─ config:: (load / watch / override)
@@ -212,7 +212,7 @@ Tauri Backend (Rust)
 | git::progress | side-band 解码 | git://progress |
 | http::client | 连接 + TLS + 重定向 + 伪 SNI | 通用响应 |
 | tls::verifier | SAN 白名单 + Pin | 安全失败分类 |
-| ip_pool::probe | RTT 探测 / score | ip://updated |
+| ip_pool::probe | TCP 握手测速 / latency score | ip://updated |
 | proxy::manager | 失败计数 -> fallback | proxy://fallback |
 | tasks::registry | id / state / cancel | 任务快照 |
 | tasks::dispatcher | 事件分发 | Tauri emit |
@@ -271,20 +271,23 @@ Tauri Backend (Rust)
 | 来源 | 描述 |
 |------|------|
 | builtin | 内置可信 IP |
-| history | 历史成功（附加权重 0） |
+| history | 历史成功（缓存命中时优先复用） |
 | user_static | 用户手动添加 |
 | dns | 多 DoH 解析结果 |
-| fallback | 最近失败 IP（惩罚高） |
+| fallback | 最近失败后需要重新验证的 IP |
+
+评分策略：
+- `ip-config.json` 新增 `preheatDomains` 与 `scoreTtlSeconds`。预热域名在进程启动后立即从所有来源收集 IP，并对目标端口执行 TCP 握手测速（Github 场景默认 443，同时兼容 80），记录最优延迟。
+- 非预热域名在首次需要选址时才触发相同的收集与测速流程，完成后将结果写入缓存并持久化到 `ip-history.json`。
+- 评分值仅为最近一次 TCP 握手延迟（毫秒），延迟越小优先级越高；不再引入额外权重或失败惩罚。
+- 每条评分记录包含 `ip/port/sources/latency_ms/measured_at/expires_at`，并在 `scoreTtlSeconds`（默认 300 秒）后过期。预热域名到期后后台自动刷新；非预热域名到期后直接删除条目，下一次访问会重新采样。
 
 流程：  
-1. 聚合 -> 去重  
-2. 探测（TCP->TLS->HEAD）收集 RTT/成功  
-3. 更新统计 (rtt_avg, jitter, fail)  
-4. Score = rtt_avg + jitter*w1 + fail*w2 + min(source_weight) + cooldown_penalty  
-5. 选最优非冷却 IP  
-6. 失败重试换下一个 → 达阈值加入 fallback/cooldown  
-
-权重示例：history=0, user_static=0, builtin=5, dns=10, fallback=50。
+1. 查询缓存（域名 + 端口）；未过期则直接返回最小延迟条目。  
+2. 若缓存缺失或过期，聚合全部来源 IP，执行 TCP 握手测速并生成新的 `IpStat` 列表。  
+3. 将结果写入缓存与 `ip-history.json`，并挑选延迟最低的 IP 给调用方。  
+4. 仅在确认是 IP 连通性问题时（多次连接失败）触发强制重测或标记为 fallback 来源。  
+5. 预热域名由后台定时任务在过期时重新测速，确保常用目标始终有最新延迟数据。
 
 ---
 
@@ -389,8 +392,14 @@ Tauri Backend (Rust)
 | 文件 | 用途 |
 |------|------|
 | config.json | httpStrategy / httpFake / tls / proxy |
-| ip-config.json | dns providers / scoring |
-| ip-history.json | 历史成功失败与 RTT |
+| ip-config.json | dns providers / 预热域名列表 / 评分 TTL |
+| ip-history.json | 最近一次 TCP 握手采样（延迟 / 来源 / 过期时间） |
+
+预热与评分策略：
+- `ip-config.json` 内新增 `preheatDomains` 与 `scoreTtlSeconds`，启动时对预热域名从全部来源收集 IP，并针对目标端口（默认 443，兼容 80）执行 TCP 握手测速。
+- 非预热域名在第一次需要连接时才触发同样的收集与测速，完成后写入缓存与历史文件。
+- 评分仅等于最近一次 TCP 握手延迟（毫秒），延迟越小优先级越高；不再叠加权重或失败惩罚。
+- 评分在 `scoreTtlSeconds` 后过期。预热域名由后台自动刷新；非预热域名过期后直接移除，下一次访问重新采样。
 | cert-fp.log | 指纹追加日志（JSON line） |
 | strategy.lock | 可选运行时快照 |
 | lfs-cache/ | LFS 对象（后期） |
@@ -574,15 +583,11 @@ enum IpSource { Builtin, History, UserStatic, Dns, Fallback }
 
 struct IpStat {
   ip: String,
+  port: u16,
   sources: Vec<IpSource>,
-  rtt_avg: f32,
-  rtt_jitter: f32,
-  success: u32,
-  failure: u32,
-  last_success: Option<std::time::Instant>,
-  last_failure: Option<std::time::Instant>,
-  cooldown_until: Option<std::time::Instant>,
-  score: f32
+  latency_ms: u32,
+  measured_at: std::time::Instant,
+  expires_at: std::time::Instant,
 }
 
 struct HttpStrategy {
@@ -668,13 +673,31 @@ impl ServerCertVerifier for GithubSanVerifier {
 
 ### IP 评分
 ```rust
-fn compute_score(stat: &IpStat, cfg: &ScoreCfg, now: Instant) -> f32 {
-  let jitter_pen = stat.rtt_jitter * cfg.jitter_weight;
-  let fail_recent = recent_fail_count(stat, cfg.recent_failure_decay_sec, now);
-  let fail_pen = fail_recent as f32 * cfg.failure_weight;
-  let src_pen = stat.sources.iter().map(|s| cfg.source_weight[s]).min().unwrap_or(0.0);
-  let cooldown_pen = stat.cooldown_until.filter(|t| *t > now).map(|_| 10_000.0).unwrap_or(0.0);
-  stat.rtt_avg + jitter_pen + fail_pen + src_pen + cooldown_pen
+fn ensure_latency_score(domain: &str, port: u16, now: Instant) -> Option<IpStat> {
+  if let Some(entry) = cache.get(domain, port).filter(|s| s.expires_at > now) {
+    return Some(entry);
+  }
+
+  let ttl = cfg.score_ttl_seconds;
+  let ips = collect_all_sources(domain);
+  let mut best: Option<IpStat> = None;
+  for (ip, sources) in ips {
+    if let Ok(latency_ms) = tcp_handshake_latency(&ip, port) {
+      let measured = IpStat {
+        ip,
+        port,
+        sources,
+        latency_ms,
+        measured_at: now,
+        expires_at: now + Duration::from_secs(ttl),
+      };
+      cache.upsert(domain, port, measured.clone());
+      if best.as_ref().map(|b| latency_ms < b.latency_ms).unwrap_or(true) {
+        best = Some(measured);
+      }
+    }
+  }
+  best
 }
 ```
 
@@ -723,17 +746,6 @@ pub fn start_clone(repo: String, dest: String, registry: Arc<TaskRegistry>) -> U
 src/
   api/
     git.ts
-    http.ts
-    ip.ts
-    strategy.ts
-    tauri.ts
-  stores/
-    tasks.ts
-    logs.ts
-  views/
-    GitPanel.vue
-    HttpTester.vue
-    NetworkInsights.vue
   components/
     ProgressBar.vue
     LogViewer.vue
@@ -778,7 +790,7 @@ cert-fp.log
 | 代理失败未降级 | 低 | 停留不可达 | failure 阈值回退 | 自动恢复探测 |
 | 并发资源争用 | 中 | 大量任务 | UI 限制提示 | 任务调度队列 |
 | Pack 中断 | 中 | 重下载 | 整体重试 | Pack resume |
-| IP 池污染 | 中 | 引入坏 IP | 失败惩罚 / cooldown | 信誉评分 |
+| IP 池污染 | 中 | 引入坏 IP | 过期后自动重新测速 | 来源白名单 + 延迟采样 |
 | 指纹文件篡改 | 低 | 误导 Pin | 只追加 + 校验行格式 | Hash 链/签名 |
 | 安全策略误配置 | 中 | 关闭 whitelist | UI 警告 | 安全模式一键恢复 |
 
@@ -808,7 +820,7 @@ cert-fp.log
 | SAN 白名单 | 强制 | P0 | 自定义 verifier |
 | SPKI Pin | 可选 | P7 | tls::verifier + config |
 | 代理与回退 | 保留 | P4 | proxy::manager |
-| IP 优选 5 来源 | 精简 | P5 | ip_pool with scoring |
+| IP 优选 5 来源 | 精简 | P5 | ip_pool with latency scoring |
 | 任务事件/取消 | 保留 | P0 | TaskRegistry + emit |
 | 错误分类 | 保留 | 渐进 | ErrorCategory 枚举 |
 | 指纹事件 | 保留 | P7 | security::fingerprint |

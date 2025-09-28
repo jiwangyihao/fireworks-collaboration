@@ -8,7 +8,7 @@
 
 - 为什么迁移：gitoxide 短期内没有 push 能力；git2-rs（libgit2）在 push/fetch/clone 上更成熟，生态验证充分。
 - 新 MP0 目标：保持既有命令/事件/前端 UI 不变，后端 Git 实现从 gix 替换为 git2-rs；清理 gix 依赖与实现；全部单测通过。
-- MP1 目标：在 git2-rs 基础上补齐 push，并灰度引入“自适应 TLS 传输层（原方式A，仅接管连接/TLS/SNI）”，失败自动回退；后续与 IP 池集成，连接时优选评分最高 IP，只有在确认是 IP 连通性问题时才更换 IP，更换后仍先使用 Fake SNI。
+- MP1 目标：在 git2-rs 基础上补齐 push，并灰度引入“自适应 TLS 传输层（原方式A，仅接管连接/TLS/SNI）”，失败自动回退；后续与 IP 池集成，连接时优选基于 TCP 握手延迟的评分最高 IP，只有在确认是 IP 连通性问题时才更换 IP，更换后仍先使用 Fake SNI。
 - P2 将引入本地 Git 操作（init/add/commit/branch/tag/remote/checkout 等）与 shallow/partial，以及任务级策略覆盖；代理支持按规划延后到 P5。
 - 路线图统一为 9 阶段（MP0、MP1、P2…P8），长期目标与现有技术方案保持一致。
 
@@ -136,7 +136,7 @@ Push（HTTPS）设计（git2-rs）：
   - SNI 可为 Fake 或 Real；
   - TLS 使用 rustls，自定义验证器支持 SAN 白名单、可选 SPKI Pin、Real-Host 验证；
   - 代理模式下禁用 Fake SNI（减少可识别特征）。
-  - 与 IP 池协作（启用时）：连接前由 IP 池提供评分最高的候选 IP；仅在确认是 IP 连通性问题时更换 IP，更换后仍优先使用 Fake SNI，再按回退链进行。
+  - 与 IP 池协作（启用时）：连接前由 IP 池基于最新的 TCP 握手延迟（按域名+端口缓存，列表域名在启动时预热，其余按需采样）提供评分最高的候选 IP；仅在确认是 IP 连通性问题时才触发更换，更换后仍优先使用 Fake SNI，再按回退链进行。
 - 回退：连接或验证失败 → 自动切回 Real SNI；仍失败 → 切换 IP（后期）/代理（若可用）；最终回退到 libgit2 默认。
 - 安全基线：不关闭链验证；Fake SNI 仅改变握手 SNI，不降低验证强度。
 
@@ -248,8 +248,14 @@ strategyOverride?: {
 | 文件 | 用途 |
 |------|------|
 | config.json | httpStrategy / httpFake / tls / proxy |
-| ip-config.json | dns providers / scoring |
-| ip-history.json | 历史成功失败与 RTT |
+| ip-config.json | dns providers / 预热域名列表 / 评分 TTL |
+| ip-history.json | 最近一次 TCP 握手采样（延迟 / 来源 / 过期时间） |
+
+预热与评分策略：
+- `ip-config.json` 内新增 `preheatDomains` 与 `scoreTtlSeconds`。预热列表中的域名在进程启动后立即从全部可用来源（内置、DNS、历史、用户静态、兜底）收集 IP，并分别对目标端口（Github 场景默认 443，同时兼容 80）执行一次 TCP 握手测速，记录最优延迟。
+- 非预热域名在第一次选址时才触发同样的 IP 收集与测速；完成后写入 `ip-history.json` 并带上 `expires_at`。
+- 评分仅等于最近一次 TCP 握手延迟（毫秒），延迟越小优先级越高；不存在复杂权重或失败惩罚。
+- 评分在 `scoreTtlSeconds` 后过期（默认 300 秒）。预热域名到期后后台自动刷新；非预热域名到期后条目被移除，下一次访问重新采样。
 | cert-fp.log | 证书指纹追加日志（JSON line） |
 | strategy.lock | 可选运行时快照 |
 | lfs-cache/ | LFS 对象缓存（后期） |
@@ -298,15 +304,11 @@ enum IpSource { Builtin, History, UserStatic, Dns, Fallback }
 
 struct IpStat {
   ip: String,
+  port: u16,
   sources: Vec<IpSource>,
-  rtt_avg: f32,
-  rtt_jitter: f32,
-  success: u32,
-  failure: u32,
-  last_success: Option<std::time::Instant>,
-  last_failure: Option<std::time::Instant>,
-  cooldown_until: Option<std::time::Instant>,
-  score: f32
+  latency_ms: u32,
+  measured_at: std::time::Instant,
+  expires_at: std::time::Instant,
 }
 
 struct HttpStrategy {
@@ -389,13 +391,31 @@ impl ServerCertVerifier for GithubSanVerifier {
 
 IP 评分：
 ```rust
-fn compute_score(stat: &IpStat, cfg: &ScoreCfg, now: Instant) -> f32 {
-  let jitter_pen = stat.rtt_jitter * cfg.jitter_weight;
-  let fail_recent = recent_fail_count(stat, cfg.recent_failure_decay_sec, now);
-  let fail_pen = fail_recent as f32 * cfg.failure_weight;
-  let src_pen = stat.sources.iter().map(|s| cfg.source_weight[s]).min().unwrap_or(0.0);
-  let cooldown_pen = stat.cooldown_until.filter(|t| *t > now).map(|_| 10_000.0).unwrap_or(0.0);
-  stat.rtt_avg + jitter_pen + fail_pen + src_pen + cooldown_pen
+fn ensure_latency_score(domain: &str, port: u16, now: Instant) -> Option<IpStat> {
+  if let Some(entry) = cache.get(domain, port).filter(|s| s.expires_at > now) {
+    return Some(entry);
+  }
+
+  let ttl = cfg.score_ttl_seconds;
+  let ips = collect_all_sources(domain);
+  let mut best: Option<IpStat> = None;
+  for (ip, sources) in ips {
+    if let Ok(latency_ms) = tcp_handshake_latency(&ip, port) {
+      let measured = IpStat {
+        ip,
+        port,
+        sources,
+        latency_ms,
+        measured_at: now,
+        expires_at: now + Duration::from_secs(ttl),
+      };
+      cache.upsert(domain, port, measured.clone());
+      if best.as_ref().map(|b| latency_ms < b.latency_ms).unwrap_or(true) {
+        best = Some(measured);
+      }
+    }
+  }
+  best
 }
 ```
 
@@ -479,7 +499,7 @@ cert-fp.log
 | 代理失败未降级 | 低 | 停留不可达 | failure 阈值回退 | 自动恢复探测 |
 | 并发资源争用 | 中 | 大量任务 | UI 限制提示 | 任务调度队列 |
 | Pack 中断 | 中 | 重下载 | 整体重试 | Pack resume |
-| IP 池污染 | 中 | 引入坏 IP | 失败惩罚 / cooldown | 信誉评分 |
+| IP 池污染 | 中 | 引入坏 IP | 过期后自动重新测速 | 来源白名单 + 延迟采样 |
 | 指纹文件篡改 | 低 | 误导 Pin | 只追加 + 校验行格式 | Hash 链/签名 |
 | 安全策略误配置 | 中 | 关闭 whitelist | UI 警告 | 安全模式一键恢复 |
 
@@ -497,7 +517,7 @@ cert-fp.log
 | SAN 白名单 | 强制 | MP0 | 自定义 verifier |
 | SPKI Pin | 可选 | P7 | tls::verifier + config |
 | 代理与回退 | 保留 | P5 | proxy::manager |
-| IP 优选 5 来源 | 精简 | P4 | ip_pool with scoring |
+| IP 优选 5 来源 | 精简 | P4 | ip_pool with latency scoring |
 | 任务事件/取消 | 保留 | MP0 | TaskRegistry + emit |
 | 错误分类 | 保留 | 渐进 | ErrorCategory 枚举 |
 | 指纹事件 | 保留 | P7 | security::fingerprint |
@@ -535,7 +555,7 @@ HTTP 策略摘要（由原 §11 合并）：
 - MP1：沿用 git2-rs 默认 HTTP，进度/取消/错误分类完善；
 - P2：支持浅克隆（depth）、部分克隆（`filter=blob:none`）并对进度与速率做展示；
 - P3：自适应 TLS 传输层全量推广（默认启用，仍可关闭），含 Fake/Real 回退与验证策略；
-- P4：启用 IP 池/优选作为可选增强，自适应 TLS 在连接前选取评分最高 IP。
+- P4：启用 IP 池/优选作为可选增强，仅以 TCP 握手延迟为评分依据，自适应 TLS 在连接前选取延迟最低的 IP。
 重定向策略：默认跟随有限次（如 5 次），跨主域重定向需命中白名单。
 
 ### MP0 — git2-rs 基线（已完成）
@@ -566,8 +586,9 @@ HTTP 策略摘要（由原 §11 合并）：
 - 回退：总开关关闭自适应 TLS；回到 libgit2 默认传输。
 
 ### P4 — IP 优选与 IP 池（独立阶段）
-- 目标：引入 IP 池与评分；“自适应 TLS 传输层”连接前自动选择“评分最高 IP”。
+- 目标：引入 IP 池与评分；评分仅基于最近一次 TCP 握手延迟，连接前自动选择延迟最低的 IP 并按照 TTL 定期刷新。
 - IP 来源：`builtin`/`history`/`user_static`/`dns`/`fallback`。
+- 预热域名列表（配置）在启动时对 80/443 端口预采样；列表外域名按需采样，记录 5 分钟（可配置）TTL，过期即重测或清除。
 - 切换策略：仅在“确认是 IP 连通性问题”时更换 IP；更换后仍先用 Fake SNI，再按回退链进行。
 - 验收：在不稳定网络下连通性/时延中位数提升；故障注入下能快速切换与冷却。
 - 回退：关闭 IP 池功能，回到系统解析。
