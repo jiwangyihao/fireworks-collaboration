@@ -38,6 +38,7 @@ pub mod partial_filter_support; // 支撑能力判定
 pub mod pipeline; // 12.15: pipeline DSL (e2e scaffolding)
 pub mod repo_factory;
 pub mod retry_matrix; // 12.9: push & retry 矩阵
+pub mod strategy_support; // 12.28: strategy & override structured helpers
 pub mod shallow_matrix; // 12.5: 浅克隆 / 深度矩阵
 pub mod task_wait; // 12.18: 任务等待辅助
 pub mod test_env; // 12.19: 简化 i18n fixture/translate for tests
@@ -150,6 +151,11 @@ pub mod prelude {
     pub use super::http_override_stub::{
         http_override_cases, http_override_cases_for, run_http_override, FollowMode,
         HttpOverrideCase, IdempotentFlag, MaxEventsCase,
+    };
+
+    pub use super::strategy_support::{
+        test_emit_adaptive_tls_observability, test_emit_clone_strategy_and_rollout,
+        test_emit_clone_with_override,
     };
 
     // 通用 Trait / helper

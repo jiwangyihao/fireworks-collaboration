@@ -163,10 +163,9 @@ mod section_http_events {
 //   - push_summary_event_no_override
 //   - strategy_override_summary_and_gating (summary + 多 appliedCodes 片段，gating 逻辑单列在 section_summary_gating)
 mod section_strategy_summary_multiop {
+    use crate::common::strategy_support::test_emit_clone_with_override;
     use fireworks_collaboration_lib::core::tasks::model::TaskKind;
-    use fireworks_collaboration_lib::core::tasks::registry::{
-        test_emit_clone_with_override, TaskRegistry,
-    };
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
     use fireworks_collaboration_lib::events::emitter::AppHandle;
     use fireworks_collaboration_lib::events::structured::{
         clear_test_event_bus, set_global_event_bus, set_test_event_bus, Event as StructuredEvent,
@@ -461,10 +460,9 @@ mod section_strategy_summary_multiop {
 //   - push_tls_insecure_only_event_once
 mod section_override_no_conflict {
     use super::wait_done;
+    use crate::common::strategy_support::test_emit_clone_with_override;
     use fireworks_collaboration_lib::core::tasks::model::TaskKind;
-    use fireworks_collaboration_lib::core::tasks::registry::{
-        test_emit_clone_with_override, TaskRegistry,
-    };
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
     use fireworks_collaboration_lib::events::emitter::AppHandle;
     use fireworks_collaboration_lib::events::structured::{
         clear_test_event_bus, set_global_event_bus, set_test_event_bus, Event as StructuredEvent,
