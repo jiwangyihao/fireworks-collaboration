@@ -178,7 +178,10 @@ mod tests {
 
         // 默认配置开启证书指纹日志，应返回 Some 路径
         let cfg = loader::load_or_init().expect("load default config");
-        assert!(cfg.tls.cert_fp_log_enabled, "default config should enable cert fp log");
+        assert!(
+            cfg.tls.cert_fp_log_enabled,
+            "default config should enable cert fp log"
+        );
         assert!(log_path().is_some());
 
         // 人为关闭后应返回 None

@@ -2,7 +2,9 @@ use crate::core::config::loader;
 use crate::core::git::default_impl::{add, commit, init, push};
 use crate::core::tasks::model::TaskState;
 use crate::core::tasks::{TaskKind, TaskRegistry};
-use crate::events::structured::{self, Event, EventBusAny, MemoryEventBus, StrategyEvent, TaskEvent};
+use crate::events::structured::{
+    self, Event, EventBusAny, MemoryEventBus, StrategyEvent, TaskEvent,
+};
 use anyhow::{anyhow, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -143,7 +145,6 @@ pub struct ComparisonSummary {
     pub regression_flags: Vec<String>,
 }
 
-
 impl ThresholdCheck {
     fn at_least(actual: f64, expected: f64) -> Self {
         Self {
@@ -174,20 +175,17 @@ fn build_comparison_summary(
     let fake_fallback_rate_delta = current.thresholds.fake_fallback_rate.actual
         - baseline.thresholds.fake_fallback_rate.actual;
     let cert_fp_events_delta = current.cert_fp_events as i64 - baseline.cert_fp_events as i64;
-    let auto_disable_triggered_delta = current.auto_disable.triggered as i64
-        - baseline.auto_disable.triggered as i64;
-    let auto_disable_recovered_delta = current.auto_disable.recovered as i64
-        - baseline.auto_disable.recovered as i64;
+    let auto_disable_triggered_delta =
+        current.auto_disable.triggered as i64 - baseline.auto_disable.triggered as i64;
+    let auto_disable_recovered_delta =
+        current.auto_disable.recovered as i64 - baseline.auto_disable.recovered as i64;
 
     let mut regression_flags = Vec::new();
     if baseline.thresholds.success_rate.pass && !current.thresholds.success_rate.pass {
         regression_flags.push("success_rate.pass_regressed".to_string());
     }
     if success_rate_delta < -0.0001 {
-        regression_flags.push(format!(
-            "success_rate.decreased({:.4})",
-            success_rate_delta
-        ));
+        regression_flags.push(format!("success_rate.decreased({:.4})", success_rate_delta));
     }
     if baseline.thresholds.fake_fallback_rate.pass && !current.thresholds.fake_fallback_rate.pass {
         regression_flags.push("fake_fallback_rate.pass_regressed".to_string());
@@ -302,7 +300,8 @@ impl SoakAggregator {
     fn process_events(&mut self, events: Vec<Event>) {
         for evt in events {
             match evt {
-                Event::Task(TaskEvent::Completed { .. }) | Event::Task(TaskEvent::Failed { .. }) => {
+                Event::Task(TaskEvent::Completed { .. })
+                | Event::Task(TaskEvent::Failed { .. }) => {
                     // Already tracked via record_task; nothing extra needed here.
                 }
                 Event::Strategy(StrategyEvent::AdaptiveTlsTiming {
@@ -332,7 +331,13 @@ impl SoakAggregator {
                         cert_fp_changed,
                     });
                 }
-                Event::Strategy(StrategyEvent::AdaptiveTlsFallback { kind, from, to, reason, .. }) => {
+                Event::Strategy(StrategyEvent::AdaptiveTlsFallback {
+                    kind,
+                    from,
+                    to,
+                    reason,
+                    ..
+                }) => {
                     let key = format!("{}:{}->{}:{}", kind, from, to, reason);
                     *self.fallback.counts.entry(key).or_default() += 1;
                     if from == "Fake" && to == "Real" {
@@ -395,20 +400,15 @@ impl SoakAggregator {
         let mut total_fake_attempts = 0u64;
         let mut cert_fp_changed_samples = 0u64;
         for (kind, data) in self.timing.iter() {
-            let connect_vals: Vec<u32> = data
-                .samples
-                .iter()
-                .filter_map(|s| s.connect_ms)
-                .collect();
+            let connect_vals: Vec<u32> = data.samples.iter().filter_map(|s| s.connect_ms).collect();
             let tls_vals: Vec<u32> = data.samples.iter().filter_map(|s| s.tls_ms).collect();
-            let first_byte_vals: Vec<u32> =
-                data.samples.iter().filter_map(|s| s.first_byte_ms).collect();
-            let total_vals: Vec<u32> = data.samples.iter().filter_map(|s| s.total_ms).collect();
-            let changed_count = data
+            let first_byte_vals: Vec<u32> = data
                 .samples
                 .iter()
-                .filter(|s| s.cert_fp_changed)
-                .count() as u64;
+                .filter_map(|s| s.first_byte_ms)
+                .collect();
+            let total_vals: Vec<u32> = data.samples.iter().filter_map(|s| s.total_ms).collect();
+            let changed_count = data.samples.iter().filter(|s| s.cert_fp_changed).count() as u64;
             cert_fp_changed_samples += changed_count;
             total_fake_attempts += data.used_fake_count;
             timing_summary.insert(
@@ -471,8 +471,7 @@ impl SoakAggregator {
 }
 
 pub fn run_from_env() -> Result<SoakReport> {
-    let guard = std::env::var("FWC_ADAPTIVE_TLS_SOAK")
-        .unwrap_or_else(|_| "0".to_string());
+    let guard = std::env::var("FWC_ADAPTIVE_TLS_SOAK").unwrap_or_else(|_| "0".to_string());
     if guard != "1" {
         return Err(anyhow!(
             "FWC_ADAPTIVE_TLS_SOAK=1 is required to run the soak mode"
@@ -540,8 +539,8 @@ pub fn run(opts: SoakOptions) -> Result<SoakReport> {
     git2::Repository::init_bare(&origin_dir)
         .with_context(|| format!("init bare origin at {}", origin_dir.display()))?;
 
-    let branch_name = setup_producer(&origin_dir, &producer_dir)
-        .context("initialize producer repository")?;
+    let branch_name =
+        setup_producer(&origin_dir, &producer_dir).context("initialize producer repository")?;
 
     if consumer_dir.exists() {
         fs::remove_dir_all(&consumer_dir)
@@ -579,14 +578,8 @@ pub fn run(opts: SoakOptions) -> Result<SoakReport> {
     for round in 0..iterations {
         prepare_commit(&producer_dir, round, &branch_name)
             .with_context(|| format!("prepare commit for iteration {}", round))?;
-        let push_state = run_push_task(
-            &registry,
-            &runtime,
-            &producer_dir,
-            &mut aggregator,
-            &bus,
-        )
-        .with_context(|| format!("execute push task at iteration {}", round))?;
+        let push_state = run_push_task(&registry, &runtime, &producer_dir, &mut aggregator, &bus)
+            .with_context(|| format!("execute push task at iteration {}", round))?;
         ensure!(
             matches!(push_state, TaskState::Completed),
             "push task failed at iteration {} with state {:?}",
@@ -594,14 +587,8 @@ pub fn run(opts: SoakOptions) -> Result<SoakReport> {
             push_state
         );
 
-        let fetch_state = run_fetch_task(
-            &registry,
-            &runtime,
-            &consumer_dir,
-            &mut aggregator,
-            &bus,
-        )
-        .with_context(|| format!("execute fetch task at iteration {}", round))?;
+        let fetch_state = run_fetch_task(&registry, &runtime, &consumer_dir, &mut aggregator, &bus)
+            .with_context(|| format!("execute fetch task at iteration {}", round))?;
         ensure!(
             matches!(fetch_state, TaskState::Completed),
             "fetch task failed at iteration {} with state {:?}",
@@ -652,12 +639,8 @@ pub fn run(opts: SoakOptions) -> Result<SoakReport> {
             .map(|p| p.display().to_string()),
     };
 
-    let mut report = aggregator.into_report(
-        started_unix,
-        finished_unix,
-        duration_secs,
-        options_snapshot,
-    );
+    let mut report =
+        aggregator.into_report(started_unix, finished_unix, duration_secs, options_snapshot);
 
     if let Some(baseline_path) = opts.baseline_report.as_ref() {
         match load_baseline_report(baseline_path) {
@@ -754,8 +737,7 @@ fn setup_producer(origin: &Path, producer: &Path) -> Result<String> {
     fs::create_dir_all(producer)
         .with_context(|| format!("create producer dir: {}", producer.display()))?;
     let cancel = AtomicBool::new(false);
-    init::git_init(producer, &cancel, |_| {})
-        .map_err(|e| anyhow!("git init failed: {}", e))?;
+    init::git_init(producer, &cancel, |_| {}).map_err(|e| anyhow!("git init failed: {}", e))?;
     let readme = producer.join("README.md");
     fs::write(&readme, b"Adaptive TLS Soak\n")
         .with_context(|| format!("write {}", readme.display()))?;
@@ -813,8 +795,7 @@ fn prepare_commit(repo: &Path, iteration: u32, branch: &str) -> Result<()> {
         &cancel,
         |_| {},
     )
-    .map_err(|e| anyhow!("git commit failed: {}", e))?
-        ;
+    .map_err(|e| anyhow!("git commit failed: {}", e))?;
     Ok(())
 }
 
@@ -948,14 +929,7 @@ fn run_clone_task(
         let registry = Arc::clone(registry);
         async move {
             registry.spawn_git_clone_task_with_opts(
-                None,
-                id,
-                token,
-                origin_str,
-                dest_str,
-                None,
-                None,
-                None,
+                None, id, token, origin_str, dest_str, None, None, None,
             )
         }
     });
@@ -979,8 +953,7 @@ fn write_report(path: &Path, report: &SoakReport) -> Result<()> {
         }
     }
     let json = serde_json::to_string_pretty(report)?;
-    fs::write(path, json)
-        .with_context(|| format!("write report file: {}", path.display()))?;
+    fs::write(path, json).with_context(|| format!("write report file: {}", path.display()))?;
     Ok(())
 }
 
@@ -1115,7 +1088,7 @@ mod tests {
             comparison: None,
         };
 
-    let mut current = baseline.clone();
+        let mut current = baseline.clone();
         current.thresholds.success_rate = ThresholdCheck {
             pass: false,
             actual: 0.9,
@@ -1132,7 +1105,7 @@ mod tests {
         current.auto_disable.triggered = 3;
         current.auto_disable.recovered = 1;
 
-    let comparison = build_comparison_summary(Path::new("baseline.json"), &baseline, &current);
+        let comparison = build_comparison_summary(Path::new("baseline.json"), &baseline, &current);
         assert!(comparison.success_rate_delta < 0.0);
         assert!(comparison.fake_fallback_rate_delta > 0.0);
         assert_eq!(comparison.cert_fp_events_delta, 3);
