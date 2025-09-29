@@ -150,6 +150,19 @@
 	- 预热频率过高 → 为每个域名引入最小刷新间隔与失败退避；
 	- TCP 预热被远端限流 → 限制每主机并发数并提供节流配置；
 	- 历史文件损坏 → 遇到解析错误自动重建空结构并重新采样。
+- **提交范围**：
+    - 新增 `src-tauri/src/core/ip_pool/preheat.rs`，内置多来源候选收集器（Builtin/DNS/History/UserStatic/Fallback）、并发受控的 TCP 握手测速器以及基于 `tokio` 运行时的循环调度器；默认在首轮完成后按 `scoreTtlSeconds` 全量刷新。
+    - 新增 `src-tauri/src/core/ip_pool/history.rs`，定义 `IpHistoryStore` 与 `IpHistoryRecord`，支持基于 `config/ip-history.json` 的懒加载、容错重建与内存降级。
+    - 扩展 `IpPoolFileConfig`，引入 `userStatic` 配置用于静态 IP 声明；`IpStat` 追加 `sources` 字段以记录合并来源；`IpPool` 负责生命周期内预热任务的创建、热更新与历史存档访问。
+    - 追加内置/兜底 IP 白名单、配置刷新触发接口 `PreheatService::request_refresh`，并在 `set_config` 热更新时自动替换预热线程。
+- **差异记录**：
+	- 预热调度器改为维护逐域计划，成功路径按 TTL 续约，失败路径采用最大 6×TTL 的指数退避，并支持热更新/手动刷新即时重置队列；后续若需要提前量可在 P4.2 拓展。
+	- Fallback 来源现阶段仅暴露一组静态地址，占位以保留枚举通路；动态兜底逻辑待后续阶段补齐。
+	- 历史候选在采集阶段会判定过期并自动剔除，避免重复使用陈旧 IP，同时在落盘失败时记录告警日志。
+- **测试与验收**：
+	- 新增单元测试覆盖 `IpHistoryStore` 读写、`collect_candidates` 去重合并及过期历史剔除、`DomainSchedule` 退避/刷新行为、`probe_latency` 超时以及缓存/历史写入幂等。
+    - 已执行 `cargo fmt` 与 `cargo test -q`，全部用例通过；运行期间仅保留既有 Git fixture 的噪声日志，无新增 warning。
+    - 人工验证 `config/ip-config.json` 自动生成 `userStatic` 默认字段，预热禁用场景未启动后台线程。
 
 ### P4.2 按需域名评分与 TTL 管理
 - **目标**：为预热列表之外的域名提供首访即时采样与评分，统一缓存写入、TTL 生命周期与过期清理策略，确保按需域名在网络环境变化时能自动刷新。
@@ -307,10 +320,35 @@
 	- 文件读写失败目前仅在日志中呈现，没有向前端透出；待 P4.2 以后结合事件中心补齐。
 	- `load_effective_config_at` 在读取失败时落回默认配置可能掩盖配置丢失，需要运维结合日志 `load ip pool config failed` 定期巡检。
 
-### P4.1 预热域名采样与调度 实现说明（占位）
-- **提交范围待补充**：完成预热调度器与测量器后，记录关键并发控制与失败退避实现细节。
-- **差异记录占位**：标注与设计不一致的刷新时序、并发阈值或日志格式调整。
-- **测试与验收占位**：列出预热路径的单元/集成/故障注入测试结果及遗留问题。
+### P4.1 预热域名采样与调度 实现说明
+- **提交范围**：
+	- `PreheatService::spawn` 通过独立 2 worker 的 tokio runtime 驱动 `run_preheat_loop`，维护 `stop_flag`/`Notify` 以支持热更新中断与 `request_refresh` 手动刷新。
+	- `run_preheat_loop` 基于 `EffectiveIpPoolConfig.file.preheat_domains` 初始化 `DomainSchedule`，按 TTL 与 backoff 顺序调度 `preheat_domain`，并在停机或刷新请求时重置队列。
+	- `collect_candidates` 使用 `AggregatedCandidate` 对 builtin/userStatic/history/dns/fallback 五类来源去重合并，历史来源经 `IpHistoryStore::get_fresh` 自动剔除过期项；`measure_candidates` 结合信号量控制并发、裁剪探测超时并按延迟排序。
+	- `update_cache_and_history` 将最低延迟的 `IpStat` 写入 `IpScoreCache`，同步落盘 `IpHistoryStore`，保留 `sources`、`measured_at_epoch_ms` 与 `expires_at_epoch_ms`，确保缓存与历史一致。
+	- 在 `IpPool::set_config` 热更新路径上替换 `PreheatService` 实例，变更配置后立即触发全量刷新；`userStatic` 配置项首次生成时自动持久化。
+- **关键代码路径**：
+	- `DomainSchedule` 将 TTL 作为 `min_backoff`，失败时按 2 倍指数退避并封顶为 `FAILURE_BACKOFF_MULT_MAX`（6×TTL），`next_due_schedule` 按 `next_due` 选取最早待执行域，避免饥饿；`force_refresh` 用于热更新或手动触发，立即重置调度。
+	- `measure_candidates` 通过 `Semaphore(max_parallel_probes)` 限流单域探测，`probe_timeout_ms` 在 100ms 与 `MAX_PROBE_TIMEOUT_MS`（10s）之间裁剪，探测成功与失败均输出 `ip_pool` target 日志便于观测。
+	- 历史写读依赖 `IpHistoryStore::upsert` 与 `get_fresh`：成功探测写入新记录，过期记录在下一次读取时删除并尝试持久化，防止陈旧候选继续参与排名。
+	- 候选来源在 `collect_candidates` 中做集合并集，`AggregatedCandidate::to_stat` 将来源写回 `IpStat.sources`，保证后续观测可以区分采样链路。
+- **差异记录**：
+	- 当前实现依旧采用“整表 TTL 到期后统一刷新”，未实现设计原稿中的按域提前刷新；通过 `request_refresh` 或配置热更新可提前启动一次全量刷新。
+	- Fallback 来源继续是静态占位 IP，动态兜底与退避事件指标计划在 P4.4/P4.5 引入；本阶段仅保证通路完整。
+	- 为避免极小 TTL 导致循环自旋，引入 `MIN_TTL_SECS=30` 的硬下限，并以 `FAILURE_BACKOFF_MULT_MAX=6` 限制最大退避时长，这是对原方案的补充约束。
+- **测试与验收**：
+	- 新增 `next_due_schedule_selects_earliest_entry`、`domain_schedule_backoff_caps_after_retries`、`domain_schedule_force_refresh_resets_state` 验证调度排序、退避封顶与刷新语义；`collect_candidates_merges_sources_from_history`、`collect_candidates_skips_expired_history_entries` 覆盖来源合并与过期剔除。
+	- `IpHistoryStore` 增补 `get_fresh_returns_valid_record`，与原有 `get_fresh_evicts_expired_records` 一起验证历史读取同时保留新鲜记录、删除过期记录的对称性。
+	- `update_cache_and_history_writes_best_entry`、`probe_latency_times_out_reasonably` 等用例确认探测速率、缓存写入与失败超时路径；CI 执行 `cargo fmt`、`cargo test -q` 全量通过，仅保留既有 git fixture 噪声。
+	- 人工验证 `ipPool.enabled=false` 或 `preheatDomains` 为空时预热线程退出，`set_config` 热更新会触发立即刷新，`config/ip-config.json` 默认生成空 `userStatic` 字段。
+- **运维与配置落地**：
+	- `max_parallel_probes`、`probe_timeout_ms` 可运行期调整，预热线程固定 2 worker；建议在带宽有限环境调低并发以避免对目标域造成突发握手压力。
+	- 静态 IP 可通过 `userStatic` 配置补充，修改后可调用 `request_refresh` 立即采样；历史文件存于 `config/ip-history.json`，若解析失败会自动重建并打印 `ip_pool` 告警。
+	- 预热日志集中在 `ip_pool` target，失败日志包含 `failure_streak` 与当前退避秒数，方便运维定位持续失败域名。
+- **残留风险**：
+	- 预热线程独立占用两个 runtime worker，资源受限设备需关注额外线程带来的内存与上下文切换；后续视情况考虑复用主 runtime。
+	- 失败退避当前仅通过日志呈现，缺少指标与事件告警，需在 P4.4 扩展观测以免长时间失败被忽视。
+	- Fallback 地址仍为静态配置，不一定覆盖区域故障；P4.5 前需要运维手动维护或临时禁用 fallback 来源。
 
 ### P4.2 按需域名评分与 TTL 管理 实现说明（占位）
 - **提交范围待补充**：说明即时采样、缓存写路径、单飞机制与 TTL 清理实现概况。
