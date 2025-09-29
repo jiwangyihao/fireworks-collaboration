@@ -275,10 +275,37 @@
 - 验收/测试情况与残留风险；
 - 运维手册或配置样例的落地状态。
 
-### P4.0 基线架构与配置打通 实现说明（占位）
-- **提交范围待补充**：落地 `ip_pool` 模块骨架、配置解析与缓存骨架后补齐文件与模块说明。
-- **差异记录占位**：若配置字段或默认值与设计不同，请列出调整原因与回滚方案。
-- **测试与验收占位**：补充单元测试覆盖、集成冒烟结果、潜在回归风险。
+### P4.0 基线架构与配置打通 实现说明
+- **提交范围**：
+    - 新增 `src-tauri/src/core/ip_pool/{mod,config,cache}.rs`，定义 `IpPool`、`EffectiveIpPoolConfig`、`IpPoolRuntimeConfig`、`IpPoolFileConfig`、`IpCandidate` 及 `IpScoreCache`，完成运行期配置与磁盘 `ip-config.json` 读写骨架。
+    - `src-tauri/src/core/config/model.rs` 引入 `IpPoolRuntimeConfig` 字段，CLI/Tauri 两端共享默认值。
+    - `src-tauri/src/app.rs` 将 `IpPool` 注册为全局 `State`，`set_config` 命令热更新运行期配置并刷新磁盘配置。
+	- `src-tauri/src/core/config/loader.rs` 新增 `set_global_base_dir`，在 Tauri `setup` 阶段注入配置目录，保证 CLI/桌面端共享的 `config/` 与 `ip-config.json` 均落在同一根目录。
+- **关键代码路径**：
+    - `IpPool::pick_best`：在运行期禁用时直接回退系统 DNS，启用后优先返回缓存 `IpScoreCache` 中的 `best` 候选；缓存 miss 路径继续回退，确保 P4.0 不引入真实探测逻辑。
+    - `load_effective_config_*`：以 `AppConfig.ip_pool` 为运行期来源、`ip-config.json` 为文件来源，组合成 `EffectiveIpPoolConfig`；支持 `base_dir` 覆盖方便测试。
+    - `config::load_or_init_file_at`：首次运行落地默认配置，写入成功后通过 `tracing::info` 打印路径，便于运维定位生成文件。
+	- `app::run` `setup` 钩子：统一推导配置基目录 → 调用 `cfg_loader::set_global_base_dir` → 初始化 `AppConfig` 与 `IpPool`，并在读取文件失败时降级为默认配置但仍记录错误，保证 UI 可继续启动。
+- **数据流概览**：
+	- 桌面端启动时通过 `cfg_loader::load_or_init_at` 与 `ip_pool::load_effective_config_at` 同步拉起两个配置文件，确保 UI 与 IP 池共享同一份运行期快照。
+	- `set_config` 命令写入 `config.json` 后立即重建 `EffectiveIpPoolConfig`，再通过共享 `Arc<Mutex<IpPool>>` 更新全局状态，后续阶段可在相同入口追加缓存刷新或事件广播。
+	- CLI/测试场景若未设置全局基目录，将回退到 `dirs::config_dir()` 或当前目录，文档需提醒运维保持目录一致以复用评分缓存。
+- **设计差异与取舍**：
+    - `IpPool::report_outcome` 暂仅写 debug 日志，未落地统计；与最初草案一致，将统计与评分推迟至 P4.2/P4.3，避免 P4.0 引入未完成的评分逻辑。
+    - 缓存实现采用 `RwLock<HashMap<...>>`，未引入跨进程持久化；满足基线阶段“仅暴露结构”的目标。
+- **测试与验证**：
+    - `ip_pool::mod` 单测覆盖禁用回退、启用时命中缓存、运行期配置热更新，以及 `load_effective_config_at` 在定制基目录下的组合结果；同时校验损坏的 `ip-config.json` 会返回错误。
+    - `config.rs` 单测验证运行期/文件默认值、`load_or_init_file` 的首次生成、`save_file` 的持久化，以及 JSON 反序列化默认填充。
+	- `cache.rs` 单测覆盖 `insert/get/remove/clear/snapshot` 读写路径，确保缺省 `IpCandidate` 可安全构造；`config::model` 额外断言 `ipPool.enabled` 默认关闭，避免旧配置升级后误启用。
+    - 运行 `cargo test -q` 全量通过，warning 仅来自现有 git fixture（未新增告警）。
+- **运维与配置落地**：
+    - 默认生成的 `config/ip-config.json` 包含空的 `preheatDomains` 与 300s TTL；后续阶段可直接编辑生效。
+	- `cfg_loader::set_global_base_dir` 会把配置写入应用数据目录（如 Windows `%APPDATA%\top.jwyihao.fireworks-collaboration\config\`），命令行测试可通过环境覆盖使用相同目录，以便后续阶段共享评分历史。
+	- `AppConfig.ip_pool.historyPath` 暂保留接口未实现文件加载，文档继续提示待后续阶段接入。
+- **残留风险**：
+    - `set_config` 默认忽略 `IpPool` 锁竞争失败，仅写日志；若未来 UI 需要反馈，需要补充错误提示。
+	- 文件读写失败目前仅在日志中呈现，没有向前端透出；待 P4.2 以后结合事件中心补齐。
+	- `load_effective_config_at` 在读取失败时落回默认配置可能掩盖配置丢失，需要运维结合日志 `load ip pool config failed` 定期巡检。
 
 ### P4.1 预热域名采样与调度 实现说明（占位）
 - **提交范围待补充**：完成预热调度器与测量器后，记录关键并发控制与失败退避实现细节。
