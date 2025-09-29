@@ -186,6 +186,41 @@
 	- 缓存膨胀 → 设置最大条目数 + LRU 淘汰策略；
 	- 单飞阻塞时间过长 → 设置采样超时并在失败时回退系统 DNS；
 	- 清理逻辑误删预热条目 → 在缓存结构中区分预热与按需标记，清理器仅处理按需条目。
+- **实现说明**
+- **提交范围**：
+    - `src-tauri/src/core/ip_pool/mod.rs` 重写为异步取用：`IpPool::pick_best` 通过单飞 (`tokio::sync::Mutex<HashMap<IpCacheKey, Arc<Notify>>>`) 串行化同域采样，新增 `ensure_sampled`、`sample_once`、`maybe_prune_cache`、`enforce_cache_capacity` 等步骤；同时引入 `OutcomeStats` 与 `report_outcome` 计数逻辑、`outcome_snapshot` 测试辅助方法。
+    - `src-tauri/src/core/ip_pool/config.rs` 扩展运行期配置字段 `cachePruneIntervalSecs`、`maxCacheEntries`、`singleflightTimeoutMs` 并补充默认值与测试覆盖。
+    - `src-tauri/src/core/ip_pool/history.rs` 新增 `remove` 接口，支持 TTL 过期或容量控制时同步清理历史记录。
+    - `src-tauri/src/core/ip_pool/preheat.rs` 公开 `collect_candidates`/`measure_candidates`/`update_cache_and_history`/`probe_latency`，供按需路径复用；`AggregatedCandidate` 调整为 `pub(super)`。
+    - `src-tauri/src/core/ip_pool/mod.rs` 单元测试新增 `on_demand_sampling_uses_user_static_candidate`、`ttl_expiry_triggers_resample`、`single_flight_prevents_duplicate_sampling`，并把既有缓存命中测试迁移到异步风格。
+	- `src-tauri/src/core/ip_pool/cache.rs` 内联 `IpSource`、`IpStat::is_expired` 与缓存枚举，替代独立的 `source.rs`/`time.rs`，保持缓存读取、过期判断与来源追踪在同一处维护。
+	- `src-tauri/src/core/ip_pool/manager.rs` 合并原 `selection.rs`、`outcome.rs` 内容，集中定义 `IpSelection`、`IpOutcome`、`OutcomeMetrics` 等结构；`mod.rs` 仅保留必要的 `pub use`，减少跨文件跳转成本并便于后续 P4.3 扩展。
+- **关键代码路径与行为**：
+	- `IpPool::pick_best` 先检查缓存有效性（`expires_at` 缺省视为永不过期），命中失败时触发 `ensure_sampled`；若采样仍失败则回退系统 DNS。
+	- `ensure_sampled` 以 `Notify` 单飞等待其他协程结果，并在超时（默认 10s，可配置）时返回系统解析；`sample_once` 复用预热探测逻辑并写入 `IpScoreCache` + `IpHistoryStore`。
+	- `maybe_prune_cache` 使用 `AtomicI64` 控制 TTL 清理节奏，按配置间隔移除非预热域名的过期条目，并调用 `enforce_cache_capacity` 基于 `measured_at` 进行最久淘汰。
+	- `report_outcome` 在非系统路径下记录成功/失败计数和最近时间，为后续 P4.5 熔断铺路。
+	- `IpSelectionStrategy::pick`、`IpSelection::from_cache_snapshot` 迁移至 `manager.rs` 后直接依赖缓存内联的 `IpStat::is_expired`；`apply_probe_result` 在同一文件内串联 `OutcomeStats` 更新与缓存写入，确保候选筛选、延迟排序与失败计数拥有一致的上下文。
+- **设计差异与取舍**：
+	- TTL 清理采用“按需触发”策略（在 `pick_best` 时判定 interval），未额外保留常驻后台线程；满足资源约束同时与原方案目标一致。
+	- 当历史文件持久化失败时仅记录告警并保留内存态，避免影响链路；未来可结合 P4.4 指标进一步暴露。
+	- 缓存容量限制仅统计非预热域名，预热域维持由调度器负责；淘汰顺序使用 `measured_at`，暂未实现 LRU 更精细策略。
+	- `pick_best` 现已异步，后续 P4.3 集成传输层需配合调用点改造；Tauri 端仍通过外层 `Mutex` 序列化访问，未引入 API 破坏。
+	- 为降低模块碎片化并支撑后续观测与熔断决策，本阶段合并了不足 50 行的 `selection.rs`、`outcome.rs`、`time.rs`，牺牲部分文件长度换取上下文集中，减少未来重构时的同步成本。
+- **测试与验收**：
+	- 新增单测覆盖单飞互斥、TTL 过期再采样、缓存命中与默认回退行为，均使用本地 `TcpListener` 验证真实握手。
+	- `IpHistoryStore::remove`、配置默认值、序列化反序列化均有独立测试，覆盖新字段。
+	- 本阶段运行 `cargo fmt` 与 `cargo test -q --manifest-path src-tauri/Cargo.toml` 全量通过，测试日志仅保留既有 git fixture 的噪声（预期）。
+	- `src-tauri/tests/tasks/ip_pool_manager.rs` 集成测试扩展预热命中、按需采样以及失败回退用例，验证合并后公开 API 与外部可观测数据保持一致。
+- **运维与配置落地**：
+    - 新增运行期字段写入 `config.json` 后可以热生效，默认 `cachePruneIntervalSecs=60`、`maxCacheEntries=256`、`singleflightTimeoutMs=10000`，满足常规场景；文档需提醒按需调大或关闭（设为 0）容量限制。
+    - `IpPool` 热更新时清空单飞地图并重建预热线程，确保配置切换后不遗留旧任务。
+    - 默认仍使用磁盘 `ip-history.json`，但若路径异常会降级为内存模式并告警，不阻断任务。
+- **残留风险**：
+    - TTL 清理依赖任务触发，极低流量场景可能延迟释放过期条目；后续可结合调度器心跳优化。
+    - 历史文件写入失败仍只记录日志，未向前端 surface；需在 P4.4/运维手册中补充巡检策略。
+    - `singleflightTimeoutMs` 过小可能导致频繁回退系统 DNS（当前默认 10s 较保守），配置误设需结合运维监控。
+    - 现阶段 `OutcomeStats` 仅计数未做策略使用，若长时间运行可能累积较大 HashMap；P4.5 引入熔断时需增量治理。
 
 ### P4.3 传输层集成与优选决策
 - **目标**：在不破坏自适应 TLS 既有回退链的前提下，将 IP 池评分结果注入 Fake/Real 阶段连接建立流程，形成可回退的优选决策；同时记录失败结果为后续熔断提供数据。
@@ -350,10 +385,36 @@
 	- 失败退避当前仅通过日志呈现，缺少指标与事件告警，需在 P4.4 扩展观测以免长时间失败被忽视。
 	- Fallback 地址仍为静态配置，不一定覆盖区域故障；P4.5 前需要运维手动维护或临时禁用 fallback 来源。
 
-### P4.2 按需域名评分与 TTL 管理 实现说明（占位）
-- **提交范围待补充**：说明即时采样、缓存写路径、单飞机制与 TTL 清理实现概况。
-- **差异记录占位**：若缓存淘汰、过期策略或报告接口与设计有偏差，在此集中描述。
-- **测试与验收占位**：更新按需域名命中率、并发冲突、过期刷新相关测试结论。
+### P4.2 按需域名评分与 TTL 管理 实现说明
+- **提交范围**：
+    - `src-tauri/src/core/ip_pool/mod.rs` 重写为异步取用：`IpPool::pick_best` 通过单飞 (`tokio::sync::Mutex<HashMap<IpCacheKey, Arc<Notify>>>`) 串行化同域采样，新增 `ensure_sampled`、`sample_once`、`maybe_prune_cache`、`enforce_cache_capacity` 等步骤；同时引入 `OutcomeStats` 与 `report_outcome` 计数逻辑、`outcome_snapshot` 测试辅助方法。
+    - `src-tauri/src/core/ip_pool/config.rs` 扩展运行期配置字段 `cachePruneIntervalSecs`、`maxCacheEntries`、`singleflightTimeoutMs` 并补充默认值与测试覆盖。
+    - `src-tauri/src/core/ip_pool/history.rs` 新增 `remove` 接口，支持 TTL 过期或容量控制时同步清理历史记录。
+    - `src-tauri/src/core/ip_pool/preheat.rs` 公开 `collect_candidates`/`measure_candidates`/`update_cache_and_history`/`probe_latency`，供按需路径复用；`AggregatedCandidate` 调整为 `pub(super)`。
+    - `src-tauri/src/core/ip_pool/mod.rs` 单元测试新增 `on_demand_sampling_uses_user_static_candidate`、`ttl_expiry_triggers_resample`、`single_flight_prevents_duplicate_sampling`，并把既有缓存命中测试迁移到异步风格。
+- **关键代码路径与行为**：
+    - `IpPool::pick_best` 先检查缓存有效性（`expires_at` 缺省视为永不过期），命中失败时触发 `ensure_sampled`；若采样仍失败则回退系统 DNS。
+    - `ensure_sampled` 以 `Notify` 单飞等待其他协程结果，并在超时（默认 10s，可配置）时返回系统解析；`sample_once` 复用预热探测逻辑并写入 `IpScoreCache` + `IpHistoryStore`。
+    - `maybe_prune_cache` 使用 `AtomicI64` 控制 TTL 清理节奏，按配置间隔移除非预热域名的过期条目，并调用 `enforce_cache_capacity` 基于 `measured_at` 进行最久淘汰。
+    - `report_outcome` 在非系统路径下记录成功/失败计数和最近时间，为后续 P4.5 熔断铺路。
+- **设计差异与取舍**：
+    - TTL 清理采用“按需触发”策略（在 `pick_best` 时判定 interval），未额外保留常驻后台线程；满足资源约束同时与原方案目标一致。
+    - 当历史文件持久化失败时仅记录告警并保留内存态，避免影响链路；未来可结合 P4.4 指标进一步暴露。
+    - 缓存容量限制仅统计非预热域名，预热域维持由调度器负责；淘汰顺序使用 `measured_at`，暂未实现 LRU 更精细策略。
+    - `pick_best` 现已异步，后续 P4.3 集成传输层需配合调用点改造；Tauri 端仍通过外层 `Mutex` 序列化访问，未引入 API 破坏。
+- **测试与验收**：
+    - 新增单测覆盖单飞互斥、TTL 过期再采样、缓存命中与默认回退行为，均使用本地 `TcpListener` 验证真实握手。
+    - `IpHistoryStore::remove`、配置默认值、序列化反序列化均有独立测试，覆盖新字段。
+    - 本阶段运行 `cargo fmt` 与 `cargo test -q --manifest-path src-tauri/Cargo.toml` 全量通过，测试日志仅保留既有 git fixture 的噪声（预期）。
+- **运维与配置落地**：
+    - 新增运行期字段写入 `config.json` 后可以热生效，默认 `cachePruneIntervalSecs=60`、`maxCacheEntries=256`、`singleflightTimeoutMs=10000`，满足常规场景；文档需提醒按需调大或关闭（设为 0）容量限制。
+    - `IpPool` 热更新时清空单飞地图并重建预热线程，确保配置切换后不遗留旧任务。
+    - 默认仍使用磁盘 `ip-history.json`，但若路径异常会降级为内存模式并告警，不阻断任务。
+- **残留风险**：
+    - TTL 清理依赖任务触发，极低流量场景可能延迟释放过期条目；后续可结合调度器心跳优化。
+    - 历史文件写入失败仍只记录日志，未向前端 surface；需在 P4.4/运维手册中补充巡检策略。
+    - `singleflightTimeoutMs` 过小可能导致频繁回退系统 DNS（当前默认 10s 较保守），配置误设需结合运维监控。
+    - 现阶段 `OutcomeStats` 仅计数未做策略使用，若长时间运行可能累积较大 HashMap；P4.5 引入熔断时需增量治理。
 
 ### P4.3 传输层集成与优选决策 实现说明（占位）
 - **提交范围待补充**：列出 transport 层改造点、线程本地上下文扩展以及回退链联动细节。
