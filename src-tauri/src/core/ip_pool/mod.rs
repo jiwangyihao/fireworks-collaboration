@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod config;
 pub mod history;
+pub mod preheat;
 
 use crate::core::config::model::AppConfig;
 use anyhow::Result;
@@ -10,9 +11,11 @@ use std::{path::Path, sync::Arc};
 pub use cache::{IpCacheKey, IpCacheSlot, IpCandidate, IpScoreCache, IpStat};
 pub use config::{
     EffectiveIpPoolConfig, IpPoolFileConfig, IpPoolRuntimeConfig, IpPoolSourceToggle,
-    PreheatDomain,
+    PreheatDomain, UserStaticIp,
 };
 pub use history::{IpHistoryRecord, IpHistoryStore};
+
+use self::preheat::PreheatService;
 
 /// IP 候选来源分类，贯穿配置、缓存与事件输出。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -95,6 +98,7 @@ pub struct IpPool {
     config: Arc<EffectiveIpPoolConfig>,
     cache: Arc<IpScoreCache>,
     history: Arc<IpHistoryStore>,
+    preheater: Option<PreheatService>,
 }
 
 impl IpPool {
@@ -109,11 +113,14 @@ impl IpPool {
                 );
                 Arc::new(IpHistoryStore::in_memory())
             });
-        Self {
+        let mut pool = Self {
             config: Arc::new(config),
             cache: Arc::new(IpScoreCache::new()),
             history,
-        }
+            preheater: None,
+        };
+        pool.rebuild_preheater();
+        pool
     }
 
     pub fn from_app_config(app_cfg: &AppConfig) -> Result<Self> {
@@ -122,11 +129,14 @@ impl IpPool {
     }
 
     pub fn with_cache(config: EffectiveIpPoolConfig, cache: IpScoreCache) -> Self {
-        Self {
+        let mut pool = Self {
             config: Arc::new(config),
             cache: Arc::new(cache),
             history: Arc::new(IpHistoryStore::in_memory()),
-        }
+            preheater: None,
+        };
+        pool.rebuild_preheater();
+        pool
     }
 
     pub fn config(&self) -> &EffectiveIpPoolConfig {
@@ -155,6 +165,7 @@ impl IpPool {
 
     pub fn update_config(&mut self, config: EffectiveIpPoolConfig) {
         self.config = Arc::new(config);
+        self.rebuild_preheater();
     }
 
     pub fn pick_best(&self, host: &str, port: u16) -> IpSelection {
@@ -185,6 +196,34 @@ impl IpPool {
             "ip pool outcome recorded"
         );
         // P4.0 阶段仅记录日志，真实反馈逻辑将在后续阶段引入。
+    }
+
+    fn rebuild_preheater(&mut self) {
+        // Drop any existing preheater before creating a new one so background threads exit.
+        self.preheater = None;
+        if !self.is_enabled() {
+            return;
+        }
+        if self.config.file.preheat_domains.is_empty() {
+            return;
+        }
+        match PreheatService::spawn(
+            self.config.clone(),
+            self.cache.clone(),
+            self.history.clone(),
+        ) {
+            Ok(service) => {
+                service.request_refresh();
+                self.preheater = Some(service);
+            }
+            Err(err) => {
+                tracing::error!(
+                    target = "ip_pool",
+                    error = %err,
+                    "failed to spawn ip pool preheat service"
+                );
+            }
+        }
     }
 
 }

@@ -96,6 +96,8 @@ pub struct IpPoolFileConfig {
     pub preheat_domains: Vec<PreheatDomain>,
     #[serde(default = "default_score_ttl_seconds")]
     pub score_ttl_seconds: u64,
+    #[serde(default)]
+    pub user_static: Vec<UserStaticIp>,
 }
 
 impl Default for IpPoolFileConfig {
@@ -103,6 +105,7 @@ impl Default for IpPoolFileConfig {
         Self {
             preheat_domains: Vec::new(),
             score_ttl_seconds: default_score_ttl_seconds(),
+            user_static: Vec::new(),
         }
     }
 }
@@ -123,6 +126,16 @@ impl PreheatDomain {
             ports: default_preheat_ports(),
         }
     }
+}
+
+/// 用户静态 IP 配置，允许针对特定域名写入固定 IP。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct UserStaticIp {
+    pub host: String,
+    pub ip: String,
+    #[serde(default = "default_preheat_ports")]
+    pub ports: Vec<u16>,
 }
 
 /// 组合后的生效配置，便于 IpPool 管理运行期与外部文件配置。
@@ -217,6 +230,7 @@ mod tests {
         let cfg = IpPoolFileConfig::default();
         assert!(cfg.preheat_domains.is_empty());
         assert_eq!(cfg.score_ttl_seconds, default_score_ttl_seconds());
+        assert!(cfg.user_static.is_empty());
     }
 
     #[test]
@@ -240,13 +254,13 @@ mod tests {
         let domain = &cfg.file.preheat_domains[0];
         assert_eq!(domain.host, "github.com");
         assert_eq!(domain.ports, vec![443, 80]);
+        assert!(cfg.file.user_static.is_empty());
     }
 
     #[test]
     fn load_or_init_file_creates_default() {
         let guard = test_guard().lock().unwrap();
-        let temp_dir =
-            std::env::temp_dir().join(format!("fwc-ip-pool-{}", uuid::Uuid::new_v4()));
+        let temp_dir = std::env::temp_dir().join(format!("fwc-ip-pool-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&temp_dir).unwrap();
         let cfg = load_or_init_file_at(&temp_dir).expect("create default ip config");
         assert!(cfg.preheat_domains.is_empty());
@@ -266,12 +280,18 @@ mod tests {
         let mut cfg = IpPoolFileConfig::default();
         cfg.preheat_domains.push(PreheatDomain::new("github.com"));
         cfg.score_ttl_seconds = 120;
-    save_file_at(&cfg, &temp_dir).expect("save ip config");
-    let loaded = load_or_init_file_at(&temp_dir).expect("load ip config");
+        cfg.user_static.push(UserStaticIp {
+            host: "github.com".into(),
+            ip: "140.82.112.3".into(),
+            ports: vec![443],
+        });
+        save_file_at(&cfg, &temp_dir).expect("save ip config");
+        let loaded = load_or_init_file_at(&temp_dir).expect("load ip config");
         assert_eq!(loaded.preheat_domains.len(), 1);
         assert_eq!(loaded.score_ttl_seconds, 120);
+        assert_eq!(loaded.user_static.len(), 1);
         fs::remove_dir_all(&temp_dir).ok();
-    drop(guard);
+        drop(guard);
     }
 
     fn test_guard() -> &'static Mutex<()> {
