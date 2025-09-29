@@ -33,6 +33,7 @@ pub mod git_helpers;
 pub mod git_scenarios;
 pub mod http_override_stub; // 12.10: http override cases & stub
 pub mod i18n;
+pub mod ip_pool; // P4.2: IP pool helpers for selection & cache tests
 pub mod partial_filter_matrix; // 12.6: partial clone filter 矩阵
 pub mod partial_filter_support; // 支撑能力判定
 pub mod pipeline; // 12.15: pipeline DSL (e2e scaffolding)
@@ -112,6 +113,11 @@ pub mod prelude {
     pub use super::fixtures::{
         create_empty_dir, create_empty_repo, path_slug, repo_with_staged, stage_files, write_files,
         TestRepo,
+    };
+
+    pub use super::ip_pool::{
+        cache_best, candidate_v4, enabled_config, epoch_ms, history_record, make_latency_stat,
+        stat_with_latency, user_static_only_config,
     };
     // Repo factory helpers (rev_count moved here)
     pub use super::repo_factory::rev_count;

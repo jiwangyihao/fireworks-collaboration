@@ -168,6 +168,11 @@ path = "tests/tasks/task_registry_and_service.rs"
 required-features = []
 
 [[test]]
+name = "ip_pool_manager"
+path = "tests/tasks/ip_pool_manager.rs"
+required-features = []
+
+[[test]]
 name = "e2e_public_git"
 path = "tests/e2e/e2e_public_git.rs"
 required-features = []
