@@ -227,10 +227,10 @@ mod section_adaptive_tls_metrics {
 
 // ---------------- section_adaptive_tls_fallback ----------------
 mod section_adaptive_tls_fallback {
+    use crate::common::strategy_support::test_emit_adaptive_tls_observability;
     use fireworks_collaboration_lib::core::git::transport::{
         tl_push_fallback_event, tl_take_fallback_events, FallbackEventRecord,
     };
-    use crate::common::strategy_support::test_emit_adaptive_tls_observability;
     use fireworks_collaboration_lib::events::structured::{
         set_test_event_bus, Event, MemoryEventBus, StrategyEvent,
     };

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::core::ip_pool::IpPoolRuntimeConfig;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HttpCfg {
@@ -81,6 +83,9 @@ pub struct AppConfig {
     /// 可通过环境变量 `FWC_PARTIAL_FILTER_SUPPORTED=1` 在运行时覆盖（仅影响 fallback 行为，不启用真正 partial 传输）。
     #[serde(default)]
     pub partial_filter_supported: bool,
+    /// P4.0: IP 池运行期配置，默认关闭。
+    #[serde(default)]
+    pub ip_pool: IpPoolRuntimeConfig,
 }
 
 fn default_true() -> bool {
@@ -175,6 +180,7 @@ impl Default for AppConfig {
             },
             retry: RetryCfg::default(),
             partial_filter_supported: false,
+            ip_pool: IpPoolRuntimeConfig::default(),
         }
     }
 }
@@ -245,6 +251,7 @@ mod tests {
         assert!(s.contains("\"certFpLogEnabled\""));
         assert!(s.contains("\"certFpMaxBytes\""));
         assert!(s.contains("\"spkiPins\""));
+        assert!(s.contains("\"ipPool\""));
     }
 
     #[test]
@@ -288,5 +295,6 @@ mod tests {
         assert_eq!(cfg.tls.cert_fp_max_bytes, 5 * 1024 * 1024);
         // P3.4: spkiPins default empty
         assert!(cfg.tls.spki_pins.is_empty());
+        assert!(!cfg.ip_pool.enabled, "ipPool defaults to disabled");
     }
 }

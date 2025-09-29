@@ -16,8 +16,8 @@ use fireworks_collaboration_lib::core::tasks::retry::{
 };
 use fireworks_collaboration_lib::events::emitter::{emit_all, AppHandle};
 use fireworks_collaboration_lib::events::structured::{
-    publish_global, set_global_event_bus, Event as StructuredEvent,
-    MemoryEventBus, StrategyEvent as StructuredStrategyEvent,
+    publish_global, set_global_event_bus, Event as StructuredEvent, MemoryEventBus,
+    StrategyEvent as StructuredStrategyEvent,
 };
 use serde_json::Value;
 use std::path::PathBuf;
@@ -47,10 +47,16 @@ fn runtime_config() -> AppConfig {
         fireworks_collaboration_lib::core::config::loader::load_or_init()
             .unwrap_or_else(|_| AppConfig::default())
     };
-    if matches!(std::env::var("FWC_PARTIAL_FILTER_SUPPORTED").as_deref(), Ok("1")) {
+    if matches!(
+        std::env::var("FWC_PARTIAL_FILTER_SUPPORTED").as_deref(),
+        Ok("1")
+    ) {
         cfg.partial_filter_supported = true;
     }
-    if matches!(std::env::var("FWC_PARTIAL_FILTER_CAPABLE").as_deref(), Ok("1")) {
+    if matches!(
+        std::env::var("FWC_PARTIAL_FILTER_CAPABLE").as_deref(),
+        Ok("1")
+    ) {
         cfg.partial_filter_supported = true;
     }
     cfg
@@ -111,8 +117,8 @@ pub fn test_emit_clone_with_override(
     if let Some(inner) = strategy_override.get("strategyOverride") {
         strategy_override = inner.clone();
     }
-    let parsed_opts = parse_depth_filter_opts(None, None, Some(strategy_override))
-        .expect("parse override");
+    let parsed_opts =
+        parse_depth_filter_opts(None, None, Some(strategy_override)).expect("parse override");
     let mut applied_codes: Vec<String> = vec![];
     let mut effective_follow = global_cfg.http.follow_redirects;
     let mut effective_max = global_cfg.http.max_redirects;
@@ -124,12 +130,8 @@ pub fn test_emit_clone_with_override(
         .as_ref()
         .and_then(|s| s.http.as_ref())
     {
-        let (f, m, changed, conflict) = TaskRegistry::apply_http_override(
-            "GitClone",
-            &task_id,
-            &global_cfg,
-            Some(http_over),
-        );
+        let (f, m, changed, conflict) =
+            TaskRegistry::apply_http_override("GitClone", &task_id, &global_cfg, Some(http_over));
         effective_follow = f;
         effective_max = m;
         if changed {
@@ -166,12 +168,8 @@ pub fn test_emit_clone_with_override(
         .as_ref()
         .and_then(|s| s.tls.as_ref())
     {
-        let (ins, skip, changed, conflict) = TaskRegistry::apply_tls_override(
-            "GitClone",
-            &task_id,
-            &global_cfg,
-            Some(tls_over),
-        );
+        let (ins, skip, changed, conflict) =
+            TaskRegistry::apply_tls_override("GitClone", &task_id, &global_cfg, Some(tls_over));
         effective_insecure = ins;
         effective_skip = skip;
         if changed {
@@ -208,7 +206,8 @@ pub fn test_emit_clone_with_override(
         .as_ref()
         .and_then(|s| s.retry.as_ref())
     {
-        let (plan, changed) = TaskRegistry::apply_retry_override(&global_cfg.retry, Some(retry_over));
+        let (plan, changed) =
+            TaskRegistry::apply_retry_override(&global_cfg.retry, Some(retry_over));
         retry_plan = plan;
         if changed {
             let base_plan = load_retry_plan();
@@ -348,7 +347,10 @@ mod tests {
             .into_iter()
             .find_map(|evt| match evt {
                 Event::Strategy(StrategyEvent::AdaptiveTlsRollout { id, sampled, .. })
-                    if id == expected_id => Some(sampled),
+                    if id == expected_id =>
+                {
+                    Some(sampled)
+                }
                 _ => None,
             })
             .expect("rollout event")

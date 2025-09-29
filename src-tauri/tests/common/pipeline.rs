@@ -331,10 +331,8 @@ pub fn run_pipeline_with(spec: &PipelineSpec, cfg: &PipelineConfig) -> PipelineO
                 if let Some(l) = &local {
                     if force_fail {
                         // 改 remote URL 指向临时不存在的路径以触发失败，避免依赖环境特定路径
-                        let bogus_remote = std::env::temp_dir().join(format!(
-                            "fwc-missing-remote-{}",
-                            uuid::Uuid::new_v4()
-                        ));
+                        let bogus_remote = std::env::temp_dir()
+                            .join(format!("fwc-missing-remote-{}", uuid::Uuid::new_v4()));
                         let _ = std::fs::remove_dir_all(&bogus_remote);
                         let bogus_remote_str = bogus_remote.to_string_lossy().replace('\\', "/");
                         let mut set_remote = Command::new("git");

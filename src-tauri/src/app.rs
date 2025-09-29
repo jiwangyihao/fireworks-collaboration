@@ -5,6 +5,7 @@ use crate::core::{
         client::HttpClient,
         types::{HttpRequestInput, HttpResponseOutput, RedirectInfo},
     },
+    ip_pool::{self, IpPool},
     tasks::{SharedTaskRegistry, TaskKind, TaskRegistry, TaskSnapshot},
     tls::util::match_domain,
 };
@@ -52,6 +53,7 @@ impl Default for SystemProxy {
 type SharedConfig = Arc<Mutex<AppConfig>>;
 type ConfigBaseDir = PathBuf;
 type TaskRegistryState = SharedTaskRegistry;
+type SharedIpPool = Arc<Mutex<IpPool>>;
 
 // ===== Commands =====
 #[tauri::command]
@@ -70,12 +72,29 @@ async fn set_config(
     newCfg: AppConfig,
     cfg: State<'_, SharedConfig>,
     base: State<'_, ConfigBaseDir>,
+    pool: State<'_, SharedIpPool>,
 ) -> Result<(), String> {
     {
         let mut g = cfg.lock().map_err(|e| e.to_string())?;
         *g = newCfg.clone();
     }
-    cfg_loader::save_at(&newCfg, &*base).map_err(|e| e.to_string())
+    cfg_loader::save_at(&newCfg, &*base).map_err(|e| e.to_string())?;
+    match ip_pool::load_effective_config_at(&newCfg, base.as_path()) {
+        Ok(effective) => {
+            if let Ok(mut guard) = pool.inner().lock() {
+                guard.update_config(effective);
+            } else {
+                tracing::error!(
+                    target = "ip_pool",
+                    "failed to acquire ip pool lock while applying config"
+                );
+            }
+        }
+        Err(err) => {
+            tracing::error!(target = "ip_pool", error = %err, "failed to refresh ip pool configuration");
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -725,6 +744,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(OAuthState::new(Mutex::new(None)))
         .manage(Arc::new(TaskRegistry::new()) as TaskRegistryState)
+        .manage(Arc::new(Mutex::new(IpPool::default())) as SharedIpPool)
         .invoke_handler(tauri::generate_handler![
             greet,
             start_oauth_server,
@@ -764,8 +784,25 @@ pub fn run() {
         // 注入全局配置基目录，确保后续动态加载（如 Git 子传输）与应用一致
         cfg_loader::set_global_base_dir(&base_dir);
         let cfg = cfg_loader::load_or_init_at(&base_dir).unwrap_or_default();
-        app.manage(Arc::new(Mutex::new(cfg)) as SharedConfig);
+        app.manage(Arc::new(Mutex::new(cfg.clone())) as SharedConfig);
+        let base_dir_clone = base_dir.clone();
         app.manage::<ConfigBaseDir>(base_dir);
+        let effective = match ip_pool::load_effective_config_at(&cfg, &base_dir_clone) {
+            Ok(cfg) => cfg,
+            Err(err) => {
+                tracing::error!(target = "ip_pool", error = %err, "load ip pool config failed; using defaults");
+                ip_pool::EffectiveIpPoolConfig::from_parts(
+                    cfg.ip_pool.clone(),
+                    ip_pool::IpPoolFileConfig::default(),
+                )
+            }
+        };
+        let pool_state = app.state::<SharedIpPool>();
+        if let Ok(mut guard) = pool_state.inner().lock() {
+            guard.update_config(effective);
+        } else {
+            tracing::error!(target = "ip_pool", "failed to acquire ip pool lock during setup");
+        }
         Ok(())
     });
     builder
