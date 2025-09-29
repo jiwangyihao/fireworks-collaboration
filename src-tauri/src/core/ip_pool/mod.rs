@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod config;
+pub mod history;
 
 use crate::core::config::model::AppConfig;
 use anyhow::Result;
@@ -8,8 +9,10 @@ use std::{path::Path, sync::Arc};
 
 pub use cache::{IpCacheKey, IpCacheSlot, IpCandidate, IpScoreCache, IpStat};
 pub use config::{
-    EffectiveIpPoolConfig, IpPoolFileConfig, IpPoolRuntimeConfig, IpPoolSourceToggle, PreheatDomain,
+    EffectiveIpPoolConfig, IpPoolFileConfig, IpPoolRuntimeConfig, IpPoolSourceToggle,
+    PreheatDomain,
 };
+pub use history::{IpHistoryRecord, IpHistoryStore};
 
 /// IP 候选来源分类，贯穿配置、缓存与事件输出。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -91,13 +94,25 @@ pub enum IpOutcome {
 pub struct IpPool {
     config: Arc<EffectiveIpPoolConfig>,
     cache: Arc<IpScoreCache>,
+    history: Arc<IpHistoryStore>,
 }
 
 impl IpPool {
     pub fn new(config: EffectiveIpPoolConfig) -> Self {
+        let history = IpHistoryStore::load_default()
+            .map(Arc::new)
+            .unwrap_or_else(|err| {
+                tracing::warn!(
+                    target = "ip_pool",
+                    error = %err,
+                    "failed to load ip history; using in-memory store"
+                );
+                Arc::new(IpHistoryStore::in_memory())
+            });
         Self {
             config: Arc::new(config),
             cache: Arc::new(IpScoreCache::new()),
+            history,
         }
     }
 
@@ -110,6 +125,7 @@ impl IpPool {
         Self {
             config: Arc::new(config),
             cache: Arc::new(cache),
+            history: Arc::new(IpHistoryStore::in_memory()),
         }
     }
 
@@ -127,6 +143,10 @@ impl IpPool {
 
     pub fn cache(&self) -> &IpScoreCache {
         &self.cache
+    }
+
+    pub fn history(&self) -> &IpHistoryStore {
+        &self.history
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -166,6 +186,7 @@ impl IpPool {
         );
         // P4.0 阶段仅记录日志，真实反馈逻辑将在后续阶段引入。
     }
+
 }
 
 impl Default for IpPool {

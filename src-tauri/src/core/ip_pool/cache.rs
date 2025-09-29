@@ -41,6 +41,8 @@ impl Default for IpCandidate {
 #[serde(rename_all = "camelCase")]
 pub struct IpStat {
     pub candidate: IpCandidate,
+    #[serde(default)]
+    pub sources: Vec<IpSource>,
     /// TCP 握手延迟（毫秒）；P4.0 阶段未计算时保持 None。
     #[serde(default)]
     pub latency_ms: Option<u32>,
@@ -54,10 +56,13 @@ pub struct IpStat {
 
 impl IpStat {
     pub fn with_latency(candidate: IpCandidate, latency_ms: u32) -> Self {
+        let initial_source = candidate.source;
         Self {
             candidate,
             latency_ms: Some(latency_ms),
-            ..Self::default()
+            measured_at_epoch_ms: None,
+            expires_at_epoch_ms: None,
+            sources: vec![initial_source],
         }
     }
 }
@@ -169,6 +174,7 @@ mod tests {
             fetched.best.unwrap().candidate.address,
             stat.candidate.address
         );
+        assert_eq!(stat.sources, vec![IpSource::Builtin]);
         // 确保 snapshot 复制，而不是共享引用
         let snapshot = cache.snapshot();
         assert!(snapshot.contains_key(&key));
