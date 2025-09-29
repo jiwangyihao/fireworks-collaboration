@@ -5,7 +5,16 @@ use std::{
     sync::RwLock,
 };
 
-use super::IpSource;
+/// IP 候选来源分类，贯穿配置、缓存与事件输出。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum IpSource {
+    Builtin,
+    Dns,
+    History,
+    UserStatic,
+    Fallback,
+}
 
 /// IP 候选条目，记录来源与端口信息。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -63,6 +72,13 @@ impl IpStat {
             measured_at_epoch_ms: None,
             expires_at_epoch_ms: None,
             sources: vec![initial_source],
+        }
+    }
+
+    pub fn is_expired(&self, now_ms: i64) -> bool {
+        match self.expires_at_epoch_ms {
+            Some(expires) => expires <= now_ms,
+            None => false,
         }
     }
 }

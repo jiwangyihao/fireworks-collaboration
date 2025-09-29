@@ -42,10 +42,31 @@ pub struct IpPoolRuntimeConfig {
     /// 可选：覆盖历史缓存文件路径，缺省时由模块自行推导。
     #[serde(default)]
     pub history_path: Option<String>,
+    /// TTL 定期清理间隔（秒）。
+    #[serde(default = "default_cache_prune_interval_secs")]
+    pub cache_prune_interval_secs: u64,
+    /// 缓存最大条目数（仅统计非预热域名）。0 表示无限制。
+    #[serde(default = "default_max_cache_entries")]
+    pub max_cache_entries: usize,
+    /// 单飞等待超时时间（毫秒）。
+    #[serde(default = "default_singleflight_timeout_ms")]
+    pub singleflight_timeout_ms: u64,
 }
 
 fn default_probe_timeout_ms() -> u64 {
     1500
+}
+
+fn default_cache_prune_interval_secs() -> u64 {
+    60
+}
+
+fn default_max_cache_entries() -> usize {
+    256
+}
+
+fn default_singleflight_timeout_ms() -> u64 {
+    10_000
 }
 
 impl Default for IpPoolRuntimeConfig {
@@ -56,6 +77,9 @@ impl Default for IpPoolRuntimeConfig {
             max_parallel_probes: default_max_parallel_probes(),
             probe_timeout_ms: default_probe_timeout_ms(),
             history_path: None,
+            cache_prune_interval_secs: default_cache_prune_interval_secs(),
+            max_cache_entries: default_max_cache_entries(),
+            singleflight_timeout_ms: default_singleflight_timeout_ms(),
         }
     }
 }
@@ -223,6 +247,15 @@ mod tests {
         assert!(cfg.sources.history);
         assert!(cfg.sources.user_static);
         assert!(cfg.sources.fallback);
+        assert_eq!(
+            cfg.cache_prune_interval_secs,
+            default_cache_prune_interval_secs()
+        );
+        assert_eq!(cfg.max_cache_entries, default_max_cache_entries());
+        assert_eq!(
+            cfg.singleflight_timeout_ms,
+            default_singleflight_timeout_ms()
+        );
     }
 
     #[test]
@@ -255,6 +288,15 @@ mod tests {
         assert_eq!(domain.host, "github.com");
         assert_eq!(domain.ports, vec![443, 80]);
         assert!(cfg.file.user_static.is_empty());
+        assert_eq!(
+            cfg.runtime.cache_prune_interval_secs,
+            default_cache_prune_interval_secs()
+        );
+        assert_eq!(cfg.runtime.max_cache_entries, default_max_cache_entries());
+        assert_eq!(
+            cfg.runtime.singleflight_timeout_ms,
+            default_singleflight_timeout_ms()
+        );
     }
 
     #[test]

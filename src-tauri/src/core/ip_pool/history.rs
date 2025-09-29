@@ -75,6 +75,36 @@ impl IpHistoryStore {
         })
     }
 
+    pub fn load_or_init_from_file(path: &Path) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).ok();
+        }
+        let file = if path.exists() {
+            let data =
+                fs::read(path).with_context(|| format!("read ip history: {}", path.display()))?;
+            match serde_json::from_slice::<IpHistoryFile>(&data) {
+                Ok(parsed) => parsed,
+                Err(err) => {
+                    tracing::warn!(
+                        target = "ip_pool",
+                        path = %path.display(),
+                        error = %err,
+                        "ip history corrupted, resetting"
+                    );
+                    IpHistoryFile::default()
+                }
+            }
+        } else {
+            let default = IpHistoryFile::default();
+            Self::persist(Some(path), &default)?;
+            default
+        };
+        Ok(Self {
+            path: Some(path.to_path_buf()),
+            inner: Mutex::new(file),
+        })
+    }
+
     pub fn load_default() -> Result<Self> {
         let base = crate::core::config::loader::base_dir();
         Self::load_or_init_at(&base)
@@ -165,6 +195,24 @@ impl IpHistoryStore {
         Self::persist(self.path.as_deref(), &guard)
     }
 
+    pub fn remove(&self, host: &str, port: u16) -> Result<bool> {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("ip history poisoned"))?;
+        if let Some(idx) = guard
+            .entries
+            .iter()
+            .position(|entry| entry.host == host && entry.port == port)
+        {
+            guard.entries.remove(idx);
+            Self::persist(self.path.as_deref(), &guard)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     fn persist(path: Option<&Path>, file: &IpHistoryFile) -> Result<()> {
         if let Some(path) = path {
             let json = serde_json::to_string_pretty(file).context("serialize ip history")?;
@@ -221,6 +269,16 @@ mod tests {
     }
 
     #[test]
+    fn load_or_init_from_file_creates_parent_dirs() {
+        let base = std::env::temp_dir().join(format!("ip-history-file-{}", Uuid::new_v4()));
+        let path = base.join("nested").join("custom-history.json");
+        let store = IpHistoryStore::load_or_init_from_file(&path).expect("load history file");
+        assert!(path.exists());
+        assert!(store.snapshot().unwrap().is_empty());
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
     fn get_fresh_evicts_expired_records() {
         let store = IpHistoryStore::in_memory();
         let record = IpHistoryRecord {
@@ -265,5 +323,27 @@ mod tests {
         assert_eq!(fetched.latency_ms, record.latency_ms);
         assert_eq!(fetched.sources, record.sources);
         assert_eq!(store.snapshot().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn remove_clears_matching_entry() {
+        let store = IpHistoryStore::in_memory();
+        let record = IpHistoryRecord {
+            host: "github.com".into(),
+            port: 443,
+            candidate: IpCandidate::new(
+                IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+                443,
+                IpSource::Builtin,
+            ),
+            sources: vec![IpSource::Builtin],
+            latency_ms: 10,
+            measured_at_epoch_ms: 1,
+            expires_at_epoch_ms: 10_000,
+        };
+        store.upsert(record).expect("write history");
+        assert!(store.remove("github.com", 443).expect("remove entry"));
+        assert!(store.get("github.com", 443).is_none());
+        assert!(!store.remove("github.com", 443).expect("idempotent remove"));
     }
 }

@@ -1,0 +1,116 @@
+use std::{sync::Arc, time::Duration};
+
+use anyhow::Result;
+use tokio::{sync::Notify, time::timeout};
+
+use super::{
+    cache::{IpCacheKey, IpStat},
+    maintenance,
+    manager::IpPool,
+    preheat,
+};
+
+pub(super) fn get_fresh_cached(
+    pool: &IpPool,
+    host: &str,
+    port: u16,
+    now_ms: i64,
+) -> Option<IpStat> {
+    if let Some(slot) = pool.cache.get(host, port) {
+        if let Some(best) = slot.best {
+            if !best.is_expired(now_ms) {
+                return Some(best);
+            }
+            if !pool.is_preheat_target(host, port) {
+                maintenance::expire_entry(pool, host, port);
+            }
+        }
+    }
+    None
+}
+
+pub(super) async fn ensure_sampled(pool: &IpPool, host: &str, port: u16) -> Result<Option<IpStat>> {
+    let key = IpCacheKey::new(host.to_string(), port);
+    loop {
+        if let Some(stat) = get_fresh_cached(pool, host, port, preheat::current_epoch_ms()) {
+            return Ok(Some(stat));
+        }
+
+        let waiter = {
+            let mut guard = pool.pending.lock().await;
+            if let Some(existing) = guard.get(&key) {
+                Some(existing.clone())
+            } else {
+                let notify = Arc::new(Notify::new());
+                guard.insert(key.clone(), notify.clone());
+                None
+            }
+        };
+
+        if let Some(waiter) = waiter {
+            let timeout_ms = pool.config.runtime.singleflight_timeout_ms.max(100);
+            if timeout(Duration::from_millis(timeout_ms as u64), waiter.notified())
+                .await
+                .is_err()
+            {
+                tracing::warn!(
+                    target = "ip_pool",
+                    host,
+                    port,
+                    "waited for single-flight probe but timed out"
+                );
+                return Ok(None);
+            }
+            continue;
+        }
+
+        let result = sample_once(pool, host, port).await;
+        let mut guard = pool.pending.lock().await;
+        if let Some(entry) = guard.remove(&key) {
+            entry.notify_waiters();
+        }
+        return result;
+    }
+}
+
+async fn sample_once(pool: &IpPool, host: &str, port: u16) -> Result<Option<IpStat>> {
+    let config = pool.config.clone();
+    let history = pool.history.clone();
+    let cache = pool.cache.clone();
+
+    let candidates = preheat::collect_candidates(host, port, &config, history.clone()).await;
+    if candidates.is_empty() {
+        tracing::warn!(
+            target = "ip_pool",
+            host,
+            port,
+            "no candidates collected for on-demand sampling"
+        );
+        maintenance::expire_entry(pool, host, port);
+        return Ok(None);
+    }
+
+    let stats = preheat::measure_candidates(
+        host,
+        port,
+        candidates,
+        &config.runtime,
+        config.file.score_ttl_seconds,
+    )
+    .await;
+
+    if stats.is_empty() {
+        tracing::warn!(
+            target = "ip_pool",
+            host,
+            port,
+            "all candidates failed probing"
+        );
+        maintenance::expire_entry(pool, host, port);
+        return Ok(None);
+    }
+
+    let best = stats.first().cloned();
+    preheat::update_cache_and_history(host, port, stats, cache, history)?;
+    Ok(best)
+}

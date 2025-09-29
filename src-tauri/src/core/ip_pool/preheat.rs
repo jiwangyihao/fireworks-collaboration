@@ -337,7 +337,7 @@ async fn preheat_domain(
 }
 
 #[derive(Debug, Clone)]
-struct AggregatedCandidate {
+pub(super) struct AggregatedCandidate {
     candidate: IpCandidate,
     sources: HashSet<IpSource>,
 }
@@ -367,7 +367,7 @@ impl AggregatedCandidate {
     }
 }
 
-async fn collect_candidates(
+pub(super) async fn collect_candidates(
     host: &str,
     port: u16,
     config: &EffectiveIpPoolConfig,
@@ -427,9 +427,9 @@ async fn collect_candidates(
     map.into_values().collect()
 }
 
-async fn measure_candidates(
+pub(super) async fn measure_candidates(
     host: &str,
-    port: u16,
+    _port: u16,
     candidates: Vec<AggregatedCandidate>,
     runtime_cfg: &IpPoolRuntimeConfig,
     ttl_secs: u64,
@@ -482,7 +482,7 @@ async fn measure_candidates(
     stats
 }
 
-async fn probe_latency(ip: IpAddr, port: u16, timeout_ms: u64) -> Result<u32> {
+pub(super) async fn probe_latency(ip: IpAddr, port: u16, timeout_ms: u64) -> Result<u32> {
     let addr = SocketAddr::new(ip, port);
     let timeout = Duration::from_millis(timeout_ms);
     let start = Instant::now();
@@ -492,7 +492,7 @@ async fn probe_latency(ip: IpAddr, port: u16, timeout_ms: u64) -> Result<u32> {
     Ok(elapsed.as_millis().min(u128::from(u32::MAX)) as u32)
 }
 
-fn update_cache_and_history(
+pub(super) fn update_cache_and_history(
     host: &str,
     port: u16,
     stats: Vec<IpStat>,
@@ -562,7 +562,7 @@ async fn resolve_dns(host: &str, port: u16) -> Result<Vec<IpAddr>> {
     Ok(addrs)
 }
 
-fn current_epoch_ms() -> i64 {
+pub(super) fn current_epoch_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| StdDuration::from_secs(0))
