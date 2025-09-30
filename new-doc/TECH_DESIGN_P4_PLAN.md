@@ -1,19 +1,5 @@
 # P4 阶段技术设计文档 —— IP 优选与握手延迟调度
 
-## 待办事项（2025-10-01）
-- [x] 制定提交拆分计划
-- [x] 提交：IP 池异常治理与事件增强
-- [x] 提交：HTTP 客户端集成 IP 池候选
-- [x] 提交：P4.5 文档更新
-- [x] 检查工作区改动并梳理差异
-- [x] 规划 P4.6 主题提交拆分方案
-- [x] 依次创建代码类提交
-- [x] 最后提交文档更新
-- [x] 提交后自检
-- [x] 整理 P4.6 soak 变更清单
-- [x] 补充 P4.6 实现说明
-- [x] 自检并勾选待办
-
 ## 1. 概述
 
 本阶段在 MP0～P3 已完成的 git2-rs 基线、自适应 TLS 传输层（含默认启用、Real-Host 验证、SPKI Pin、自动禁用）与观测框架之上，引入“IP 池与优选”能力。目标是在不破坏现有任务契约的前提下，为白名单域构建可配置的预热域名列表、统一的 IP 收集与 TCP 握手测速管线，依据延迟评分在每次任务开始前选择最优 IP；同时保持评分 TTL 过期机制与回退链协同，确保当网络环境变化或 IP 失效时能快速刷新或退回系统 DNS。
@@ -665,12 +651,15 @@
     - 添写 `src-tauri/src/core/ip_pool/events.rs` 的新事件辅助方法（CIDR 过滤、熔断、配置更新、自动禁用/恢复），并在 `src-tauri/src/events/structured.rs` 增补 `StrategyEvent` 变体。
     - 丰富配置：`src-tauri/src/core/ip_pool/config.rs` 默认值新增熔断相关字段、黑名单/白名单列表；`EffectiveIpPoolConfig` 序列化保持兼容。
     - 新增测试 `src-tauri/tests/tasks/ip_pool_event_emit.rs` 与 `src-tauri/tests/tasks/ip_pool_event_edge.rs` 覆盖事件发射、并发更新、异常边界；同时补充 `src-tauri/src/core/ip_pool/events.rs` 内嵌单测确保结构化事件载荷正确。
+    - 迭代 `src-tauri/src/core/ip_pool/manager.rs` 的自动禁用接口：`set_auto_disabled` 现在接收禁用原因并在冷却窗口内去重事件，`clear_auto_disabled` 返回是否真正切换状态；同步更新 `preheat.rs` 以复用新语义并避免重复发射启用事件。
+    - 扩展 `src-tauri/tests/tasks/ip_pool_manager.rs`，新增 `auto_disable_extends_without_duplicate_events` 回归场景，验证禁用扩展与恢复只发射一次结构化事件且选择逻辑在冷却期回退系统 DNS。
 - **关键代码路径与行为**：
     - `IpPool::report_candidate_outcome` 在记录候选结果后委托 `CircuitBreaker`，熔断打开时通过 `emit_ip_pool_ip_tripped` 写入结构化事件；`is_ip_tripped`/`get_tripped_ips` 供外部快速查询当前被禁名单。
     - `CircuitBreaker::record_outcome` 根据连续失败、滑动窗口失败率与冷却时间执行状态迁移，并在转入 `Cooldown` 或重新回到 `Normal` 时分别生成 `IpPoolIpTripped`/`IpPoolIpRecovered` 事件及 `tracing` 日志。
     - 预热调度器扩展黑白名单策略：`collect_candidates` 先执行白名单放行（未命中即丢弃）、再执行黑名单淘汰，所有决策均调用 `emit_ip_pool_cidr_filter` 记录来源（`whitelist`/`blacklist`）与 CIDR；并在连续失败（当前阈值 5 次）后触发 `IpPool::set_auto_disabled` 进入 5 分钟冷却窗口。
     - 全局 Auto Disable/Enable：`auto_disabled_until` 通过 `AtomicI64` 管理冷却截止时间，`IpPool::is_enabled` 和预热循环在读取时统一尊重，并在冷却结束时调用 `clear_auto_disabled` + `emit_ip_pool_auto_enable` 恢复。
     - 配置热更新：`IpPool::update_config` 重新构建熔断器、预热服务与历史存储，随后使用 `emit_ip_pool_config_update` 记录旧新配置快照；`IpPoolFileConfig` 新增黑白名单字段在默认情况下为空数组，避免破坏现有部署。
+    - 自动禁用状态采用 CAS 语义防止并发触发重复事件：在禁用仍生效时只延长 `auto_disabled_until` 并输出 debug 日志，不再重复发射 `IpPoolAutoDisable`；`clear_auto_disabled` 使用 `swap` 判定冷却是否结束，避免多次恢复事件。
 - **设计差异与取舍**：
     - 预热全域失败触发 auto-disable 的阈值与冷却时间暂以常量实现（5 次、5 分钟），后续若需按环境调优可延伸为运行期配置；为避免重复事件，在 `set_auto_disabled` 内部触发事件的同时仍保留预热路径的显式发射，便于区分触发原因。
     - 黑白名单使用简单 CIDR/单 IP 字符串匹配，无额外语法校验；无效条目仍按原样发射事件，留给运维识别修正。
@@ -679,6 +668,7 @@
     - 新增事件单测验证所有策略事件字段（CIDR 过滤、熔断、配置更新、auto-disable/enable）在 `MemoryEventBus` 上完整可序列化；边界测试覆盖多次熔断恢复、黑白名单异常、并发热重载与事件总线替换。
     - 运行 `cargo test -q --manifest-path src-tauri/Cargo.toml`、`cargo test -q --test ip_pool_event_emit --manifest-path src-tauri/Cargo.toml` 等命令全量通过；前端 `pnpm test --coverage` 同步执行确认无回归。
     - `doc/P4.5_TEST_SUMMARY.md` 汇总变更与测试结果，覆盖率报告保存在 `coverage/` 目录供查阅。
+    - 新增回归测试 `auto_disable_extends_without_duplicate_events` 验证在禁用期内延长冷却不会多次触发结构化事件，以及恢复路径只发射一次启用事件；测试执行于 `cargo test --test ip_pool_manager -- auto_disable_extends_without_duplicate_events`。
 - **运维与配置落地**：
     - `config.json` 中的熔断阈值（`failure_threshold`、`failure_rate_threshold`、`failure_window_seconds`、`min_samples_in_window`、`cooldown_seconds`、`circuit_breaker_enabled`）支持热更新；`ip-config.json` 可新增 `blacklist`/`whitelist` 列表，保存后触发预热刷新即可生效。
     - 结构化事件新增 `IpPoolCidrFilter`、`IpPoolIpTripped`、`IpPoolIpRecovered`、`IpPoolConfigUpdate`、`IpPoolAutoDisable`、`IpPoolAutoEnable`，可通过日志或 `MemoryEventBus` 订阅构建监控面板；事件携带原因/CIDR/禁用截止时间，便于定位问题。

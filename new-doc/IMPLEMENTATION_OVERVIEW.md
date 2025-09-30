@@ -1,8 +1,8 @@
-# Fireworks Collaboration 实现总览（MP0 -> MP3 & 测试重构）
+# Fireworks Collaboration 实现总览（MP0 -> P4 & 测试重构）
 
-> 目的：以统一视角梳理 MP0、MP1、P2、P3 四个阶段以及测试重构后的现状，面向后续演进（P4+）的研发、运维与质量成员，提供完整的实现细节、配置指引、事件契约、测试矩阵与回退策略。
+> 目的：以统一视角梳理 MP0、MP1、P2、P3、P4 五个阶段以及测试重构后的现状，面向后续演进（P5+）的研发、运维与质量成员，提供完整的实现细节、配置指引、事件契约、测试矩阵与回退策略。
 >
-> 版本：v1.0（2025-09-28） 维护者：Core Team
+> 版本：v1.1（2025-10-01） 维护者：Core Team
 
 ---
 
@@ -13,12 +13,13 @@
   - **MP1**：Push、方式A自定义 smart subtransport、Retry v1、事件增强；
   - **P2**：本地 Git 操作扩展、Shallow/Partial、任务级策略覆盖、策略信息事件与护栏；
   - **P3**：自适应 TLS 全量 rollout、可观测性强化、Real Host 校验、SPKI Pin、自动禁用、Soak；
+  - **P4**：IP 池采样与优选、预热调度、熔断治理、Soak 阈值；
   - **测试重构**：`src-tauri/tests` 聚合结构、事件 DSL、属性测试与回归种子策略。
 - **读者画像**：
   - 新接手的后端/前端开发；
   - 运维与 SRE（回退、监控、调参）；
   - 测试与质量保障（测试矩阵、DSL 约束）。
-- **联动文档**：`new-doc/MP*.md` 系列详细交接稿、`new-doc/TECH_DESIGN_*.md` 设计稿、`doc/TESTS_REFACTOR_HANDOFF.md`。
+- **联动文档**：`new-doc/MP*_IMPLEMENTATION_HANDOFF.md`、`new-doc/P*_IMPLEMENTATION_HANDOFF.md` 系列交接稿、`new-doc/TECH_DESIGN_*.md` 设计稿、`doc/TESTS_REFACTOR_HANDOFF.md`。
 
 ---
 
@@ -30,6 +31,7 @@
 | MP1 | Push、方式A smart subtransport、Retry v1、进度阶段化 | `task://error`，Push `PreUpload/Upload/PostReceive`，错误分类输出 | HTTP/TLS/Fake SNI 配置热加载 | Push/方式A/Retry 可配置关闭或自动回退 | Rust/前端测试覆盖 push、事件 casing |
 | P2 | 本地操作（commit/branch/checkout/tag/remote）、Shallow/Partial、策略覆盖、护栏、Summary | 覆盖策略事件：`*_override_applied`、`strategy_override_summary` 等 | `strategyOverride` 入参，env gating（`FWC_PARTIAL_FILTER_SUPPORTED`、`FWC_STRATEGY_APPLIED_EVENTS`） | 逐项移除 TaskKind / 关闭 gating | 新增矩阵测试、属性测试覆盖策略解析 |
 | P3 | 自适应 TLS rollout + 可观测性、Real Host 校验、SPKI Pin、自动禁用、Soak | `AdaptiveTls*` 结构化事件、指纹变化事件 | `http.fakeSniRolloutPercent`、`tls.metricsEnabled`、`tls.certFpLogEnabled`、`tls.spkiPins` 等 | 配置层关闭 Fake/metrics/pin；自动禁用冷却 | Soak 测试 + 指标契约测试 |
+| P4 | IP 池采样与握手优选、传输集成、异常治理、观测扩展、Soak 阈值 | `IpPoolSelection`、`IpPoolRefresh`、`IpPoolAutoDisable`、`IpPoolCidrFilter` 等 | `ip_pool.*` 运行期与文件配置（缓存、熔断、TTL、黑白名单）| 配置禁用 IP 池/熔断/预热；自动禁用冷却 | Rust 单测/集测、IP 池集成测试、Soak 报告 |
 | 测试重构 | 主题聚合、事件 DSL、属性测试集中管理 | DSL 输出 Tag 子序列 | N/A | N/A | `src-tauri/tests` 结构稳定，CI 使用共享 helper |
 
 ---
@@ -73,6 +75,7 @@ http_fake_request(input: HttpRequestInput): Promise<HttpResponseOutput>
 - `task://error`：分类或信息事件，`{ taskId, kind, category, message, code?, retriedTimes? }`；
 - 自适应 TLS 结构化事件（P3）：`AdaptiveTlsRollout`、`AdaptiveTlsTiming`、`AdaptiveTlsFallback`、`AdaptiveTlsAutoDisable`、`CertFingerprintChanged`、`CertFpPinMismatch`；
 - 策略信息事件（P2）：`http_strategy_override_applied`、`retry_strategy_override_applied`、`tls_strategy_override_applied`、`strategy_override_conflict`、`strategy_override_ignored_fields`、`partial_filter_fallback`、`strategy_override_summary`。
+- IP 池与优选事件（P4）：`IpPoolSelection`、`IpPoolRefresh`、`IpPoolCidrFilter`、`IpPoolIpTripped`、`IpPoolIpRecovered`、`IpPoolAutoDisable`、`IpPoolAutoEnable`、`IpPoolConfigUpdate`；同时 `AdaptiveTlsTiming/Fallback` 增补 `ip_source`、`ip_latency_ms`、`ip_selection_stage` 可选字段。
 
 事件顺序约束在测试中锁定：策略 applied -> conflict -> ignored -> partial fallback -> summary；TLS 事件在任务结束前统一刷出。
 
@@ -96,7 +99,15 @@ Transport Stack
  ├─ Rewrite + rollout 决策（P3）
  ├─ Fallback 状态机 Fake->Real->Default
  ├─ TLS 验证与 SPKI Pin
+ ├─ IP 池候选消费与握手埋点（P4）
  └─ 自动禁用窗口
+
+IP Pool Service (core/ip_pool/*)
+ ├─ `IpPool` 统一入口（pick/report/maintenance/config）
+ ├─ `PreheatService` 调度多来源采样（builtin/history/userStatic/DNS/fallback）
+ ├─ `IpScoreCache` + `IpHistoryStore` 缓存与持久化（TTL、容量、降级）
+ ├─ 传输层集成：`custom_https_subtransport` 消费候选、线程本地埋点
+ └─ 异常治理：`circuit_breaker`、黑白名单、全局自动禁用（P4）
 ```
 
 前端（Pinia + Vue）在 `src/api/tasks.ts` 统一订阅事件，将 snake/camel 输入归一，`src/stores/tasks.ts` 管理任务、进度、错误、策略事件。
@@ -122,9 +133,11 @@ Transport Stack
 - **灰度策略**：MP1 的方式A 与 Retry、P3 的 fake SNI rollout 都支持按域或百分比分级，推荐每级灰度至少运行一次 soak 或回归脚本；
   - Rollout 0% -> 25% -> 50% -> 100%，期间监控 `AdaptiveTlsRollout` 与 `AdaptiveTlsFallback` 事件；
   - Push/策略相关配置调整需同步更新前端提示与文档，避免用户误解重试次数或凭证要求。
+  - P4 的 IP 池推荐域名单独启用：先在预热域上验证 TTL 刷新/候选延迟，再逐步扩大 `preheatDomains`；按需域名可通过 `ip_pool.enabled`/`maxCacheEntries`/`singleflightTimeoutMs` 跨阶段放量，并搭配 Soak 报告监控 `selection_by_strategy` 与 `refresh_success_rate`。
 - **跨阶段依赖**：
   - P2 的策略覆盖与 P3 的 adaptive TLS 共享 HTTP/TLS 配置，只在任务级做差异化；
   - P3 的指纹日志与自动禁用依赖 MP1 方式A 的传输框架，如需临时关闭 Fake SNI，应评估 P3 指标链路的可见性。
+  - P4 的 IP 池与 P3 的 Adaptive TLS 深度联动：传输层在同一线程上下文填充 `ip_source`/`ip_latency_ms` 并继续触发 `AdaptiveTlsTiming/Fallback`；关闭 IP 池时需同步评估 P3 自动禁用与指标的观测空洞；黑白名单/熔断策略依赖 P2 的任务配置热加载能力。
 - **回滚指引**：
   - 生产事故时优先通过配置禁用新增功能（Push、策略覆盖、Fake SNI、指标采集等）；
   - 若需降级二进制，参考 `src-tauri/_archive` 中的 legacy 实现及各阶段 handoff 文档的“回退矩阵”。
@@ -315,7 +328,80 @@ Transport Stack
   - 指纹日志与 soak 报告包含敏感信息，导出前确保 `logging.authHeaderMasked` 与脱敏策略开启。
 - **回退策略**：配置层可关闭 Fake SNI（`fakeSniEnabled=false` 或 rollout=0）、关闭指标采集（`metricsEnabled=false`）、清空 `tls.spkiPins` 或调高 auto disable 阈值，必要时可回退到 `src-tauri/src/core/git/transport/_archive` 中的 legacy 实现。
 
-### 4.5 测试重构 - 统一验证体系
+### 4.5 P4 - IP 池与握手优选
+
+  - **目标**：
+    - 为指定域名和按需域名收集多来源 IP 候选，通过 TCP 握手延迟排序选择最佳连接；
+    - 保持缓存 TTL、容量与历史持久化，确保网络变化时能快速刷新或回退；
+    - 与传输层、自适应 TLS、观测体系打通，并在异常场景下提供熔断和全局禁用能力；
+    - 提供 Soak 阈值和报告扩展，为灰度和准入提供量化依据。
+  - **核心模块**：
+    - `IpPool` 统一封装 pick/report/maintenance/config 接口；
+    - `IpScoreCache`（内存缓存）+ `IpHistoryStore`（磁盘 `ip-history.json`）负责 TTL、容量、降级处理；
+    - `PreheatService` 独立 tokio runtime 调度多来源采样（Builtin/UserStatic/History/DNS/Fallback），指数退避与手动刷新并存；
+    - `custom_https_subtransport` 以延迟优先顺序尝试候选，失败后回退系统 DNS，并记录 `IpPoolSelection` 事件及线程本地埋点；
+    - `circuit_breaker` + 黑白名单 + 全局 `auto_disabled_until` 联合管理熔断与禁用，事件 `IpPoolIpTripped/Recovered`、`IpPoolAutoDisable/Enable` 反映状态；
+    - `core/ip_pool/events.rs` 集中封装所有新事件、保证测试可注入总线。
+  - **配置与默认值**：
+    - 运行期（`config.json`）：`ip_pool.enabled=false`、`cachePruneIntervalSecs=60`、`maxCacheEntries=256`、`singleflightTimeoutMs=10000`、熔断阈值 (`failureThreshold=5`、`failureRateThreshold=0.6`、`failureWindowSeconds=120`、`cooldownSeconds=300`、`circuitBreakerEnabled=true`)；
+    - 文件（`ip-config.json`）：`preheatDomains=[]`、`scoreTtlSeconds=300`、`maxParallelProbes=4`、`probeTimeoutMs=3000`、`userStatic=[]`、`blacklist/whitelist=[]`、`historyPath="ip-history.json"`；所有字段热更新后立即重建预热计划与熔断状态。
+  - **运行生命周期**：
+    1. 应用启动加载配置 -> 构建 `IpPool` -> `PreheatService::spawn` 若启用则拉起后台 runtime；
+    2. 预热循环按域调度采样，写入缓存与历史，并发 `IpPoolRefresh`；
+    3. 任务阶段 `pick_best` 优先命中缓存，否则 `ensure_sampled` 同域单飞采样；
+    4. `report_outcome` 回写成功/失败，为熔断统计提供数据；
+    5. `maybe_prune_cache` 按 `cachePruneIntervalSecs` 清理过期与超额条目，同时调用 `history.prune_and_enforce`；
+    6. 持续失败或运维干预触发 `set_auto_disabled`，冷却到期 `clear_auto_disabled` 自动恢复。
+  - **预热调度细节**：
+    - `DomainSchedule` 维护 `next_due`、`failure_streak` 与指数退避（封顶 6×TTL），热更新与 `request_refresh` 会立即重置；
+    - 候选收集 `collect_candidates` 合并五类来源，白名单优先保留、黑名单直接剔除并发 `IpPoolCidrFilter`；
+    - `measure_candidates` 受信号量限制并发数，`probe_latency` 根据配置截断超时，成功/失败均写 `ip_pool` target 日志；
+    - 当所有域达到失败阈值时执行 `set_auto_disabled("preheat consecutive failures", cooldown)` 并进入冷却；
+    - 预热成功/失败均会发 `IpPoolRefresh` 事件（`reason=preheat/no_candidates/all_probes_failed`）。
+  - **按需采样与缓存维护**：
+    - `ensure_sampled` 使用 `Notify` 单飞避免同域重复采样，超时（默认 10s）后回落系统 DNS；
+    - `sample_once` 复用预热逻辑，成功写回缓存与历史；
+    - `maybe_prune_cache` 清理过期条目、执行 LRU 式容量淘汰，再调用 `history.prune_and_enforce(now, max(maxCacheEntries, 128))`；
+    - `IpHistoryStore` 持久化失败时降级为内存模式，仅记录 `warn`，运行期不受阻塞；
+    - `auto_disable_extends_without_duplicate_events` 回归测试确保冷却延长不重复发 disable 事件，`clear_auto_disabled` 仅在状态切换时广播 enable。
+  - **传输层集成**：
+    - `acquire_ip_or_block` 返回按延迟排序的候选 snapshot，逐一尝试并通过 `report_candidate_outcome` 记录；
+    - 成功/失败均通过 `IpPoolSelection`、线程局部 `ip_source`/`ip_latency_ms` 反馈给 `AdaptiveTlsTiming/Fallback`；
+    - 阻塞接口 `pick_best_blocking` 复用全局 tokio runtime `OnceLock` 以适配同步调用场景；
+    - IP 池禁用或候选耗尽时事件中的 `strategy=SystemDefault`，前端可据此回退展示。
+  - **异常治理**：
+    - `CircuitBreaker::record_outcome` 基于滑动窗口判定并发 `IpPoolIpTripped/Recovered`；
+    - 黑白名单从配置热更新后即时生效，过滤结果通过 `IpPoolCidrFilter` 记录；
+    - 全局自动禁用采用 CAS/Swap 保证幂等，冷却中延长仅写 debug，恢复只发一次 `IpPoolAutoEnable`；
+    - 事件辅助 `event_bus_thread_safety_and_replacement` 测试覆盖并发场景，确保不会丢失或重复。
+  - **观测与数据**：
+    - 事件：`IpPoolSelection`（strategy/source/latency/candidates）、`IpPoolRefresh`（success/min/max/原因）、`IpPoolConfigUpdate`、熔断/禁用/CIDR；
+    - `AdaptiveTlsTiming/Fallback` 新增 ip 字段，与 P3 事件共享线程局部；
+    - `ip-history.json` 超过 1 MiB 记录警告；`prune_and_enforce` 在维护周期内统一清理；
+    - Soak 报告新增 `ip_pool` 统计（selection_total/by_strategy、refresh_success/failure、success_rate）。
+  - **Soak 与阈值**：
+    - 环境变量 `FWC_ADAPTIVE_TLS_SOAK=1`、`FWC_SOAK_MIN_IP_POOL_REFRESH_RATE`、`FWC_SOAK_MAX_AUTO_DISABLE`、`FWC_SOAK_MIN_LATENCY_IMPROVEMENT` 等可调；
+    - 报告 `thresholds` 判断 ready 状态，`comparison` 对比基线（成功率、回退率、IP 池刷新率、自动禁用次数、延迟改善）；
+    - 无基线时自动标记 `not_applicable` 并写入原因。
+  - **测试矩阵**：
+    - 单元：`preheat.rs`、`history.rs`、`mod.rs`（缓存/单飞/TTL）、`circuit_breaker.rs`、`events.rs`；
+    - 集成：`tests/tasks/ip_pool_manager.rs`、`ip_pool_preheat_events.rs`、`ip_pool_event_emit.rs`、`ip_pool_event_edge.rs`、`events_backward_compat.rs`；
+    - Soak：`src-tauri/src/soak/mod.rs` 对阈值、报告、基线比较和环境变量覆盖提供测试；
+    - 全量回归：`cargo test -q --manifest-path src-tauri/Cargo.toml`、前端 `pnpm test -s`。
+  - **运维要点与故障排查**：
+    - 快速禁用：`ip_pool.enabled=false` 或停用预热线程，新任务立即回退系统 DNS；
+    - 黑白名单：更新 `ip-config.json` 后调用 `request_refresh` 即时生效，事件中保留被过滤 IP 与 CIDR；
+    - 自动禁用：观察 `IpPoolAutoDisable`/`IpPoolAutoEnable` 与日志，必要时手动调用 `clear_auto_disabled` 或调整 `cooldownSeconds`；
+    - 历史异常：删除损坏的 `ip-history.json` 会自动重建，日志含 `failed to load ip history`；
+    - 调试：`RUST_LOG=ip_pool=debug` 打开预热/候选/退避细节；Soak 报告 `ip_pool.refresh_success_rate` < 阈值时重点排查网络连通性。
+  - **交接 checklist**：
+    - 发布前确认 `ip-config.json`/`config.json` 的 IP 池字段（TTL、并发、黑白名单、熔断阈值）与预期一致；
+    - 运行 `cargo test --test ip_pool_manager`、`--test ip_pool_preheat_events`、`--test events_backward_compat` 快速验证集成与事件向后兼容；
+    - 所有灰度环境需保留最新 soak 报告与 `selection_by_strategy` 指标截图，供准入评审；
+    - 告警体系需新增 IP 池类事件（刷新失败率、auto disable、熔断）监控，防止观测盲点；
+    - 运维手册应补充黑白名单维护与历史文件巡检 SOP。
+
+### 4.6 测试重构 - 统一验证体系
 
 - **目录布局**：`src-tauri/tests` 现按主题聚合——`common/`（共享 DSL 与 fixtures）、`git/`（Git 语义）、`events/`、`quality/`、`tasks/`、`e2e/`；每个聚合文件控制在 800 行内，新增用例优先追加至现有 section。
 - **公共模块**：`common/test_env.rs`（全局初始化）、`fixtures.rs` 与 `repo_factory.rs`（仓库构造）、`git_scenarios.rs`（复合操作）、`shallow_matrix.rs`/`partial_filter_matrix.rs`/`retry_matrix.rs`（参数矩阵），确保相同语义只实现一次。
@@ -334,8 +420,8 @@ Transport Stack
 
 ## 5. 交接与发布 checklist 概览
 
-- **文档同步**：合并前核对 `new-doc/MP*_IMPLEMENTATION_HANDOFF.md`、`new-doc/IMPLEMENTATION_OVERVIEW_MP0-P3.md` 与 `doc/TESTS_REFACTOR_HANDOFF.md` 的版本号与变更记录，一并更新 `CHANGELOG.md`。
-- **配置审计**：按阶段确认环境变量与 AppConfig 值：MP1（Fake SNI 白名单、Retry 阈值）、P2（`FWC_PARTIAL_FILTER_SUPPORTED`、`FWC_STRATEGY_APPLIED_EVENTS`）、P3（rollout 百分比、auto disable 阈值、SPKI pin 列表）。
+- **文档同步**：合并前核对 `new-doc/MP*_IMPLEMENTATION_HANDOFF.md`、`new-doc/P*_IMPLEMENTATION_HANDOFF.md` 与本文、`doc/TESTS_REFACTOR_HANDOFF.md` 的版本号与变更记录，一并更新 `CHANGELOG.md`。
+- **配置审计**：按阶段确认环境变量与 AppConfig 值：MP1（Fake SNI 白名单、Retry 阈值）、P2（`FWC_PARTIAL_FILTER_SUPPORTED`、`FWC_STRATEGY_APPLIED_EVENTS`）、P3（rollout 百分比、auto disable 阈值、SPKI pin 列表）、P4（`ip_pool.enabled`、`cachePruneIntervalSecs`、`maxCacheEntries`、`singleflightTimeoutMs`、熔断阈值与 `cooldownSeconds`、`preheatDomains`、`probeTimeoutMs`、黑白名单）。
 - **灰度计划**：在发布计划中记录灰度顺序与回退手段（参考 §3.5），确保 SRE 获得监控告警阈值与事件观察面。
 - **测试执行**：要求在主干合并前执行 `cargo test -q`、`pnpm test -s`，必要时附加 soak 报告；若涉及传输层改动，附上目标域指纹快照。
 - **运维交接**：提供最新 `cert-fp.log` 样例、策略 Summary 截图与 `task_list` 正常输出，帮助运维确认运行状态；新事件字段需同步到监控解析脚本。
