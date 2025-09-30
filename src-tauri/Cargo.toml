@@ -149,6 +149,16 @@ path = "tests/git/git_tag_and_remote.rs"
 required-features = []
 
 [[test]]
+name = "http_adaptive_tls"
+path = "tests/http_adaptive_tls.rs"
+required-features = []
+
+[[test]]
+name = "events_backward_compat"
+path = "tests/events/events_backward_compat.rs"
+required-features = []
+
+[[test]]
 name = "events_structure_and_contract"
 path = "tests/events/events_structure_and_contract.rs"
 required-features = []
@@ -164,6 +174,11 @@ path = "tests/quality/error_and_i18n.rs"
 required-features = []
 
 [[test]]
+name = "ip_pool_soak"
+path = "tests/quality/ip_pool_soak.rs"
+required-features = []
+
+[[test]]
 name = "task_registry_and_service"
 path = "tests/tasks/task_registry_and_service.rs"
 required-features = []
@@ -171,6 +186,16 @@ required-features = []
 [[test]]
 name = "ip_pool_manager"
 path = "tests/tasks/ip_pool_manager.rs"
+required-features = []
+
+[[test]]
+name = "ip_pool_fault_injection"
+path = "tests/tasks/ip_pool_fault_injection.rs"
+required-features = []
+
+[[test]]
+name = "ip_pool_preheat_events"
+path = "tests/tasks/ip_pool_preheat_events.rs"
 required-features = []
 
 [[test]]
