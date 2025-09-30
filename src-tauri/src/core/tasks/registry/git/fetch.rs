@@ -56,6 +56,9 @@ impl TaskRegistry {
                                 first_byte_ms: t.first_byte_ms,
                                 total_ms: t.total_ms,
                                 cert_fp_changed: snap.cert_fp_changed.unwrap_or(false),
+                                ip_source: snap.ip_source.clone(),
+                                ip_latency_ms: snap.ip_latency_ms,
+                                ip_selection_stage: snap.ip_strategy.map(|s| s.to_string()),
                             },
                         ));
                     }
@@ -63,6 +66,7 @@ impl TaskRegistry {
                 for evt in fallback_events {
                     match evt {
                         FallbackEventRecord::Transition { from, to, reason } => {
+                            let snap = tl_snapshot();
                             publish_global(StructuredEvent::Strategy(
                                 StructuredStrategyEvent::AdaptiveTlsFallback {
                                     id: id.to_string(),
@@ -70,6 +74,8 @@ impl TaskRegistry {
                                     from: from.to_string(),
                                     to: to.to_string(),
                                     reason,
+                                    ip_source: snap.ip_source.clone(),
+                                    ip_latency_ms: snap.ip_latency_ms,
                                 },
                             ));
                         }
