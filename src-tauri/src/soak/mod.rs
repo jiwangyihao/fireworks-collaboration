@@ -64,6 +64,7 @@ pub struct SoakReport {
     pub fallback: FallbackSummary,
     pub auto_disable: AutoDisableSummary,
     pub cert_fp_events: u64,
+    pub ip_pool: IpPoolSummary,
     pub totals: TotalsSummary,
     pub thresholds: ThresholdSummary,
     pub comparison: Option<ComparisonSummary>,
@@ -111,6 +112,16 @@ pub struct FallbackSummary {
 pub struct AutoDisableSummary {
     triggered: u64,
     recovered: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IpPoolSummary {
+    selection_total: u64,
+    selection_by_strategy: HashMap<String, u64>,
+    refresh_total: u64,
+    refresh_success: u64,
+    refresh_failure: u64,
+    refresh_success_rate: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -273,12 +284,22 @@ struct AutoDisableStats {
 }
 
 #[derive(Default)]
+struct IpPoolStats {
+    selection_total: u64,
+    selection_by_strategy: HashMap<String, u64>,
+    refresh_total: u64,
+    refresh_success: u64,
+    refresh_failure: u64,
+}
+
+#[derive(Default)]
 struct SoakAggregator {
     operations: HashMap<String, OperationStats>,
     timing: HashMap<String, TimingData>,
     fallback: FallbackStats,
     auto_disable: AutoDisableStats,
     cert_fp_events: u64,
+    ip_pool: IpPoolStats,
     expected_iterations: u32,
 }
 
@@ -356,6 +377,22 @@ impl SoakAggregator {
                 }
                 Event::Strategy(StrategyEvent::CertFingerprintChanged { .. }) => {
                     self.cert_fp_events += 1;
+                }
+                Event::Strategy(StrategyEvent::IpPoolSelection { strategy, .. }) => {
+                    self.ip_pool.selection_total += 1;
+                    *self
+                        .ip_pool
+                        .selection_by_strategy
+                        .entry(strategy.clone())
+                        .or_default() += 1;
+                }
+                Event::Strategy(StrategyEvent::IpPoolRefresh { success, .. }) => {
+                    self.ip_pool.refresh_total += 1;
+                    if success {
+                        self.ip_pool.refresh_success += 1;
+                    } else {
+                        self.ip_pool.refresh_failure += 1;
+                    }
                 }
                 _ => {}
             }
@@ -455,6 +492,18 @@ impl SoakAggregator {
                 recovered: self.auto_disable.recovered,
             },
             cert_fp_events: self.cert_fp_events + cert_fp_changed_samples,
+            ip_pool: IpPoolSummary {
+                selection_total: self.ip_pool.selection_total,
+                selection_by_strategy: self.ip_pool.selection_by_strategy,
+                refresh_total: self.ip_pool.refresh_total,
+                refresh_success: self.ip_pool.refresh_success,
+                refresh_failure: self.ip_pool.refresh_failure,
+                refresh_success_rate: if self.ip_pool.refresh_total > 0 {
+                    self.ip_pool.refresh_success as f64 / self.ip_pool.refresh_total as f64
+                } else {
+                    1.0
+                },
+            },
             totals: TotalsSummary {
                 total_operations,
                 completed: total_completed,
@@ -1040,6 +1089,183 @@ mod tests {
     }
 
     #[test]
+    fn ip_pool_stats_process_events_correctly() {
+        let mut agg = SoakAggregator::default();
+        agg.expected_iterations = 3;
+
+        // Simulate IP pool selection events
+        agg.process_events(vec![
+            Event::Strategy(StrategyEvent::IpPoolSelection {
+                id: "task1".into(),
+                domain: "github.com".into(),
+                port: 443,
+                strategy: "Cached".into(),
+                source: Some("Builtin".into()),
+                latency_ms: Some(20),
+                candidates_count: 3,
+            }),
+            Event::Strategy(StrategyEvent::IpPoolSelection {
+                id: "task2".into(),
+                domain: "github.com".into(),
+                port: 443,
+                strategy: "SystemDefault".into(),
+                source: None,
+                latency_ms: None,
+                candidates_count: 0,
+            }),
+        ]);
+
+        assert_eq!(agg.ip_pool.selection_total, 2);
+        assert_eq!(*agg.ip_pool.selection_by_strategy.get("Cached").unwrap(), 1);
+        assert_eq!(
+            *agg.ip_pool
+                .selection_by_strategy
+                .get("SystemDefault")
+                .unwrap(),
+            1
+        );
+
+        // Simulate IP pool refresh events
+        agg.process_events(vec![
+            Event::Strategy(StrategyEvent::IpPoolRefresh {
+                id: "preheat1".into(),
+                domain: "github.com".into(),
+                success: true,
+                candidates_count: 5,
+                min_latency_ms: Some(10),
+                max_latency_ms: Some(50),
+                reason: "preheat".into(),
+            }),
+            Event::Strategy(StrategyEvent::IpPoolRefresh {
+                id: "preheat2".into(),
+                domain: "example.com".into(),
+                success: false,
+                candidates_count: 0,
+                min_latency_ms: None,
+                max_latency_ms: None,
+                reason: "no_candidates".into(),
+            }),
+            Event::Strategy(StrategyEvent::IpPoolRefresh {
+                id: "preheat3".into(),
+                domain: "test.com".into(),
+                success: true,
+                candidates_count: 3,
+                min_latency_ms: Some(15),
+                max_latency_ms: Some(30),
+                reason: "preheat".into(),
+            }),
+        ]);
+
+        assert_eq!(agg.ip_pool.refresh_total, 3);
+        assert_eq!(agg.ip_pool.refresh_success, 2);
+        assert_eq!(agg.ip_pool.refresh_failure, 1);
+
+        let opts_snapshot = SoakOptionsSnapshot {
+            iterations: 3,
+            keep_clones: false,
+            report_path: "memory".into(),
+            workspace_dir: "memory".into(),
+            baseline_report: None,
+        };
+        let report = agg.into_report(0, 0, 0, opts_snapshot);
+        assert_eq!(report.ip_pool.selection_total, 2);
+        assert_eq!(report.ip_pool.refresh_total, 3);
+        assert_eq!(report.ip_pool.refresh_success, 2);
+        assert_eq!(report.ip_pool.refresh_failure, 1);
+        assert!((report.ip_pool.refresh_success_rate - 2.0 / 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ip_pool_stats_calculates_success_rate_with_zero_refreshes() {
+        let mut agg = SoakAggregator::default();
+        agg.expected_iterations = 1;
+
+        let opts_snapshot = SoakOptionsSnapshot {
+            iterations: 1,
+            keep_clones: false,
+            report_path: "memory".into(),
+            workspace_dir: "memory".into(),
+            baseline_report: None,
+        };
+        let report = agg.into_report(0, 0, 0, opts_snapshot);
+        assert_eq!(report.ip_pool.refresh_total, 0);
+        assert_eq!(report.ip_pool.refresh_success_rate, 1.0); // Default to 1.0 when no refreshes
+    }
+
+    #[test]
+    fn soak_report_serialization_includes_ip_pool() {
+        let report = SoakReport {
+            started_unix: 0,
+            finished_unix: 0,
+            duration_secs: 0,
+            options: SoakOptionsSnapshot {
+                iterations: 1,
+                keep_clones: false,
+                report_path: "memory".into(),
+                workspace_dir: "memory".into(),
+                baseline_report: None,
+            },
+            iterations: 1,
+            operations: HashMap::new(),
+            timing: HashMap::new(),
+            fallback: FallbackSummary {
+                counts: HashMap::new(),
+                fake_to_real: 0,
+                real_to_default: 0,
+            },
+            auto_disable: AutoDisableSummary {
+                triggered: 0,
+                recovered: 0,
+            },
+            cert_fp_events: 0,
+            ip_pool: IpPoolSummary {
+                selection_total: 10,
+                selection_by_strategy: [
+                    ("Cached".to_string(), 8),
+                    ("SystemDefault".to_string(), 2),
+                ]
+                .iter()
+                .cloned()
+                .collect(),
+                refresh_total: 5,
+                refresh_success: 4,
+                refresh_failure: 1,
+                refresh_success_rate: 0.8,
+            },
+            totals: TotalsSummary {
+                total_operations: 1,
+                completed: 1,
+                failed: 0,
+                canceled: 0,
+            },
+            thresholds: ThresholdSummary {
+                success_rate: ThresholdCheck {
+                    pass: true,
+                    actual: 1.0,
+                    expected: 0.99,
+                    comparator: ">=".to_string(),
+                },
+                fake_fallback_rate: ThresholdCheck {
+                    pass: true,
+                    actual: 0.0,
+                    expected: 0.05,
+                    comparator: "<=".to_string(),
+                },
+            },
+            comparison: None,
+        };
+
+        let json = serde_json::to_string(&report).expect("serialize report");
+        assert!(json.contains("\"selection_total\":10"));
+        assert!(json.contains("\"refresh_success_rate\":0.8"));
+
+        let deserialized: SoakReport = serde_json::from_str(&json).expect("deserialize report");
+        assert_eq!(deserialized.ip_pool.selection_total, 10);
+        assert_eq!(deserialized.ip_pool.refresh_total, 5);
+        assert!((deserialized.ip_pool.refresh_success_rate - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
     fn comparison_summary_detects_regressions() {
         let baseline = SoakReport {
             started_unix: 0,
@@ -1065,6 +1291,14 @@ mod tests {
                 recovered: 1,
             },
             cert_fp_events: 2,
+            ip_pool: IpPoolSummary {
+                selection_total: 0,
+                selection_by_strategy: HashMap::new(),
+                refresh_total: 0,
+                refresh_success: 0,
+                refresh_failure: 0,
+                refresh_success_rate: 1.0,
+            },
             totals: TotalsSummary {
                 total_operations: 3,
                 completed: 3,
@@ -1139,6 +1373,9 @@ mod tests {
                 first_byte_ms: Some(56),
                 total_ms: Some(78),
                 cert_fp_changed: false,
+                ip_source: None,
+                ip_latency_ms: None,
+                ip_selection_stage: None,
             }),
             Event::Strategy(StrategyEvent::AdaptiveTlsFallback {
                 id: "test-clone".into(),
@@ -1146,6 +1383,8 @@ mod tests {
                 from: "Fake".into(),
                 to: "Real".into(),
                 reason: "FakeHandshakeError".into(),
+                ip_source: None,
+                ip_latency_ms: None,
             }),
         ]);
         let report = agg.into_report(
