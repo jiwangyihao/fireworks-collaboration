@@ -313,6 +313,13 @@ async fn preheat_domain(
         let candidates = collect_candidates(host, port, config, history.clone()).await;
         if candidates.is_empty() {
             tracing::warn!(target = "ip_pool", host, port, "no candidates collected");
+            // Emit failure event
+            {
+                use crate::core::ip_pool::events::emit_ip_pool_refresh;
+                use uuid::Uuid;
+                let task_id = Uuid::new_v4();
+                emit_ip_pool_refresh(task_id, host, false, &[], "no_candidates".to_string());
+            }
             continue;
         }
 
@@ -328,10 +335,25 @@ async fn preheat_domain(
         if stats.is_empty() {
             tracing::warn!(target = "ip_pool", host, port, "all probes failed");
             cache.remove(host, port);
+            // Emit failure event
+            {
+                use crate::core::ip_pool::events::emit_ip_pool_refresh;
+                use uuid::Uuid;
+                let task_id = Uuid::new_v4();
+                emit_ip_pool_refresh(task_id, host, false, &[], "all_probes_failed".to_string());
+            }
             continue;
         }
 
-        update_cache_and_history(host, port, stats, cache.clone(), history.clone())?;
+        update_cache_and_history(host, port, stats.clone(), cache.clone(), history.clone())?;
+
+        // Emit IP pool refresh event for observability
+        {
+            use crate::core::ip_pool::events::emit_ip_pool_refresh;
+            use uuid::Uuid;
+            let task_id = Uuid::new_v4();
+            emit_ip_pool_refresh(task_id, host, true, &stats, "preheat".to_string());
+        }
     }
     Ok(())
 }

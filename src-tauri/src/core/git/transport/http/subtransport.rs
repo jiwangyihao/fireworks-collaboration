@@ -515,6 +515,22 @@ impl CustomHttpsSubtransport {
             .and_then(|stat| stat.latency_ms);
         tl_set_ip_selection(Some(strategy_label), ip_source_label.clone(), ip_latency);
 
+        // Emit IP pool selection event
+        {
+            use crate::core::ip_pool::events::emit_ip_pool_selection;
+            use uuid::Uuid;
+            // Generate a pseudo task ID for transport layer (could be improved by passing real task ID)
+            let task_id = Uuid::new_v4();
+            emit_ip_pool_selection(
+                task_id,
+                host,
+                port,
+                selection.strategy(),
+                used_candidate_stat.as_ref(),
+                candidates.len().min(255) as u8,
+            );
+        }
+
         if matches!(selection.strategy(), IpSelectionStrategy::Cached) {
             let outcome = match &final_result {
                 Ok(_) if selection_success => IpOutcome::Success,
