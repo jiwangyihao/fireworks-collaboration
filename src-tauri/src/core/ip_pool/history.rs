@@ -213,9 +213,87 @@ impl IpHistoryStore {
         }
     }
 
+    /// Prune entries based on capacity limit (LRU-like based on measured_at).
+    /// Returns the number of entries removed.
+    pub fn enforce_capacity(&self, max_entries: usize) -> Result<usize> {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("ip history poisoned"))?;
+
+        if guard.entries.len() <= max_entries {
+            return Ok(0);
+        }
+
+        // Sort by measured_at (oldest first)
+        guard.entries.sort_by_key(|e| e.measured_at_epoch_ms);
+        let to_remove = guard.entries.len() - max_entries;
+        guard.entries.drain(0..to_remove);
+
+        Self::persist(self.path.as_deref(), &guard)?;
+        tracing::info!(
+            target = "ip_pool",
+            removed = to_remove,
+            remaining = guard.entries.len(),
+            "enforced ip history capacity limit"
+        );
+        Ok(to_remove)
+    }
+
+    /// Prune expired entries and enforce capacity limit.
+    /// Returns (expired_count, capacity_pruned_count).
+    pub fn prune_and_enforce(
+        &self,
+        now_epoch_ms: i64,
+        max_entries: usize,
+    ) -> Result<(usize, usize)> {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("ip history poisoned"))?;
+
+        let before = guard.entries.len();
+        guard
+            .entries
+            .retain(|e| e.expires_at_epoch_ms > now_epoch_ms);
+        let expired = before - guard.entries.len();
+
+        let capacity_pruned = if guard.entries.len() > max_entries {
+            guard.entries.sort_by_key(|e| e.measured_at_epoch_ms);
+            let to_remove = guard.entries.len() - max_entries;
+            guard.entries.drain(0..to_remove);
+            to_remove
+        } else {
+            0
+        };
+
+        if expired > 0 || capacity_pruned > 0 {
+            Self::persist(self.path.as_deref(), &guard)?;
+            tracing::debug!(
+                target = "ip_pool",
+                expired = expired,
+                capacity_pruned = capacity_pruned,
+                remaining = guard.entries.len(),
+                "pruned ip history"
+            );
+        }
+
+        Ok((expired, capacity_pruned))
+    }
+
     fn persist(path: Option<&Path>, file: &IpHistoryFile) -> Result<()> {
         if let Some(path) = path {
             let json = serde_json::to_string_pretty(file).context("serialize ip history")?;
+            // Check file size before writing (warn if > 1MB)
+            if json.len() > 1_048_576 {
+                tracing::warn!(
+                    target = "ip_pool",
+                    path = %path.display(),
+                    size_bytes = json.len(),
+                    entries = file.entries.len(),
+                    "ip history file size exceeds 1MB; consider reducing max entries"
+                );
+            }
             fs::write(path, json).with_context(|| format!("write ip history: {}", path.display()))
         } else {
             Ok(())
@@ -345,5 +423,81 @@ mod tests {
         assert!(store.remove("github.com", 443).expect("remove entry"));
         assert!(store.get("github.com", 443).is_none());
         assert!(!store.remove("github.com", 443).expect("idempotent remove"));
+    }
+
+    #[test]
+    fn enforce_capacity_removes_oldest_entries() {
+        let store = IpHistoryStore::in_memory();
+        for i in 0..5 {
+            let record = IpHistoryRecord {
+                host: format!("host{}.com", i),
+                port: 443,
+                candidate: IpCandidate::new(
+                    IpAddr::V4(Ipv4Addr::new(1, 1, 1, i as u8 + 1)),
+                    443,
+                    IpSource::Builtin,
+                ),
+                sources: vec![IpSource::Builtin],
+                latency_ms: 10 + i as u32,
+                measured_at_epoch_ms: (i + 1) as i64 * 1000,
+                expires_at_epoch_ms: 100_000,
+            };
+            store.upsert(record).expect("write history");
+        }
+        let removed = store.enforce_capacity(3).expect("enforce capacity");
+        assert_eq!(removed, 2);
+        let snapshot = store.snapshot().unwrap();
+        assert_eq!(snapshot.len(), 3);
+        // Should keep the 3 newest (host2, host3, host4)
+        assert!(snapshot.iter().all(|e| e.host.starts_with("host")
+            && (e.host == "host2.com" || e.host == "host3.com" || e.host == "host4.com")));
+    }
+
+    #[test]
+    fn prune_and_enforce_removes_expired_and_old_entries() {
+        let store = IpHistoryStore::in_memory();
+        // Add 2 expired entries
+        for i in 0..2 {
+            let record = IpHistoryRecord {
+                host: format!("expired{}.com", i),
+                port: 443,
+                candidate: IpCandidate::new(
+                    IpAddr::V4(Ipv4Addr::new(1, 1, 1, i as u8 + 1)),
+                    443,
+                    IpSource::Builtin,
+                ),
+                sources: vec![IpSource::Builtin],
+                latency_ms: 10,
+                measured_at_epoch_ms: 1000,
+                expires_at_epoch_ms: 5000,
+            };
+            store.upsert(record).expect("write history");
+        }
+        // Add 4 valid entries
+        for i in 0..4 {
+            let record = IpHistoryRecord {
+                host: format!("valid{}.com", i),
+                port: 443,
+                candidate: IpCandidate::new(
+                    IpAddr::V4(Ipv4Addr::new(2, 2, 2, i as u8 + 1)),
+                    443,
+                    IpSource::Builtin,
+                ),
+                sources: vec![IpSource::Builtin],
+                latency_ms: 20,
+                measured_at_epoch_ms: (i + 1) as i64 * 2000 + 10000,
+                expires_at_epoch_ms: 100_000,
+            };
+            store.upsert(record).expect("write history");
+        }
+        let (expired, capacity_pruned) = store
+            .prune_and_enforce(10_000, 3)
+            .expect("prune and enforce");
+        assert_eq!(expired, 2);
+        assert_eq!(capacity_pruned, 1);
+        let snapshot = store.snapshot().unwrap();
+        assert_eq!(snapshot.len(), 3);
+        // Should only have valid entries, and the 3 newest
+        assert!(snapshot.iter().all(|e| e.host.starts_with("valid")));
     }
 }
