@@ -77,8 +77,7 @@ impl IpCircuitState {
 
     /// 检查是否应该从冷却期恢复
     fn should_reset(&self, now_ms: i64, cooldown_ms: i64) -> bool {
-        matches!(self.state, CircuitState::Cooldown)
-            && now_ms >= self.cooldown_at_ms + cooldown_ms
+        matches!(self.state, CircuitState::Cooldown) && now_ms >= self.cooldown_at_ms + cooldown_ms
     }
 
     /// 重置窗口统计
@@ -270,7 +269,8 @@ impl CircuitBreaker {
     pub fn reset_ip(&self, ip: IpAddr) {
         if let Ok(mut states) = self.states.lock() {
             if let Some(state) = states.get_mut(&ip) {
-                let was_tripped = matches!(state.state, CircuitState::Open | CircuitState::Cooldown);
+                let was_tripped =
+                    matches!(state.state, CircuitState::Open | CircuitState::Cooldown);
                 *state = IpCircuitState::default();
                 if was_tripped {
                     tracing::info!(
@@ -320,9 +320,7 @@ impl CircuitBreaker {
 
         states
             .iter()
-            .filter(|(_, state)| {
-                matches!(state.state, CircuitState::Open | CircuitState::Cooldown)
-            })
+            .filter(|(_, state)| matches!(state.state, CircuitState::Open | CircuitState::Cooldown))
             .map(|(ip, _)| *ip)
             .collect()
     }

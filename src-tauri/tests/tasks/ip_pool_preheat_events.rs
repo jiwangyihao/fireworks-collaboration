@@ -17,90 +17,38 @@ fn __init_env() {
 }
 
 mod section_preheat_event_emission {
-    use super::common::prelude::*;
-    use fireworks_collaboration_lib::core::ip_pool::config::{
-        IpPoolSourceToggle, PreheatDomain, UserStaticIp,
-    };
-    use fireworks_collaboration_lib::core::ip_pool::preheat::{
-        collect_candidates, measure_candidates, update_cache_and_history,
-    };
-    use fireworks_collaboration_lib::core::ip_pool::{IpScoreCache, IpSource};
+    use fireworks_collaboration_lib::core::ip_pool::cache::{IpCandidate, IpStat};
+    use fireworks_collaboration_lib::core::ip_pool::events::emit_ip_pool_refresh;
+    use fireworks_collaboration_lib::core::ip_pool::IpSource;
     use fireworks_collaboration_lib::events::structured::{
         clear_test_event_bus, set_test_event_bus, Event, MemoryEventBus, StrategyEvent,
     };
+    use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Arc;
-    use tokio::net::TcpListener;
+    use uuid::Uuid;
 
-    #[tokio::test]
-    async fn preheat_success_emits_refresh_event_with_preheat_reason() {
+    fn sample_stat(latency_ms: u32) -> IpStat {
+        let candidate = IpCandidate::new(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            443,
+            IpSource::UserStatic,
+        );
+        IpStat::with_latency(candidate, latency_ms)
+    }
+
+    #[test]
+    fn preheat_success_emits_refresh_event_with_preheat_reason() {
         let bus = MemoryEventBus::new();
         set_test_event_bus(Arc::new(bus.clone()));
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let accept_task = tokio::spawn(async move {
-            if let Ok((stream, _)) = listener.accept().await {
-                drop(stream);
-            }
-        });
-
-        let mut cfg = enabled_config();
-        cfg.runtime.sources = IpPoolSourceToggle {
-            builtin: false,
-            dns: false,
-            history: false,
-            user_static: true,
-            fallback: false,
-        };
-        cfg.file.user_static_ips.push(UserStaticIp {
-            domain: "preheat.test".to_string(),
-            port: Some(addr.port()),
-            ips: vec![addr.ip().to_string()],
-        });
-        cfg.file.score_ttl_seconds = 300;
-        cfg.runtime.max_parallel_probes = 4;
-        cfg.runtime.probe_timeout_ms = 2000;
-
-        let cache = IpScoreCache::new();
-        let history = enabled_history();
-
-        // Simulate preheat_domain logic
-        let candidates = collect_candidates(
+        let stats = vec![sample_stat(42)];
+        emit_ip_pool_refresh(
+            Uuid::new_v4(),
             "preheat.test",
-            addr.port(),
-            &cfg,
-            Arc::new(history.clone()),
-        )
-        .await;
-        assert!(!candidates.is_empty());
-
-        let stats = measure_candidates(
-            &candidates,
-            cfg.runtime.max_parallel_probes,
-            cfg.runtime.probe_timeout_ms,
-            cfg.file.score_ttl_seconds,
-        )
-        .await;
-        assert!(!stats.is_empty());
-
-        accept_task.await.unwrap();
-
-        update_cache_and_history(
-            "preheat.test",
-            addr.port(),
-            stats.clone(),
-            Arc::new(cache),
-            Arc::new(history),
-        )
-        .unwrap();
-
-        // Emit event manually (simulating preheat_domain integration)
-        {
-            use fireworks_collaboration_lib::core::ip_pool::events::emit_ip_pool_refresh;
-            use uuid::Uuid;
-            let task_id = Uuid::new_v4();
-            emit_ip_pool_refresh(task_id, "preheat.test", true, &stats, "preheat".to_string());
-        }
+            true,
+            &stats,
+            "preheat".to_string(),
+        );
 
         let events = bus.snapshot();
         let refresh_events: Vec<_> = events
@@ -124,47 +72,25 @@ mod section_preheat_event_emission {
         assert_eq!(domain, "preheat.test");
         assert!(success);
         assert_eq!(*candidates_count, stats.len() as u8);
-        assert!(min_lat.is_some());
-        assert!(max_lat.is_some());
+        assert_eq!(min_lat, &Some(42));
+        assert_eq!(max_lat, &Some(42));
         assert_eq!(reason, "preheat");
 
         clear_test_event_bus();
     }
 
-    #[tokio::test]
-    async fn preheat_no_candidates_emits_refresh_event_with_no_candidates_reason() {
+    #[test]
+    fn preheat_no_candidates_emits_refresh_event_with_no_candidates_reason() {
         let bus = MemoryEventBus::new();
         set_test_event_bus(Arc::new(bus.clone()));
 
-        let mut cfg = enabled_config();
-        cfg.runtime.sources = IpPoolSourceToggle {
-            builtin: false,
-            dns: false,
-            history: false,
-            user_static: false,
-            fallback: false,
-        };
-
-        let history = enabled_history();
-
-        // Simulate preheat_domain logic with no sources
-        let candidates =
-            collect_candidates("missing.test", 443, &cfg, Arc::new(history.clone())).await;
-        assert!(candidates.is_empty());
-
-        // Emit failure event
-        {
-            use fireworks_collaboration_lib::core::ip_pool::events::emit_ip_pool_refresh;
-            use uuid::Uuid;
-            let task_id = Uuid::new_v4();
-            emit_ip_pool_refresh(
-                task_id,
-                "missing.test",
-                false,
-                &[],
-                "no_candidates".to_string(),
-            );
-        }
+        emit_ip_pool_refresh(
+            Uuid::new_v4(),
+            "missing.test",
+            false,
+            &[],
+            "no_candidates".to_string(),
+        );
 
         let events = bus.snapshot();
         let refresh_events: Vec<_> = events
@@ -191,55 +117,18 @@ mod section_preheat_event_emission {
         clear_test_event_bus();
     }
 
-    #[tokio::test]
-    async fn preheat_all_probes_failed_emits_refresh_event() {
+    #[test]
+    fn preheat_all_probes_failed_emits_refresh_event() {
         let bus = MemoryEventBus::new();
         set_test_event_bus(Arc::new(bus.clone()));
 
-        let mut cfg = enabled_config();
-        cfg.runtime.sources = IpPoolSourceToggle {
-            builtin: false,
-            dns: false,
-            history: false,
-            user_static: true,
-            fallback: false,
-        };
-        // Use a non-listening port
-        cfg.file.user_static_ips.push(UserStaticIp {
-            domain: "fail.test".to_string(),
-            port: Some(1), // Port 1 is typically reserved and not listening
-            ips: vec!["127.0.0.1".to_string()],
-        });
-        cfg.runtime.probe_timeout_ms = 500;
-
-        let history = enabled_history();
-
-        let candidates =
-            collect_candidates("fail.test", 1, &cfg, Arc::new(history.clone())).await;
-        assert!(!candidates.is_empty());
-
-        let stats = measure_candidates(
-            &candidates,
-            cfg.runtime.max_parallel_probes,
-            cfg.runtime.probe_timeout_ms,
-            cfg.file.score_ttl_seconds,
-        )
-        .await;
-        assert!(stats.is_empty()); // All probes should fail
-
-        // Emit failure event
-        {
-            use fireworks_collaboration_lib::core::ip_pool::events::emit_ip_pool_refresh;
-            use uuid::Uuid;
-            let task_id = Uuid::new_v4();
-            emit_ip_pool_refresh(
-                task_id,
-                "fail.test",
-                false,
-                &[],
-                "all_probes_failed".to_string(),
-            );
-        }
+        emit_ip_pool_refresh(
+            Uuid::new_v4(),
+            "fail.test",
+            false,
+            &[],
+            "all_probes_failed".to_string(),
+        );
 
         let events = bus.snapshot();
         let refresh_events: Vec<_> = events

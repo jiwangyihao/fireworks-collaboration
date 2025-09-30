@@ -1,4 +1,7 @@
+#![allow(dead_code)]
+
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fireworks_collaboration_lib::core::ip_pool::cache::{
@@ -9,6 +12,9 @@ use fireworks_collaboration_lib::core::ip_pool::config::{
 };
 use fireworks_collaboration_lib::core::ip_pool::history::IpHistoryRecord;
 use fireworks_collaboration_lib::core::ip_pool::{IpCacheKey, IpSource};
+use fireworks_collaboration_lib::events::structured::{
+    clear_test_event_bus, set_test_event_bus, Event, MemoryEventBus, StrategyEvent,
+};
 
 /// 返回启用运行时的默认配置。
 pub fn enabled_config() -> EffectiveIpPoolConfig {
@@ -89,4 +95,51 @@ pub fn epoch_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .expect("system time before unix epoch")
         .as_millis() as i64
+}
+
+/// Helper guard that installs a fresh `MemoryEventBus` for the duration of a test.
+/// Automatically clears the global bus when dropped to avoid cross-test leakage.
+pub struct TestEventBus {
+    bus: Arc<MemoryEventBus>,
+}
+
+impl TestEventBus {
+    /// Installs a new in-memory event bus and returns a guard for interacting with it.
+    pub fn install() -> Self {
+        let bus = Arc::new(MemoryEventBus::new());
+        set_test_event_bus(bus.clone());
+        Self { bus }
+    }
+
+    /// Returns a clone of the underlying bus for advanced scenarios.
+    pub fn handle(&self) -> Arc<MemoryEventBus> {
+        self.bus.clone()
+    }
+
+    /// Returns a snapshot of all events currently captured by the bus.
+    pub fn snapshot(&self) -> Vec<Event> {
+        self.bus.snapshot()
+    }
+
+    /// Returns only the strategy events captured by the bus.
+    pub fn strategy_events(&self) -> Vec<StrategyEvent> {
+        self.snapshot()
+            .into_iter()
+            .filter_map(|event| match event {
+                Event::Strategy(evt) => Some(evt),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+impl Drop for TestEventBus {
+    fn drop(&mut self) {
+        clear_test_event_bus();
+    }
+}
+
+/// Convenience constructor to install a temporary memory event bus.
+pub fn install_test_event_bus() -> TestEventBus {
+    TestEventBus::install()
 }

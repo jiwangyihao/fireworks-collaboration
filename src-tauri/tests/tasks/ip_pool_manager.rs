@@ -532,24 +532,30 @@ mod section_outcome_metrics {
 // ---------------- section_event_emission ----------------
 mod section_event_emission {
     use super::common::prelude::*;
+    use fireworks_collaboration_lib::core::ip_pool::config::EffectiveIpPoolConfig;
     use fireworks_collaboration_lib::core::ip_pool::events::{
+        emit_ip_pool_auto_disable, emit_ip_pool_auto_enable, emit_ip_pool_cidr_filter,
+        emit_ip_pool_config_update, emit_ip_pool_ip_recovered, emit_ip_pool_ip_tripped,
         emit_ip_pool_refresh, emit_ip_pool_selection,
     };
     use fireworks_collaboration_lib::core::ip_pool::{
         IpPool, IpScoreCache, IpSelectionStrategy, IpSource,
     };
-    use fireworks_collaboration_lib::events::structured::{
-        clear_test_event_bus, set_test_event_bus, Event, MemoryEventBus, StrategyEvent,
-    };
-    use std::sync::Arc;
+    use fireworks_collaboration_lib::events::structured::StrategyEvent;
     use tokio::net::TcpListener;
     use uuid::Uuid;
 
+    fn expect_single_event<F>(events: Vec<StrategyEvent>, assert_fn: F)
+    where
+        F: FnOnce(&StrategyEvent),
+    {
+        assert_eq!(events.len(), 1, "expected a single strategy event");
+        assert_fn(&events[0]);
+    }
+
     #[test]
     fn emit_ip_pool_selection_includes_strategy_and_latency() {
-        let bus = MemoryEventBus::new();
-        set_test_event_bus(Arc::new(bus.clone()));
-
+        let bus = install_test_event_bus();
         let task_id = Uuid::new_v4();
         let stat = make_latency_stat(
             [1, 2, 3, 4],
@@ -569,10 +575,8 @@ mod section_event_emission {
             3,
         );
 
-        let events = bus.snapshot();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Event::Strategy(StrategyEvent::IpPoolSelection {
+        expect_single_event(bus.strategy_events(), |event| match event {
+            StrategyEvent::IpPoolSelection {
                 id,
                 domain,
                 port,
@@ -580,7 +584,7 @@ mod section_event_emission {
                 source,
                 latency_ms,
                 candidates_count,
-            }) => {
+            } => {
                 assert_eq!(id, &task_id.to_string());
                 assert_eq!(domain, "github.com");
                 assert_eq!(*port, 443);
@@ -589,16 +593,13 @@ mod section_event_emission {
                 assert_eq!(*latency_ms, Some(25));
                 assert_eq!(*candidates_count, 3);
             }
-            _ => panic!("expected IpPoolSelection event"),
-        }
-        clear_test_event_bus();
+            other => panic!("unexpected event variant: {:?}", other),
+        });
     }
 
     #[test]
     fn emit_ip_pool_refresh_includes_latency_range() {
-        let bus = MemoryEventBus::new();
-        set_test_event_bus(Arc::new(bus.clone()));
-
+        let bus = install_test_event_bus();
         let task_id = Uuid::new_v4();
         let stats = vec![
             make_latency_stat(
@@ -621,10 +622,8 @@ mod section_event_emission {
 
         emit_ip_pool_refresh(task_id, "example.com", true, &stats, "test".to_string());
 
-        let events = bus.snapshot();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Event::Strategy(StrategyEvent::IpPoolRefresh {
+        expect_single_event(bus.strategy_events(), |event| match event {
+            StrategyEvent::IpPoolRefresh {
                 id,
                 domain,
                 success,
@@ -632,7 +631,7 @@ mod section_event_emission {
                 min_latency_ms,
                 max_latency_ms,
                 reason,
-            }) => {
+            } => {
                 assert_eq!(id, &task_id.to_string());
                 assert_eq!(domain, "example.com");
                 assert!(success);
@@ -641,16 +640,13 @@ mod section_event_emission {
                 assert_eq!(*max_latency_ms, Some(30));
                 assert_eq!(reason, "test");
             }
-            _ => panic!("expected IpPoolRefresh event"),
-        }
-        clear_test_event_bus();
+            other => panic!("unexpected event variant: {:?}", other),
+        });
     }
 
     #[test]
     fn emit_ip_pool_refresh_handles_empty_candidates() {
-        let bus = MemoryEventBus::new();
-        set_test_event_bus(Arc::new(bus.clone()));
-
+        let bus = install_test_event_bus();
         let task_id = Uuid::new_v4();
         emit_ip_pool_refresh(
             task_id,
@@ -660,35 +656,228 @@ mod section_event_emission {
             "no_candidates".to_string(),
         );
 
-        let events = bus.snapshot();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Event::Strategy(StrategyEvent::IpPoolRefresh {
+        expect_single_event(bus.strategy_events(), |event| match event {
+            StrategyEvent::IpPoolRefresh {
                 success,
                 candidates_count,
                 min_latency_ms,
                 max_latency_ms,
                 reason,
                 ..
-            }) => {
+            } => {
                 assert!(!success);
                 assert_eq!(*candidates_count, 0);
                 assert!(min_latency_ms.is_none());
                 assert!(max_latency_ms.is_none());
                 assert_eq!(reason, "no_candidates");
             }
-            _ => panic!("expected IpPoolRefresh event"),
+            other => panic!("unexpected event variant: {:?}", other),
+        });
+    }
+
+    #[test]
+    fn auto_disable_extends_without_duplicate_events() {
+        let bus = install_test_event_bus();
+        let mut cfg = enabled_config();
+        cfg.runtime.enabled = true;
+        cfg.runtime.max_cache_entries = 8;
+        let pool = IpPool::new(cfg);
+
+        // Prime cache with a candidate to observe selection behavior before/after auto-disable.
+        let now_ms = epoch_ms();
+        let stat = make_latency_stat(
+            [10, 0, 0, 1],
+            443,
+            25,
+            IpSource::Builtin,
+            Some(now_ms),
+            Some(now_ms + 60_000),
+        );
+        cache_best(pool.cache(), "auto.test", 443, stat);
+
+        let initial = pool.pick_best_blocking("auto.test", 443);
+        assert!(!initial.is_system_default());
+
+        pool.set_auto_disabled("test reason", 1_000);
+        let first_until = pool.auto_disabled_until().expect("pool should be disabled");
+
+        // Second call should extend duration but not emit duplicate events.
+        pool.set_auto_disabled("extended reason", 5_000);
+        let extended_until = pool
+            .auto_disabled_until()
+            .expect("pool should remain disabled");
+        assert!(extended_until >= first_until);
+
+        let disabled = pool.pick_best_blocking("auto.test", 443);
+        assert!(disabled.is_system_default());
+
+        assert!(pool.clear_auto_disabled());
+        // Second clear should be a no-op and not emit another event.
+        assert!(!pool.clear_auto_disabled());
+
+        let restored = pool.pick_best_blocking("auto.test", 443);
+        assert!(!restored.is_system_default());
+
+        let events = bus.strategy_events();
+        let disable_events: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                StrategyEvent::IpPoolAutoDisable { reason, until_ms } => {
+                    Some((reason.clone(), *until_ms))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            disable_events.len(),
+            1,
+            "duplicate disable events detected: {:?}",
+            disable_events
+        );
+        assert_eq!(disable_events[0].0, "test reason");
+
+        let enable_events: Vec<_> = events
+            .iter()
+            .filter(|event| matches!(event, StrategyEvent::IpPoolAutoEnable {}))
+            .collect();
+        assert_eq!(enable_events.len(), 1);
+    }
+
+    #[test]
+    fn emit_ip_pool_cidr_filter_publishes_event() {
+        let bus = install_test_event_bus();
+        emit_ip_pool_cidr_filter(
+            "192.168.1.1".parse().unwrap(),
+            "blacklist",
+            "192.168.1.0/24",
+        );
+
+        expect_single_event(bus.strategy_events(), |event| match event {
+            StrategyEvent::IpPoolCidrFilter {
+                ip,
+                list_type,
+                cidr,
+            } => {
+                assert_eq!(ip, "192.168.1.1");
+                assert_eq!(list_type, "blacklist");
+                assert_eq!(cidr, "192.168.1.0/24");
+            }
+            other => panic!("unexpected event variant: {:?}", other),
+        });
+    }
+
+    #[test]
+    fn emit_ip_pool_ip_tripped_and_recovered_publish_events() {
+        let bus = install_test_event_bus();
+        emit_ip_pool_ip_tripped("10.0.0.2".parse().unwrap(), "failures_exceeded");
+        emit_ip_pool_ip_recovered("10.0.0.2".parse().unwrap());
+
+        let events = bus.strategy_events();
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            StrategyEvent::IpPoolIpTripped { ref ip, ref reason }
+                if ip == "10.0.0.2" && reason == "failures_exceeded"
+        ));
+        assert!(matches!(
+            events[1],
+            StrategyEvent::IpPoolIpRecovered { ref ip } if ip == "10.0.0.2"
+        ));
+    }
+
+    #[test]
+    fn emit_ip_pool_config_update_publishes_event() {
+        let bus = install_test_event_bus();
+        let dummy = EffectiveIpPoolConfig::default();
+        emit_ip_pool_config_update(&dummy, &dummy);
+
+        expect_single_event(bus.strategy_events(), |event| match event {
+            StrategyEvent::IpPoolConfigUpdate { old, new } => {
+                assert!(old.contains("EffectiveIpPoolConfig"));
+                assert!(new.contains("EffectiveIpPoolConfig"));
+            }
+            other => panic!("unexpected event variant: {:?}", other),
+        });
+    }
+
+    #[test]
+    fn emit_ip_pool_auto_disable_and_enable_publish_events() {
+        let bus = install_test_event_bus();
+        emit_ip_pool_auto_disable("manual_test", 1_234_567_890);
+        emit_ip_pool_auto_enable();
+
+        let events = bus.strategy_events();
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            StrategyEvent::IpPoolAutoDisable { ref reason, until_ms }
+                if reason == "manual_test" && until_ms == 1_234_567_890
+        ));
+        assert!(matches!(events[1], StrategyEvent::IpPoolAutoEnable {}));
+    }
+
+    #[test]
+    fn circuit_breaker_repeated_tripped_and_recovered() {
+        let bus = install_test_event_bus();
+        for _ in 0..3 {
+            emit_ip_pool_ip_tripped("10.0.0.1".parse().unwrap(), "failures_exceeded");
+            emit_ip_pool_ip_recovered("10.0.0.1".parse().unwrap());
         }
-        clear_test_event_bus();
+
+        let events = bus.strategy_events();
+        let tripped = events
+            .iter()
+            .filter(|event| matches!(event, StrategyEvent::IpPoolIpTripped { .. }))
+            .count();
+        let recovered = events
+            .iter()
+            .filter(|event| matches!(event, StrategyEvent::IpPoolIpRecovered { .. }))
+            .count();
+        assert_eq!(tripped, 3);
+        assert_eq!(recovered, 3);
+    }
+
+    #[test]
+    fn blacklist_whitelist_empty_and_invalid_cidr() {
+        let bus = install_test_event_bus();
+        emit_ip_pool_cidr_filter("1.2.3.4".parse().unwrap(), "blacklist", "");
+        emit_ip_pool_cidr_filter("1.2.3.5".parse().unwrap(), "whitelist", "invalid_cidr");
+
+        let events = bus.strategy_events();
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            StrategyEvent::IpPoolCidrFilter { ref ip, ref list_type, ref cidr }
+                if ip == "1.2.3.4" && list_type == "blacklist" && cidr.is_empty()
+        ));
+        assert!(matches!(
+            events[1],
+            StrategyEvent::IpPoolCidrFilter { ref ip, ref list_type, ref cidr }
+                if ip == "1.2.3.5" && list_type == "whitelist" && cidr == "invalid_cidr"
+        ));
+    }
+
+    #[test]
+    fn config_hot_reload_concurrent() {
+        let bus = install_test_event_bus();
+        let dummy = EffectiveIpPoolConfig::default();
+        for _ in 0..5 {
+            emit_ip_pool_config_update(&dummy, &dummy);
+        }
+
+        let updates = bus
+            .strategy_events()
+            .into_iter()
+            .filter(|event| matches!(event, StrategyEvent::IpPoolConfigUpdate { .. }))
+            .count();
+        assert_eq!(updates, 5);
     }
 
     #[tokio::test]
     async fn pick_best_with_on_demand_sampling_does_not_emit_selection_event() {
         // Note: IP pool selection event is emitted at transport layer, not in pick_best
         // This test documents expected behavior: pick_best prepares candidates but doesn't emit
-        let bus = MemoryEventBus::new();
-        set_test_event_bus(Arc::new(bus.clone()));
-
+        let bus = install_test_event_bus();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let accept_task = tokio::spawn(async move {
@@ -704,14 +893,70 @@ mod section_event_emission {
         accept_task.await.unwrap();
 
         // IP pool manager itself doesn't emit IpPoolSelection - that's transport layer's job
-        let events = bus.snapshot();
-        let selection_events: Vec<_> = events
+        let selection_events = bus
+            .strategy_events()
             .into_iter()
-            .filter(|e| matches!(e, Event::Strategy(StrategyEvent::IpPoolSelection { .. })))
-            .collect();
-        assert_eq!(selection_events.len(), 0);
+            .filter(|event| matches!(event, StrategyEvent::IpPoolSelection { .. }))
+            .count();
+        assert_eq!(selection_events, 0);
+    }
 
-        clear_test_event_bus();
+    #[test]
+    fn event_bus_thread_safety_and_replacement() {
+        use fireworks_collaboration_lib::events::structured::{
+            clear_test_event_bus, set_test_event_bus, Event, EventBusAny,
+        };
+        use std::sync::Arc;
+        use std::thread;
+
+        // Verify concurrent publishers can share the same thread-local override bus.
+        {
+            let bus_guard = install_test_event_bus();
+            let bus_handle = bus_guard.handle();
+            let bus_dyn: Arc<dyn EventBusAny> = bus_handle.clone();
+
+            let handles: Vec<_> = (0..10)
+                .map(|i| {
+                    let bus_clone = bus_dyn.clone();
+                    thread::spawn(move || {
+                        set_test_event_bus(bus_clone);
+                        emit_ip_pool_auto_disable(&format!("t{i}"), i as i64);
+                        clear_test_event_bus();
+                    })
+                })
+                .collect();
+
+            for handle in handles {
+                handle.join().unwrap();
+            }
+
+            let disable_count = bus_guard
+                .snapshot()
+                .into_iter()
+                .filter(|event| {
+                    matches!(
+                        event,
+                        Event::Strategy(StrategyEvent::IpPoolAutoDisable { .. })
+                    )
+                })
+                .count();
+            assert_eq!(disable_count, 10);
+        }
+
+        // Replacing the bus should isolate subsequent events.
+        {
+            let bus_guard = install_test_event_bus();
+            emit_ip_pool_auto_enable();
+
+            let enable_count = bus_guard
+                .snapshot()
+                .into_iter()
+                .filter(|event| {
+                    matches!(event, Event::Strategy(StrategyEvent::IpPoolAutoEnable {}))
+                })
+                .count();
+            assert_eq!(enable_count, 1);
+        }
     }
 }
 
@@ -827,7 +1072,6 @@ mod section_history_auto_cleanup {
         // Make directory readonly on Windows (best effort)
         #[cfg(windows)]
         {
-            use std::os::windows::fs::MetadataExt;
             let mut perms = std::fs::metadata(invalid_path.parent().unwrap())
                 .unwrap()
                 .permissions();

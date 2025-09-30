@@ -27,6 +27,8 @@ mod section_backward_compatibility {
             "AdaptiveTlsTiming": {
                 "id": "task123",
                 "kind": "GitClone",
+                "used_fake_sni": false,
+                "fallback_stage": "Real",
                 "connect_ms": 100,
                 "tls_ms": 200,
                 "first_byte_ms": 50,
@@ -41,6 +43,8 @@ mod section_backward_compatibility {
             StrategyEvent::AdaptiveTlsTiming {
                 id,
                 kind,
+                used_fake_sni,
+                fallback_stage,
                 connect_ms,
                 tls_ms,
                 first_byte_ms,
@@ -52,8 +56,10 @@ mod section_backward_compatibility {
             } => {
                 assert_eq!(id, "task123");
                 assert_eq!(kind, "GitClone");
-                assert_eq!(connect_ms, 100);
-                assert_eq!(tls_ms, 200);
+                assert!(!used_fake_sni);
+                assert_eq!(fallback_stage, "Real");
+                assert_eq!(connect_ms, Some(100));
+                assert_eq!(tls_ms, Some(200));
                 assert_eq!(first_byte_ms, Some(50));
                 assert_eq!(total_ms, Some(350));
                 assert!(!cert_fp_changed);
@@ -70,8 +76,10 @@ mod section_backward_compatibility {
         let event = StrategyEvent::AdaptiveTlsTiming {
             id: "task456".into(),
             kind: "GitPush".into(),
-            connect_ms: 80,
-            tls_ms: 120,
+            used_fake_sni: false,
+            fallback_stage: "Real".into(),
+            connect_ms: Some(80),
+            tls_ms: Some(120),
             first_byte_ms: Some(40),
             total_ms: Some(240),
             cert_fp_changed: false,
@@ -96,8 +104,10 @@ mod section_backward_compatibility {
         let event = StrategyEvent::AdaptiveTlsTiming {
             id: "task789".into(),
             kind: "GitFetch".into(),
-            connect_ms: 90,
-            tls_ms: 110,
+            used_fake_sni: true,
+            fallback_stage: "Fake".into(),
+            connect_ms: Some(90),
+            tls_ms: Some(110),
             first_byte_ms: Some(45),
             total_ms: Some(245),
             cert_fp_changed: false,
@@ -185,6 +195,8 @@ mod section_backward_compatibility {
             "AdaptiveTlsTiming": {
                 "id": "task999",
                 "kind": "GitClone",
+                "used_fake_sni": false,
+                "fallback_stage": "Real",
                 "connect_ms": 100,
                 "tls_ms": 200,
                 "first_byte_ms": 50,

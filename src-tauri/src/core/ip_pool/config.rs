@@ -309,14 +309,8 @@ mod tests {
             default_singleflight_timeout_ms()
         );
         assert_eq!(cfg.failure_threshold, default_failure_threshold());
-        assert_eq!(
-            cfg.failure_rate_threshold,
-            default_failure_rate_threshold()
-        );
-        assert_eq!(
-            cfg.failure_window_seconds,
-            default_failure_window_seconds()
-        );
+        assert_eq!(cfg.failure_rate_threshold, default_failure_rate_threshold());
+        assert_eq!(cfg.failure_window_seconds, default_failure_window_seconds());
         assert_eq!(cfg.min_samples_in_window, default_min_samples_in_window());
         assert_eq!(cfg.cooldown_seconds, default_cooldown_seconds());
         assert!(cfg.circuit_breaker_enabled);

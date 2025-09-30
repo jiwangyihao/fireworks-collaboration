@@ -13,10 +13,10 @@ use tokio_rustls::rustls::ClientConfig;
 use tokio_rustls::TlsConnector;
 
 use crate::core::config::model::AppConfig;
-use crate::core::tls::util::{decide_sni_host_with_proxy, proxy_present};
-use crate::core::tls::verifier::create_client_config;
 use crate::core::ip_pool::global::obtain_global_pool;
 use crate::core::ip_pool::IpSelectionStrategy;
+use crate::core::tls::util::{decide_sni_host_with_proxy, proxy_present};
+use crate::core::tls::verifier::create_client_config;
 
 use super::types::{HttpRequestInput, HttpResponseOutput, TimingInfo};
 
@@ -85,11 +85,19 @@ impl HttpClient {
                 .await
                 .context("connect timeout")?
                 .context("connect error")?;
-                (tcp, host.clone(), false, start_connect.elapsed().as_millis() as u32)
+                (
+                    tcp,
+                    host.clone(),
+                    false,
+                    start_connect.elapsed().as_millis() as u32,
+                )
             }
             IpSelectionStrategy::Cached => {
                 // 用IP池选中的IP建立连接，SNI仍用原host
-                let ip = sel.selected().map(|s| s.candidate.address).ok_or_else(|| anyhow!("ip pool returned no candidate"))?;
+                let ip = sel
+                    .selected()
+                    .map(|s| s.candidate.address)
+                    .ok_or_else(|| anyhow!("ip pool returned no candidate"))?;
                 let start_connect = Instant::now();
                 let tcp = timeout(
                     Duration::from_millis(input.timeout_ms),
@@ -98,7 +106,12 @@ impl HttpClient {
                 .await
                 .context("connect timeout (ip pool)")?
                 .context("connect error (ip pool)")?;
-                (tcp, host.clone(), true, start_connect.elapsed().as_millis() as u32)
+                (
+                    tcp,
+                    host.clone(),
+                    true,
+                    start_connect.elapsed().as_millis() as u32,
+                )
             }
         };
 
@@ -180,7 +193,11 @@ impl HttpClient {
             headers,
             body_base64: BASE64.encode(&buf),
             used_fake_sni: fake,
-            ip: if used_ip_pool { sel.selected().map(|s| s.candidate.address.to_string()) } else { None },
+            ip: if used_ip_pool {
+                sel.selected().map(|s| s.candidate.address.to_string())
+            } else {
+                None
+            },
             timing: TimingInfo {
                 connect_ms,
                 tls_ms,

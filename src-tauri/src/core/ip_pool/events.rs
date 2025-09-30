@@ -24,7 +24,10 @@ pub fn emit_ip_pool_ip_recovered(ip: std::net::IpAddr) {
     }));
 }
 /// Emit IpPoolConfigUpdate event when the pool config is updated.
-pub fn emit_ip_pool_config_update(old_config: &crate::core::ip_pool::config::EffectiveIpPoolConfig, new_config: &crate::core::ip_pool::config::EffectiveIpPoolConfig) {
+pub fn emit_ip_pool_config_update(
+    old_config: &crate::core::ip_pool::config::EffectiveIpPoolConfig,
+    new_config: &crate::core::ip_pool::config::EffectiveIpPoolConfig,
+) {
     tracing::info!(target = "ip_pool", "ip pool config updated");
     publish_global(Event::Strategy(StrategyEvent::IpPoolConfigUpdate {
         old: format!("{:?}", old_config),
@@ -33,7 +36,12 @@ pub fn emit_ip_pool_config_update(old_config: &crate::core::ip_pool::config::Eff
 }
 /// Emit IpPoolAutoDisable event when the pool is globally auto-disabled.
 pub fn emit_ip_pool_auto_disable(reason: &str, until_ms: i64) {
-    tracing::warn!(target = "ip_pool", reason, until_ms, "ip pool auto-disabled");
+    tracing::warn!(
+        target = "ip_pool",
+        reason,
+        until_ms,
+        "ip pool auto-disabled"
+    );
     publish_global(Event::Strategy(StrategyEvent::IpPoolAutoDisable {
         reason: reason.to_string(),
         until_ms,
@@ -49,7 +57,6 @@ pub fn emit_ip_pool_auto_enable() {
 ///
 /// Provides structured event emission for IP pool selection and refresh operations,
 /// ensuring observability while respecting privacy (no raw IP addresses in events).
-
 use crate::events::structured::{publish_global, Event, StrategyEvent};
 use uuid::Uuid;
 

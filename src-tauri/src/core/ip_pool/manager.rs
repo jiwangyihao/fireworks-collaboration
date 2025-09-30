@@ -8,8 +8,8 @@ use std::{
     },
 };
 
-use anyhow::Result;
 use super::events::{emit_ip_pool_auto_disable, emit_ip_pool_auto_enable};
+use anyhow::Result;
 use tokio::{
     runtime::{Builder as RuntimeBuilder, Handle, Runtime},
     sync::{Mutex as AsyncMutex, Notify},
@@ -289,16 +289,57 @@ impl IpPool {
     }
 
     /// 设置全局禁用，禁用 cooldown_ms 毫秒
-    pub fn set_auto_disabled(&self, cooldown_ms: i64) {
-        let until = preheat::current_epoch_ms() + cooldown_ms;
-        self.auto_disabled_until.store(until, Ordering::Relaxed);
-        emit_ip_pool_auto_disable("auto-disable by circuit breaker or fallback", until);
+    pub fn set_auto_disabled(&self, reason: &str, cooldown_ms: i64) {
+        if cooldown_ms <= 0 {
+            self.clear_auto_disabled();
+            return;
+        }
+
+        let now = preheat::current_epoch_ms();
+        let new_until = now + cooldown_ms;
+        let mut prev = self.auto_disabled_until.load(Ordering::Relaxed);
+
+        loop {
+            // 若已处于禁用状态且剩余时间更长，则无需更新或重复发事件
+            if prev > now && prev >= new_until {
+                return;
+            }
+
+            match self.auto_disabled_until.compare_exchange(
+                prev,
+                new_until,
+                Ordering::SeqCst,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    if prev <= now {
+                        emit_ip_pool_auto_disable(reason, new_until);
+                    } else {
+                        tracing::debug!(
+                            target = "ip_pool",
+                            previous_until = prev,
+                            until = new_until,
+                            reason,
+                            "ip pool auto-disable extended"
+                        );
+                    }
+                    break;
+                }
+                Err(actual) => prev = actual,
+            }
+        }
     }
 
     /// 清除全局禁用状态
-    pub fn clear_auto_disabled(&self) {
-        self.auto_disabled_until.store(0, Ordering::Relaxed);
-        emit_ip_pool_auto_enable();
+    pub fn clear_auto_disabled(&self) -> bool {
+        let now = preheat::current_epoch_ms();
+        let previous = self.auto_disabled_until.swap(0, Ordering::SeqCst);
+        if previous > now {
+            emit_ip_pool_auto_enable();
+            true
+        } else {
+            false
+        }
     }
 
     /// 获取当前 auto_disabled_until
@@ -330,7 +371,12 @@ impl IpPool {
 
     pub async fn pick_best(&self, host: &str, port: u16) -> IpSelection {
         if !self.is_enabled() {
-            tracing::debug!(target = "ip_pool", host, port, "ip pool disabled or auto-disabled; using system DNS");
+            tracing::debug!(
+                target = "ip_pool",
+                host,
+                port,
+                "ip pool disabled or auto-disabled; using system DNS"
+            );
             return IpSelection::system_default(host.to_string(), port);
         }
 

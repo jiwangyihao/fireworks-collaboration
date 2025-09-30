@@ -116,8 +116,8 @@ pub mod prelude {
     };
 
     pub use super::ip_pool::{
-        cache_best, candidate_v4, enabled_config, epoch_ms, history_record, make_latency_stat,
-        stat_with_latency, user_static_only_config,
+        cache_best, candidate_v4, enabled_config, epoch_ms, history_record, install_test_event_bus,
+        make_latency_stat, stat_with_latency, user_static_only_config, TestEventBus,
     };
     // Repo factory helpers (rev_count moved here)
     pub use super::repo_factory::rev_count;

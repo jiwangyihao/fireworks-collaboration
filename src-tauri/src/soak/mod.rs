@@ -1374,10 +1374,7 @@ mod tests {
             "FWC_SOAK_REPORT_PATH",
             report_path.to_str().expect("report path utf-8"),
         );
-        std::env::set_var(
-            "FWC_SOAK_BASE_DIR",
-            base.to_str().expect("base dir utf-8"),
-        );
+        std::env::set_var("FWC_SOAK_BASE_DIR", base.to_str().expect("base dir utf-8"));
         std::env::set_var("FWC_SOAK_MIN_SUCCESS_RATE", "0.75");
         std::env::set_var("FWC_SOAK_MAX_FAKE_FALLBACK_RATE", "0.25");
         std::env::set_var("FWC_SOAK_MIN_IP_POOL_REFRESH_RATE", "0.5");
@@ -1392,15 +1389,8 @@ mod tests {
             report.options.thresholds.min_ip_pool_refresh_success_rate,
             0.5
         );
-        assert_eq!(
-            report.options.thresholds.max_auto_disable_triggered,
-            2
-        );
-        assert!(report
-            .options
-            .thresholds
-            .min_latency_improvement
-            .is_none());
+        assert_eq!(report.options.thresholds.max_auto_disable_triggered, 2);
+        assert!(report.options.thresholds.min_latency_improvement.is_none());
         assert!(report.thresholds.latency_improvement.is_none());
         assert!(report.thresholds.ready);
         assert!(report_path.exists());
