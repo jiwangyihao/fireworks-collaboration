@@ -213,6 +213,9 @@ mod section_adaptive_tls_metrics {
             first_byte_ms: Some(40),
             total_ms: Some(50),
             cert_fp_changed: false,
+            ip_source: None,
+            ip_latency_ms: None,
+            ip_selection_stage: None,
         }));
         let events = bus.snapshot();
         let timing = events.into_iter().find_map(|e| match e {

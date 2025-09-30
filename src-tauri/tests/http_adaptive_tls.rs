@@ -256,14 +256,13 @@ fn ip_pool_candidate_successfully_used() {
         .expect("metrics available");
     assert_eq!(metrics.success, 1);
     assert_eq!(metrics.failure, 0);
-    assert!(metrics.last_outcome_ms > 0, "last outcome timestamp missing");
+    assert!(
+        metrics.last_outcome_ms > 0,
+        "last outcome timestamp missing"
+    );
 
     let candidate_metrics = guard
-        .candidate_outcome_metrics(
-            "localhost",
-            port,
-            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-        )
+        .candidate_outcome_metrics("localhost", port, IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)))
         .expect("candidate metrics available");
     assert_eq!(candidate_metrics.success, 1);
     assert_eq!(candidate_metrics.failure, 0);
@@ -358,14 +357,13 @@ fn ip_pool_candidate_exhaustion_falls_back_to_system() {
         .expect("metrics available");
     assert_eq!(metrics.success, 0);
     assert_eq!(metrics.failure, 1);
-    assert!(metrics.last_outcome_ms > 0, "last outcome timestamp missing");
+    assert!(
+        metrics.last_outcome_ms > 0,
+        "last outcome timestamp missing"
+    );
 
     let fail_metrics_a = guard
-        .candidate_outcome_metrics(
-            "localhost",
-            port,
-            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
-        )
+        .candidate_outcome_metrics("localhost", port, IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)))
         .expect("first failure candidate metrics available");
     assert_eq!(fail_metrics_a.success, 0);
     assert!(
@@ -379,11 +377,7 @@ fn ip_pool_candidate_exhaustion_falls_back_to_system() {
     assert_eq!(fail_metrics_a.last_sources, vec![IpSource::UserStatic]);
 
     let fail_metrics_b = guard
-        .candidate_outcome_metrics(
-            "localhost",
-            port,
-            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3)),
-        )
+        .candidate_outcome_metrics("localhost", port, IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3)))
         .expect("second failure candidate metrics available");
     assert_eq!(fail_metrics_b.success, 0);
     assert!(

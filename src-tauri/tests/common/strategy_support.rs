@@ -270,6 +270,9 @@ pub fn test_emit_adaptive_tls_observability(task_id: uuid::Uuid, kind: &str) {
                 first_byte_ms: cap.first_byte_ms,
                 total_ms: cap.total_ms,
                 cert_fp_changed: false,
+                ip_source: None,
+                ip_latency_ms: None,
+                ip_selection_stage: None,
             },
         ));
     }
@@ -283,6 +286,8 @@ pub fn test_emit_adaptive_tls_observability(task_id: uuid::Uuid, kind: &str) {
                         from: from.to_string(),
                         to: to.to_string(),
                         reason,
+                        ip_source: None,
+                        ip_latency_ms: None,
                     },
                 ));
             }
