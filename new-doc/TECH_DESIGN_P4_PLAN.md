@@ -199,6 +199,7 @@
 	- `IpPool::pick_best` 先检查缓存有效性（`expires_at` 缺省视为永不过期），命中失败时触发 `ensure_sampled`；若采样仍失败则回退系统 DNS。
 	- `ensure_sampled` 以 `Notify` 单飞等待其他协程结果，并在超时（默认 10s，可配置）时返回系统解析；`sample_once` 复用预热探测逻辑并写入 `IpScoreCache` + `IpHistoryStore`。
 	- `maybe_prune_cache` 使用 `AtomicI64` 控制 TTL 清理节奏，按配置间隔移除非预热域名的过期条目，并调用 `enforce_cache_capacity` 基于 `measured_at` 进行最久淘汰。
+	- `report_candidate_outcome` 与 `candidate_outcome_metrics` 组合提供 per-IP 统计视图：记录成功/失败计数、最近一次时间戳与来源集合，并在 `report_outcome` 的聚合层补全 `last_outcome_ms`，为后续熔断与观测打通数据链路。
 	- `report_outcome` 在非系统路径下记录成功/失败计数和最近时间，为后续 P4.5 熔断铺路。
 	- `IpSelectionStrategy::pick`、`IpSelection::from_cache_snapshot` 迁移至 `manager.rs` 后直接依赖缓存内联的 `IpStat::is_expired`；`apply_probe_result` 在同一文件内串联 `OutcomeStats` 更新与缓存写入，确保候选筛选、延迟排序与失败计数拥有一致的上下文。
 - **设计差异与取舍**：
@@ -416,10 +417,33 @@
     - `singleflightTimeoutMs` 过小可能导致频繁回退系统 DNS（当前默认 10s 较保守），配置误设需结合运维监控。
     - 现阶段 `OutcomeStats` 仅计数未做策略使用，若长时间运行可能累积较大 HashMap；P4.5 引入熔断时需增量治理。
 
-### P4.3 传输层集成与优选决策 实现说明（占位）
-- **提交范围待补充**：列出 transport 层改造点、线程本地上下文扩展以及回退链联动细节。
-- **差异记录占位**：若候选切换策略、回退顺序或事件字段不同步，请在此说明原因。
-- **测试与验收占位**：补充传输层集成测试、回退路径验证与性能基线结果。
+### P4.3 传输层集成与优选决策 实现说明
+- **提交范围**：
+	- `src-tauri/src/core/ip_pool/global.rs` 提供全局 `Arc<Mutex<IpPool>>` 存取接口，并在 `app.rs` 启动阶段复用同一实例。
+	- `IpSelection`/`IpPool` 支持缓存备选列表与阻塞式 `pick_best_blocking`，新增共享 tokio runtime 以服务同步场景。
+	- `CustomHttpsSubtransport::connect_tls_with_fallback` 接入 IP 池候选，按延迟顺序尝试直连→系统 DNS，并回传选用结果给 `IpPool::report_outcome`。
+	- `metrics.rs` 扩展线程本地字段 `ip_strategy/ip_source/ip_latency_ms` 及 setter，供策略事件后续消费。
+	- 新增 `spawn_tls_server`/`spawn_fail_server` 测试基建与覆盖成功、候选耗尽回退两条集成用例。
+	- `IpPool::report_candidate_outcome` 持久化每个候选 IP 的成功/失败计数，并暴露 `candidate_outcome_metrics` 以支撑后续熔断阶段。
+- **关键代码路径**：
+	- `CustomHttpsSubtransport` 中引入 `ConnectTarget`/`StageResult` 抽象，确保 Fake/Real 阶段均可复用候选优选逻辑；线程本地在成功后调用 `tl_set_ip_selection` 填充观测字段。
+	- `IpPool::pick_best_blocking` 优先复用当前 tokio `Handle`，否则懒初始化多线程 runtime；`sampling.rs` 统一返回 `IpCacheSlot` 并过滤过期备选。
+	- 传输层候选循环在每次成功/失败后调用 `report_candidate_outcome`，为单个 IP 留存历史表现，失败仍交由回退链推进。
+- **差异记录**：
+	- IP 池阻塞 runtime 采用全局 `OnceLock`，避免每次握手重复建新 runtime；若初始化失败记录错误并回退系统 DNS。
+	- 线程本地默认仅在真正命中候选时写入来源与延迟；系统回退场景保持 source/latency 为空，便于前端区分。
+	- 候选失败仅记入 debug 日志与 outcome 统计，未触发额外熔断动作（保留给 P4.5）。
+- **测试与验收**：
+	- 新增 `ip_pool_candidate_successfully_used` 验证成功命中 `UserStatic` 候选并记录 `IpOutcome::Success`。
+	- 新增 `ip_pool_candidate_exhaustion_falls_back_to_system` 验证候选耗尽后回退系统 DNS，Outcome 记失败且线程本地来源为空。
+	- 新增 `ip_pool_second_candidate_recovers_after_failure` 验证首候选失败时备用候选接管且 per-IP 统计正确增减。
+	- 新增 `ip_pool_disabled_bypasses_candidates` 验证禁用开关时直接走系统 DNS 且不记录候选统计。
+	- 扩展成功与回退用例断言 `candidate_outcome_metrics` 及聚合 `outcome_metrics` 填充了成功/失败计数、最近一次时间戳与来源，验证熔断前置数据的可用性与时间准确性。
+	- `cargo test -q --manifest-path src-tauri/Cargo.toml` 全量通过，含现有回归与新增用例。
+- **残留风险**：
+	- 阻塞 runtime 采用固定 2 worker，极端高并发场景可能出现排队；后续可视需要开放配置。
+	- 测试依赖 127.0.0.0/8 多地址绑定，少数环境若不支持需改为环回别名配置。
+	- 候选级统计当前无限增长，长时间运行需结合 P4.5 的熔断/清理策略控制内存占用。
 
 ### P4.4 观测、日志与数据落地 实现说明（占位）
 - **提交范围待补充**：记录指标与事件的最终字段、`ip-history.json` 滚动策略与日志格式。
