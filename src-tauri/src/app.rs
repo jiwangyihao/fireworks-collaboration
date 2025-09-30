@@ -744,7 +744,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(OAuthState::new(Mutex::new(None)))
         .manage(Arc::new(TaskRegistry::new()) as TaskRegistryState)
-        .manage(Arc::new(Mutex::new(IpPool::default())) as SharedIpPool)
+        .manage(ip_pool::global::obtain_global_pool())
         .invoke_handler(tauri::generate_handler![
             greet,
             start_oauth_server,

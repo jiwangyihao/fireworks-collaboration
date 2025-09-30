@@ -67,18 +67,42 @@ pub fn base_dir() -> PathBuf {
         .to_path_buf()
 }
 
-#[cfg(test)]
-pub fn test_override_global_base_dir<P: AsRef<Path>>(base: P) {
+#[cfg(any(test, not(feature = "tauri-app")))]
+pub(crate) fn override_global_base_dir_internal<P: AsRef<Path>>(base: P) {
     let cell = GLOBAL_BASE_DIR.get_or_init(|| Mutex::new(None));
     let mut guard = cell.lock().unwrap();
     *guard = Some(base.as_ref().to_path_buf());
 }
 
-#[cfg(test)]
-pub fn test_clear_global_base_dir() {
+#[cfg(any(test, not(feature = "tauri-app")))]
+pub(crate) fn clear_global_base_dir_internal() {
     if let Some(cell) = GLOBAL_BASE_DIR.get() {
         let mut guard = cell.lock().unwrap();
         *guard = None;
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_clear_global_base_dir() {
+    clear_global_base_dir_internal();
+}
+
+#[cfg(test)]
+pub(crate) fn test_override_global_base_dir<P: AsRef<Path>>(base: P) {
+    override_global_base_dir_internal(base);
+}
+
+#[cfg(not(feature = "tauri-app"))]
+pub mod testing {
+    //! Testing-only helpers exposed to integration suites.
+    use super::*;
+
+    pub fn override_global_base_dir<P: AsRef<Path>>(base: P) {
+        super::override_global_base_dir_internal(base);
+    }
+
+    pub fn clear_global_base_dir() {
+        super::clear_global_base_dir_internal();
     }
 }
 
