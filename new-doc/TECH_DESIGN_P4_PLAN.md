@@ -5,6 +5,14 @@
 - [x] 提交：IP 池异常治理与事件增强
 - [x] 提交：HTTP 客户端集成 IP 池候选
 - [x] 提交：P4.5 文档更新
+- [x] 检查工作区改动并梳理差异
+- [x] 规划 P4.6 主题提交拆分方案
+- [x] 依次创建代码类提交
+- [x] 最后提交文档更新
+- [x] 提交后自检
+- [x] 整理 P4.6 soak 变更清单
+- [x] 补充 P4.6 实现说明
+- [x] 自检并勾选待办
 
 ## 1. 概述
 
@@ -680,7 +688,36 @@
     - 黑白名单解析未对 CIDR 合法性做严格校验，错误条目只会在事件中体现；运维需留意日志避免规则误配。
     - 熔断统计与事件依赖进程内存，进程重启后会失去历史窗口；生产场景应搭配外部监控或日志回放追踪实际触发次数。
 
-### P4.6 稳定性验证与准入 实现说明（占位）
-- **提交范围待补充**：完成 soak 与 readiness review 后，记录脚本、CI 接入与报告生成实现。
-- **差异记录占位**：准入阈值、灰度计划或协同流程若有变更需在此说明。
-- **测试与验收占位**：补充长稳运行、故障注入、准入评审结果及未解决风险。
+### P4.6 稳定性验证与准入 实现说明
+- **提交范围**：
+    - 重写 `src-tauri/src/soak/mod.rs` 的阈值判定与报告生成逻辑，新增 `SoakThresholds` 字段（IP 池刷新成功率、自动禁用次数、延迟改善）以及默认值。
+    - 扩展 `SoakOptions`/`SoakOptionsSnapshot` 持久化阈值配置，`SoakReport` 增补 `ip_pool` 摘要、`ThresholdSummary`、`ComparisonSummary` 字段，并将 `ThresholdCheck` 标准化为 `>=`/`<=`/`not_applicable` 三类比较器。
+    - `SoakAggregator::process_events` 新增对 `StrategyEvent::IpPoolSelection`、`IpPoolRefresh`、`AdaptiveTlsAutoDisable` 的统计；`into_report` 计算成功率/回退率/刷新率、填充 `ThresholdSummary`，并落盘 JSON。
+    - 引入 `build_comparison_summary`，在提供基线报告时计算成功率、回退率、IP 池与 GitClone p50 延迟的增量指标，并将结果写入 `comparison.regression_flags`。
+    - `run_from_env` 支持 `FWC_SOAK_MIN_SUCCESS_RATE`、`FWC_SOAK_MAX_FAKE_FALLBACK_RATE`、`FWC_SOAK_MIN_IP_POOL_REFRESH_RATE`、`FWC_SOAK_MAX_AUTO_DISABLE`、`FWC_SOAK_MIN_LATENCY_IMPROVEMENT` 等环境覆盖；空字符串表示禁用延迟改善检查。
+    - `run` 在基线缺失或加载失败时将延迟阈值标记为 `not_applicable` 并写入详细原因；完成后通过 `write_report` 生成最终报告。
+    - 新增单测覆盖环境变量解析、IP 池统计归并、延迟阈值不可用路径、比较器回归检测等关键场景。
+- **关键代码路径与行为**：
+    - `SoakAggregator::process_events` 将 IP 池选择/刷新事件聚合成 `IpPoolSummary`，默认在刷新样本缺失时返回 1.0 成功率以避免除零；`AdaptiveTlsAutoDisable` 汇总进 `AutoDisableSummary` 以支撑阈值比较。
+    - `ThresholdSummary::recompute` 根据每个 `ThresholdCheck` 的 `pass` 状态动态更新 `ready` 标记与 `failing_checks` 列表；延迟改善通过 `set_latency_improvement` 延后注入，确保基线处理与阈值关联一致。
+    - `build_comparison_summary` 计算成功率、回退率、证书漂移、自动禁用等差值，并在 GitClone p50 存在时输出 `git_clone_total_p50_improvement`；当阈值未满足或回退率升高时追加 `regression_flags`。
+    - `run_from_env` 解析迭代数、保持克隆目录、基线路径等参数，自动设置 `FWC_ADAPTIVE_TLS_SOAK=1`，并通过 `loader::set_global_base_dir` 隔离测试配置目录。
+    - `run` 将 soak 执行拆分为 push/fetch/clone 三阶段，每个任务完成后即时收割事件；所有迭代结束后再次 drain 事件并生成报告，同时支持可选保留克隆目录调查。
+- **设计差异与取舍**：
+    - 缺少基线时报告不会阻断流程，而是将延迟改善阈值标记为未通过并附带原因，促使准入评审补充基线数据；避免因工具限制中断 soak。
+    - 自动禁用阈值始终返回 `ThresholdCheck::at_most`，即使样本为 0 也纳入 Ready 判定，确保熔断行为即时暴露。
+    - IP 池刷新成功率在无事件时默认 1.0，保持历史版本兼容；若未来需要更严格判定，可通过在 CI 中强制至少执行一次预热来满足。
+    - `ThresholdCheck` 暂未区分浮点精度误差，比较采用直接 `>=`/`<=` 判断；当前阈值留有余量（例如 0.99/0.05），足以抵消噪声。
+- **测试与验收**：
+    - 单元测试：`cargo test run_from_env_honors_environment_threshold_overrides --manifest-path src-tauri/Cargo.toml`、`cargo test ip_pool_stats_process_events_correctly --manifest-path src-tauri/Cargo.toml`、`cargo test run_marks_latency_not_applicable_without_baseline --manifest-path src-tauri/Cargo.toml` 等覆盖新分支。
+    - 全量回归：`cargo test -q --manifest-path src-tauri/Cargo.toml`；附加执行 soak 比较路径 `soak_attaches_comparison_when_baseline_available` 验证基线差异处理。
+    - 结果：所有用例通过，无新增警告；生成的报告包含 `ip_pool`、`thresholds`、`comparison` 字段，Ready 状态与回退计数符合预期。
+- **运维与准入落地**：
+    - 环境覆盖：准入管线可通过上文环境变量调节阈值；将 `FWC_SOAK_MIN_LATENCY_IMPROVEMENT` 设为空字符串即可在无基线场景临时禁用延迟检查。
+    - 报告解读：`thresholds.ready=false` 且 `failing_checks` 包含 `latency_improvement` 时，需补充基线或放宽阈值；`comparison.regression_flags` 提供与历史报告的差异追踪。
+    - IP 池指标：`ip_pool.refresh_success_rate`<阈值时，调查预热事件失败原因；`selection_by_strategy` 可衡量缓存命中率与系统回退占比。
+    - 运行隔离：Soak 执行会在临时目录下生成 `config-root/runtime`，完成后按 `keep_clones` 选项清理，确保不会污染开发配置。
+- **残留风险**：
+    - 回退率和成功率依赖事件采集，如测试任务跳过自适应 TLS 将导致统计偏空；需在管线中确保策略事件开关开启。
+    - 延迟改善仍依赖外部基线文件，若历史报告采用不同迭代数或数据源，比较结果可能受噪声影响；建议同时观察原始 p50 数值。
+    - Soak 报告聚合后写入本地文件，失败仅返回错误；若用于 CI，应在步骤中显式保存 `report_path` 以供后续可视化。
