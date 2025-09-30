@@ -110,6 +110,12 @@ pub enum StrategyEvent {
         first_byte_ms: Option<u32>,
         total_ms: Option<u32>,
         cert_fp_changed: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ip_source: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ip_latency_ms: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ip_selection_stage: Option<String>,
     },
     AdaptiveTlsFallback {
         id: String,
@@ -117,6 +123,10 @@ pub enum StrategyEvent {
         from: String,
         to: String,
         reason: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ip_source: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ip_latency_ms: Option<u32>,
     },
     AdaptiveTlsAutoDisable {
         id: String,
@@ -136,6 +146,24 @@ pub enum StrategyEvent {
         host: String,
         spki_sha256: String,
         pin_count: u8,
+    },
+    IpPoolSelection {
+        id: String,
+        domain: String,
+        port: u16,
+        strategy: String,
+        source: Option<String>,
+        latency_ms: Option<u32>,
+        candidates_count: u8,
+    },
+    IpPoolRefresh {
+        id: String,
+        domain: String,
+        success: bool,
+        candidates_count: u8,
+        min_latency_ms: Option<u32>,
+        max_latency_ms: Option<u32>,
+        reason: String,
     },
 }
 
