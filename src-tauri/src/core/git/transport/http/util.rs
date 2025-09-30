@@ -1,3 +1,5 @@
+use crate::core::ip_pool::IpSource;
+
 pub(super) fn find_double_crlf(buf: &[u8]) -> Option<usize> {
     // 返回头部结束后紧随 body 的起始索引（含 CRLFCRLF 整个序列长度）
     buf.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4)
@@ -47,4 +49,21 @@ pub(super) fn log_body_preview(body: &[u8], host: &str, msg: &str) {
         })
         .collect::<String>();
     tracing::debug!(target="git.transport.http", host=%host, bytes=%n, hex=%hex, ascii=%ascii, "{}", msg);
+}
+
+pub(super) fn format_ip_sources(sources: &[IpSource]) -> String {
+    if sources.is_empty() {
+        return "unknown".to_string();
+    }
+    sources
+        .iter()
+        .map(|src| match src {
+            IpSource::Builtin => "Builtin",
+            IpSource::Dns => "Dns",
+            IpSource::History => "History",
+            IpSource::UserStatic => "UserStatic",
+            IpSource::Fallback => "Fallback",
+        })
+        .collect::<Vec<_>>()
+        .join("+")
 }

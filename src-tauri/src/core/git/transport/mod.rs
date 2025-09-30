@@ -25,13 +25,14 @@ pub use metrics::{
     metrics_enabled, tl_push_fallback_event, tl_snapshot, tl_take_fallback_events,
     FallbackEventRecord,
 };
-#[cfg(test)]
-pub use runtime::test_auto_disable_guard;
 
-// Test-only helpers re-export for ease of access in tests modules
-#[cfg(test)]
-pub use http::{
-    test_classify_and_count_fallback, test_reset_fallback_counters, test_snapshot_fallback_counters,
-};
-#[cfg(test)]
-pub use runtime::test_reset_auto_disable;
+#[cfg(not(feature = "tauri-app"))]
+pub mod testing {
+    //! Aggregated transport testing helpers available to integration tests.
+    pub use super::http::testing::{
+        classify_and_count_fallback, inject_fake_failure, inject_real_failure,
+        reset_fallback_counters, reset_injected_failures, snapshot_fallback_counters,
+        TestSubtransport,
+    };
+    pub use super::runtime::testing::{auto_disable_guard, reset_auto_disable};
+}

@@ -123,6 +123,9 @@ thread_local! {
     static TL_USED_FAKE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
     static TL_FALLBACK_STAGE: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
     static TL_CERT_FP_CHANGED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    static TL_IP_STRATEGY: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+    static TL_IP_SOURCE: RefCell<Option<String>> = const { RefCell::new(None) };
+    static TL_IP_LATENCY: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
     static TL_FALLBACK_EVENTS: RefCell<Vec<FallbackEventRecord>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -131,6 +134,9 @@ pub fn tl_reset() {
     TL_USED_FAKE.with(|c| c.set(None));
     TL_FALLBACK_STAGE.with(|c| c.set(None));
     TL_CERT_FP_CHANGED.with(|c| c.set(None));
+    TL_IP_STRATEGY.with(|c| c.set(None));
+    TL_IP_SOURCE.with(|c| *c.borrow_mut() = None);
+    TL_IP_LATENCY.with(|c| c.set(None));
     TL_FALLBACK_EVENTS.with(|c| c.borrow_mut().clear());
 }
 
@@ -142,6 +148,15 @@ pub fn tl_set_fallback_stage(s: &'static str) {
 }
 pub fn tl_set_cert_fp_changed(changed: bool) {
     TL_CERT_FP_CHANGED.with(|c| c.set(Some(changed)));
+}
+pub fn tl_set_ip_selection(
+    strategy: Option<&'static str>,
+    source: Option<String>,
+    latency_ms: Option<u32>,
+) {
+    TL_IP_STRATEGY.with(|c| c.set(strategy));
+    TL_IP_LATENCY.with(|c| c.set(latency_ms));
+    TL_IP_SOURCE.with(|cell| *cell.borrow_mut() = source);
 }
 pub fn tl_set_timing(cap: &TimingCapture) {
     TL_TIMING.with(|c| *c.borrow_mut() = Some(*cap));
@@ -155,6 +170,9 @@ pub struct TimingSnapshot {
     pub used_fake: Option<bool>,
     pub fallback_stage: Option<&'static str>,
     pub cert_fp_changed: Option<bool>,
+    pub ip_strategy: Option<&'static str>,
+    pub ip_source: Option<String>,
+    pub ip_latency_ms: Option<u32>,
 }
 
 pub fn tl_snapshot() -> TimingSnapshot {
@@ -163,6 +181,9 @@ pub fn tl_snapshot() -> TimingSnapshot {
         used_fake: TL_USED_FAKE.with(|c| c.get()),
         fallback_stage: TL_FALLBACK_STAGE.with(|c| c.get()),
         cert_fp_changed: TL_CERT_FP_CHANGED.with(|c| c.get()),
+        ip_strategy: TL_IP_STRATEGY.with(|c| c.get()),
+        ip_source: TL_IP_SOURCE.with(|c| c.borrow().clone()),
+        ip_latency_ms: TL_IP_LATENCY.with(|c| c.get()),
     }
 }
 
