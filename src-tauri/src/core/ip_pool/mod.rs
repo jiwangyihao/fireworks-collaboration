@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod config;
+pub mod events;
 pub mod global;
 pub mod history;
 pub mod preheat;
