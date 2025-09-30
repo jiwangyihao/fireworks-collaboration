@@ -4,7 +4,7 @@ use anyhow::Result;
 use tokio::{sync::Notify, time::timeout};
 
 use super::{
-    cache::{IpCacheKey, IpStat},
+    cache::{IpCacheKey, IpCacheSlot, IpStat},
     maintenance,
     manager::IpPool,
     preheat,
@@ -15,25 +15,41 @@ pub(super) fn get_fresh_cached(
     host: &str,
     port: u16,
     now_ms: i64,
-) -> Option<IpStat> {
-    if let Some(slot) = pool.cache.get(host, port) {
-        if let Some(best) = slot.best {
-            if !best.is_expired(now_ms) {
-                return Some(best);
+) -> Option<IpCacheSlot> {
+    if let Some(mut slot) = pool.cache.get(host, port) {
+        match slot.best.clone() {
+            Some(best) => {
+                if best.is_expired(now_ms) {
+                    if !pool.is_preheat_target(host, port) {
+                        maintenance::expire_entry(pool, host, port);
+                    }
+                    return None;
+                }
+                slot.alternatives.retain(|alt| !alt.is_expired(now_ms));
+                return Some(IpCacheSlot {
+                    best: Some(best),
+                    alternatives: slot.alternatives,
+                });
             }
-            if !pool.is_preheat_target(host, port) {
-                maintenance::expire_entry(pool, host, port);
+            None => {
+                if !pool.is_preheat_target(host, port) {
+                    maintenance::expire_entry(pool, host, port);
+                }
             }
         }
     }
     None
 }
 
-pub(super) async fn ensure_sampled(pool: &IpPool, host: &str, port: u16) -> Result<Option<IpStat>> {
+pub(super) async fn ensure_sampled(
+    pool: &IpPool,
+    host: &str,
+    port: u16,
+) -> Result<Option<IpCacheSlot>> {
     let key = IpCacheKey::new(host.to_string(), port);
     loop {
-        if let Some(stat) = get_fresh_cached(pool, host, port, preheat::current_epoch_ms()) {
-            return Ok(Some(stat));
+        if let Some(slot) = get_fresh_cached(pool, host, port, preheat::current_epoch_ms()) {
+            return Ok(Some(slot));
         }
 
         let waiter = {
@@ -73,7 +89,7 @@ pub(super) async fn ensure_sampled(pool: &IpPool, host: &str, port: u16) -> Resu
     }
 }
 
-async fn sample_once(pool: &IpPool, host: &str, port: u16) -> Result<Option<IpStat>> {
+async fn sample_once(pool: &IpPool, host: &str, port: u16) -> Result<Option<IpCacheSlot>> {
     let config = pool.config.clone();
     let history = pool.history.clone();
     let cache = pool.cache.clone();
@@ -111,6 +127,13 @@ async fn sample_once(pool: &IpPool, host: &str, port: u16) -> Result<Option<IpSt
     }
 
     let best = stats.first().cloned();
+    let mut alternatives: Vec<IpStat> = Vec::new();
+    if stats.len() > 1 {
+        alternatives = stats.iter().skip(1).cloned().collect();
+    }
     preheat::update_cache_and_history(host, port, stats, cache, history)?;
-    Ok(best)
+    Ok(best.map(|stat| IpCacheSlot {
+        best: Some(stat),
+        alternatives,
+    }))
 }
