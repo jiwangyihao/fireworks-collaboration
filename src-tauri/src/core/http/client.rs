@@ -15,6 +15,8 @@ use tokio_rustls::TlsConnector;
 use crate::core::config::model::AppConfig;
 use crate::core::tls::util::{decide_sni_host_with_proxy, proxy_present};
 use crate::core::tls::verifier::create_client_config;
+use crate::core::ip_pool::global::obtain_global_pool;
+use crate::core::ip_pool::IpSelectionStrategy;
 
 use super::types::{HttpRequestInput, HttpResponseOutput, TimingInfo};
 
@@ -67,26 +69,47 @@ impl HttpClient {
             .to_string();
         let port = url.port_u16().unwrap_or(443);
 
-        // 连接 TCP
+        // 集成全局IP池，优先用pick_best选出的IP建立连接
         let start_total = Instant::now();
-        let start_connect = Instant::now();
-        let tcp = timeout(
-            Duration::from_millis(input.timeout_ms),
-            TcpStream::connect((host.as_str(), port)),
-        )
-        .await
-        .context("connect timeout")?
-        .context("connect error")?;
-        let connect_ms = start_connect.elapsed().as_millis() as u32;
+        let pool = obtain_global_pool();
+        let pool = pool.lock().expect("ip pool lock");
+        let sel = pool.pick_best_blocking(&host, port);
+        let (connect_addr, sni_host, used_ip_pool, connect_ms) = match sel.strategy() {
+            IpSelectionStrategy::SystemDefault => {
+                // 走原逻辑
+                let start_connect = Instant::now();
+                let tcp = timeout(
+                    Duration::from_millis(input.timeout_ms),
+                    TcpStream::connect((host.as_str(), port)),
+                )
+                .await
+                .context("connect timeout")?
+                .context("connect error")?;
+                (tcp, host.clone(), false, start_connect.elapsed().as_millis() as u32)
+            }
+            IpSelectionStrategy::Cached => {
+                // 用IP池选中的IP建立连接，SNI仍用原host
+                let ip = sel.selected().map(|s| s.candidate.address).ok_or_else(|| anyhow!("ip pool returned no candidate"))?;
+                let start_connect = Instant::now();
+                let tcp = timeout(
+                    Duration::from_millis(input.timeout_ms),
+                    TcpStream::connect((ip, port)),
+                )
+                .await
+                .context("connect timeout (ip pool)")?
+                .context("connect error (ip pool)")?;
+                (tcp, host.clone(), true, start_connect.elapsed().as_millis() as u32)
+            }
+        };
 
         // TLS 握手，可能使用伪 SNI
-        let (sni_host, fake) = self.compute_sni_host(input.force_real_sni, &host);
-        let server_name = ServerName::try_from(sni_host.as_str())
+        let (sni_host_final, fake) = self.compute_sni_host(input.force_real_sni, &sni_host);
+        let server_name = ServerName::try_from(sni_host_final.as_str())
             .map_err(|_| anyhow!("invalid dns name for sni"))?;
         let start_tls = Instant::now();
         let tls = TlsConnector::from(self.tls.clone());
         let stream = tls
-            .connect(server_name, tcp)
+            .connect(server_name, connect_addr)
             .await
             .context("tls handshake")?;
         let tls_ms = start_tls.elapsed().as_millis() as u32;
@@ -157,7 +180,7 @@ impl HttpClient {
             headers,
             body_base64: BASE64.encode(&buf),
             used_fake_sni: fake,
-            ip: None,
+            ip: if used_ip_pool { sel.selected().map(|s| s.candidate.address.to_string()) } else { None },
             timing: TimingInfo {
                 connect_ms,
                 tls_ms,
