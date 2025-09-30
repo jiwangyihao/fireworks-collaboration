@@ -458,6 +458,7 @@ mod section_cache_maintenance {
         let pool = IpPool::with_cache(cfg, IpScoreCache::new());
         let now_ms = epoch_ms();
 
+        // Preheat entry is expired but should still be kept in cache (not history due to expiry)
         let keep = make_latency_stat(
             [21, 0, 0, 1],
             443,
@@ -486,8 +487,10 @@ mod section_cache_maintenance {
         pool.maintenance_tick_at(now_ms + 5_000);
         assert!(pool.cache().get("drop.test", 443).is_none());
         assert!(pool.history().get("drop.test", 443).is_none());
+        // Preheat entry should be kept in cache even when expired
         assert!(pool.cache().get("keep.test", 443).is_some());
-        assert!(pool.history().get("keep.test", 443).is_some());
+        // But expired preheat entries ARE removed from history to allow refresh
+        assert!(pool.history().get("keep.test", 443).is_none());
     }
 }
 
@@ -523,5 +526,335 @@ mod section_outcome_metrics {
         assert_eq!(metrics.success, 1);
         assert_eq!(metrics.failure, 1);
         assert!(metrics.last_outcome_ms > 0);
+    }
+}
+
+// ---------------- section_event_emission ----------------
+mod section_event_emission {
+    use super::common::prelude::*;
+    use fireworks_collaboration_lib::core::ip_pool::events::{
+        emit_ip_pool_refresh, emit_ip_pool_selection,
+    };
+    use fireworks_collaboration_lib::core::ip_pool::{
+        IpPool, IpScoreCache, IpSelectionStrategy, IpSource,
+    };
+    use fireworks_collaboration_lib::events::structured::{
+        clear_test_event_bus, set_test_event_bus, Event, MemoryEventBus, StrategyEvent,
+    };
+    use std::sync::Arc;
+    use tokio::net::TcpListener;
+    use uuid::Uuid;
+
+    #[test]
+    fn emit_ip_pool_selection_includes_strategy_and_latency() {
+        let bus = MemoryEventBus::new();
+        set_test_event_bus(Arc::new(bus.clone()));
+
+        let task_id = Uuid::new_v4();
+        let stat = make_latency_stat(
+            [1, 2, 3, 4],
+            443,
+            25,
+            IpSource::Builtin,
+            Some(epoch_ms()),
+            Some(epoch_ms() + 60_000),
+        );
+
+        emit_ip_pool_selection(
+            task_id,
+            "github.com",
+            443,
+            IpSelectionStrategy::Cached,
+            Some(&stat),
+            3,
+        );
+
+        let events = bus.snapshot();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Strategy(StrategyEvent::IpPoolSelection {
+                id,
+                domain,
+                port,
+                strategy,
+                source,
+                latency_ms,
+                candidates_count,
+            }) => {
+                assert_eq!(id, &task_id.to_string());
+                assert_eq!(domain, "github.com");
+                assert_eq!(*port, 443);
+                assert_eq!(strategy, "Cached");
+                assert!(source.is_some());
+                assert_eq!(*latency_ms, Some(25));
+                assert_eq!(*candidates_count, 3);
+            }
+            _ => panic!("expected IpPoolSelection event"),
+        }
+        clear_test_event_bus();
+    }
+
+    #[test]
+    fn emit_ip_pool_refresh_includes_latency_range() {
+        let bus = MemoryEventBus::new();
+        set_test_event_bus(Arc::new(bus.clone()));
+
+        let task_id = Uuid::new_v4();
+        let stats = vec![
+            make_latency_stat(
+                [1, 1, 1, 1],
+                443,
+                10,
+                IpSource::Builtin,
+                Some(epoch_ms()),
+                Some(epoch_ms() + 60_000),
+            ),
+            make_latency_stat(
+                [2, 2, 2, 2],
+                443,
+                30,
+                IpSource::Dns,
+                Some(epoch_ms()),
+                Some(epoch_ms() + 60_000),
+            ),
+        ];
+
+        emit_ip_pool_refresh(task_id, "example.com", true, &stats, "test".to_string());
+
+        let events = bus.snapshot();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Strategy(StrategyEvent::IpPoolRefresh {
+                id,
+                domain,
+                success,
+                candidates_count,
+                min_latency_ms,
+                max_latency_ms,
+                reason,
+            }) => {
+                assert_eq!(id, &task_id.to_string());
+                assert_eq!(domain, "example.com");
+                assert!(success);
+                assert_eq!(*candidates_count, 2);
+                assert_eq!(*min_latency_ms, Some(10));
+                assert_eq!(*max_latency_ms, Some(30));
+                assert_eq!(reason, "test");
+            }
+            _ => panic!("expected IpPoolRefresh event"),
+        }
+        clear_test_event_bus();
+    }
+
+    #[test]
+    fn emit_ip_pool_refresh_handles_empty_candidates() {
+        let bus = MemoryEventBus::new();
+        set_test_event_bus(Arc::new(bus.clone()));
+
+        let task_id = Uuid::new_v4();
+        emit_ip_pool_refresh(
+            task_id,
+            "empty.com",
+            false,
+            &[],
+            "no_candidates".to_string(),
+        );
+
+        let events = bus.snapshot();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::Strategy(StrategyEvent::IpPoolRefresh {
+                success,
+                candidates_count,
+                min_latency_ms,
+                max_latency_ms,
+                reason,
+                ..
+            }) => {
+                assert!(!success);
+                assert_eq!(*candidates_count, 0);
+                assert!(min_latency_ms.is_none());
+                assert!(max_latency_ms.is_none());
+                assert_eq!(reason, "no_candidates");
+            }
+            _ => panic!("expected IpPoolRefresh event"),
+        }
+        clear_test_event_bus();
+    }
+
+    #[tokio::test]
+    async fn pick_best_with_on_demand_sampling_does_not_emit_selection_event() {
+        // Note: IP pool selection event is emitted at transport layer, not in pick_best
+        // This test documents expected behavior: pick_best prepares candidates but doesn't emit
+        let bus = MemoryEventBus::new();
+        set_test_event_bus(Arc::new(bus.clone()));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accept_task = tokio::spawn(async move {
+            if let Ok((stream, _)) = listener.accept().await {
+                drop(stream);
+            }
+        });
+
+        let cfg = user_static_only_config("local.test", addr.ip(), addr.port());
+        let pool = IpPool::with_cache(cfg, IpScoreCache::new());
+
+        let _selection = pool.pick_best("local.test", addr.port()).await;
+        accept_task.await.unwrap();
+
+        // IP pool manager itself doesn't emit IpPoolSelection - that's transport layer's job
+        let events = bus.snapshot();
+        let selection_events: Vec<_> = events
+            .into_iter()
+            .filter(|e| matches!(e, Event::Strategy(StrategyEvent::IpPoolSelection { .. })))
+            .collect();
+        assert_eq!(selection_events.len(), 0);
+
+        clear_test_event_bus();
+    }
+}
+
+// ---------------- section_history_auto_cleanup ----------------
+mod section_history_auto_cleanup {
+    use super::common::fixtures;
+    use super::common::prelude::*;
+    use fireworks_collaboration_lib::core::ip_pool::{IpPool, IpScoreCache, IpSource};
+    use std::fs;
+
+    #[test]
+    fn maintenance_tick_prunes_history_capacity() {
+        let base = fixtures::create_empty_dir();
+        let mut cfg = enabled_config();
+        cfg.runtime.history_path = Some(base.join("history.json").to_string_lossy().into());
+        cfg.runtime.max_cache_entries = 2;
+        cfg.runtime.cache_prune_interval_secs = 1;
+        let pool = IpPool::with_cache(cfg, IpScoreCache::new());
+        let now_ms = epoch_ms();
+
+        // Insert 4 records, max capacity is 2
+        // Also put them in cache to ensure maintenance triggers
+        for i in 0..4 {
+            let stat = make_latency_stat(
+                [10, 10, 10, i as u8 + 1],
+                443,
+                20 + i,
+                IpSource::Builtin,
+                Some(now_ms + i as i64 * 1000),
+                Some(now_ms + 60_000),
+            );
+            let record = history_record(&format!("host{}.com", i), 443, &stat);
+            pool.history().upsert(record).unwrap();
+            cache_best(pool.cache(), &format!("host{}.com", i), 443, stat);
+        }
+
+        assert_eq!(pool.history().snapshot().unwrap().len(), 4);
+
+        // Trigger maintenance, should prune oldest 2 entries
+        pool.maintenance_tick_at(now_ms + 2_000);
+
+        let remaining = pool.history().snapshot().unwrap();
+        assert_eq!(remaining.len(), 2);
+        // Should keep the 2 newest (host2, host3)
+        assert!(remaining.iter().any(|r| r.host == "host2.com"));
+        assert!(remaining.iter().any(|r| r.host == "host3.com"));
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn maintenance_tick_prunes_expired_and_capacity() {
+        let base = fixtures::create_empty_dir();
+        let mut cfg = enabled_config();
+        cfg.runtime.history_path = Some(base.join("history.json").to_string_lossy().into());
+        cfg.runtime.max_cache_entries = 2;
+        cfg.runtime.cache_prune_interval_secs = 1;
+        let pool = IpPool::with_cache(cfg, IpScoreCache::new());
+        let now_ms = epoch_ms();
+
+        // Insert 2 expired records
+        for i in 0..2 {
+            let stat = make_latency_stat(
+                [11, 11, 11, i as u8 + 1],
+                443,
+                15,
+                IpSource::Builtin,
+                Some(now_ms - 10_000),
+                Some(now_ms - 1_000),
+            );
+            let record = history_record(&format!("expired{}.com", i), 443, &stat);
+            pool.history().upsert(record).unwrap();
+            cache_best(pool.cache(), &format!("expired{}.com", i), 443, stat);
+        }
+
+        // Insert 3 valid records (exceeds capacity of 2)
+        for i in 0..3 {
+            let stat = make_latency_stat(
+                [12, 12, 12, i as u8 + 1],
+                443,
+                18,
+                IpSource::Builtin,
+                Some(now_ms + i as i64 * 1000),
+                Some(now_ms + 60_000),
+            );
+            let record = history_record(&format!("valid{}.com", i), 443, &stat);
+            pool.history().upsert(record).unwrap();
+            cache_best(pool.cache(), &format!("valid{}.com", i), 443, stat);
+        }
+
+        assert_eq!(pool.history().snapshot().unwrap().len(), 5);
+
+        // Trigger maintenance: remove 2 expired + 1 oldest valid (valid0)
+        pool.maintenance_tick_at(now_ms + 2_000);
+
+        let remaining = pool.history().snapshot().unwrap();
+        assert_eq!(remaining.len(), 2);
+        // Should keep valid1 and valid2
+        assert!(remaining.iter().all(|r| r.host.starts_with("valid")));
+        assert!(remaining.iter().any(|r| r.host == "valid1.com"));
+        assert!(remaining.iter().any(|r| r.host == "valid2.com"));
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn history_prune_failure_does_not_block_cache_maintenance() {
+        let base = fixtures::create_empty_dir();
+        let invalid_path = base.join("readonly").join("history.json");
+        std::fs::create_dir_all(invalid_path.parent().unwrap()).unwrap();
+        std::fs::write(&invalid_path, b"{}").unwrap();
+
+        // Make directory readonly on Windows (best effort)
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            let mut perms = std::fs::metadata(invalid_path.parent().unwrap())
+                .unwrap()
+                .permissions();
+            perms.set_readonly(true);
+            let _ = std::fs::set_permissions(invalid_path.parent().unwrap(), perms);
+        }
+
+        let mut cfg = enabled_config();
+        cfg.runtime.history_path = Some(invalid_path.to_string_lossy().into());
+        cfg.runtime.cache_prune_interval_secs = 1;
+        let pool = IpPool::with_cache(cfg, IpScoreCache::new());
+        let now_ms = epoch_ms();
+
+        let expired = make_latency_stat(
+            [13, 13, 13, 13],
+            443,
+            22,
+            IpSource::Builtin,
+            Some(now_ms - 10_000),
+            Some(now_ms - 1),
+        );
+        cache_best(pool.cache(), "expired.test", 443, expired.clone());
+
+        // Maintenance should still prune cache even if history cleanup fails
+        pool.maintenance_tick_at(now_ms + 2_000);
+        assert!(pool.cache().get("expired.test", 443).is_none());
+
+        let _ = fs::remove_dir_all(&base);
     }
 }
