@@ -59,6 +59,33 @@ pub enum TransportEvent {
 /// 策略相关事件：覆盖 HTTP/TLS/冲突/汇总
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum StrategyEvent {
+    /// IP被黑白名单（CIDR）过滤事件
+    IpPoolCidrFilter {
+        ip: String,
+        list_type: String,
+        cidr: String,
+    },
+    /// 单IP被熔断事件
+    IpPoolIpTripped {
+        ip: String,
+        reason: String,
+    },
+    /// 单IP熔断恢复事件
+    IpPoolIpRecovered {
+        ip: String,
+    },
+    /// IP池配置热重载事件
+    IpPoolConfigUpdate {
+        old: String,
+        new: String,
+    },
+    /// IP池全局自动禁用事件
+    IpPoolAutoDisable {
+        reason: String,
+        until_ms: i64,
+    },
+    /// IP池全局自动恢复事件
+    IpPoolAutoEnable {},
     HttpApplied {
         id: String,
         follow: bool,

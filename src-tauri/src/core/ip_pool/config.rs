@@ -27,7 +27,7 @@ fn default_preheat_ports() -> Vec<u16> {
 const IP_CONFIG_FILE_NAME: &str = "ip-config.json";
 
 /// 运行期控制项，来自主配置文件（config.json）。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct IpPoolRuntimeConfig {
     #[serde(default)]
@@ -51,6 +51,24 @@ pub struct IpPoolRuntimeConfig {
     /// 单飞等待超时时间（毫秒）。
     #[serde(default = "default_singleflight_timeout_ms")]
     pub singleflight_timeout_ms: u64,
+    /// 熔断器：连续失败次数阈值。
+    #[serde(default = "default_failure_threshold")]
+    pub failure_threshold: u32,
+    /// 熔断器：失败率阈值（0.0-1.0）。
+    #[serde(default = "default_failure_rate_threshold")]
+    pub failure_rate_threshold: f64,
+    /// 熔断器：时间窗口大小（秒）。
+    #[serde(default = "default_failure_window_seconds")]
+    pub failure_window_seconds: u32,
+    /// 熔断器：窗口内最小样本数。
+    #[serde(default = "default_min_samples_in_window")]
+    pub min_samples_in_window: u32,
+    /// 熔断器：冷却时间（秒）。
+    #[serde(default = "default_cooldown_seconds")]
+    pub cooldown_seconds: u32,
+    /// 熔断器：是否启用。
+    #[serde(default = "default_true")]
+    pub circuit_breaker_enabled: bool,
 }
 
 fn default_probe_timeout_ms() -> u64 {
@@ -69,6 +87,26 @@ fn default_singleflight_timeout_ms() -> u64 {
     10_000
 }
 
+fn default_failure_threshold() -> u32 {
+    3
+}
+
+fn default_failure_rate_threshold() -> f64 {
+    0.5
+}
+
+fn default_failure_window_seconds() -> u32 {
+    60
+}
+
+fn default_min_samples_in_window() -> u32 {
+    5
+}
+
+fn default_cooldown_seconds() -> u32 {
+    300
+}
+
 impl Default for IpPoolRuntimeConfig {
     fn default() -> Self {
         Self {
@@ -80,6 +118,12 @@ impl Default for IpPoolRuntimeConfig {
             cache_prune_interval_secs: default_cache_prune_interval_secs(),
             max_cache_entries: default_max_cache_entries(),
             singleflight_timeout_ms: default_singleflight_timeout_ms(),
+            failure_threshold: default_failure_threshold(),
+            failure_rate_threshold: default_failure_rate_threshold(),
+            failure_window_seconds: default_failure_window_seconds(),
+            min_samples_in_window: default_min_samples_in_window(),
+            cooldown_seconds: default_cooldown_seconds(),
+            circuit_breaker_enabled: true,
         }
     }
 }
@@ -122,6 +166,12 @@ pub struct IpPoolFileConfig {
     pub score_ttl_seconds: u64,
     #[serde(default)]
     pub user_static: Vec<UserStaticIp>,
+    /// IP 黑名单（支持单个 IP 地址或 CIDR 表示法）
+    #[serde(default)]
+    pub blacklist: Vec<String>,
+    /// IP 白名单（支持单个 IP 地址或 CIDR 表示法，优先级高于黑名单）
+    #[serde(default)]
+    pub whitelist: Vec<String>,
 }
 
 impl Default for IpPoolFileConfig {
@@ -130,6 +180,8 @@ impl Default for IpPoolFileConfig {
             preheat_domains: Vec::new(),
             score_ttl_seconds: default_score_ttl_seconds(),
             user_static: Vec::new(),
+            blacklist: Vec::new(),
+            whitelist: Vec::new(),
         }
     }
 }
@@ -163,7 +215,7 @@ pub struct UserStaticIp {
 }
 
 /// 组合后的生效配置，便于 IpPool 管理运行期与外部文件配置。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EffectiveIpPoolConfig {
     #[serde(default)]
@@ -256,6 +308,18 @@ mod tests {
             cfg.singleflight_timeout_ms,
             default_singleflight_timeout_ms()
         );
+        assert_eq!(cfg.failure_threshold, default_failure_threshold());
+        assert_eq!(
+            cfg.failure_rate_threshold,
+            default_failure_rate_threshold()
+        );
+        assert_eq!(
+            cfg.failure_window_seconds,
+            default_failure_window_seconds()
+        );
+        assert_eq!(cfg.min_samples_in_window, default_min_samples_in_window());
+        assert_eq!(cfg.cooldown_seconds, default_cooldown_seconds());
+        assert!(cfg.circuit_breaker_enabled);
     }
 
     #[test]
@@ -264,6 +328,8 @@ mod tests {
         assert!(cfg.preheat_domains.is_empty());
         assert_eq!(cfg.score_ttl_seconds, default_score_ttl_seconds());
         assert!(cfg.user_static.is_empty());
+        assert!(cfg.blacklist.is_empty());
+        assert!(cfg.whitelist.is_empty());
     }
 
     #[test]

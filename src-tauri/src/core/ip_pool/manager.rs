@@ -9,6 +9,7 @@ use std::{
 };
 
 use anyhow::Result;
+use super::events::{emit_ip_pool_auto_disable, emit_ip_pool_auto_enable};
 use tokio::{
     runtime::{Builder as RuntimeBuilder, Handle, Runtime},
     sync::{Mutex as AsyncMutex, Notify},
@@ -21,6 +22,7 @@ use super::cache::IpCandidate;
 use super::{
     builder,
     cache::{IpCacheKey, IpCacheSlot, IpScoreCache, IpSource, IpStat},
+    circuit_breaker::{CircuitBreaker, CircuitBreakerConfig},
     config::{EffectiveIpPoolConfig, IpPoolFileConfig, IpPoolRuntimeConfig},
     history::IpHistoryStore,
     maintenance,
@@ -183,6 +185,9 @@ pub struct IpPool {
     pub(super) pending: Arc<AsyncMutex<HashMap<IpCacheKey, Arc<Notify>>>>,
     pub(super) last_prune_at_ms: AtomicI64,
     outcomes: Arc<Mutex<HashMap<IpCacheKey, OutcomeStats>>>,
+    circuit_breaker: Arc<CircuitBreaker>,
+    /// 全局自动禁用截止时间戳（毫秒），None 表示未禁用
+    auto_disabled_until: Arc<AtomicI64>,
 }
 
 impl fmt::Debug for IpPool {
@@ -197,8 +202,20 @@ impl fmt::Debug for IpPool {
 }
 
 impl IpPool {
+    fn build_circuit_breaker_config(runtime: &IpPoolRuntimeConfig) -> CircuitBreakerConfig {
+        CircuitBreakerConfig {
+            enabled: runtime.circuit_breaker_enabled,
+            consecutive_failure_threshold: runtime.failure_threshold,
+            failure_rate_threshold: runtime.failure_rate_threshold,
+            window_seconds: runtime.failure_window_seconds,
+            min_samples_in_window: runtime.min_samples_in_window,
+            cooldown_seconds: runtime.cooldown_seconds,
+        }
+    }
+
     pub fn new(config: EffectiveIpPoolConfig) -> Self {
         let history = builder::init_history_store(&config);
+        let breaker_config = Self::build_circuit_breaker_config(&config.runtime);
         let mut pool = Self {
             config: Arc::new(config),
             cache: Arc::new(IpScoreCache::new()),
@@ -207,6 +224,8 @@ impl IpPool {
             pending: Arc::new(AsyncMutex::new(HashMap::new())),
             last_prune_at_ms: AtomicI64::new(0),
             outcomes: Arc::new(Mutex::new(HashMap::new())),
+            circuit_breaker: Arc::new(CircuitBreaker::new(breaker_config)),
+            auto_disabled_until: Arc::new(AtomicI64::new(0)),
         };
         pool.rebuild_preheater();
         pool
@@ -218,6 +237,7 @@ impl IpPool {
     }
 
     pub fn with_cache(config: EffectiveIpPoolConfig, cache: IpScoreCache) -> Self {
+        let breaker_config = Self::build_circuit_breaker_config(&config.runtime);
         let mut pool = Self {
             config: Arc::new(config),
             cache: Arc::new(cache),
@@ -226,6 +246,8 @@ impl IpPool {
             pending: Arc::new(AsyncMutex::new(HashMap::new())),
             last_prune_at_ms: AtomicI64::new(0),
             outcomes: Arc::new(Mutex::new(HashMap::new())),
+            circuit_breaker: Arc::new(CircuitBreaker::new(breaker_config)),
+            auto_disabled_until: Arc::new(AtomicI64::new(0)),
         };
         pool.rebuild_preheater();
         pool
@@ -251,12 +273,49 @@ impl IpPool {
         &self.history
     }
 
+    /// 判断 IP 池是否启用（未被全局禁用且配置启用）
     pub fn is_enabled(&self) -> bool {
-        self.config.runtime.enabled
+        if !self.config.runtime.enabled {
+            return false;
+        }
+        let until = self.auto_disabled_until.load(Ordering::Relaxed);
+        if until > 0 {
+            let now = preheat::current_epoch_ms();
+            if now < until {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// 设置全局禁用，禁用 cooldown_ms 毫秒
+    pub fn set_auto_disabled(&self, cooldown_ms: i64) {
+        let until = preheat::current_epoch_ms() + cooldown_ms;
+        self.auto_disabled_until.store(until, Ordering::Relaxed);
+        emit_ip_pool_auto_disable("auto-disable by circuit breaker or fallback", until);
+    }
+
+    /// 清除全局禁用状态
+    pub fn clear_auto_disabled(&self) {
+        self.auto_disabled_until.store(0, Ordering::Relaxed);
+        emit_ip_pool_auto_enable();
+    }
+
+    /// 获取当前 auto_disabled_until
+    pub fn auto_disabled_until(&self) -> Option<i64> {
+        let until = self.auto_disabled_until.load(Ordering::Relaxed);
+        if until > 0 {
+            Some(until)
+        } else {
+            None
+        }
     }
 
     pub fn update_config(&mut self, config: EffectiveIpPoolConfig) {
+        let old_config = self.config.clone();
         let history_path_changed = self.config.runtime.history_path != config.runtime.history_path;
+        let breaker_config = Self::build_circuit_breaker_config(&config.runtime);
+        self.circuit_breaker.set_config(breaker_config);
         self.config = Arc::new(config);
         if history_path_changed {
             self.history = builder::init_history_store(&self.config);
@@ -266,10 +325,12 @@ impl IpPool {
             guard.clear();
         }
         self.rebuild_preheater();
+        super::events::emit_ip_pool_config_update(&old_config, &self.config);
     }
 
     pub async fn pick_best(&self, host: &str, port: u16) -> IpSelection {
         if !self.is_enabled() {
+            tracing::debug!(target = "ip_pool", host, port, "ip pool disabled or auto-disabled; using system DNS");
             return IpSelection::system_default(host.to_string(), port);
         }
 
@@ -370,6 +431,13 @@ impl IpPool {
                 tracing::warn!(target = "ip_pool", "ip pool outcome stats mutex poisoned");
             }
         }
+
+        // 将结果报告给熔断器
+        let ip = candidate.candidate.address;
+        match outcome {
+            IpOutcome::Success => self.circuit_breaker.record_success(ip),
+            IpOutcome::Failure => self.circuit_breaker.record_failure(ip),
+        }
     }
 
     /// 返回指定 host:port 的只读 outcome 统计信息。
@@ -464,6 +532,21 @@ impl IpPool {
             .preheat_domains
             .iter()
             .any(|domain| domain.host.eq_ignore_ascii_case(host) && domain.ports.contains(&port))
+    }
+
+    /// 检查指定 IP 是否被熔断（不可用）
+    pub fn is_ip_tripped(&self, ip: IpAddr) -> bool {
+        self.circuit_breaker.is_tripped(ip)
+    }
+
+    /// 获取所有被熔断的 IP 列表
+    pub fn get_tripped_ips(&self) -> Vec<IpAddr> {
+        self.circuit_breaker.get_tripped_ips()
+    }
+
+    /// 手动重置指定 IP 的熔断状态
+    pub fn reset_circuit_breaker(&self, ip: IpAddr) {
+        self.circuit_breaker.reset_ip(ip);
     }
 }
 

@@ -226,6 +226,12 @@ fn ip_pool_candidate_successfully_used() {
         cache_prune_interval_secs: 60,
         max_cache_entries: 16,
         singleflight_timeout_ms: 5_000,
+        failure_threshold: 3,
+        failure_rate_threshold: 0.5,
+        failure_window_seconds: 60,
+        min_samples_in_window: 5,
+        cooldown_seconds: 300,
+        circuit_breaker_enabled: true,
     };
     let file = IpPoolFileConfig {
         preheat_domains: Vec::new(),
@@ -235,6 +241,8 @@ fn ip_pool_candidate_successfully_used() {
             ip: "127.0.0.1".into(),
             ports: vec![port],
         }],
+        blacklist: Vec::new(),
+        whitelist: Vec::new(),
     };
     let effective = EffectiveIpPoolConfig::from_parts(runtime, file);
     let pool = IpPool::new(effective);
@@ -317,6 +325,12 @@ fn ip_pool_candidate_exhaustion_falls_back_to_system() {
         cache_prune_interval_secs: 60,
         max_cache_entries: 16,
         singleflight_timeout_ms: 3_000,
+        failure_threshold: 3,
+        failure_rate_threshold: 0.5,
+        failure_window_seconds: 60,
+        min_samples_in_window: 5,
+        cooldown_seconds: 300,
+        circuit_breaker_enabled: true,
     };
     let file = IpPoolFileConfig {
         preheat_domains: Vec::new(),
@@ -333,6 +347,8 @@ fn ip_pool_candidate_exhaustion_falls_back_to_system() {
                 ports: vec![port],
             },
         ],
+        blacklist: Vec::new(),
+        whitelist: Vec::new(),
     };
     let effective = EffectiveIpPoolConfig::from_parts(runtime, file);
     let pool = IpPool::new(effective);
@@ -443,11 +459,19 @@ fn ip_pool_second_candidate_recovers_after_failure() {
         cache_prune_interval_secs: 60,
         max_cache_entries: 16,
         singleflight_timeout_ms: 5_000,
+        failure_threshold: 3,
+        failure_rate_threshold: 0.5,
+        failure_window_seconds: 60,
+        min_samples_in_window: 5,
+        cooldown_seconds: 300,
+        circuit_breaker_enabled: true,
     };
     let file = IpPoolFileConfig {
         preheat_domains: Vec::new(),
         score_ttl_seconds: 120,
         user_static: vec![],
+        blacklist: Vec::new(),
+        whitelist: Vec::new(),
     };
     let pool = IpPool::new(EffectiveIpPoolConfig::from_parts(runtime, file));
 
@@ -552,6 +576,7 @@ fn ip_pool_disabled_bypasses_candidates() {
     let mut runtime = IpPoolRuntimeConfig::default();
     runtime.enabled = false;
     runtime.sources.user_static = true;
+    // 其余字段已由 Default 实现补全
     let mut file = IpPoolFileConfig::default();
     file.user_static.push(UserStaticIp {
         host: "localhost".into(),

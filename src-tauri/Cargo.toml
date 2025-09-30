@@ -58,6 +58,7 @@ webpki-roots = "0.25"
 hyper = { version = "0.14", features = ["client", "http1", "tcp", "stream"] }
 tokio-rustls = "0.24"
 url = "2"
+ipnet = "2"
 ## MP0.4: 移除 gix 依赖，统一到 git2-rs
 
 # 新增：git2-rs（MP0.1 引入，仅骨架，不改变行为）

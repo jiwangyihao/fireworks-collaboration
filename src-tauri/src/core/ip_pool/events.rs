@@ -1,7 +1,54 @@
-//! IP Pool event emission helpers for P4.4 observability.
-//!
-//! Provides structured event emission for IP pool selection and refresh operations,
-//! ensuring observability while respecting privacy (no raw IP addresses in events).
+/// Emit IpPoolCidrFilter event when a candidate is filtered by blacklist/whitelist.
+pub fn emit_ip_pool_cidr_filter(ip: std::net::IpAddr, list_type: &str, cidr: &str) {
+    tracing::info!(target = "ip_pool", ip = %ip, list_type, cidr, "ip filtered by cidr list");
+    publish_global(Event::Strategy(StrategyEvent::IpPoolCidrFilter {
+        ip: ip.to_string(),
+        list_type: list_type.to_string(),
+        cidr: cidr.to_string(),
+    }));
+}
+/// Emit IpPoolIpTripped event when a single IP is tripped by circuit breaker.
+pub fn emit_ip_pool_ip_tripped(ip: std::net::IpAddr, reason: &str) {
+    tracing::warn!(target = "ip_pool", ip = %ip, reason, "ip tripped by circuit breaker");
+    publish_global(Event::Strategy(StrategyEvent::IpPoolIpTripped {
+        ip: ip.to_string(),
+        reason: reason.to_string(),
+    }));
+}
+
+/// Emit IpPoolIpRecovered event when a single IP is recovered from circuit breaker.
+pub fn emit_ip_pool_ip_recovered(ip: std::net::IpAddr) {
+    tracing::info!(target = "ip_pool", ip = %ip, "ip recovered from circuit breaker");
+    publish_global(Event::Strategy(StrategyEvent::IpPoolIpRecovered {
+        ip: ip.to_string(),
+    }));
+}
+/// Emit IpPoolConfigUpdate event when the pool config is updated.
+pub fn emit_ip_pool_config_update(old_config: &crate::core::ip_pool::config::EffectiveIpPoolConfig, new_config: &crate::core::ip_pool::config::EffectiveIpPoolConfig) {
+    tracing::info!(target = "ip_pool", "ip pool config updated");
+    publish_global(Event::Strategy(StrategyEvent::IpPoolConfigUpdate {
+        old: format!("{:?}", old_config),
+        new: format!("{:?}", new_config),
+    }));
+}
+/// Emit IpPoolAutoDisable event when the pool is globally auto-disabled.
+pub fn emit_ip_pool_auto_disable(reason: &str, until_ms: i64) {
+    tracing::warn!(target = "ip_pool", reason, until_ms, "ip pool auto-disabled");
+    publish_global(Event::Strategy(StrategyEvent::IpPoolAutoDisable {
+        reason: reason.to_string(),
+        until_ms,
+    }));
+}
+
+/// Emit IpPoolAutoEnable event when the pool is auto-enabled after cooldown.
+pub fn emit_ip_pool_auto_enable() {
+    tracing::info!(target = "ip_pool", "ip pool auto-enable after cooldown");
+    publish_global(Event::Strategy(StrategyEvent::IpPoolAutoEnable {}));
+}
+/// IP Pool event emission helpers for P4.4 observability.
+///
+/// Provides structured event emission for IP pool selection and refresh operations,
+/// ensuring observability while respecting privacy (no raw IP addresses in events).
 
 use crate::events::structured::{publish_global, Event, StrategyEvent};
 use uuid::Uuid;

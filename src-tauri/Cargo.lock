@@ -1248,6 +1248,7 @@ dependencies = [
  "futures",
  "git2",
  "hyper 0.14.32",
+ "ipnet",
  "metrics",
  "once_cell",
  "proptest",

@@ -22,6 +22,23 @@ use super::{
     history::{IpHistoryRecord, IpHistoryStore},
     IpCandidate, IpSource,
 };
+use ipnet::IpNet;
+
+/// 判断 IP 是否在名单（支持单 IP 和 CIDR）
+fn is_ip_in_list(ip: IpAddr, list: &[String]) -> bool {
+    for entry in list {
+        if let Ok(net) = entry.parse::<IpNet>() {
+            if net.contains(&ip) {
+                return true;
+            }
+        } else if let Ok(addr) = entry.parse::<IpAddr>() {
+            if addr == ip {
+                return true;
+            }
+        }
+    }
+    false
+}
 
 /// 最小 TTL，避免出现 0 秒导致刷新频繁自旋。
 const MIN_TTL_SECS: u64 = 30;
@@ -114,6 +131,14 @@ async fn run_preheat_loop(
     stop: Arc<AtomicBool>,
     notify: Arc<Notify>,
 ) {
+    // 全局回退参数
+    let preheat_failure_threshold: u32 = 5; // 连续失败阈值
+    let auto_disable_cooldown_ms: i64 = 5 * 60 * 1000; // 5分钟
+    // 允许通过 config.runtime 读取自定义阈值，后续可扩展
+
+    // 尝试获取全局 IpPool 实例（假设通过 OnceCell/全局变量注入，或通过 config 传递）
+    let ip_pool = crate::core::IP_POOL_GLOBAL.get().and_then(|p| p.upgrade());
+
     if !config.runtime.enabled {
         tracing::debug!(target = "ip_pool", "ip pool disabled; preheat loop idle");
         wait_for_shutdown(stop, notify).await;
@@ -146,9 +171,26 @@ async fn run_preheat_loop(
         "starting ip pool preheat loop"
     );
 
+
     loop {
         if stop.load(Ordering::Relaxed) {
             break;
+        }
+
+        // 检查全局 auto-disabled 状态，若处于禁用期则 sleep 并跳过
+        if let Some(pool) = ip_pool.as_ref() {
+            if let Some(until) = pool.auto_disabled_until() {
+                let now = current_epoch_ms();
+                if now < until {
+                    tracing::warn!(target = "ip_pool", until, "ip pool is auto-disabled, preheat loop sleeping");
+                    sleep(Duration::from_millis((until - now).max(1000) as u64)).await;
+                    continue;
+                } else {
+                    // 冷却期已过，自动恢复
+                    pool.clear_auto_disabled();
+                    crate::core::ip_pool::events::emit_ip_pool_auto_enable();
+                }
+            }
         }
 
         let (index, due) = match next_due_schedule(&schedules) {
@@ -162,7 +204,8 @@ async fn run_preheat_loop(
         let now = Instant::now();
         if due <= now {
             let domain = schedules[index].domain.clone();
-            match preheat_domain(&domain, config.as_ref(), cache.clone(), history.clone()).await {
+            let result = preheat_domain(&domain, config.as_ref(), cache.clone(), history.clone()).await;
+            match result {
                 Ok(_) => {
                     let instant = Instant::now();
                     schedules[index].mark_success(instant);
@@ -187,6 +230,21 @@ async fn run_preheat_loop(
                         "preheat domain failed; backing off"
                     );
                 }
+            }
+
+            // 检查所有域名的 failure_streak 是否都超过阈值，若是则触发全局 auto-disable
+            let all_failed = schedules.iter().all(|s| s.failure_streak() >= preheat_failure_threshold);
+            if all_failed {
+                if let Some(pool) = ip_pool.as_ref() {
+                    let until = current_epoch_ms() + auto_disable_cooldown_ms;
+                    pool.set_auto_disabled(auto_disable_cooldown_ms);
+                    crate::core::ip_pool::events::emit_ip_pool_auto_disable(
+                        "preheat consecutive failures", until
+                    );
+                }
+                // 进入冷却期，sleep 一段时间
+                sleep(Duration::from_millis(auto_disable_cooldown_ms as u64)).await;
+                continue;
             }
 
             if stop.load(Ordering::Relaxed) {
@@ -446,7 +504,43 @@ pub(super) async fn collect_candidates(
         }
     }
 
-    map.into_values().collect()
+    let mut candidates: Vec<AggregatedCandidate> = map.into_values().collect();
+    let whitelist = &config.file.whitelist;
+    let blacklist = &config.file.blacklist;
+    // 白名单优先
+    if !whitelist.is_empty() {
+        candidates.retain(|c| {
+            let mut allowed = false;
+            for cidr in whitelist {
+                if is_ip_in_list(c.candidate.address, &[cidr.clone()]) {
+                    allowed = true;
+                    crate::core::ip_pool::events::emit_ip_pool_cidr_filter(c.candidate.address, "whitelist", cidr);
+                    break;
+                }
+            }
+            allowed
+        });
+    }
+    // 黑名单过滤
+    if !blacklist.is_empty() {
+        let before = candidates.len();
+        candidates.retain(|c| {
+            let mut blocked = false;
+            for cidr in blacklist {
+                if is_ip_in_list(c.candidate.address, &[cidr.clone()]) {
+                    blocked = true;
+                    crate::core::ip_pool::events::emit_ip_pool_cidr_filter(c.candidate.address, "blacklist", cidr);
+                    break;
+                }
+            }
+            !blocked
+        });
+        let after = candidates.len();
+        if before != after {
+            tracing::info!(target = "ip_pool", removed = before - after, "candidates removed by blacklist");
+        }
+    }
+    candidates
 }
 
 pub(super) async fn measure_candidates(

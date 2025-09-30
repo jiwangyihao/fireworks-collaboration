@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod circuit_breaker;
 pub mod config;
 pub mod events;
 pub mod global;
@@ -7,10 +8,11 @@ pub mod preheat;
 
 mod builder;
 mod maintenance;
-mod manager;
+pub mod manager;
 mod sampling;
 
 pub use cache::{IpCacheKey, IpCacheSlot, IpCandidate, IpScoreCache, IpSource, IpStat};
+pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState};
 pub use config::{
     EffectiveIpPoolConfig, IpPoolFileConfig, IpPoolRuntimeConfig, IpPoolSourceToggle,
     PreheatDomain, UserStaticIp,
