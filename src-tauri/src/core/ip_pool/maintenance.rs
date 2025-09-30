@@ -74,4 +74,16 @@ fn prune_cache(pool: &IpPool, now_ms: i64) {
         }
     }
     enforce_cache_capacity(pool);
+
+    // Prune and enforce history file capacity
+    // Note: This will prune ALL expired entries including preheat targets,
+    // allowing them to be refreshed on next preheat cycle
+    let max_history_entries = pool.config.runtime.max_cache_entries.max(128);
+    if let Err(err) = pool.history.prune_and_enforce(now_ms, max_history_entries) {
+        tracing::warn!(
+            target = "ip_pool",
+            error = %err,
+            "failed to prune ip history"
+        );
+    }
 }
