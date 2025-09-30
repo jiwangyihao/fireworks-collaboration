@@ -16,6 +16,34 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::runtime::{Builder, Runtime};
 use uuid::Uuid;
 
+/// Readiness thresholds enforced by the soak runner.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoakThresholds {
+    /// Minimum overall task success rate.
+    pub min_success_rate: f64,
+    /// Maximum allowed Fake→Real fallback ratio.
+    pub max_fake_fallback_rate: f64,
+    /// Minimum required IP pool refresh success rate when IP 池启用.
+    pub min_ip_pool_refresh_success_rate: f64,
+    /// Maximum allowed auto-disable triggers during the soak window.
+    pub max_auto_disable_triggered: u64,
+    /// Minimum required GitClone total latency improvement (p50) versus基线（若提供）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_latency_improvement: Option<f64>,
+}
+
+impl Default for SoakThresholds {
+    fn default() -> Self {
+        Self {
+            min_success_rate: 0.99,
+            max_fake_fallback_rate: 0.05,
+            min_ip_pool_refresh_success_rate: 0.85,
+            max_auto_disable_triggered: 0,
+            min_latency_improvement: Some(0.15),
+        }
+    }
+}
+
 /// Options controlling how the soak runner behaves.
 #[derive(Debug, Clone)]
 pub struct SoakOptions {
@@ -29,6 +57,8 @@ pub struct SoakOptions {
     pub base_dir: Option<PathBuf>,
     /// Optional baseline report to compare the new results against.
     pub baseline_report: Option<PathBuf>,
+    /// Readiness thresholds enforced for this soak run.
+    pub thresholds: SoakThresholds,
 }
 
 impl Default for SoakOptions {
@@ -39,6 +69,7 @@ impl Default for SoakOptions {
             report_path: PathBuf::from("soak-report.json"),
             base_dir: None,
             baseline_report: None,
+            thresholds: SoakThresholds::default(),
         }
     }
 }
@@ -50,6 +81,8 @@ pub struct SoakOptionsSnapshot {
     pub report_path: String,
     pub workspace_dir: String,
     pub baseline_report: Option<String>,
+    #[serde(default)]
+    pub thresholds: SoakThresholds,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,16 +167,30 @@ pub struct TotalsSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThresholdSummary {
-    success_rate: ThresholdCheck,
-    fake_fallback_rate: ThresholdCheck,
+    pub success_rate: ThresholdCheck,
+    pub fake_fallback_rate: ThresholdCheck,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ip_pool_refresh_success_rate: Option<ThresholdCheck>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub auto_disable_triggered: Option<ThresholdCheck>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub latency_improvement: Option<ThresholdCheck>,
+    #[serde(default)]
+    pub ready: bool,
+    #[serde(default)]
+    pub failing_checks: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThresholdCheck {
-    pass: bool,
-    actual: f64,
-    expected: f64,
-    comparator: String,
+    pub pass: bool,
+    pub actual: f64,
+    pub expected: f64,
+    pub comparator: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComparisonSummary {
@@ -154,6 +201,13 @@ pub struct ComparisonSummary {
     pub auto_disable_triggered_delta: i64,
     pub auto_disable_recovered_delta: i64,
     pub regression_flags: Vec<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_clone_total_p50_improvement: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_clone_total_p50_current: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_clone_total_p50_baseline: Option<f64>,
 }
 
 impl ThresholdCheck {
@@ -163,6 +217,7 @@ impl ThresholdCheck {
             actual,
             expected,
             comparator: ">=".to_string(),
+            details: None,
         }
     }
 
@@ -172,7 +227,72 @@ impl ThresholdCheck {
             actual,
             expected,
             comparator: "<=".to_string(),
+            details: None,
         }
+    }
+
+    fn not_applicable(expected: f64, comparator: &str, reason: impl Into<String>) -> Self {
+        Self {
+            pass: false,
+            actual: 0.0,
+            expected,
+            comparator: comparator.to_string(),
+            details: Some(reason.into()),
+        }
+    }
+}
+
+impl ThresholdSummary {
+    fn new(
+        success_rate: ThresholdCheck,
+        fake_fallback_rate: ThresholdCheck,
+        ip_pool_refresh_success_rate: Option<ThresholdCheck>,
+        auto_disable_triggered: Option<ThresholdCheck>,
+        latency_improvement: Option<ThresholdCheck>,
+    ) -> Self {
+        let mut summary = Self {
+            success_rate,
+            fake_fallback_rate,
+            ip_pool_refresh_success_rate,
+            auto_disable_triggered,
+            latency_improvement,
+            ready: false,
+            failing_checks: Vec::new(),
+        };
+        summary.recompute();
+        summary
+    }
+
+    fn set_latency_improvement(&mut self, check: ThresholdCheck) {
+        self.latency_improvement = Some(check);
+        self.recompute();
+    }
+
+    fn recompute(&mut self) {
+        let mut failing = Vec::new();
+        if !self.success_rate.pass {
+            failing.push("success_rate".to_string());
+        }
+        if !self.fake_fallback_rate.pass {
+            failing.push("fake_fallback_rate".to_string());
+        }
+        if let Some(check) = &self.ip_pool_refresh_success_rate {
+            if !check.pass {
+                failing.push("ip_pool_refresh_success_rate".to_string());
+            }
+        }
+        if let Some(check) = &self.auto_disable_triggered {
+            if !check.pass {
+                failing.push("auto_disable_triggered".to_string());
+            }
+        }
+        if let Some(check) = &self.latency_improvement {
+            if !check.pass {
+                failing.push("latency_improvement".to_string());
+            }
+        }
+        self.ready = failing.is_empty();
+        self.failing_checks = failing;
     }
 }
 
@@ -214,6 +334,32 @@ fn build_comparison_summary(
         ));
     }
 
+    let git_clone_total_p50_baseline = baseline
+        .timing
+        .get("GitClone")
+        .and_then(|summary| summary.total_ms.as_ref())
+        .map(|stats| stats.p50 as f64);
+    let git_clone_total_p50_current = current
+        .timing
+        .get("GitClone")
+        .and_then(|summary| summary.total_ms.as_ref())
+        .map(|stats| stats.p50 as f64);
+    let git_clone_total_p50_improvement = git_clone_total_p50_baseline.and_then(|base| {
+        if base <= 0.0 {
+            None
+        } else {
+            git_clone_total_p50_current.map(|curr| (base - curr) / base)
+        }
+    });
+    if let (Some(expected), Some(improvement)) = (
+        current.options.thresholds.min_latency_improvement,
+        git_clone_total_p50_improvement,
+    ) {
+        if improvement + 1e-6 < expected {
+            regression_flags.push(format!("latency_improvement.decreased({:.4})", improvement));
+        }
+    }
+
     ComparisonSummary {
         baseline_path: baseline_path.display().to_string(),
         success_rate_delta,
@@ -222,6 +368,9 @@ fn build_comparison_summary(
         auto_disable_triggered_delta,
         auto_disable_recovered_delta,
         regression_flags,
+        git_clone_total_p50_improvement,
+        git_clone_total_p50_current,
+        git_clone_total_p50_baseline,
     }
 }
 
@@ -230,6 +379,14 @@ fn load_baseline_report(path: &Path) -> Result<SoakReport> {
         .with_context(|| format!("read baseline report: {}", path.display()))?;
     serde_json::from_str(&contents)
         .with_context(|| format!("parse baseline report: {}", path.display()))
+}
+
+fn parse_env_f64(key: &str) -> Option<f64> {
+    std::env::var(key).ok().and_then(|v| v.parse::<f64>().ok())
+}
+
+fn parse_env_u64(key: &str) -> Option<u64> {
+    std::env::var(key).ok().and_then(|v| v.parse::<u64>().ok())
 }
 
 #[derive(Default)]
@@ -473,6 +630,31 @@ impl SoakAggregator {
         } else {
             0.0
         };
+        let ip_pool_refresh_success_rate = if self.ip_pool.refresh_total > 0 {
+            self.ip_pool.refresh_success as f64 / self.ip_pool.refresh_total as f64
+        } else {
+            1.0
+        };
+        let thresholds_cfg = options.thresholds.clone();
+        let ip_pool_threshold = if self.ip_pool.refresh_total > 0 {
+            Some(ThresholdCheck::at_least(
+                ip_pool_refresh_success_rate,
+                thresholds_cfg.min_ip_pool_refresh_success_rate,
+            ))
+        } else {
+            None
+        };
+        let auto_disable_threshold = Some(ThresholdCheck::at_most(
+            self.auto_disable.triggered as f64,
+            thresholds_cfg.max_auto_disable_triggered as f64,
+        ));
+        let threshold_summary = ThresholdSummary::new(
+            ThresholdCheck::at_least(success_rate, thresholds_cfg.min_success_rate),
+            ThresholdCheck::at_most(fallback_ratio, thresholds_cfg.max_fake_fallback_rate),
+            ip_pool_threshold,
+            auto_disable_threshold,
+            None,
+        );
 
         SoakReport {
             started_unix,
@@ -498,11 +680,7 @@ impl SoakAggregator {
                 refresh_total: self.ip_pool.refresh_total,
                 refresh_success: self.ip_pool.refresh_success,
                 refresh_failure: self.ip_pool.refresh_failure,
-                refresh_success_rate: if self.ip_pool.refresh_total > 0 {
-                    self.ip_pool.refresh_success as f64 / self.ip_pool.refresh_total as f64
-                } else {
-                    1.0
-                },
+                refresh_success_rate: ip_pool_refresh_success_rate,
             },
             totals: TotalsSummary {
                 total_operations,
@@ -510,10 +688,7 @@ impl SoakAggregator {
                 failed: total_failed,
                 canceled: total_canceled,
             },
-            thresholds: ThresholdSummary {
-                success_rate: ThresholdCheck::at_least(success_rate, 0.99),
-                fake_fallback_rate: ThresholdCheck::at_most(fallback_ratio, 0.05),
-            },
+            thresholds: threshold_summary,
             comparison: None,
         }
     }
@@ -542,12 +717,36 @@ pub fn run_from_env() -> Result<SoakReport> {
         .ok()
         .map(|s| PathBuf::from(s.trim()))
         .filter(|p| !p.as_os_str().is_empty());
+
+    let mut thresholds = SoakThresholds::default();
+    if let Some(v) = parse_env_f64("FWC_SOAK_MIN_SUCCESS_RATE") {
+        thresholds.min_success_rate = v;
+    }
+    if let Some(v) = parse_env_f64("FWC_SOAK_MAX_FAKE_FALLBACK_RATE") {
+        thresholds.max_fake_fallback_rate = v;
+    }
+    if let Some(v) = parse_env_f64("FWC_SOAK_MIN_IP_POOL_REFRESH_RATE") {
+        thresholds.min_ip_pool_refresh_success_rate = v;
+    }
+    if let Some(v) = parse_env_u64("FWC_SOAK_MAX_AUTO_DISABLE") {
+        thresholds.max_auto_disable_triggered = v;
+    }
+    if let Ok(raw) = std::env::var("FWC_SOAK_MIN_LATENCY_IMPROVEMENT") {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            thresholds.min_latency_improvement = None;
+        } else if let Ok(parsed) = trimmed.parse::<f64>() {
+            thresholds.min_latency_improvement = Some(parsed);
+        }
+    }
+
     let opts = SoakOptions {
         iterations,
         keep_clones,
         report_path,
         base_dir,
         baseline_report,
+        thresholds,
     };
     run(opts)
 }
@@ -686,6 +885,7 @@ pub fn run(opts: SoakOptions) -> Result<SoakReport> {
             .baseline_report
             .as_ref()
             .map(|p| p.display().to_string()),
+        thresholds: opts.thresholds.clone(),
     };
 
     let mut report =
@@ -695,6 +895,19 @@ pub fn run(opts: SoakOptions) -> Result<SoakReport> {
         match load_baseline_report(baseline_path) {
             Ok(baseline) => {
                 let summary = build_comparison_summary(baseline_path, &baseline, &report);
+                if let Some(target) = report.options.thresholds.min_latency_improvement {
+                    let latency_check =
+                        if let Some(improvement) = summary.git_clone_total_p50_improvement {
+                            ThresholdCheck::at_least(improvement, target)
+                        } else {
+                            ThresholdCheck::not_applicable(
+                                target,
+                                ">=",
+                                "GitClone total_ms p50 unavailable in baseline or current report",
+                            )
+                        };
+                    report.thresholds.set_latency_improvement(latency_check);
+                }
                 report.comparison = Some(summary);
             }
             Err(err) => {
@@ -704,8 +917,24 @@ pub fn run(opts: SoakOptions) -> Result<SoakReport> {
                     path = %baseline_path.display(),
                     "failed to load baseline report; continuing without comparison"
                 );
+                if let Some(target) = report.options.thresholds.min_latency_improvement {
+                    let latency_check = ThresholdCheck::not_applicable(
+                        target,
+                        ">=",
+                        format!("failed to load baseline: {err}"),
+                    );
+                    report.thresholds.set_latency_improvement(latency_check);
+                }
             }
         }
+    } else if let Some(target) = report.options.thresholds.min_latency_improvement {
+        // Baseline未提供时，延迟阈值无法验证，视为未通过以提示补充基线。
+        let latency_check = ThresholdCheck::not_applicable(
+            target,
+            ">=",
+            "baseline report not provided; latency improvement cannot be evaluated",
+        );
+        report.thresholds.set_latency_improvement(latency_check);
     }
 
     write_report(&opts.report_path, &report)
@@ -1009,6 +1238,32 @@ fn write_report(path: &Path, report: &SoakReport) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+
+    struct EnvSnapshot {
+        entries: Vec<(String, Option<String>)>,
+    }
+
+    impl EnvSnapshot {
+        fn capture(keys: &[&str]) -> Self {
+            let entries = keys
+                .iter()
+                .map(|key| (key.to_string(), std::env::var(key).ok()))
+                .collect();
+            Self { entries }
+        }
+    }
+
+    impl Drop for EnvSnapshot {
+        fn drop(&mut self) {
+            for (key, value) in self.entries.iter() {
+                match value {
+                    Some(original) => std::env::set_var(key, original),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
 
     #[test]
     fn soak_runs_minimal_iterations() {
@@ -1019,6 +1274,7 @@ mod tests {
             report_path: workspace.join("report.json"),
             base_dir: Some(workspace.clone()),
             baseline_report: None,
+            thresholds: SoakThresholds::default(),
         };
         let report = run(opts).expect("soak run should succeed");
         assert!(report.iterations >= 1);
@@ -1037,6 +1293,7 @@ mod tests {
             report_path: baseline_report_path.clone(),
             base_dir: Some(baseline_workspace.clone()),
             baseline_report: None,
+            thresholds: SoakThresholds::default(),
         };
         let baseline_report = run(baseline_opts).expect("baseline soak run should succeed");
         assert!(baseline_report.comparison.is_none());
@@ -1049,6 +1306,7 @@ mod tests {
             report_path: current_report_path.clone(),
             base_dir: Some(current_workspace.clone()),
             baseline_report: Some(baseline_report_path.clone()),
+            thresholds: SoakThresholds::default(),
         };
         let current_report = run(current_opts).expect("current soak run should succeed");
         let comparison = current_report
@@ -1081,11 +1339,73 @@ mod tests {
             report_path: report_path.clone(),
             base_dir: Some(config_workspace.clone()),
             baseline_report: Some(baseline_path.clone()),
+            thresholds: SoakThresholds::default(),
         };
         let report = run(opts).expect("soak run should succeed even with invalid baseline");
         assert!(report.comparison.is_none());
 
         let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn run_from_env_honors_environment_threshold_overrides() {
+        let keys = [
+            "FWC_ADAPTIVE_TLS_SOAK",
+            "FWC_SOAK_ITERATIONS",
+            "FWC_SOAK_KEEP_CLONES",
+            "FWC_SOAK_REPORT_PATH",
+            "FWC_SOAK_BASE_DIR",
+            "FWC_SOAK_MIN_SUCCESS_RATE",
+            "FWC_SOAK_MAX_FAKE_FALLBACK_RATE",
+            "FWC_SOAK_MIN_IP_POOL_REFRESH_RATE",
+            "FWC_SOAK_MAX_AUTO_DISABLE",
+            "FWC_SOAK_MIN_LATENCY_IMPROVEMENT",
+        ];
+        let _snapshot = EnvSnapshot::capture(&keys);
+
+        let base = std::env::temp_dir().join(format!("fwc-soak-env-{}", Uuid::new_v4()));
+        let report_path = base.join("report.json");
+        fs::create_dir_all(&base).expect("create base dir");
+
+        std::env::set_var("FWC_ADAPTIVE_TLS_SOAK", "1");
+        std::env::set_var("FWC_SOAK_ITERATIONS", "1");
+        std::env::set_var("FWC_SOAK_KEEP_CLONES", "0");
+        std::env::set_var(
+            "FWC_SOAK_REPORT_PATH",
+            report_path.to_str().expect("report path utf-8"),
+        );
+        std::env::set_var(
+            "FWC_SOAK_BASE_DIR",
+            base.to_str().expect("base dir utf-8"),
+        );
+        std::env::set_var("FWC_SOAK_MIN_SUCCESS_RATE", "0.75");
+        std::env::set_var("FWC_SOAK_MAX_FAKE_FALLBACK_RATE", "0.25");
+        std::env::set_var("FWC_SOAK_MIN_IP_POOL_REFRESH_RATE", "0.5");
+        std::env::set_var("FWC_SOAK_MAX_AUTO_DISABLE", "2");
+        std::env::set_var("FWC_SOAK_MIN_LATENCY_IMPROVEMENT", "");
+
+        let report = run_from_env().expect("soak run should succeed via env");
+        assert_eq!(report.iterations, 1);
+        assert_eq!(report.options.thresholds.min_success_rate, 0.75);
+        assert_eq!(report.options.thresholds.max_fake_fallback_rate, 0.25);
+        assert_eq!(
+            report.options.thresholds.min_ip_pool_refresh_success_rate,
+            0.5
+        );
+        assert_eq!(
+            report.options.thresholds.max_auto_disable_triggered,
+            2
+        );
+        assert!(report
+            .options
+            .thresholds
+            .min_latency_improvement
+            .is_none());
+        assert!(report.thresholds.latency_improvement.is_none());
+        assert!(report.thresholds.ready);
+        assert!(report_path.exists());
+
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -1166,6 +1486,7 @@ mod tests {
             report_path: "memory".into(),
             workspace_dir: "memory".into(),
             baseline_report: None,
+            thresholds: SoakThresholds::default(),
         };
         let report = agg.into_report(0, 0, 0, opts_snapshot);
         assert_eq!(report.ip_pool.selection_total, 2);
@@ -1186,6 +1507,7 @@ mod tests {
             report_path: "memory".into(),
             workspace_dir: "memory".into(),
             baseline_report: None,
+            thresholds: SoakThresholds::default(),
         };
         let report = agg.into_report(0, 0, 0, opts_snapshot);
         assert_eq!(report.ip_pool.refresh_total, 0);
@@ -1204,6 +1526,7 @@ mod tests {
                 report_path: "memory".into(),
                 workspace_dir: "memory".into(),
                 baseline_report: None,
+                thresholds: SoakThresholds::default(),
             },
             iterations: 1,
             operations: HashMap::new(),
@@ -1238,20 +1561,13 @@ mod tests {
                 failed: 0,
                 canceled: 0,
             },
-            thresholds: ThresholdSummary {
-                success_rate: ThresholdCheck {
-                    pass: true,
-                    actual: 1.0,
-                    expected: 0.99,
-                    comparator: ">=".to_string(),
-                },
-                fake_fallback_rate: ThresholdCheck {
-                    pass: true,
-                    actual: 0.0,
-                    expected: 0.05,
-                    comparator: "<=".to_string(),
-                },
-            },
+            thresholds: ThresholdSummary::new(
+                ThresholdCheck::at_least(1.0, 0.99),
+                ThresholdCheck::at_most(0.0, 0.05),
+                None,
+                Some(ThresholdCheck::at_most(0.0, 0.0)),
+                None,
+            ),
             comparison: None,
         };
 
@@ -1277,6 +1593,7 @@ mod tests {
                 report_path: "memory".into(),
                 workspace_dir: "memory".into(),
                 baseline_report: None,
+                thresholds: SoakThresholds::default(),
             },
             iterations: 1,
             operations: HashMap::new(),
@@ -1287,8 +1604,8 @@ mod tests {
                 real_to_default: 0,
             },
             auto_disable: AutoDisableSummary {
-                triggered: 1,
-                recovered: 1,
+                triggered: 0,
+                recovered: 0,
             },
             cert_fp_events: 2,
             ip_pool: IpPoolSummary {
@@ -1305,36 +1622,24 @@ mod tests {
                 failed: 0,
                 canceled: 0,
             },
-            thresholds: ThresholdSummary {
-                success_rate: ThresholdCheck {
-                    pass: true,
-                    actual: 1.0,
-                    expected: 0.99,
-                    comparator: ">=".to_string(),
-                },
-                fake_fallback_rate: ThresholdCheck {
-                    pass: true,
-                    actual: 0.02,
-                    expected: 0.05,
-                    comparator: "<=".to_string(),
-                },
-            },
+            thresholds: ThresholdSummary::new(
+                ThresholdCheck::at_least(1.0, 0.99),
+                ThresholdCheck::at_most(0.02, 0.05),
+                None,
+                Some(ThresholdCheck::at_most(0.0, 0.0)),
+                None,
+            ),
             comparison: None,
         };
 
         let mut current = baseline.clone();
-        current.thresholds.success_rate = ThresholdCheck {
-            pass: false,
-            actual: 0.9,
-            expected: 0.99,
-            comparator: ">=".to_string(),
-        };
-        current.thresholds.fake_fallback_rate = ThresholdCheck {
-            pass: false,
-            actual: 0.1,
-            expected: 0.05,
-            comparator: "<=".to_string(),
-        };
+        current.thresholds = ThresholdSummary::new(
+            ThresholdCheck::at_least(0.9, 0.99),
+            ThresholdCheck::at_most(0.1, 0.05),
+            None,
+            Some(ThresholdCheck::at_most(3.0, 0.0)),
+            None,
+        );
         current.cert_fp_events = 5;
         current.auto_disable.triggered = 3;
         current.auto_disable.recovered = 1;
@@ -1343,7 +1648,7 @@ mod tests {
         assert!(comparison.success_rate_delta < 0.0);
         assert!(comparison.fake_fallback_rate_delta > 0.0);
         assert_eq!(comparison.cert_fp_events_delta, 3);
-        assert_eq!(comparison.auto_disable_triggered_delta, 2);
+        assert_eq!(comparison.auto_disable_triggered_delta, 3);
         assert!(comparison
             .regression_flags
             .iter()
@@ -1397,10 +1702,231 @@ mod tests {
                 report_path: "memory".into(),
                 workspace_dir: "memory".into(),
                 baseline_report: None,
+                thresholds: SoakThresholds::default(),
             },
         );
         assert!(report.thresholds.success_rate.pass);
         assert!(!report.thresholds.fake_fallback_rate.pass);
         assert!((report.thresholds.fake_fallback_rate.actual - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn threshold_summary_recompute_after_latency_update() {
+        let mut summary = ThresholdSummary::new(
+            ThresholdCheck::at_least(1.0, 0.99),
+            ThresholdCheck::at_most(0.01, 0.05),
+            None,
+            Some(ThresholdCheck::at_most(0.0, 0.0)),
+            None,
+        );
+        assert!(summary.ready);
+
+        summary.set_latency_improvement(ThresholdCheck::at_least(0.20, 0.15));
+        assert!(summary.ready);
+
+        summary.set_latency_improvement(ThresholdCheck::at_least(0.05, 0.15));
+        assert!(!summary.ready);
+        assert!(summary
+            .failing_checks
+            .contains(&"latency_improvement".to_string()));
+        assert!(summary
+            .latency_improvement
+            .as_ref()
+            .and_then(|c| c.details.as_ref())
+            .is_none());
+    }
+
+    #[test]
+    fn comparison_summary_computes_latency_improvement() {
+        let mut baseline_timing = HashMap::new();
+        baseline_timing.insert(
+            "GitClone".to_string(),
+            TimingSummary {
+                samples: 10,
+                used_fake: 5,
+                cert_fp_changed_samples: 0,
+                final_stage_counts: HashMap::new(),
+                connect_ms: None,
+                tls_ms: None,
+                first_byte_ms: None,
+                total_ms: Some(FieldStats {
+                    count: 10,
+                    min: 180,
+                    max: 240,
+                    avg: 200.0,
+                    p50: 200,
+                    p95: 230,
+                }),
+            },
+        );
+
+        let baseline = SoakReport {
+            started_unix: 0,
+            finished_unix: 0,
+            duration_secs: 0,
+            options: SoakOptionsSnapshot {
+                iterations: 1,
+                keep_clones: false,
+                report_path: "baseline".into(),
+                workspace_dir: "baseline".into(),
+                baseline_report: None,
+                thresholds: SoakThresholds::default(),
+            },
+            iterations: 1,
+            operations: HashMap::new(),
+            timing: baseline_timing,
+            fallback: FallbackSummary {
+                counts: HashMap::new(),
+                fake_to_real: 0,
+                real_to_default: 0,
+            },
+            auto_disable: AutoDisableSummary {
+                triggered: 0,
+                recovered: 0,
+            },
+            cert_fp_events: 0,
+            ip_pool: IpPoolSummary {
+                selection_total: 0,
+                selection_by_strategy: HashMap::new(),
+                refresh_total: 0,
+                refresh_success: 0,
+                refresh_failure: 0,
+                refresh_success_rate: 1.0,
+            },
+            totals: TotalsSummary {
+                total_operations: 0,
+                completed: 0,
+                failed: 0,
+                canceled: 0,
+            },
+            thresholds: ThresholdSummary::new(
+                ThresholdCheck::at_least(1.0, 0.99),
+                ThresholdCheck::at_most(0.0, 0.05),
+                None,
+                Some(ThresholdCheck::at_most(0.0, 0.0)),
+                None,
+            ),
+            comparison: None,
+        };
+
+        let mut current_timing = HashMap::new();
+        current_timing.insert(
+            "GitClone".to_string(),
+            TimingSummary {
+                samples: 10,
+                used_fake: 5,
+                cert_fp_changed_samples: 0,
+                final_stage_counts: HashMap::new(),
+                connect_ms: None,
+                tls_ms: None,
+                first_byte_ms: None,
+                total_ms: Some(FieldStats {
+                    count: 10,
+                    min: 140,
+                    max: 210,
+                    avg: 150.0,
+                    p50: 150,
+                    p95: 180,
+                }),
+            },
+        );
+
+        let mut thresholds_override = SoakThresholds::default();
+        thresholds_override.min_latency_improvement = Some(0.30);
+        let current = SoakReport {
+            started_unix: 0,
+            finished_unix: 0,
+            duration_secs: 0,
+            options: SoakOptionsSnapshot {
+                iterations: 1,
+                keep_clones: false,
+                report_path: "current".into(),
+                workspace_dir: "current".into(),
+                baseline_report: None,
+                thresholds: thresholds_override,
+            },
+            iterations: 1,
+            operations: HashMap::new(),
+            timing: current_timing,
+            fallback: FallbackSummary {
+                counts: HashMap::new(),
+                fake_to_real: 0,
+                real_to_default: 0,
+            },
+            auto_disable: AutoDisableSummary {
+                triggered: 0,
+                recovered: 0,
+            },
+            cert_fp_events: 0,
+            ip_pool: IpPoolSummary {
+                selection_total: 0,
+                selection_by_strategy: HashMap::new(),
+                refresh_total: 0,
+                refresh_success: 0,
+                refresh_failure: 0,
+                refresh_success_rate: 1.0,
+            },
+            totals: TotalsSummary {
+                total_operations: 0,
+                completed: 0,
+                failed: 0,
+                canceled: 0,
+            },
+            thresholds: ThresholdSummary::new(
+                ThresholdCheck::at_least(1.0, 0.99),
+                ThresholdCheck::at_most(0.0, 0.05),
+                None,
+                Some(ThresholdCheck::at_most(0.0, 0.0)),
+                None,
+            ),
+            comparison: None,
+        };
+
+        let summary = build_comparison_summary(Path::new("baseline.json"), &baseline, &current);
+        let improvement = summary
+            .git_clone_total_p50_improvement
+            .expect("latency improvement should exist");
+        assert!((improvement - 0.25).abs() < 1e-6);
+        assert_eq!(summary.git_clone_total_p50_baseline, Some(200.0));
+        assert_eq!(summary.git_clone_total_p50_current, Some(150.0));
+        assert!(summary
+            .regression_flags
+            .iter()
+            .any(|f| f.contains("latency_improvement")));
+    }
+
+    #[test]
+    fn run_marks_latency_not_applicable_without_baseline() {
+        let base = std::env::temp_dir().join(format!("fwc-soak-latency-{}", Uuid::new_v4()));
+        let report_path = base.join("report.json");
+        let mut thresholds = SoakThresholds::default();
+        thresholds.min_latency_improvement = Some(0.2);
+
+        let opts = SoakOptions {
+            iterations: 1,
+            keep_clones: false,
+            report_path: report_path.clone(),
+            base_dir: Some(base.clone()),
+            baseline_report: None,
+            thresholds,
+        };
+
+        let report = run(opts).expect("soak run should succeed without baseline");
+        let latency_check = report
+            .thresholds
+            .latency_improvement
+            .expect("latency check should exist");
+        assert!(!latency_check.pass);
+        let reason = latency_check
+            .details
+            .expect("latency check should include details");
+        assert!(reason.contains("baseline report not provided"));
+        assert!(report
+            .thresholds
+            .failing_checks
+            .contains(&"latency_improvement".to_string()));
+        assert!(!report.thresholds.ready);
+
+        let _ = fs::remove_dir_all(&base);
     }
 }
