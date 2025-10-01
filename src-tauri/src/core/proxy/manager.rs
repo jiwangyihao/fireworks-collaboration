@@ -7,6 +7,8 @@ use super::{
     config::{ProxyConfig, ProxyMode},
     state::{ProxyState, ProxyStateContext, StateTransition},
     system_detector::SystemProxyDetector,
+    detector::ProxyFailureDetector,
+    events::ProxyFallbackEvent,
     ProxyConnector, PlaceholderConnector, HttpProxyConnector, Socks5ProxyConnector,
 };
 use anyhow::Result;
@@ -20,12 +22,16 @@ use std::sync::{Arc, RwLock};
 /// - Detecting system proxy settings
 /// - Managing proxy state transitions (for P5.4/P5.5)
 /// - Providing connector instances (for P5.1/P5.2)
+/// - Monitoring proxy failures and triggering fallback (P5.4)
 pub struct ProxyManager {
     /// Current proxy configuration
     config: Arc<RwLock<ProxyConfig>>,
     
     /// Current proxy state context
     state: Arc<RwLock<ProxyStateContext>>,
+    
+    /// Failure detector for automatic fallback (P5.4)
+    failure_detector: ProxyFailureDetector,
 }
 
 impl ProxyManager {
@@ -40,9 +46,16 @@ impl ProxyManager {
             ProxyStateContext::new()
         };
         
+        // Create failure detector from config
+        let failure_detector = ProxyFailureDetector::new(
+            config.fallback_window_seconds,
+            config.fallback_threshold,
+        );
+        
         Self {
             config: Arc::new(RwLock::new(config)),
             state: Arc::new(RwLock::new(state)),
+            failure_detector,
         }
     }
     
@@ -214,19 +227,37 @@ impl ProxyManager {
     
     /// Record a proxy connection failure
     /// 
-    /// This will be used by P5.4 for automatic fallback detection.
-    /// Currently just logs and updates counters.
+    /// P5.4: Integrated with FailureDetector for automatic fallback
     pub fn report_failure(&self, reason: &str) {
-        let mut state = self.state.write().unwrap();
-        state.record_failure();
+        // Update state counters
+        {
+            let mut state = self.state.write().unwrap();
+            state.record_failure();
+            
+            tracing::warn!(
+                "Proxy connection failure recorded: {} (consecutive failures: {})",
+                reason,
+                state.consecutive_failures
+            );
+        }
         
-        tracing::warn!(
-            "Proxy connection failure recorded: {} (consecutive failures: {})",
-            reason,
-            state.consecutive_failures
+        // Report to failure detector
+        self.failure_detector.report_failure();
+        
+        // Log detector stats at debug level
+        let stats = self.failure_detector.get_stats();
+        tracing::debug!(
+            "Failure detector updated: {}/{} attempts failed ({:.1}%), threshold={:.1}%",
+            stats.failures,
+            stats.total_attempts,
+            stats.failure_rate * 100.0,
+            stats.threshold * 100.0
         );
         
-        // P5.4 will add automatic fallback logic here based on thresholds
+        // Check if fallback should be triggered
+        if self.failure_detector.should_fallback() {
+            self.trigger_automatic_fallback(reason);
+        }
     }
     
     /// Record a proxy connection success
@@ -234,20 +265,77 @@ impl ProxyManager {
     /// This will be used by P5.5 for automatic recovery detection.
     /// Currently just logs and updates counters.
     pub fn report_success(&self) {
-        let mut state = self.state.write().unwrap();
-        state.record_success();
+        // Update state counters
+        {
+            let mut state = self.state.write().unwrap();
+            state.record_success();
+            
+            tracing::debug!(
+                "Proxy connection success recorded (consecutive successes: {})",
+                state.consecutive_successes
+            );
+        }
         
-        tracing::debug!(
-            "Proxy connection success recorded (consecutive successes: {})",
-            state.consecutive_successes
-        );
+        // Report to failure detector
+        self.failure_detector.report_success();
         
         // P5.5 will add automatic recovery logic here based on strategy
     }
     
+    /// Trigger automatic fallback to direct connection
+    /// 
+    /// Internal method called when failure rate exceeds threshold.
+    /// Emits ProxyFallbackEvent.
+    fn trigger_automatic_fallback(&self, last_error: &str) {
+        // Get failure stats
+        let stats = self.failure_detector.get_stats();
+        
+        // Mark fallback as triggered to prevent repeated triggers
+        self.failure_detector.mark_fallback_triggered();
+        
+        // Transition state to Fallback
+        {
+            let mut state = self.state.write().unwrap();
+            let reason = format!(
+                "Failure rate {:.1}% exceeded threshold {:.1}% ({}/{} attempts in {}s window)",
+                stats.failure_rate * 100.0,
+                stats.threshold * 100.0,
+                stats.failures,
+                stats.total_attempts,
+                stats.window_seconds
+            );
+            
+            if let Err(e) = state.transition(StateTransition::TriggerFallback, Some(reason.clone())) {
+                tracing::error!("Failed to transition to fallback state: {}", e);
+                return;
+            }
+            
+            tracing::warn!("Automatic proxy fallback triggered: {}", reason);
+        }
+        
+        // Emit fallback event (P5.6 will hook this to frontend)
+        let event = ProxyFallbackEvent::automatic(
+            last_error.to_string(),
+            stats.failures,
+            stats.window_seconds,
+            stats.failure_rate,
+            self.sanitized_url(),
+        );
+        
+        tracing::info!(
+            "Proxy fallback event emitted: failures={}, rate={:.2}%, window={}s",
+            event.failure_count,
+            event.failure_rate * 100.0,
+            event.window_seconds
+        );
+        
+        // TODO P5.6: Publish event to frontend
+        // crate::events::publish_global(ProxyEvent::Fallback(event));
+    }
+    
     /// Manually trigger fallback to direct connection
     /// 
-    /// This is for manual intervention or testing. P5.4 will add automatic fallback.
+    /// This is for manual intervention or testing. P5.4 adds automatic fallback.
     pub fn manual_fallback(&self, reason: &str) -> Result<()> {
         let mut state = self.state.write().unwrap();
         state.transition(
@@ -255,7 +343,22 @@ impl ProxyManager {
             Some(reason.to_string()),
         )?;
         
+        // Mark detector as fallback triggered
+        self.failure_detector.mark_fallback_triggered();
+        
         tracing::warn!("Manual proxy fallback triggered: {}", reason);
+        
+        // Emit manual fallback event
+        let event = ProxyFallbackEvent::manual(
+            reason.to_string(),
+            self.sanitized_url(),
+        );
+        
+        tracing::info!("Manual proxy fallback event emitted: {}", event.reason);
+        
+        // TODO P5.6: Publish event to frontend
+        // crate::events::publish_global(ProxyEvent::Fallback(event));
+        
         Ok(())
     }
     
@@ -265,11 +368,15 @@ impl ProxyManager {
     pub fn manual_recover(&self) -> Result<()> {
         let mut state = self.state.write().unwrap();
         
+        tracing::info!("Starting manual proxy recovery from state: {:?}", state.state);
+        
         // Start recovery process
         state.transition(
             StateTransition::StartRecovery,
             Some("Manual recovery requested".to_string()),
         )?;
+        
+        tracing::debug!("Recovery phase initiated, state: {:?}", state.state);
         
         // Immediately complete recovery (in P5.5, health checks will determine this)
         state.transition(
@@ -277,13 +384,27 @@ impl ProxyManager {
             Some("Manual recovery".to_string()),
         )?;
         
-        tracing::info!("Manual proxy recovery completed");
+        // Reset failure detector on successful recovery
+        self.failure_detector.reset();
+        
+        tracing::info!("Manual proxy recovery completed, state: {:?}", state.state);
         Ok(())
     }
     
     /// Get current state context for diagnostics
     pub fn get_state_context(&self) -> ProxyStateContext {
         self.state.read().unwrap().clone()
+    }
+    
+    /// Get current failure statistics (P5.4)
+    /// 
+    /// Returns statistics from the failure detector including:
+    /// - Total attempts in window
+    /// - Number of failures
+    /// - Current failure rate
+    /// - Whether fallback was triggered
+    pub fn get_failure_stats(&self) -> super::detector::FailureStats {
+        self.failure_detector.get_stats()
     }
 }
 
@@ -397,12 +518,18 @@ mod tests {
         let config = ProxyConfig {
             mode: ProxyMode::Http,
             url: "http://proxy.example.com:8080".to_string(),
+            fallback_threshold: 0.5, // 50% threshold
             ..Default::default()
         };
         
         let manager = ProxyManager::new(config);
         
-        // Record failures
+        // Report successes first to avoid immediate fallback
+        manager.report_success();
+        manager.report_success();
+        manager.report_success();
+        
+        // Record failures (2/5 = 40% < 50%)
         manager.report_failure("Connection timeout");
         manager.report_failure("Connection refused");
         
@@ -626,18 +753,25 @@ mod tests {
         let config = ProxyConfig {
             mode: ProxyMode::Http,
             url: "http://proxy.example.com:8080".to_string(),
+            fallback_threshold: 0.5, // 50% threshold
             ..Default::default()
         };
         
         let manager = ProxyManager::new(config);
         
+        // Report some successes first to establish a baseline
+        manager.report_success();
+        manager.report_success();
+        manager.report_success();
+        
+        // Now report 2 failures (2/5 = 40% < 50%, should not fallback)
         manager.report_failure("Error 1");
         manager.report_failure("Error 2");
         
         let context = manager.get_state_context();
         assert_eq!(context.state, ProxyState::Enabled);
         assert_eq!(context.consecutive_failures, 2);
-        assert_eq!(context.consecutive_successes, 0);
+        assert_eq!(context.consecutive_successes, 0); // Reset by failures
     }
 
     #[test]
@@ -712,12 +846,18 @@ mod tests {
         let config = ProxyConfig {
             mode: ProxyMode::Http,
             url: "http://proxy.example.com:8080".to_string(),
+            fallback_threshold: 0.5, // 50% threshold
             ..Default::default()
         };
         
         let manager = ProxyManager::new(config);
         
-        // Record failures
+        // Start with successes to avoid immediate fallback
+        for _ in 0..5 {
+            manager.report_success();
+        }
+        
+        // Record failures (3/8 = 37.5% < 50%)
         for _ in 0..3 {
             manager.report_failure("Connection error");
         }
@@ -1132,5 +1272,181 @@ mod tests {
         
         // SOCKS5代理启用时强制禁用自定义传输层
         assert!(manager.should_disable_custom_transport());
+    }
+
+    // P5.4 Advanced scenario tests
+
+    #[test]
+    fn test_fallback_then_recover() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "http://proxy:8080".to_string(),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+
+        // Initial state: Enabled
+        assert_eq!(manager.get_state_context().state, ProxyState::Enabled);
+
+        // Manually trigger fallback
+        manager.manual_fallback("Test fallback").unwrap();
+        assert_eq!(manager.get_state_context().state, ProxyState::Fallback);
+
+        // Recover back to enabled
+        manager.manual_recover().unwrap();
+        assert_eq!(manager.get_state_context().state, ProxyState::Enabled);
+
+        // Failure stats should be reset after recovery
+        let stats = manager.get_failure_stats();
+        assert_eq!(stats.total_attempts, 0);
+        assert_eq!(stats.failures, 0);
+    }
+
+    #[test]
+    fn test_automatic_fallback_after_multiple_failures() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "http://proxy:8080".to_string(),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+
+        // Establish baseline with some successes
+        for _ in 0..5 {
+            manager.report_success();
+        }
+
+        // Report many failures to exceed 20% threshold
+        for _ in 0..5 {
+            manager.report_failure("Connection error");
+        }
+
+        // Should automatically fallback
+        assert_eq!(manager.get_state_context().state, ProxyState::Fallback);
+        
+        // Verify failure stats
+        let stats = manager.get_failure_stats();
+        assert_eq!(stats.total_attempts, 10);
+        assert_eq!(stats.failures, 5);
+        assert_eq!(stats.failure_rate, 0.5);
+    }
+
+    #[test]
+    fn test_fallback_state_persistence() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "http://proxy:8080".to_string(),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+
+        // Trigger fallback
+        manager.manual_fallback("Persistent fallback").unwrap();
+        
+        // Multiple checks should still show fallback
+        for _ in 0..5 {
+            assert_eq!(manager.get_state_context().state, ProxyState::Fallback);
+        }
+
+        // Failure reporting should not cause duplicate fallback
+        for _ in 0..3 {
+            manager.report_failure("Error");
+        }
+        
+        assert_eq!(manager.get_state_context().state, ProxyState::Fallback);
+    }
+
+    #[test]
+    fn test_concurrent_fallback_requests() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let config = ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "http://proxy:8080".to_string(),
+            ..Default::default()
+        };
+        let manager = Arc::new(ProxyManager::new(config));
+        let mut handles = vec![];
+
+        // Spawn 10 threads trying to trigger fallback
+        for i in 0..10 {
+            let manager_clone = Arc::clone(&manager);
+            let handle = thread::spawn(move || {
+                let _ = manager_clone.manual_fallback(&format!("Concurrent {}", i));
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Should still be in valid fallback state
+        assert_eq!(manager.get_state_context().state, ProxyState::Fallback);
+    }
+
+    #[test]
+    fn test_fallback_event_validation() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "http://proxy:8080".to_string(),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+
+        // Setup for automatic fallback
+        for _ in 0..5 {
+            manager.report_success();
+        }
+        for _ in 0..5 {
+            manager.report_failure("Network error");
+        }
+
+        // Should have triggered automatic fallback
+        assert_eq!(manager.get_state_context().state, ProxyState::Fallback);
+
+        // Verify fallback event would be emitted with correct data
+        // (In P5.6, this will be tested by checking actual event emissions)
+        let stats = manager.get_failure_stats();
+        assert!(stats.fallback_triggered);
+        assert_eq!(stats.failures, 5);
+        assert_eq!(stats.failure_rate, 0.5);
+    }
+
+    #[test]
+    fn test_recovery_resets_detector() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "http://proxy:8080".to_string(),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+
+        // Report successes first to establish a baseline
+        for _ in 0..20 {
+            manager.report_success();
+        }
+        
+        // Then report a few failures (not enough to exceed 20% threshold)
+        for _ in 0..3 {
+            manager.report_failure("Error");
+        }
+
+        let stats_before = manager.get_failure_stats();
+        assert_eq!(stats_before.total_attempts, 23);
+        assert_eq!(stats_before.failures, 3);
+        // 3/23 = 13% < 20% threshold, should not auto-fallback
+
+        // Manual fallback and recover
+        manager.manual_fallback("Test").unwrap();
+        manager.manual_recover().unwrap();
+
+        // Stats should be reset
+        let stats_after = manager.get_failure_stats();
+        assert_eq!(stats_after.total_attempts, 0);
+        assert_eq!(stats_after.failures, 0);
+        assert_eq!(stats_after.failure_rate, 0.0);
+        assert!(!stats_after.fallback_triggered);
     }
 }
