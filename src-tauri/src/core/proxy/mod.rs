@@ -4,9 +4,11 @@
 //! - Proxy configuration and state management
 //! - System proxy detection (Windows/macOS/Linux)
 //! - Proxy connector trait for unified interface
-//! - Automatic fallback and recovery mechanisms (to be implemented in P5.4/P5.5)
+//! - Automatic fallback and recovery mechanisms (P5.4: fallback, P5.5: recovery)
+//! - Failure detection with sliding window statistics (P5.4)
 
 pub mod config;
+pub mod detector;
 pub mod errors;
 pub mod events;
 pub mod http_connector;
@@ -16,6 +18,7 @@ pub mod state;
 pub mod system_detector;
 
 pub use config::{ProxyConfig, ProxyMode};
+pub use detector::{FailureStats, ProxyFailureDetector};
 pub use errors::ProxyError;
 pub use events::{
     ProxyFallbackEvent, ProxyHealthCheckEvent, ProxyRecoveredEvent, ProxyStateEvent,
