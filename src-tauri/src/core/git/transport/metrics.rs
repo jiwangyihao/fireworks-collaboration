@@ -127,6 +127,11 @@ thread_local! {
     static TL_IP_SOURCE: RefCell<Option<String>> = const { RefCell::new(None) };
     static TL_IP_LATENCY: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
     static TL_FALLBACK_EVENTS: RefCell<Vec<FallbackEventRecord>> = const { RefCell::new(Vec::new()) };
+    // P5.3: Proxy-related thread-local fields
+    static TL_USED_PROXY: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    static TL_PROXY_TYPE: RefCell<Option<String>> = const { RefCell::new(None) };
+    static TL_PROXY_LATENCY: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+    static TL_CUSTOM_TRANSPORT_DISABLED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
 pub fn tl_reset() {
@@ -138,6 +143,11 @@ pub fn tl_reset() {
     TL_IP_SOURCE.with(|c| *c.borrow_mut() = None);
     TL_IP_LATENCY.with(|c| c.set(None));
     TL_FALLBACK_EVENTS.with(|c| c.borrow_mut().clear());
+    // P5.3: Reset proxy fields
+    TL_USED_PROXY.with(|c| c.set(None));
+    TL_PROXY_TYPE.with(|c| *c.borrow_mut() = None);
+    TL_PROXY_LATENCY.with(|c| c.set(None));
+    TL_CUSTOM_TRANSPORT_DISABLED.with(|c| c.set(None));
 }
 
 pub fn tl_set_used_fake(v: bool) {
@@ -158,6 +168,20 @@ pub fn tl_set_ip_selection(
     TL_IP_LATENCY.with(|c| c.set(latency_ms));
     TL_IP_SOURCE.with(|cell| *cell.borrow_mut() = source);
 }
+
+/// P5.3: Set proxy usage information
+pub fn tl_set_proxy_usage(
+    used: bool,
+    proxy_type: Option<String>,
+    latency_ms: Option<u32>,
+    custom_transport_disabled: bool,
+) {
+    TL_USED_PROXY.with(|c| c.set(Some(used)));
+    TL_PROXY_TYPE.with(|cell| *cell.borrow_mut() = proxy_type);
+    TL_PROXY_LATENCY.with(|c| c.set(latency_ms));
+    TL_CUSTOM_TRANSPORT_DISABLED.with(|c| c.set(Some(custom_transport_disabled)));
+}
+
 pub fn tl_set_timing(cap: &TimingCapture) {
     TL_TIMING.with(|c| *c.borrow_mut() = Some(*cap));
 }
@@ -173,6 +197,11 @@ pub struct TimingSnapshot {
     pub ip_strategy: Option<&'static str>,
     pub ip_source: Option<String>,
     pub ip_latency_ms: Option<u32>,
+    // P5.3: Proxy-related fields
+    pub used_proxy: Option<bool>,
+    pub proxy_type: Option<String>,
+    pub proxy_latency_ms: Option<u32>,
+    pub custom_transport_disabled: Option<bool>,
 }
 
 pub fn tl_snapshot() -> TimingSnapshot {
@@ -184,6 +213,11 @@ pub fn tl_snapshot() -> TimingSnapshot {
         ip_strategy: TL_IP_STRATEGY.with(|c| c.get()),
         ip_source: TL_IP_SOURCE.with(|c| c.borrow().clone()),
         ip_latency_ms: TL_IP_LATENCY.with(|c| c.get()),
+        // P5.3: Read proxy fields
+        used_proxy: TL_USED_PROXY.with(|c| c.get()),
+        proxy_type: TL_PROXY_TYPE.with(|c| c.borrow().clone()),
+        proxy_latency_ms: TL_PROXY_LATENCY.with(|c| c.get()),
+        custom_transport_disabled: TL_CUSTOM_TRANSPORT_DISABLED.with(|c| c.get()),
     }
 }
 
