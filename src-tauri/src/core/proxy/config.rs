@@ -134,9 +134,16 @@ impl ProxyConfig {
         Duration::from_secs(self.timeout_seconds)
     }
     
-    /// Check if proxy is enabled (not Off mode)
+    /// Check if proxy is enabled:
+    /// - Off: false
+    /// - Http/Socks5: URL非空才启用
+    /// - System: 允许空URL
     pub fn is_enabled(&self) -> bool {
-        self.mode != ProxyMode::Off
+        match self.mode {
+            ProxyMode::Off => false,
+            ProxyMode::Http | ProxyMode::Socks5 => !self.url.trim().is_empty(),
+            ProxyMode::System => true,
+        }
     }
     
     /// Validate configuration
@@ -414,17 +421,20 @@ mod tests {
 
     #[test]
     fn test_proxy_config_is_enabled() {
-        let mut config = ProxyConfig::default();
-        assert!(!config.is_enabled());
-        
-        config.mode = ProxyMode::Http;
-        assert!(config.is_enabled());
-        
-        config.mode = ProxyMode::Socks5;
-        assert!(config.is_enabled());
-        
-        config.mode = ProxyMode::System;
-        assert!(config.is_enabled());
+    let mut config = ProxyConfig::default();
+    assert!(!config.is_enabled());
+
+    config.mode = ProxyMode::Http;
+    assert!(!config.is_enabled()); // URL为空，不应启用
+    config.url = "http://proxy.example.com:8080".to_string();
+    assert!(config.is_enabled());
+
+    config.mode = ProxyMode::Socks5;
+    assert!(config.is_enabled());
+
+    config.mode = ProxyMode::System;
+    config.url = "".to_string();
+    assert!(config.is_enabled()); // System模式允许空URL
     }
 
     #[test]
