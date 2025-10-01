@@ -313,7 +313,8 @@ mod tests {
     use super::*;
     use fireworks_collaboration_lib::core::config::{loader, model::AppConfig};
     use fireworks_collaboration_lib::events::structured::{
-        clear_test_event_bus, set_test_event_bus, Event, MemoryEventBus, StrategyEvent,
+        clear_test_event_bus, set_test_event_bus, Event, MemoryEventBus, 
+        StrategyEvent,
     };
     use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
@@ -335,9 +336,12 @@ mod tests {
     }
 
     fn collect_rollout(percent: u8) -> bool {
-        let _guard = config_lock().lock().unwrap();
+        // 清理可能由其他并行测试留下的事件总线状态
+        clear_test_event_bus();
+        
         let temp = setup_config(percent);
         let bus = std::sync::Arc::new(MemoryEventBus::new());
+        // 设置测试事件总线（publish_global 会优先使用 TEST_OVERRIDE_BUS）
         set_test_event_bus(bus.clone());
 
         let repo = "https://github.com/owner/repo";
@@ -363,11 +367,13 @@ mod tests {
 
     #[test]
     fn rollout_event_reflects_sampled_true_when_percent_100() {
+        let _guard = config_lock().lock().unwrap();
         assert!(collect_rollout(100));
     }
 
     #[test]
     fn rollout_event_reflects_sampled_false_when_percent_zero() {
+        let _guard = config_lock().lock().unwrap();
         assert!(!collect_rollout(0));
     }
 }

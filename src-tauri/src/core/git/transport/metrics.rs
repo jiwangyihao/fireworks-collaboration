@@ -257,6 +257,8 @@ mod tests {
 
     #[test]
     fn finish_respects_metrics_enabled_flag() {
+        let _lock = metrics_env_lock().lock().unwrap();
+        
         tl_reset();
         test_override_metrics_enabled(Some(false));
         let mut recorder = TimingRecorder::new();
