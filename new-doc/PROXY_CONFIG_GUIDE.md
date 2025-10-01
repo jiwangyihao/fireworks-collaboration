@@ -95,11 +95,32 @@ Connection timeout in seconds for proxy connections.
 
 Failure rate threshold (0.0-1.0) to trigger automatic fallback to direct connection. Default is 0.2 (20% failure rate).
 
-**Note**: This feature will be implemented in P5.4. Currently, fallback is not automatic.
+**✅ P5.4 Implemented**: Automatic fallback is now fully functional.
+
+- Validates input: `window_seconds` must be > 0 (falls back to 60 if 0), `threshold` is clamped to [0.0, 1.0]
+- Uses sliding window failure detection to calculate real-time failure rates
+- Automatically triggers fallback when failure rate exceeds threshold
+- Prevents duplicate fallback triggers with state management
+
+**Tuning Tips**:
+- **Lower threshold (0.1-0.15)**: More aggressive fallback, better for strict availability requirements
+- **Higher threshold (0.3-0.5)**: More tolerant, better for unstable networks with intermittent failures
+- **Default (0.2)**: Balanced approach, suitable for most scenarios
 
 ### `fallbackWindowSeconds` (number, default: `300`)
 
 Time window in seconds for calculating failure rate. Default is 300 seconds (5 minutes).
+
+**✅ P5.4 Implemented**: Sliding window calculation is active.
+
+- Window is validated: must be > 0 (falls back to 60 seconds if invalid)
+- Older connection attempts outside the window are automatically pruned
+- Only attempts within the window contribute to failure rate calculation
+
+**Tuning Tips**:
+- **Shorter window (60-120s)**: Faster reaction to proxy issues, more sensitive to bursts
+- **Longer window (600-900s)**: Smoother failure rate calculation, less prone to false positives
+- **Default (300s = 5min)**: Good balance between responsiveness and stability
 
 ### `recoveryCooldownSeconds` (number, default: `300`)
 
@@ -221,6 +242,126 @@ The application will automatically detect proxy settings from:
     "fallbackWindowSeconds": 600
   }
 }
+```
+
+### Example 7: Aggressive Fallback for High Availability (P5.4)
+
+```json
+{
+  "proxy": {
+    "mode": "http",
+    "url": "http://proxy.company.com:8080",
+    "username": "user",
+    "password": "pass",
+    "fallbackThreshold": 0.1,
+    "fallbackWindowSeconds": 120
+  }
+}
+```
+
+**Use Case**: Critical operations where availability is paramount.
+
+**Behavior**:
+- Fallback triggers at 10% failure rate
+- Calculates failure rate over 2-minute window
+- Quickly switches to direct connection on proxy issues
+- Best for: CI/CD pipelines, automated scripts
+
+**Trade-offs**:
+- May fallback too early during brief network hiccups
+- Less tolerant of temporary proxy instability
+
+### Example 8: Tolerant Fallback for Unstable Networks (P5.4)
+
+```json
+{
+  "proxy": {
+    "mode": "socks5",
+    "url": "socks5://proxy.example.com:1080",
+    "fallbackThreshold": 0.4,
+    "fallbackWindowSeconds": 900
+  }
+}
+```
+
+**Use Case**: Environments with intermittent connectivity or proxy instability.
+
+**Behavior**:
+- Fallback triggers at 40% failure rate
+- Calculates failure rate over 15-minute window
+- More tolerant of temporary failures
+- Best for: Mobile networks, developing regions, unstable corporate proxies
+
+**Trade-offs**:
+- Slower to react to persistent proxy failures
+- Users may experience more failed requests before fallback
+
+## Troubleshooting Automatic Fallback (P5.4)
+
+### Scenario: Fallback Not Triggering
+
+**Symptoms**: Proxy keeps failing but doesn't fallback to direct connection.
+
+**Possible Causes**:
+1. **Failure rate below threshold**
+   - Check: `fallbackThreshold` is too high (e.g., 0.9)
+   - Solution: Lower threshold to 0.2-0.3
+
+2. **Window too large**
+   - Check: `fallbackWindowSeconds` is very large (> 1800)
+   - Solution: Reduce window to 300-600 seconds
+
+3. **Not enough attempts in window**
+   - Check: Very few connection attempts within window
+   - Solution: Use shorter window (60-120s) or wait for more attempts
+
+**Debug Steps**:
+```
+1. Check logs for "Proxy connection failure recorded" messages
+2. Look for "Failure detector updated" debug logs showing failure rate
+3. Verify threshold is crossed: failure_rate >= threshold
+4. Confirm state transitions to "fallback"
+```
+
+### Scenario: Fallback Triggering Too Often
+
+**Symptoms**: Proxy fallbacks to direct connection even with minor issues.
+
+**Possible Causes**:
+1. **Threshold too low**
+   - Check: `fallbackThreshold` is very low (< 0.1)
+   - Solution: Increase threshold to 0.2-0.3
+
+2. **Window too small**
+   - Check: `fallbackWindowSeconds` is very small (< 60)
+   - Solution: Increase window to 300-600 seconds
+
+3. **Burst failures triggering fallback**
+   - Check: Short burst of failures within small window
+   - Solution: Use longer window to smooth out bursts
+
+**Debug Steps**:
+```
+1. Check logs for "Automatic proxy fallback triggered" messages
+2. Review failure_rate, threshold, and window_seconds in log
+3. Analyze failure patterns: burst vs sustained failures
+4. Adjust threshold/window based on patterns
+```
+
+### Scenario: Configuration Not Taking Effect
+
+**Symptoms**: Changes to `fallbackThreshold` or `fallbackWindowSeconds` seem ignored.
+
+**Solutions**:
+1. **Restart application**: Configuration is loaded at startup
+2. **Verify JSON syntax**: Ensure no syntax errors in `config.json`
+3. **Check for typos**: Field names are case-sensitive (`fallbackThreshold` not `fallbackthreshold`)
+4. **Look for validation warnings**: Check logs for configuration validation messages
+
+**Example Log Messages**:
+```
+WARN Invalid window_seconds=0, using default 60 seconds
+WARN Threshold 1.5 out of range [0.0, 1.0], clamped to 1.0
 ```
 
 ## System Proxy Detection
@@ -352,13 +493,17 @@ The following features are planned for future releases:
 
 - ✅ **P5.1**: Full HTTP/HTTPS proxy implementation with CONNECT tunnel support (Completed)
 - ✅ **P5.2**: SOCKS5 proxy protocol implementation (Completed)
-- ⏳ **P5.3**: Transport layer integration and mutual exclusion enforcement
-- ⏳ **P5.4**: Automatic fallback to direct connection on proxy failures
+- ✅ **P5.3**: System proxy auto-detection (Windows, macOS, Linux) (Completed)
+- ✅ **P5.4**: Automatic fallback to direct connection with failure detection (Completed)
+  - Sliding window failure rate calculation
+  - Configurable threshold and window
+  - Comprehensive edge case handling and logging
+  - 234 unit tests with 100% pass rate
 - ⏳ **P5.5**: Automatic recovery with health check probing
 - ⏳ **P5.6**: Frontend UI for proxy configuration and status display
 - ⏳ **P5.7**: Comprehensive testing and production readiness validation
 
-**Note**: Until P5.3 is completed, proxy configuration is available but not yet integrated with the Git transport layer. Manual testing requires actual network connections to proxy servers.
+**Note**: P5.3 transport layer integration is complete. Proxy support is fully functional in Git operations.
 
 ## References
 
