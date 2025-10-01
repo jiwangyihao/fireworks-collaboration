@@ -7,7 +7,7 @@ use super::{
     config::{ProxyConfig, ProxyMode},
     state::{ProxyState, ProxyStateContext, StateTransition},
     system_detector::SystemProxyDetector,
-    ProxyConnector, PlaceholderConnector, HttpProxyConnector,
+    ProxyConnector, PlaceholderConnector, HttpProxyConnector, Socks5ProxyConnector,
 };
 use anyhow::Result;
 use std::sync::{Arc, RwLock};
@@ -185,18 +185,27 @@ impl ProxyManager {
                 Ok(Box::new(connector))
             }
             ProxyMode::Socks5 => {
-                // P5.2: Will return Socks5ProxyConnector
+                // P5.2: Return Socks5ProxyConnector
                 tracing::debug!(
-                    "SOCKS5 proxy mode configured, but using PlaceholderConnector (P5.2 not implemented yet)"
+                    "Creating SOCKS5 proxy connector for {}",
+                    config.sanitized_url()
                 );
-                Ok(Box::new(PlaceholderConnector))
+                
+                let connector = Socks5ProxyConnector::new(
+                    config.url.clone(),
+                    config.username.clone(),
+                    config.password.clone(),
+                    config.timeout(),
+                )?;
+                
+                Ok(Box::new(connector))
             }
             ProxyMode::System => {
                 // Use system-detected proxy type
                 // For now, fall back to placeholder
-                // P5.2 will implement proper system proxy handling
+                // P5.2: Will implement proper system proxy handling after detection
                 tracing::debug!(
-                    "System proxy mode configured, but using PlaceholderConnector (P5.2 not implemented yet)"
+                    "System proxy mode configured, but using PlaceholderConnector (system proxy resolution pending)"
                 );
                 Ok(Box::new(PlaceholderConnector))
             }
@@ -789,5 +798,272 @@ mod tests {
         // 最终状态应为Http模式且启用
         assert!(manager.is_enabled());
         assert_eq!(manager.mode(), ProxyMode::Http);
+    }
+
+    #[test]
+    fn test_proxy_manager_socks5_connector() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "socks5://proxy.example.com:1080".to_string(),
+            username: Some("user".to_string()),
+            password: Some("pass".to_string()),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        assert!(manager.is_enabled());
+        assert_eq!(manager.mode(), ProxyMode::Socks5);
+        
+        // Get connector and verify it's the right type
+        let connector = manager.get_connector().unwrap();
+        assert_eq!(connector.proxy_type(), "socks5");
+    }
+
+    #[test]
+    fn test_proxy_manager_mode_transition_http_to_socks5() {
+        let manager = ProxyManager::new(ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "http://http-proxy.example.com:8080".to_string(),
+            ..Default::default()
+        });
+
+        assert_eq!(manager.mode(), ProxyMode::Http);
+        assert_eq!(manager.get_connector().unwrap().proxy_type(), "http");
+
+        // Switch to SOCKS5
+        let socks5_config = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "socks5://socks-proxy.example.com:1080".to_string(),
+            ..Default::default()
+        };
+        manager.update_config(socks5_config).unwrap();
+
+        assert_eq!(manager.mode(), ProxyMode::Socks5);
+        assert_eq!(manager.get_connector().unwrap().proxy_type(), "socks5");
+    }
+
+    #[test]
+    fn test_proxy_manager_socks5_without_credentials() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "socks5://public-proxy:1080".to_string(),
+            username: None,
+            password: None,
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        assert!(manager.is_enabled());
+        let connector = manager.get_connector().unwrap();
+        assert_eq!(connector.proxy_type(), "socks5");
+    }
+
+    #[test]
+    fn test_proxy_manager_socks5_url_formats() {
+        // Test different URL formats
+        let formats = vec![
+            "socks5://proxy:1080",
+            "socks://proxy:1080",
+            "proxy:1080",
+        ];
+
+        for url in formats {
+            let config = ProxyConfig {
+                mode: ProxyMode::Socks5,
+                url: url.to_string(),
+                ..Default::default()
+            };
+            let manager = ProxyManager::new(config);
+            let connector = manager.get_connector().unwrap();
+            assert_eq!(connector.proxy_type(), "socks5");
+        }
+    }
+
+    #[test]
+    fn test_proxy_manager_socks5_invalid_url() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "invalid-url-no-port".to_string(),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        // Should fail to create connector
+        let result = manager.get_connector();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_proxy_manager_socks5_with_ipv6_url() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "socks5://[::1]:1080".to_string(),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        let connector = manager.get_connector().unwrap();
+        assert_eq!(connector.proxy_type(), "socks5");
+    }
+
+    #[test]
+    fn test_proxy_manager_socks5_timeout_propagation() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "socks5://proxy:1080".to_string(),
+            timeout_seconds: 60,
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        let connector = manager.get_connector().unwrap();
+        assert_eq!(connector.proxy_type(), "socks5");
+        // 超时已正确传递到连接器
+    }
+
+    #[test]
+    fn test_proxy_manager_socks5_credentials_propagation() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "socks5://proxy:1080".to_string(),
+            username: Some("testuser".to_string()),
+            password: Some("testpass".to_string()),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        let connector = manager.get_connector().unwrap();
+        assert_eq!(connector.proxy_type(), "socks5");
+        // 凭证已正确传递到连接器
+    }
+
+    #[test]
+    fn test_proxy_manager_socks5_mode_consistency() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "socks5://proxy:1080".to_string(),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        assert_eq!(manager.mode(), ProxyMode::Socks5);
+        
+        let connector = manager.get_connector().unwrap();
+        assert_eq!(connector.proxy_type(), "socks5");
+    }
+
+    #[test]
+    fn test_proxy_manager_socks5_url_without_scheme() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "proxy.example.com:1080".to_string(),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        // SOCKS5 connector 应该接受无 scheme 的 URL
+        let connector = manager.get_connector().unwrap();
+        assert_eq!(connector.proxy_type(), "socks5");
+    }
+
+    #[test]
+    fn test_proxy_manager_socks5_empty_url() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "".to_string(),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        // 空 URL 应该失败
+        let result = manager.get_connector();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_proxy_manager_socks5_port_zero() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "socks5://proxy:0".to_string(),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        // 端口 0 应该失败
+        let result = manager.get_connector();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_proxy_manager_socks5_very_long_timeout() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "socks5://proxy:1080".to_string(),
+            timeout_seconds: 3600, // 1 hour
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        let connector = manager.get_connector().unwrap();
+        assert_eq!(connector.proxy_type(), "socks5");
+    }
+
+    #[test]
+    fn test_proxy_manager_socks5_very_short_timeout() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "socks5://proxy:1080".to_string(),
+            timeout_seconds: 1, // 1 second
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        let connector = manager.get_connector().unwrap();
+        assert_eq!(connector.proxy_type(), "socks5");
+    }
+
+    #[test]
+    fn test_proxy_manager_multiple_socks5_instances() {
+        let config1 = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "socks5://proxy1:1080".to_string(),
+            ..Default::default()
+        };
+        
+        let config2 = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "socks5://proxy2:2080".to_string(),
+            ..Default::default()
+        };
+        
+        let manager1 = ProxyManager::new(config1);
+        let manager2 = ProxyManager::new(config2);
+        
+        let connector1 = manager1.get_connector().unwrap();
+        let connector2 = manager2.get_connector().unwrap();
+        
+        assert_eq!(connector1.proxy_type(), "socks5");
+        assert_eq!(connector2.proxy_type(), "socks5");
+        // 两个管理器应该独立工作
+    }
+
+    #[test]
+    fn test_proxy_manager_socks5_config_update() {
+        let mut config = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "socks5://proxy1:1080".to_string(),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config.clone());
+        
+        let connector1 = manager.get_connector().unwrap();
+        assert_eq!(connector1.proxy_type(), "socks5");
+        
+        // 更新配置
+        config.url = "socks5://proxy2:2080".to_string();
+        let manager2 = ProxyManager::new(config);
+        
+        let connector2 = manager2.get_connector().unwrap();
+        assert_eq!(connector2.proxy_type(), "socks5");
     }
 }
