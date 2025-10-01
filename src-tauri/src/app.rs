@@ -6,6 +6,7 @@ use crate::core::{
         types::{HttpRequestInput, HttpResponseOutput, RedirectInfo},
     },
     ip_pool::{self, IpPool},
+    proxy::{ProxyManager, ProxyMode},
     tasks::{SharedTaskRegistry, TaskKind, TaskRegistry, TaskSnapshot},
     tls::util::match_domain,
 };
@@ -54,6 +55,7 @@ type SharedConfig = Arc<Mutex<AppConfig>>;
 type ConfigBaseDir = PathBuf;
 type TaskRegistryState = SharedTaskRegistry;
 type SharedIpPool = Arc<Mutex<IpPool>>;
+type SharedProxyManager = Arc<Mutex<ProxyManager>>;
 
 // ===== Commands =====
 #[tauri::command]
