@@ -87,6 +87,7 @@ path = "soak/main.rs"
 # Windows specific dependencies for registry access
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winreg", "winnt", "minwindef"] }
+winreg = "0.52"
 
 [[test]]
 name = "git_init_and_repo_structure"
