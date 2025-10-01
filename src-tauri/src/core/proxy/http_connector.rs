@@ -4,7 +4,6 @@
 //! Supports Basic authentication and timeout control.
 
 use super::{ProxyConnector, ProxyError};
-use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -156,12 +155,11 @@ impl HttpProxyConnector {
 }
 
 impl ProxyConnector for HttpProxyConnector {
-    fn connect(&self, host: &str, port: u16) -> Result<TcpStream> {
+    fn connect(&self, host: &str, port: u16) -> Result<TcpStream, ProxyError> {
         let start_time = Instant::now();
         
         // Parse proxy URL
-        let (proxy_host, proxy_port) = self.parse_proxy_url()
-            .map_err(|e| anyhow::anyhow!("Proxy configuration error: {}", e))?;
+        let (proxy_host, proxy_port) = self.parse_proxy_url()?;
 
         // Sanitize proxy URL for logging (hide credentials)
         let sanitized_url = if self.username.is_some() {
@@ -183,9 +181,9 @@ impl ProxyConnector for HttpProxyConnector {
         // Resolve proxy address
         let proxy_addr = format!("{}:{}", proxy_host, proxy_port)
             .to_socket_addrs()
-            .context("Failed to resolve proxy address")?
+            .map_err(|e| ProxyError::network(format!("Failed to resolve proxy address: {e}")))?
             .next()
-            .ok_or_else(|| anyhow::anyhow!("No addresses resolved for proxy"))?;
+            .ok_or_else(|| ProxyError::network("No addresses resolved for proxy".to_string()))?;
 
         tracing::debug!("Resolved proxy address: {}", proxy_addr);
 
@@ -199,9 +197,9 @@ impl ProxyConnector for HttpProxyConnector {
                     "Failed to connect to proxy server"
                 );
                 if elapsed >= self.timeout {
-                    anyhow::anyhow!("Proxy connection timeout: {}", ProxyError::timeout(e.to_string()))
+                    ProxyError::timeout(format!("Proxy connection timeout: {e}"))
                 } else {
-                    anyhow::anyhow!("Proxy connection failed: {}", ProxyError::network(e.to_string()))
+                    ProxyError::network(format!("Proxy connection failed: {e}"))
                 }
             })?;
 
@@ -212,9 +210,9 @@ impl ProxyConnector for HttpProxyConnector {
 
         // Set read/write timeouts
         stream.set_read_timeout(Some(self.timeout))
-            .context("Failed to set read timeout")?;
+            .map_err(|e| ProxyError::network(format!("Failed to set read timeout: {e}")))?;
         stream.set_write_timeout(Some(self.timeout))
-            .context("Failed to set write timeout")?;
+            .map_err(|e| ProxyError::network(format!("Failed to set write timeout: {e}")))?;
 
         // Send CONNECT request
         self.send_connect_request(&mut stream, host, port)
@@ -225,7 +223,7 @@ impl ProxyConnector for HttpProxyConnector {
                     elapsed_ms = start_time.elapsed().as_millis(),
                     "CONNECT request failed"
                 );
-                anyhow::anyhow!("HTTP proxy CONNECT failed: {}", e)
+                e
             })?;
 
         let total_elapsed = start_time.elapsed();

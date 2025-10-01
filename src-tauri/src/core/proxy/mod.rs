@@ -11,6 +11,7 @@ pub mod errors;
 pub mod events;
 pub mod http_connector;
 pub mod manager;
+pub mod socks5_connector;
 pub mod state;
 pub mod system_detector;
 
@@ -21,10 +22,10 @@ pub use events::{
 };
 pub use http_connector::HttpProxyConnector;
 pub use manager::ProxyManager;
+pub use socks5_connector::Socks5ProxyConnector;
 pub use state::{ProxyState, ProxyStateContext, StateTransition};
 pub use system_detector::SystemProxyDetector;
 
-use anyhow::Result;
 use std::net::TcpStream;
 
 /// Trait for proxy connectors
@@ -39,11 +40,13 @@ pub trait ProxyConnector: Send + Sync {
     /// * `port` - Target port to connect to
     /// 
     /// # Returns
-    /// A TCP stream connected through the proxy, or an error
-    fn connect(&self, host: &str, port: u16) -> Result<TcpStream>;
+    /// A TCP stream connected through the proxy, or a ProxyError
+    fn connect(&self, host: &str, port: u16) -> Result<TcpStream, ProxyError>;
     
     /// Get the proxy type name for logging
-    fn proxy_type(&self) -> &str;
+    fn proxy_type(&self) -> &str {
+        "unknown"
+    }
 }
 
 /// Placeholder proxy connector that always falls back to direct connection
@@ -53,10 +56,10 @@ pub trait ProxyConnector: Send + Sync {
 pub struct PlaceholderConnector;
 
 impl ProxyConnector for PlaceholderConnector {
-    fn connect(&self, host: &str, port: u16) -> Result<TcpStream> {
+    fn connect(&self, host: &str, port: u16) -> Result<TcpStream, ProxyError> {
         tracing::debug!("PlaceholderConnector: falling back to direct connection to {host}:{port}");
         TcpStream::connect((host, port))
-            .map_err(|e| anyhow::anyhow!("Direct connection failed: {}", e))
+            .map_err(|e| ProxyError::network(format!("Direct connection failed: {e}")))
     }
     
     fn proxy_type(&self) -> &str {
