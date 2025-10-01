@@ -44,7 +44,7 @@ pub fn git_add<F: FnMut(ProgressPayload)>(
         if Path::new(t).is_absolute() {
             return Err(GitError::new(
                 ErrorCategory::Protocol,
-                format!("absolute path not allowed: {}", t),
+                format!("absolute path not allowed: {t}"),
             ));
         }
         if seen.insert(t.to_string()) {
@@ -64,7 +64,7 @@ pub fn git_add<F: FnMut(ProgressPayload)>(
     let workdir_canon = std::fs::canonicalize(workdir).map_err(|e| {
         GitError::new(
             ErrorCategory::Internal,
-            format!("canonicalize workdir: {}", e),
+            format!("canonicalize workdir: {e}"),
         )
     })?;
     let total = uniq.len() as u32;
@@ -82,16 +82,16 @@ pub fn git_add<F: FnMut(ProgressPayload)>(
         if !p_abs.exists() {
             return Err(GitError::new(
                 ErrorCategory::Protocol,
-                format!("path does not exist: {}", raw),
+                format!("path does not exist: {raw}"),
             ));
         }
         let p_canon = std::fs::canonicalize(&p_abs).map_err(|e| {
-            GitError::new(ErrorCategory::Internal, format!("canonicalize path: {}", e))
+            GitError::new(ErrorCategory::Internal, format!("canonicalize path: {e}"))
         })?;
         if !p_canon.starts_with(&workdir_canon) {
             return Err(GitError::new(
                 ErrorCategory::Protocol,
-                format!("path outside workdir: {}", raw),
+                format!("path outside workdir: {raw}"),
             ));
         }
         let rel = match p_canon.strip_prefix(&workdir_canon) {
