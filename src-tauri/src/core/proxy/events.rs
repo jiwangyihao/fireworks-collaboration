@@ -49,42 +49,58 @@ impl ProxyStateEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProxyFallbackEvent {
-    /// Number of consecutive failures that triggered the fallback
-    pub consecutive_failures: u32,
+    /// Reason for fallback (e.g., "Failure rate exceeded threshold")
+    pub reason: String,
     
-    /// Last error message (sanitized)
-    pub last_error: String,
+    /// Total number of failures in the sliding window
+    pub failure_count: usize,
+    
+    /// Sliding window duration in seconds
+    pub window_seconds: u64,
+    
+    /// Timestamp when fallback was triggered (Unix epoch seconds)
+    pub fallback_at: u64,
+    
+    /// Failure rate that triggered the fallback (0.0 to 1.0)
+    pub failure_rate: f64,
     
     /// Proxy URL (sanitized, no credentials)
     pub proxy_url: String,
     
     /// Whether fallback was automatic or manual
     pub is_automatic: bool,
-    
-    /// Timestamp of the fallback (Unix epoch seconds)
-    pub timestamp: u64,
 }
 
 impl ProxyFallbackEvent {
-    /// Create a new automatic fallback event
-    pub fn automatic(consecutive_failures: u32, last_error: String, proxy_url: String) -> Self {
+    /// Create a new automatic fallback event from failure detector stats
+    pub fn automatic(
+        reason: String,
+        failure_count: usize,
+        window_seconds: u64,
+        failure_rate: f64,
+        proxy_url: String,
+    ) -> Self {
         Self {
-            consecutive_failures,
-            last_error,
+            reason,
+            failure_count,
+            window_seconds,
+            fallback_at: current_timestamp(),
+            failure_rate,
             proxy_url,
             is_automatic: true,
-            timestamp: current_timestamp(),
         }
     }
     
     /// Create a new manual fallback event
     pub fn manual(reason: String, proxy_url: String) -> Self {
         Self {
-            consecutive_failures: 0,
-            last_error: reason,
+            reason,
+            failure_count: 0,
+            window_seconds: 0,
+            fallback_at: current_timestamp(),
+            failure_rate: 0.0,
             proxy_url,
             is_automatic: false,
-            timestamp: current_timestamp(),
         }
     }
 }
@@ -217,15 +233,19 @@ mod tests {
     #[test]
     fn test_proxy_fallback_event_automatic() {
         let event = ProxyFallbackEvent::automatic(
+            "Failure rate exceeded threshold".to_string(),
             5,
-            "Connection timeout".to_string(),
+            300,
+            0.5,
             "http://proxy.example.com:8080".to_string(),
         );
         
-        assert_eq!(event.consecutive_failures, 5);
-        assert_eq!(event.last_error, "Connection timeout");
+        assert_eq!(event.reason, "Failure rate exceeded threshold");
+        assert_eq!(event.failure_count, 5);
+        assert_eq!(event.window_seconds, 300);
+        assert_eq!(event.failure_rate, 0.5);
         assert!(event.is_automatic);
-        assert!(event.timestamp > 0);
+        assert!(event.fallback_at > 0);
     }
 
     #[test]
@@ -235,10 +255,12 @@ mod tests {
             "http://proxy.example.com:8080".to_string(),
         );
         
-        assert_eq!(event.consecutive_failures, 0);
-        assert_eq!(event.last_error, "User requested fallback");
+        assert_eq!(event.reason, "User requested fallback");
+        assert_eq!(event.failure_count, 0);
+        assert_eq!(event.window_seconds, 0);
+        assert_eq!(event.failure_rate, 0.0);
         assert!(!event.is_automatic);
-        assert!(event.timestamp > 0);
+        assert!(event.fallback_at > 0);
     }
 
     #[test]
@@ -309,15 +331,17 @@ mod tests {
         assert!(!json.contains("previous_state")); // snake_case should not be present
         
         let fallback_event = ProxyFallbackEvent::automatic(
+            "Timeout threshold exceeded".to_string(),
             3,
-            "Timeout".to_string(),
+            300,
+            0.3,
             "http://proxy.example.com".to_string(),
         );
         
         let json = serde_json::to_string(&fallback_event).unwrap();
-        assert!(json.contains("consecutiveFailures"));
+        assert!(json.contains("failureCount"));
         assert!(json.contains("isAutomatic"));
-        assert!(!json.contains("consecutive_failures")); // snake_case should not be present
+        assert!(!json.contains("failure_count")); // snake_case should not be present
     }
 
     #[test]
@@ -347,8 +371,10 @@ mod tests {
         
         // Fallback event (automatic)
         let fallback_auto = ProxyFallbackEvent::automatic(
+            "Error threshold exceeded".to_string(),
             5,
-            "Error".to_string(),
+            300,
+            0.5,
             "http://proxy.example.com".to_string(),
         );
         let json = serde_json::to_string(&fallback_auto).unwrap();
@@ -398,13 +424,17 @@ mod tests {
     #[test]
     fn test_fallback_event_fields() {
         let auto_event = ProxyFallbackEvent::automatic(
+            "Connection timeout threshold exceeded".to_string(),
             10,
-            "Connection timeout".to_string(),
+            300,
+            0.4,
             "http://proxy.example.com:8080".to_string(),
         );
         
-        assert_eq!(auto_event.consecutive_failures, 10);
-        assert_eq!(auto_event.last_error, "Connection timeout");
+        assert_eq!(auto_event.reason, "Connection timeout threshold exceeded");
+        assert_eq!(auto_event.failure_count, 10);
+        assert_eq!(auto_event.window_seconds, 300);
+        assert_eq!(auto_event.failure_rate, 0.4);
         assert_eq!(auto_event.proxy_url, "http://proxy.example.com:8080");
         assert!(auto_event.is_automatic);
         
@@ -413,8 +443,10 @@ mod tests {
             "http://proxy.example.com:8080".to_string(),
         );
         
-        assert_eq!(manual_event.consecutive_failures, 0);
-        assert_eq!(manual_event.last_error, "User intervention");
+        assert_eq!(manual_event.reason, "User intervention");
+        assert_eq!(manual_event.failure_count, 0);
+        assert_eq!(manual_event.window_seconds, 0);
+        assert_eq!(manual_event.failure_rate, 0.0);
         assert!(!manual_event.is_automatic);
     }
 
