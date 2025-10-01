@@ -7,15 +7,19 @@
 //! - Automatic fallback and recovery mechanisms (to be implemented in P5.4/P5.5)
 
 pub mod config;
+pub mod errors;
 pub mod events;
+pub mod http_connector;
 pub mod manager;
 pub mod state;
 pub mod system_detector;
 
 pub use config::{ProxyConfig, ProxyMode};
+pub use errors::ProxyError;
 pub use events::{
     ProxyFallbackEvent, ProxyHealthCheckEvent, ProxyRecoveredEvent, ProxyStateEvent,
 };
+pub use http_connector::HttpProxyConnector;
 pub use manager::ProxyManager;
 pub use state::{ProxyState, ProxyStateContext, StateTransition};
 pub use system_detector::SystemProxyDetector;

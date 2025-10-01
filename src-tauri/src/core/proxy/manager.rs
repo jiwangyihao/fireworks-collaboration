@@ -7,7 +7,7 @@ use super::{
     config::{ProxyConfig, ProxyMode},
     state::{ProxyState, ProxyStateContext, StateTransition},
     system_detector::SystemProxyDetector,
-    ProxyConnector, PlaceholderConnector,
+    ProxyConnector, PlaceholderConnector, HttpProxyConnector,
 };
 use anyhow::Result;
 use std::sync::{Arc, RwLock};
@@ -154,23 +154,49 @@ impl ProxyManager {
     
     /// Get a proxy connector instance
     /// 
-    /// In P5.0, this returns a PlaceholderConnector.
-    /// In P5.1/P5.2, this will return actual HTTP or SOCKS5 connectors.
+    /// Returns the appropriate connector based on the current proxy mode:
+    /// - Off: PlaceholderConnector (direct connection)
+    /// - Http: HttpProxyConnector (P5.1)
+    /// - Socks5: PlaceholderConnector (P5.2 will implement Socks5ProxyConnector)
+    /// - System: Based on detected system proxy type
     pub fn get_connector(&self) -> Result<Box<dyn ProxyConnector>> {
         let config = self.config.read().unwrap();
         
         match config.mode {
             ProxyMode::Off => {
                 // No proxy, return placeholder (falls back to direct)
+                tracing::debug!("Proxy mode is Off, using direct connection");
                 Ok(Box::new(PlaceholderConnector))
             }
-            ProxyMode::Http | ProxyMode::Socks5 | ProxyMode::System => {
-                // P5.0: Return placeholder
-                // P5.1: Will return HttpProxyConnector
-                // P5.2: Will return Socks5ProxyConnector based on config.mode
+            ProxyMode::Http => {
+                // P5.1: Return HttpProxyConnector
                 tracing::debug!(
-                    "Proxy mode {:?} configured, but returning PlaceholderConnector (P5.0)",
-                    config.mode
+                    "Creating HTTP proxy connector for {}",
+                    config.sanitized_url()
+                );
+                
+                let connector = HttpProxyConnector::new(
+                    config.url.clone(),
+                    config.username.clone(),
+                    config.password.clone(),
+                    config.timeout(),
+                );
+                
+                Ok(Box::new(connector))
+            }
+            ProxyMode::Socks5 => {
+                // P5.2: Will return Socks5ProxyConnector
+                tracing::debug!(
+                    "SOCKS5 proxy mode configured, but using PlaceholderConnector (P5.2 not implemented yet)"
+                );
+                Ok(Box::new(PlaceholderConnector))
+            }
+            ProxyMode::System => {
+                // Use system-detected proxy type
+                // For now, fall back to placeholder
+                // P5.2 will implement proper system proxy handling
+                tracing::debug!(
+                    "System proxy mode configured, but using PlaceholderConnector (P5.2 not implemented yet)"
                 );
                 Ok(Box::new(PlaceholderConnector))
             }
@@ -341,11 +367,20 @@ mod tests {
 
     #[test]
     fn test_proxy_manager_get_connector() {
+        // Test Off mode - should return placeholder
         let manager = ProxyManager::default();
-        
-        // Should return placeholder connector
         let connector = manager.get_connector().unwrap();
         assert_eq!(connector.proxy_type(), "placeholder");
+        
+        // Test HTTP mode - should return http connector
+        let http_config = ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "http://proxy.example.com:8080".to_string(),
+            ..Default::default()
+        };
+        let http_manager = ProxyManager::new(http_config);
+        let http_connector = http_manager.get_connector().unwrap();
+        assert_eq!(http_connector.proxy_type(), "http");
     }
 
     #[test]
@@ -594,5 +629,165 @@ mod tests {
         assert_eq!(context.state, ProxyState::Enabled);
         assert_eq!(context.consecutive_failures, 2);
         assert_eq!(context.consecutive_successes, 0);
+    }
+
+    #[test]
+    fn test_proxy_manager_connector_type_changes_with_mode() {
+        let manager = ProxyManager::default();
+        
+        // Initially Off mode - should return placeholder
+        let connector = manager.get_connector().unwrap();
+        assert_eq!(connector.proxy_type(), "placeholder");
+        
+        // Update to HTTP mode
+        let http_config = ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "http://proxy.example.com:8080".to_string(),
+            ..Default::default()
+        };
+        manager.update_config(http_config).unwrap();
+        
+        // Should now return HTTP connector
+        let connector = manager.get_connector().unwrap();
+        assert_eq!(connector.proxy_type(), "http");
+        
+        // Update back to Off
+        manager.update_config(ProxyConfig::default()).unwrap();
+        
+        // Should return placeholder again
+        let connector = manager.get_connector().unwrap();
+        assert_eq!(connector.proxy_type(), "placeholder");
+    }
+
+    #[test]
+    fn test_proxy_manager_http_connector_uses_config() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "http://myproxy.com:9090".to_string(),
+            username: Some("testuser".to_string()),
+            password: Some("testpass".to_string()),
+            timeout_seconds: 45,
+            ..Default::default()
+        };
+        
+        let manager = ProxyManager::new(config);
+        
+        // Get connector and verify it's HTTP type
+        let connector = manager.get_connector().unwrap();
+        assert_eq!(connector.proxy_type(), "http");
+        
+        // Verify manager state matches config
+        assert_eq!(manager.mode(), ProxyMode::Http);
+        assert!(manager.is_enabled());
+    }
+
+    #[test]
+    fn test_proxy_manager_multiple_config_updates() {
+        let manager = ProxyManager::default();
+        
+        for i in 0..5 {
+            let config = ProxyConfig {
+                mode: ProxyMode::Http,
+                url: format!("http://proxy{}.example.com:8080", i),
+                ..Default::default()
+            };
+            
+            manager.update_config(config).unwrap();
+            assert!(manager.is_enabled());
+            assert_eq!(manager.mode(), ProxyMode::Http);
+        }
+    }
+
+    #[test]
+    fn test_proxy_manager_failure_success_cycle() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "http://proxy.example.com:8080".to_string(),
+            ..Default::default()
+        };
+        
+        let manager = ProxyManager::new(config);
+        
+        // Record failures
+        for _ in 0..3 {
+            manager.report_failure("Connection error");
+        }
+        
+        let ctx = manager.get_state_context();
+        assert_eq!(ctx.consecutive_failures, 3);
+        assert_eq!(ctx.consecutive_successes, 0);
+        
+        // Record success - should reset failure counter
+        manager.report_success();
+        
+        let ctx = manager.get_state_context();
+        assert_eq!(ctx.consecutive_failures, 0);
+        assert_eq!(ctx.consecutive_successes, 1);
+    }
+
+    #[test]
+    fn test_proxy_manager_extreme_timeout_config() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "http://proxy.example.com:8080".to_string(),
+            timeout_seconds: 24 * 3600, // 24小时
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        assert!(manager.is_enabled());
+        assert_eq!(manager.mode(), ProxyMode::Http);
+        assert_eq!(manager.state(), ProxyState::Enabled);
+    }
+
+    #[test]
+    fn test_proxy_manager_empty_url_config() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "".to_string(),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        // 空URL应被视为无效，is_enabled为false
+        assert!(!manager.is_enabled());
+        assert_eq!(manager.state(), ProxyState::Disabled);
+    }
+
+    #[test]
+    fn test_proxy_manager_no_mode_config() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Off,
+            url: "http://proxy.example.com:8080".to_string(),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        assert!(!manager.is_enabled());
+        assert_eq!(manager.state(), ProxyState::Disabled);
+    }
+
+    #[test]
+    fn test_proxy_manager_multithreaded_config_switching() {
+        use std::sync::Arc;
+        use std::thread;
+        let manager = Arc::new(ProxyManager::default());
+        let mut handles = vec![];
+        for i in 0..10 {
+            let manager_clone = Arc::clone(&manager);
+            let url = format!("http://proxy{}.example.com:8080", i);
+            let handle = thread::spawn(move || {
+                let config = ProxyConfig {
+                    mode: ProxyMode::Http,
+                    url,
+                    ..Default::default()
+                };
+                let _ = manager_clone.update_config(config);
+            });
+            handles.push(handle);
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        // 最终状态应为Http模式且启用
+        assert!(manager.is_enabled());
+        assert_eq!(manager.mode(), ProxyMode::Http);
     }
 }
