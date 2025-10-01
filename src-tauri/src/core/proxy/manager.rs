@@ -1066,4 +1066,71 @@ mod tests {
         let connector2 = manager2.get_connector().unwrap();
         assert_eq!(connector2.proxy_type(), "socks5");
     }
+
+    // P5.3: Tests for custom transport disable logic
+    #[test]
+    fn test_proxy_manager_should_disable_custom_transport_when_proxy_enabled() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "http://proxy:8080".to_string(),
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        // 代理启用时应该禁用自定义传输层
+        assert!(manager.should_disable_custom_transport());
+    }
+
+    #[test]
+    fn test_proxy_manager_should_not_disable_when_proxy_off() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Off,
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        // 代理未启用时不应禁用自定义传输层（除非明确配置）
+        assert!(!manager.should_disable_custom_transport());
+    }
+
+    #[test]
+    fn test_proxy_manager_should_disable_custom_transport_when_configured() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Off,
+            disable_custom_transport: true,
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        // 即使代理未启用，如果明确配置禁用则应该禁用
+        assert!(manager.should_disable_custom_transport());
+    }
+
+    #[test]
+    fn test_proxy_manager_http_disables_custom_transport() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "http://proxy:8080".to_string(),
+            disable_custom_transport: false, // 即使设为false
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        // HTTP代理启用时强制禁用自定义传输层
+        assert!(manager.should_disable_custom_transport());
+    }
+
+    #[test]
+    fn test_proxy_manager_socks5_disables_custom_transport() {
+        let config = ProxyConfig {
+            mode: ProxyMode::Socks5,
+            url: "socks5://proxy:1080".to_string(),
+            disable_custom_transport: false, // 即使设为false
+            ..Default::default()
+        };
+        let manager = ProxyManager::new(config);
+        
+        // SOCKS5代理启用时强制禁用自定义传输层
+        assert!(manager.should_disable_custom_transport());
+    }
 }
