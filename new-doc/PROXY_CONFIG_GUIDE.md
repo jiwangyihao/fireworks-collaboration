@@ -1,8 +1,14 @@
-# Proxy Configuration Guide (P5.0)
+# Proxy Configuration Guide (P5.0-P5.2)
 
 ## Overview
 
 Starting from P5.0, the application supports proxy configuration for HTTP/HTTPS and SOCKS5 proxies, including automatic system proxy detection.
+
+**Implementation Status**:
+- ✅ **P5.0**: Base architecture, configuration model, state machine, system proxy detection
+- ✅ **P5.1**: HTTP/HTTPS proxy with CONNECT tunnel and Basic Auth
+- ✅ **P5.2**: SOCKS5 proxy with No Auth and Username/Password Auth
+- ⏳ **P5.3+**: Transport layer integration, automatic fallback/recovery (in development)
 
 ## Configuration Structure
 
@@ -154,7 +160,7 @@ All other fields will use default values when not specified.
 }
 ```
 
-### Example 4: SOCKS5 Proxy
+### Example 4: SOCKS5 Proxy Without Authentication
 
 ```json
 {
@@ -164,6 +170,27 @@ All other fields will use default values when not specified.
   }
 }
 ```
+
+**Note**: SOCKS5 proxy is fully implemented in P5.2, supporting:
+- No Auth (0x00) method
+- Username/Password Auth (0x02) method
+- IPv4, IPv6, and domain name address types
+- Comprehensive timeout control and error handling
+
+### Example 4b: SOCKS5 Proxy With Authentication
+
+```json
+{
+  "proxy": {
+    "mode": "socks5",
+    "url": "socks5://proxy.example.com:1080",
+    "username": "socksuser",
+    "password": "sockspass"
+  }
+}
+```
+
+When username and password are provided, the connector will use Username/Password authentication (method 0x02).
 
 ### Example 5: System Proxy Auto-Detection
 
@@ -179,6 +206,8 @@ The application will automatically detect proxy settings from:
 - **Windows**: Internet Settings registry (`HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings`)
 - **macOS**: Network preferences via `scutil --proxy`
 - **Linux**: Environment variables (`http_proxy`, `https_proxy`, `all_proxy`)
+
+**Detected Proxy Types**: The system can detect both HTTP and SOCKS5 proxies. The proxy type is determined from the URL scheme or system settings.
 
 ### Example 6: Custom Timeout and Fallback Settings
 
@@ -262,11 +291,32 @@ The proxy configuration supports hot reloading:
 
 ### Proxy connection fails
 
-1. Verify the proxy URL format is correct
+1. Verify the proxy URL format is correct:
+   - HTTP: `http://host:port` or `https://host:port`
+   - SOCKS5: `socks5://host:port` or `socks://host:port`
 2. Check username/password if authentication is required
 3. Ensure the proxy server is accessible from your network
 4. Increase `timeoutSeconds` if the network is slow
-5. Check application logs for detailed error messages
+5. Check application logs for detailed error messages:
+   - `ProxyError::Network`: Connection or DNS issues
+   - `ProxyError::Auth`: Authentication failure (407 for HTTP, auth failure for SOCKS5)
+   - `ProxyError::Proxy`: Proxy server errors or protocol issues
+   - `ProxyError::Timeout`: Connection timeout
+
+### SOCKS5-specific issues
+
+1. **Authentication method not supported**: Ensure your SOCKS5 server supports No Auth (0x00) or Username/Password (0x02) methods. GSSAPI and other methods are not yet supported.
+2. **Version mismatch**: The connector requires SOCKS5 (version 0x05). SOCKS4 is not supported.
+3. **Address type not supported**: Verify the target host can be resolved. The connector supports IPv4, IPv6, and domain names.
+4. **REP error codes**: Check logs for specific SOCKS5 response codes:
+   - `0x01`: General SOCKS server failure
+   - `0x02`: Connection not allowed by ruleset
+   - `0x03`: Network unreachable
+   - `0x04`: Host unreachable
+   - `0x05`: Connection refused
+   - `0x06`: TTL expired
+   - `0x07`: Command not supported
+   - `0x08`: Address type not supported
 
 ### System proxy detection not working
 
@@ -296,17 +346,19 @@ This is by design to prevent credential leakage. Full URLs with credentials are 
 
 4. **Trust**: Ensure you trust the proxy server, as it can see all your Git traffic.
 
-## Future Enhancements (P5.1-P5.7)
+## Future Enhancements (P5.3-P5.7)
 
 The following features are planned for future releases:
 
-- **P5.1**: Full HTTP/HTTPS proxy implementation with CONNECT tunnel support
-- **P5.2**: SOCKS5 proxy protocol implementation
-- **P5.3**: Transport layer integration and mutual exclusion enforcement
-- **P5.4**: Automatic fallback to direct connection on proxy failures
-- **P5.5**: Automatic recovery with health check probing
-- **P5.6**: Frontend UI for proxy configuration and status display
-- **P5.7**: Comprehensive testing and production readiness validation
+- ✅ **P5.1**: Full HTTP/HTTPS proxy implementation with CONNECT tunnel support (Completed)
+- ✅ **P5.2**: SOCKS5 proxy protocol implementation (Completed)
+- ⏳ **P5.3**: Transport layer integration and mutual exclusion enforcement
+- ⏳ **P5.4**: Automatic fallback to direct connection on proxy failures
+- ⏳ **P5.5**: Automatic recovery with health check probing
+- ⏳ **P5.6**: Frontend UI for proxy configuration and status display
+- ⏳ **P5.7**: Comprehensive testing and production readiness validation
+
+**Note**: Until P5.3 is completed, proxy configuration is available but not yet integrated with the Git transport layer. Manual testing requires actual network connections to proxy servers.
 
 ## References
 
