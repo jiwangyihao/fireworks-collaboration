@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::core::ip_pool::IpPoolRuntimeConfig;
+use crate::core::proxy::ProxyConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,6 +87,9 @@ pub struct AppConfig {
     /// P4.0: IP 池运行期配置，默认关闭。
     #[serde(default)]
     pub ip_pool: IpPoolRuntimeConfig,
+    /// P5.0: 代理配置，默认关闭。
+    #[serde(default)]
+    pub proxy: ProxyConfig,
 }
 
 fn default_true() -> bool {
@@ -181,6 +185,7 @@ impl Default for AppConfig {
             retry: RetryCfg::default(),
             partial_filter_supported: false,
             ip_pool: IpPoolRuntimeConfig::default(),
+            proxy: ProxyConfig::default(),
         }
     }
 }
@@ -252,6 +257,7 @@ mod tests {
         assert!(s.contains("\"certFpMaxBytes\""));
         assert!(s.contains("\"spkiPins\""));
         assert!(s.contains("\"ipPool\""));
+        assert!(s.contains("\"proxy\""));
     }
 
     #[test]
@@ -296,5 +302,7 @@ mod tests {
         // P3.4: spkiPins default empty
         assert!(cfg.tls.spki_pins.is_empty());
         assert!(!cfg.ip_pool.enabled, "ipPool defaults to disabled");
+        // P5.0: proxy defaults to off mode
+        assert!(!cfg.proxy.is_enabled(), "proxy defaults to disabled");
     }
 }
