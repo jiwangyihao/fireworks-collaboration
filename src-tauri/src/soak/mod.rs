@@ -98,6 +98,7 @@ pub struct SoakReport {
     pub auto_disable: AutoDisableSummary,
     pub cert_fp_events: u64,
     pub ip_pool: IpPoolSummary,
+    pub proxy: ProxySummary,
     pub totals: TotalsSummary,
     pub thresholds: ThresholdSummary,
     pub comparison: Option<ComparisonSummary>,
@@ -155,6 +156,18 @@ pub struct IpPoolSummary {
     pub refresh_success: u64,
     pub refresh_failure: u64,
     pub refresh_success_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxySummary {
+    pub fallback_count: u64,
+    pub recovered_count: u64,
+    pub health_check_total: u64,
+    pub health_check_success: u64,
+    pub avg_health_check_latency_ms: Option<f64>,
+    pub system_proxy_detect_total: u64,
+    pub system_proxy_detect_success: u64,
+    pub system_proxy_detect_success_rate: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -450,6 +463,17 @@ pub struct IpPoolStats {
 }
 
 #[derive(Default)]
+pub struct ProxyStats {
+    pub fallback_count: u64,
+    pub recovered_count: u64,
+    pub health_check_latencies: Vec<u32>,
+    pub health_check_success: u64,
+    pub health_check_failure: u64,
+    pub system_proxy_detect_total: u64,
+    pub system_proxy_detect_success: u64,
+}
+
+#[derive(Default)]
 pub struct SoakAggregator {
     operations: HashMap<String, OperationStats>,
     timing: HashMap<String, TimingData>,
@@ -457,6 +481,7 @@ pub struct SoakAggregator {
     auto_disable: AutoDisableStats,
     cert_fp_events: u64,
     pub ip_pool: IpPoolStats,
+    pub proxy: ProxyStats,
     pub expected_iterations: u32,
 }
 
@@ -551,6 +576,28 @@ impl SoakAggregator {
                         self.ip_pool.refresh_failure += 1;
                     }
                 }
+                Event::Strategy(StrategyEvent::ProxyFallback { .. }) => {
+                    self.proxy.fallback_count += 1;
+                }
+                Event::Strategy(StrategyEvent::ProxyRecovered { .. }) => {
+                    self.proxy.recovered_count += 1;
+                }
+                Event::Strategy(StrategyEvent::ProxyHealthCheck { success, latency_ms, .. }) => {
+                    if success {
+                        self.proxy.health_check_success += 1;
+                    } else {
+                        self.proxy.health_check_failure += 1;
+                    }
+                    if let Some(latency) = latency_ms {
+                        self.proxy.health_check_latencies.push(latency);
+                    }
+                }
+                Event::Strategy(StrategyEvent::SystemProxyDetected { success, .. }) => {
+                    self.proxy.system_proxy_detect_total += 1;
+                    if success {
+                        self.proxy.system_proxy_detect_success += 1;
+                    }
+                }
                 _ => {}
             }
         }
@@ -635,6 +682,21 @@ impl SoakAggregator {
         } else {
             1.0
         };
+        
+        // 计算代理统计
+        let proxy_health_check_total = self.proxy.health_check_success + self.proxy.health_check_failure;
+        let avg_health_check_latency_ms = if !self.proxy.health_check_latencies.is_empty() {
+            let sum: u64 = self.proxy.health_check_latencies.iter().map(|&v| v as u64).sum();
+            Some(sum as f64 / self.proxy.health_check_latencies.len() as f64)
+        } else {
+            None
+        };
+        let system_proxy_detect_success_rate = if self.proxy.system_proxy_detect_total > 0 {
+            self.proxy.system_proxy_detect_success as f64 / self.proxy.system_proxy_detect_total as f64
+        } else {
+            0.0
+        };
+        
         let thresholds_cfg = options.thresholds.clone();
         let ip_pool_threshold = if self.ip_pool.refresh_total > 0 {
             Some(ThresholdCheck::at_least(
@@ -681,6 +743,16 @@ impl SoakAggregator {
                 refresh_success: self.ip_pool.refresh_success,
                 refresh_failure: self.ip_pool.refresh_failure,
                 refresh_success_rate: ip_pool_refresh_success_rate,
+            },
+            proxy: ProxySummary {
+                fallback_count: self.proxy.fallback_count,
+                recovered_count: self.proxy.recovered_count,
+                health_check_total: proxy_health_check_total,
+                health_check_success: self.proxy.health_check_success,
+                avg_health_check_latency_ms,
+                system_proxy_detect_total: self.proxy.system_proxy_detect_total,
+                system_proxy_detect_success: self.proxy.system_proxy_detect_success,
+                system_proxy_detect_success_rate,
             },
             totals: TotalsSummary {
                 total_operations,
