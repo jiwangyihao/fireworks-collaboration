@@ -1,8 +1,8 @@
-# Fireworks Collaboration 实现总览（MP0 -> P4 & 测试重构）
+# Fireworks Collaboration 实现总览（MP0 -> P5 & 测试重构）
 
-> 目的：以统一视角梳理 MP0、MP1、P2、P3、P4 五个阶段以及测试重构后的现状，面向后续演进（P5+）的研发、运维与质量成员，提供完整的实现细节、配置指引、事件契约、测试矩阵与回退策略。
+> 目的：以统一视角梳理 MP0、MP1、P2、P3、P4、P5 六个阶段以及测试重构后的现状，面向后续演进（P6+）的研发、运维与质量成员，提供完整的实现细节、配置指引、事件契约、测试矩阵与回退策略。
 >
-> 版本：v1.1（2025-10-01） 维护者：Core Team
+> 版本：v1.2（2025-10-03） 维护者：Core Team
 
 ---
 
@@ -14,6 +14,7 @@
   - **P2**：本地 Git 操作扩展、Shallow/Partial、任务级策略覆盖、策略信息事件与护栏；
   - **P3**：自适应 TLS 全量 rollout、可观测性强化、Real Host 校验、SPKI Pin、自动禁用、Soak；
   - **P4**：IP 池采样与优选、预热调度、熔断治理、Soak 阈值；
+  - **P5**：代理支持（HTTP/SOCKS5/System）、自动降级与恢复、健康检查、前端集成；
   - **测试重构**：`src-tauri/tests` 聚合结构、事件 DSL、属性测试与回归种子策略。
 - **读者画像**：
   - 新接手的后端/前端开发；
@@ -32,6 +33,7 @@
 | P2 | 本地操作（commit/branch/checkout/tag/remote）、Shallow/Partial、策略覆盖、护栏、Summary | 覆盖策略事件：`*_override_applied`、`strategy_override_summary` 等 | `strategyOverride` 入参，env gating（`FWC_PARTIAL_FILTER_SUPPORTED`、`FWC_STRATEGY_APPLIED_EVENTS`） | 逐项移除 TaskKind / 关闭 gating | 新增矩阵测试、属性测试覆盖策略解析 |
 | P3 | 自适应 TLS rollout + 可观测性、Real Host 校验、SPKI Pin、自动禁用、Soak | `AdaptiveTls*` 结构化事件、指纹变化事件 | `http.fakeSniRolloutPercent`、`tls.metricsEnabled`、`tls.certFpLogEnabled`、`tls.spkiPins` 等 | 配置层关闭 Fake/metrics/pin；自动禁用冷却 | Soak 测试 + 指标契约测试 |
 | P4 | IP 池采样与握手优选、传输集成、异常治理、观测扩展、Soak 阈值 | `IpPoolSelection`、`IpPoolRefresh`、`IpPoolAutoDisable`、`IpPoolCidrFilter` 等 | `ip_pool.*` 运行期与文件配置（缓存、熔断、TTL、黑白名单）| 配置禁用 IP 池/熔断/预热；自动禁用冷却 | Rust 单测/集测、IP 池集成测试、Soak 报告 |
+| P5 | 代理支持（HTTP/SOCKS5/System）、自动降级与恢复、前端集成 | `ProxyStateEvent`、`ProxyFallbackEvent`、`ProxyRecoveredEvent`、`ProxyHealthCheckEvent` 等 | `proxy.*` 配置（mode/url/auth/超时/降级/恢复/健康检查/调试日志）| 配置禁用代理/手动降级恢复/调整阈值 | 276个测试（243 Rust + 33 TypeScript），跨平台系统检测，状态机转换验证 |
 | 测试重构 | 主题聚合、事件 DSL、属性测试集中管理 | DSL 输出 Tag 子序列 | N/A | N/A | `src-tauri/tests` 结构稳定，CI 使用共享 helper |
 
 ---
@@ -76,6 +78,7 @@ http_fake_request(input: HttpRequestInput): Promise<HttpResponseOutput>
 - 自适应 TLS 结构化事件（P3）：`AdaptiveTlsRollout`、`AdaptiveTlsTiming`、`AdaptiveTlsFallback`、`AdaptiveTlsAutoDisable`、`CertFingerprintChanged`、`CertFpPinMismatch`；
 - 策略信息事件（P2）：`http_strategy_override_applied`、`retry_strategy_override_applied`、`tls_strategy_override_applied`、`strategy_override_conflict`、`strategy_override_ignored_fields`、`partial_filter_fallback`、`strategy_override_summary`。
 - IP 池与优选事件（P4）：`IpPoolSelection`、`IpPoolRefresh`、`IpPoolCidrFilter`、`IpPoolIpTripped`、`IpPoolIpRecovered`、`IpPoolAutoDisable`、`IpPoolAutoEnable`、`IpPoolConfigUpdate`；同时 `AdaptiveTlsTiming/Fallback` 增补 `ip_source`、`ip_latency_ms`、`ip_selection_stage` 可选字段。
+- 代理事件（P5）：`ProxyStateEvent`（状态转换，含扩展字段）、`ProxyFallbackEvent`（自动/手动降级）、`ProxyRecoveredEvent`（自动/手动恢复）、`ProxyHealthCheckEvent`（健康检查结果）；代理启用时通过传输层注册逻辑强制禁用自定义传输层与 Fake SNI；配置热更新和系统代理检测不发射独立事件，由Tauri命令直接返回结果。
 
 事件顺序约束在测试中锁定：策略 applied -> conflict -> ignored -> partial fallback -> summary；TLS 事件在任务结束前统一刷出。
 
@@ -108,6 +111,14 @@ IP Pool Service (core/ip_pool/*)
  ├─ `IpScoreCache` + `IpHistoryStore` 缓存与持久化（TTL、容量、降级）
  ├─ 传输层集成：`custom_https_subtransport` 消费候选、线程本地埋点
  └─ 异常治理：`circuit_breaker`、黑白名单、全局自动禁用（P4）
+
+Proxy Service (core/proxy/*)
+ ├─ `ProxyManager` 统一管理（连接器、状态、配置、健康检查）
+ ├─ HTTP/SOCKS5 连接器（CONNECT隧道、协议握手、Basic Auth）
+ ├─ `ProxyFailureDetector` 滑动窗口失败检测与自动降级
+ ├─ `ProxyHealthChecker` 后台探测与自动恢复
+ ├─ `SystemProxyDetector` 跨平台系统代理检测（Windows/macOS/Linux）
+ └─ 传输层集成：代理启用时强制禁用自定义传输层与 Fake SNI（P5）
 ```
 
 前端（Pinia + Vue）在 `src/api/tasks.ts` 统一订阅事件，将 snake/camel 输入归一，`src/stores/tasks.ts` 管理任务、进度、错误、策略事件。
@@ -142,7 +153,7 @@ IP Pool Service (core/ip_pool/*)
   - 生产事故时优先通过配置禁用新增功能（Push、策略覆盖、Fake SNI、指标采集等）；
   - 若需降级二进制，参考 `src-tauri/_archive` 中的 legacy 实现及各阶段 handoff 文档的“回退矩阵”。
 - **交接资料**：
-  - 每次版本发布前更新 `CHANGELOG.md`、`new-doc/IMPLEMENTATION_OVERVIEW_MP0-P3.md` 与对应用的 handoff 文档；
+  - 每次版本发布前更新 `CHANGELOG.md`、`new-doc/IMPLEMENTATION_OVERVIEW.md` 与对应的 handoff 文档；
   - 附上最新 soak 报告、配置快照、事件截图，供下游团队复用。
 
 ---
@@ -401,7 +412,97 @@ IP Pool Service (core/ip_pool/*)
     - 告警体系需新增 IP 池类事件（刷新失败率、auto disable、熔断）监控，防止观测盲点；
     - 运维手册应补充黑白名单维护与历史文件巡检 SOP。
 
-### 4.6 测试重构 - 统一验证体系
+### 4.6 P5 - 代理支持与自动降级
+
+  - **目标**：
+    - 支持 HTTP/HTTPS、SOCKS5 和系统代理，提供统一配置与管理接口；
+    - 实现代理失败的自动降级直连与健康检查恢复机制；
+    - 与 Fake SNI、IP 优选等既有策略保持互斥，确保网络环境适配性；
+    - 提供跨平台系统代理检测（Windows/macOS/Linux）与前端集成。
+  - **核心模块**：
+    - `ProxyManager` 统一封装模式、状态、连接器、健康检查、配置热更新；
+    - `HttpProxyConnector`（CONNECT隧道、Basic Auth）与 `Socks5ProxyConnector`（协议握手、认证方法、地址类型）实现 `ProxyConnector` trait；
+    - `ProxyFailureDetector` 滑动窗口统计失败率，触发自动降级并发 `ProxyFallbackEvent`；
+    - `ProxyHealthChecker` 后台定期探测（默认60秒），连续成功达阈值后触发自动恢复并发 `ProxyRecoveredEvent`；
+    - `SystemProxyDetector` 跨平台检测系统代理（Windows注册表/macOS scutil/Linux环境变量）；
+    - 传输层集成：`register.rs` 检查代理配置，启用时跳过自定义传输层注册，强制使用 libgit2 默认 HTTP 传输。
+  - **配置与默认值**：
+    - 运行期（`config.json`）：`proxy.mode=off`（off/http/socks5/system）、`url=""`、`username/password=null`、`disableCustomTransport=false`（代理启用时强制true）、`timeoutSeconds=30`、`fallbackThreshold=0.2`、`fallbackWindowSeconds=300`、`recoveryCooldownSeconds=300`、`healthCheckIntervalSeconds=60`、`recoveryStrategy="consecutive"`、`probeUrl="www.github.com:443"`（host:port格式）、`probeTimeoutSeconds=10`、`recoveryConsecutiveThreshold=3`、`debugProxyLogging=false`；
+    - 所有字段支持热更新，通过重新创建 `ProxyManager` 实例生效。
+  - **运行生命周期**：
+    1. 应用启动加载配置 -> 创建 `ProxyManager` -> 初始化失败检测器和健康检查器；
+    2. 传输层注册时调用 `should_skip_custom_transport()`，代理启用则跳过 `https+custom` 注册；
+    3. 任务阶段 `get_connector()` 返回对应连接器（HTTP/SOCKS5），建立隧道并报告结果；
+    4. `report_failure()` 更新滑动窗口，失败率超阈值触发 `trigger_automatic_fallback()`；
+    5. 后台健康检查定期探测，连续成功达阈值触发 `trigger_automatic_recovery()`；
+    6. 冷却窗口结束后自动清除禁用状态，恢复代理模式；
+    7. 状态机转换规则：Disabled↔Enabled（启用/禁用）、Enabled→Fallback（失败降级）、Fallback→Recovering（开始恢复）、Recovering→Enabled（恢复成功）或Recovering→Fallback（恢复失败），所有转换通过 `can_transition_to()` 验证。
+  - **强制互斥策略**：
+    - 代理启用时 `ProxyManager::should_disable_custom_transport()` 强制返回 `true`（检查 `is_enabled()` 且 `mode != Off`）；
+    - 传输层注册阶段 `register.rs::should_skip_custom_transport()` 创建临时 `ProxyManager` 检查配置，若应禁用则直接返回 `Ok(())`，跳过 `https+custom` 注册；
+    - 同时通过 `tl_set_proxy_usage()` 记录代理使用状态到线程局部metrics，供传输层和观测系统使用；
+    - 结果：代理模式下不使用 Fake SNI、IP 优选，直接使用 libgit2 默认 HTTP 传输（真实SNI），避免复杂度叠加和潜在冲突。
+  - **协议实现细节**：
+    - HTTP CONNECT：构造 `CONNECT host:port HTTP/1.1`，解析 200/407（需认证）/502（网关错误）响应，支持 Basic Auth（Base64编码 `username:password`）；超时通过 `TcpStream::set_read_timeout()` 和 `set_write_timeout()` 控制；
+    - SOCKS5：版本协商（0x05）-> 认证（No Auth 0x00 / Username/Password 0x02）-> CONNECT请求（CMD=0x01），支持 IPv4（ATYP=0x01）/IPv6（ATYP=0x04）/域名（ATYP=0x03）地址类型，映射 REP 错误码（0x01-0x08：通用失败/规则禁止/网络不可达/主机不可达/连接拒绝/TTL超时/命令不支持/地址类型不支持）；
+    - 系统检测：Windows 读取注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings` 的 `ProxyEnable` 和 `ProxyServer` 字段，macOS 执行 `scutil --proxy` 并解析输出，Linux 检测 `HTTPS_PROXY`/`HTTP_PROXY` 环境变量（按优先级）；
+    - 错误分类：`ProxyError` 包含5个变体（Network/Auth/Proxy/Timeout/Config），每个错误通过 `category()` 方法返回分类字符串供日志和诊断使用。
+  - **自动降级与恢复**：
+    - 失败检测器维护滑动窗口（默认300秒），样本数≥5且失败率≥20%触发降级；
+    - 降级后状态切换为 `Fallback`（通过 `can_transition_to()` 验证 Enabled→Fallback 合法），`is_enabled()` 返回 `false`，后续任务走直连；状态机转换规则在 `state.rs` 的 `apply_transition()` 中强制验证；
+    - 健康检查器定期探测代理可用性（探测目标为 `probeUrl` 配置的 host:port）；
+    - 连续成功次数达阈值（默认3次）且冷却期满（默认300秒）触发恢复；
+    - 恢复后状态切换为 `Enabled`，重置失败统计，发射 `ProxyRecoveredEvent`；
+    - 支持三种恢复策略：`immediate`（单次成功）、`consecutive`（连续多次成功）、`exponential-backoff`（退避恢复）。
+  - **前端集成**：
+    - `ProxyConfig.vue`：代理配置UI（模式选择、URL/凭证输入、系统检测按钮、禁用自定义传输层开关、高级设置包含降级/恢复/探测配置、调试日志开关）；
+    - `ProxyStatusPanel.vue`：状态面板（当前状态、降级原因、失败统计、URL显示含凭证脱敏）；
+    - Tauri 命令：`detect_system_proxy()`（检测系统代理，返回 SystemProxyResult）、`force_proxy_fallback(reason?: Option<String>)`（手动降级，支持自定义原因）、`force_proxy_recovery()`（手动恢复）、`get_system_proxy()`（legacy 命令，返回基础信息）；
+    - Pinia store：`useConfigStore` 管理代理配置（读写 config.json），前端组件通过 Tauri 命令直接调用后端功能；
+    - 系统代理检测通过 `detect_system_proxy()` 命令返回结果，不发射事件；配置热更新无独立事件，由组件保存时触发。
+  - **观测与事件**：
+    - `ProxyStateEvent`：状态转换（previous/current state、reason、timestamp），包含扩展字段（proxy_mode、proxy_state、fallback_reason、failure_count、health_check_success_rate、next_health_check_at、system_proxy_url、custom_transport_disabled）；
+    - `ProxyFallbackEvent`：降级事件（reason、failure_count、window_seconds、failure_rate、proxy_url、is_automatic）；
+    - `ProxyRecoveredEvent`：恢复事件（successful_checks、proxy_url、is_automatic、strategy、timestamp）；
+    - `ProxyHealthCheckEvent`：健康检查结果（success、response_time_ms、error、proxy_url、test_url、timestamp）；
+    - 代理事件通过传输层线程局部变量与 P3 的 `AdaptiveTlsTiming/Fallback` 事件联动，但不会修改既有事件结构。
+  - **Soak 与阈值**：
+    - 环境变量：`FWC_PROXY_SOAK=1`、`FWC_SOAK_MIN_PROXY_SUCCESS_RATE=0.95`（代理成功率≥95%）、`FWC_SOAK_MAX_PROXY_FALLBACK_COUNT=1`（最多降级1次）、`FWC_SOAK_MIN_PROXY_RECOVERY_RATE=0.9`（恢复率≥90%，如有降级）；
+    - 报告扩展：`proxy` 统计（selection_total、selection_by_mode、fallback_count、recovery_count、health_check_success_rate、avg_connection_latency_ms、system_proxy_detect_success）；
+    - 阈值判定：`proxy_success_rate >= 0.95`、`fallback_count <= 1`、`recovery_rate >= 0.9`（如有降级）、`system_proxy_detect_success == true`（System模式必须检测成功）。
+  - **测试矩阵**：
+    - config.rs（36测试）：ProxyConfig结构、validation规则、默认值、is_enabled逻辑；
+    - state.rs（17测试）：ProxyState状态机、转换验证、状态上下文；
+    - detector.rs（28测试）：ProxyFailureDetector滑动窗口、失败率计算、阈值触发；
+    - manager.rs（59测试）：ProxyManager统一API、配置热更新、状态管理、连接器切换；
+    - http_connector.rs（29测试）：HTTP CONNECT隧道、Basic Auth、响应解析、超时处理；
+    - socks5_connector.rs（59测试）：SOCKS5协议握手、认证方法、地址类型、REP错误码映射；
+    - events.rs（15测试）：事件结构体序列化、时间戳生成、事件构造器；
+    - ProxyConfig.vue（14测试）：配置UI交互、表单验证、系统检测、配置保存；
+    - ProxyStatusPanel.vue（19测试）：状态显示、URL脱敏、模式Badge；
+    - 总计：276个测试（243 Rust 单元/集成测试分布在 7 个文件：config.rs/state.rs/detector.rs/manager.rs/http_connector.rs/socks5_connector.rs/events.rs + 33 TypeScript 组件测试：ProxyConfig.test.ts 14个 + ProxyStatusPanel.test.ts 19个）。
+  - **常见故障排查**：
+    - 代理连接失败：检查 `proxy.url` 格式（必须包含协议前缀如 `http://`）、网络可达性（ping代理服务器）、凭证正确性（用户名/密码）；查看 `task://error` 中的 `category=Proxy/Auth`；启用 `debugProxyLogging=true` 查看详细连接日志（包含sanitized URL、认证状态、响应时间）；
+    - 频繁降级：查看 `ProxyFallbackEvent` 中的 `failure_rate` 和 `failure_count`，可能需调高 `fallbackThreshold`（默认0.2即20%） 或检查代理稳定性；检查滑动窗口 `fallbackWindowSeconds` 是否过短；
+    - 系统检测失败：Windows 检查注册表权限（需要读取 `HKCU`）和 IE代理设置是否配置、macOS 检查 `scutil` 命令是否可执行和网络偏好设置、Linux 检查环境变量（优先 `HTTPS_PROXY` 再 `HTTP_PROXY`）；提供手动配置回退（切换到http/socks5模式手动输入）；
+    - 自定义传输层未禁用：确认代理 `is_enabled()` 返回 `true`（mode非off且URL非空或mode为system），检查 `should_disable_custom_transport()` 逻辑；查看日志中的 "Skipping custom transport registration" 消息；
+    - 恢复不触发：检查冷却窗口是否到期（查看日志中的 recovery cooldown 提示）、`recoveryConsecutiveThreshold` 是否过高（默认3次，建议不超过10）、健康检查是否正常执行（查看 `ProxyHealthCheckEvent`）、探测URL是否可达（`probeUrl` 默认 `www.github.com:443`）。
+  - **交接要点**：
+    - 代理配置凭证当前明文存储在 `config.json`，P6 将引入安全存储（Windows Credential Manager/macOS Keychain/Linux Secret Service）；
+    - 仅支持 Basic Auth，企业认证协议（NTLM/Kerberos）暂不支持，可使用 CNTLM 等本地转换工具；
+    - PAC 文件解析、代理链、实时配置监听等功能延后到 P6 或后续版本；
+    - 代理启用时强制禁用自定义传输层与 Fake SNI 是设计选择（通过 `should_disable_custom_transport()` 实现），即使 `disableCustomTransport=false` 也会被覆盖；
+    - 热更新代理配置需要重新创建 `ProxyManager` 实例，通过传输层注册检查 `should_skip_custom_transport()` 生效；
+    - 手动降级/恢复立即切换状态，下一个任务立即使用新配置；
+    - 探测URL必须是 `host:port` 格式（如 `www.github.com:443`），不支持完整URL格式。
+  - **回退策略**：
+    - 配置层：设置 `proxy.mode=off` 立即禁用代理，下一个任务生效；
+    - 手动控制：前端点击"手动降级"或调用 `force_proxy_fallback(reason?)` Tauri命令强制切换直连，发送 `ProxyFallbackEvent` (is_automatic=false)；
+    - 调整阈值：修改 `fallbackThreshold`（0.0-1.0）/`recoveryConsecutiveThreshold`（1-10）/`recoveryCooldownSeconds`（≥10）并保存配置文件，应用重启或重新加载配置后生效；
+    - 清理统计：重启应用或手动调用 `force_proxy_recovery()` 重置滑动窗口的失败统计并尝试恢复；
+    - 运维介入：通过日志观察 `ProxyStateEvent` 和 `ProxyHealthCheckEvent` 获取诊断信息（当前状态、失败计数、健康检查结果），必要时临时设置 `healthCheckIntervalSeconds` 为更大值（如3600）延长探测间隔，或直接禁用代理。
+
+### 4.7 测试重构 - 统一验证体系
 
 - **目录布局**：`src-tauri/tests` 现按主题聚合——`common/`（共享 DSL 与 fixtures）、`git/`（Git 语义）、`events/`、`quality/`、`tasks/`、`e2e/`；每个聚合文件控制在 800 行内，新增用例优先追加至现有 section。
 - **公共模块**：`common/test_env.rs`（全局初始化）、`fixtures.rs` 与 `repo_factory.rs`（仓库构造）、`git_scenarios.rs`（复合操作）、`shallow_matrix.rs`/`partial_filter_matrix.rs`/`retry_matrix.rs`（参数矩阵），确保相同语义只实现一次。
@@ -421,7 +522,7 @@ IP Pool Service (core/ip_pool/*)
 ## 5. 交接与发布 checklist 概览
 
 - **文档同步**：合并前核对 `new-doc/MP*_IMPLEMENTATION_HANDOFF.md`、`new-doc/P*_IMPLEMENTATION_HANDOFF.md` 与本文、`doc/TESTS_REFACTOR_HANDOFF.md` 的版本号与变更记录，一并更新 `CHANGELOG.md`。
-- **配置审计**：按阶段确认环境变量与 AppConfig 值：MP1（Fake SNI 白名单、Retry 阈值）、P2（`FWC_PARTIAL_FILTER_SUPPORTED`、`FWC_STRATEGY_APPLIED_EVENTS`）、P3（rollout 百分比、auto disable 阈值、SPKI pin 列表）、P4（`ip_pool.enabled`、`cachePruneIntervalSecs`、`maxCacheEntries`、`singleflightTimeoutMs`、熔断阈值与 `cooldownSeconds`、`preheatDomains`、`probeTimeoutMs`、黑白名单）。
+- **配置审计**：按阶段确认环境变量与 AppConfig 值：MP1（Fake SNI 白名单、Retry 阈值）、P2（`FWC_PARTIAL_FILTER_SUPPORTED`、`FWC_STRATEGY_APPLIED_EVENTS`）、P3（rollout 百分比、auto disable 阈值、SPKI pin 列表）、P4（`ip_pool.enabled`、`cachePruneIntervalSecs`、`maxCacheEntries`、`singleflightTimeoutMs`、熔断阈值与 `cooldownSeconds`、`preheatDomains`、`probeTimeoutMs`、黑白名单）、P5（`proxy.mode`、`proxy.url`、凭证、`disableCustomTransport`、降级阈值 `fallbackThreshold`（0.2）、恢复阈值 `recoveryConsecutiveThreshold`（3）、健康检查间隔 `healthCheckIntervalSeconds`（60）、探测URL `probeUrl`（host:port格式如"www.github.com:443"）、探测超时 `probeTimeoutSeconds`（10）、冷却窗口 `recoveryCooldownSeconds`（300）、恢复策略 `recoveryStrategy`（immediate/consecutive/exponential-backoff）、调试日志 `debugProxyLogging`（false））。
 - **灰度计划**：在发布计划中记录灰度顺序与回退手段（参考 §3.5），确保 SRE 获得监控告警阈值与事件观察面。
 - **测试执行**：要求在主干合并前执行 `cargo test -q`、`pnpm test -s`，必要时附加 soak 报告；若涉及传输层改动，附上目标域指纹快照。
 - **运维交接**：提供最新 `cert-fp.log` 样例、策略 Summary 截图与 `task_list` 正常输出，帮助运维确认运行状态；新事件字段需同步到监控解析脚本。
