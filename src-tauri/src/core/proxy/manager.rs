@@ -122,6 +122,7 @@ impl ProxyManager {
         
         let old_enabled = self.is_enabled();
         let new_enabled = new_config.is_enabled();
+        let current_state = self.state();
         
         // Update config
         {
@@ -130,16 +131,26 @@ impl ProxyManager {
         }
         
         // Update state based on config change
-        let mut state = self.state.write().unwrap();
-        
-        if !old_enabled && new_enabled {
-            // Proxy was disabled, now enabled
-            state.transition(StateTransition::Enable, Some("Configuration updated".to_string()))?;
-            tracing::info!("Proxy enabled via configuration update");
-        } else if old_enabled && !new_enabled {
-            // Proxy was enabled, now disabled
-            state.transition(StateTransition::Disable, Some("Configuration updated".to_string()))?;
-            tracing::info!("Proxy disabled via configuration update");
+        // Only transition if we're in Disabled or Enabled states
+        // Don't interfere with Fallback/Recovering states
+        if current_state == ProxyState::Disabled || current_state == ProxyState::Enabled {
+            let mut state = self.state.write().unwrap();
+            
+            if !old_enabled && new_enabled {
+                // Proxy was disabled, now enabled
+                state.transition(StateTransition::Enable, Some("Configuration updated".to_string()))?;
+                tracing::info!("Proxy enabled via configuration update");
+            } else if old_enabled && !new_enabled {
+                // Proxy was enabled, now disabled
+                state.transition(StateTransition::Disable, Some("Configuration updated".to_string()))?;
+                tracing::info!("Proxy disabled via configuration update");
+            }
+        } else {
+            // In Fallback or Recovering state, just update config without state transition
+            tracing::debug!(
+                "Config updated while in {:?} state, preserving current state",
+                current_state
+            );
         }
         
         Ok(())
@@ -556,6 +567,20 @@ impl ProxyManager {
         
         tracing::info!("Manual proxy recovery completed, state: {:?}", state.state);
         Ok(())
+    }
+    
+    /// Force proxy fallback (P5.6 frontend command)
+    /// 
+    /// Alias for manual_fallback for frontend convenience
+    pub fn force_fallback(&mut self, reason: &str) -> Result<()> {
+        self.manual_fallback(reason)
+    }
+    
+    /// Force proxy recovery (P5.6 frontend command)
+    /// 
+    /// Alias for manual_recover for frontend convenience
+    pub fn force_recovery(&mut self) -> Result<()> {
+        self.manual_recover()
     }
     
     /// Get health check interval for periodic scheduling (P5.5)

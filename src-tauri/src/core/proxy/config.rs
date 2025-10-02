@@ -99,6 +99,11 @@ pub struct ProxyConfig {
     /// Used by "consecutive" recovery strategy
     #[serde(default = "default_recovery_consecutive_threshold")]
     pub recovery_consecutive_threshold: u32,
+    
+    /// Enable debug-level proxy logging (default: false)
+    /// When true, outputs detailed connection info including sanitized URLs, auth status, timing
+    #[serde(default)]
+    pub debug_proxy_logging: bool,
 }
 
 pub fn default_timeout_seconds() -> u64 {
@@ -154,6 +159,7 @@ impl Default for ProxyConfig {
             probe_url: default_probe_url(),
             probe_timeout_seconds: default_probe_timeout_seconds(),
             recovery_consecutive_threshold: default_recovery_consecutive_threshold(),
+            debug_proxy_logging: false,
         }
     }
 }

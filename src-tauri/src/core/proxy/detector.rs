@@ -55,7 +55,7 @@ impl FailureDetectorInner {
 ///
 /// # Example
 /// ```
-/// use fireworks_collaboration::core::proxy::ProxyFailureDetector;
+/// use fireworks_collaboration_lib::core::proxy::ProxyFailureDetector;
 ///
 /// let detector = ProxyFailureDetector::new(300, 0.2); // 5 min window, 20% threshold
 ///
@@ -204,7 +204,7 @@ impl ProxyFailureDetector {
     ///
     /// # Example
     /// ```no_run
-    /// # use fireworks_collaboration::core::proxy::ProxyFailureDetector;
+    /// # use fireworks_collaboration_lib::core::proxy::ProxyFailureDetector;
     /// # let detector = ProxyFailureDetector::new(300, 0.2);
     /// if detector.should_fallback() {
     ///     // Initiate fallback to direct connection
@@ -226,7 +226,7 @@ impl ProxyFailureDetector {
     ///
     /// # Example
     /// ```no_run
-    /// # use fireworks_collaboration::core::proxy::ProxyFailureDetector;
+    /// # use fireworks_collaboration_lib::core::proxy::ProxyFailureDetector;
     /// # let detector = ProxyFailureDetector::new(300, 0.2);
     /// // After successful recovery
     /// detector.reset();
@@ -256,7 +256,7 @@ impl ProxyFailureDetector {
     ///
     /// # Example
     /// ```no_run
-    /// # use fireworks_collaboration::core::proxy::ProxyFailureDetector;
+    /// # use fireworks_collaboration_lib::core::proxy::ProxyFailureDetector;
     /// # let detector = ProxyFailureDetector::new(300, 0.2);
     /// let stats = detector.get_stats();
     /// println!("Failure rate: {:.1}%", stats.failure_rate * 100.0);

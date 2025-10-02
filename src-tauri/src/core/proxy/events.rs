@@ -3,10 +3,10 @@
 //! These events will be emitted to the frontend in P5.6 for real-time
 //! monitoring of proxy state changes, fallback events, and health checks.
 
-use super::state::ProxyState;
+use super::{state::ProxyState, ProxyMode};
 use serde::{Deserialize, Serialize};
 
-/// Proxy state change event
+/// Proxy state change event (extended for P5.6)
 /// 
 /// Emitted whenever the proxy state transitions between:
 /// Disabled ↔ Enabled ↔ Fallback ↔ Recovering
@@ -24,10 +24,36 @@ pub struct ProxyStateEvent {
     
     /// Timestamp of the transition (Unix epoch seconds)
     pub timestamp: u64,
+    
+    // === P5.6 Extensions ===
+    
+    /// Current proxy mode (off/http/socks5/system)
+    pub proxy_mode: ProxyMode,
+    
+    /// Current proxy state (enabled/disabled/fallback/recovering)
+    pub proxy_state: ProxyState,
+    
+    /// Reason for fallback (if in Fallback state)
+    pub fallback_reason: Option<String>,
+    
+    /// Number of consecutive failures (for Fallback state)
+    pub failure_count: Option<u32>,
+    
+    /// Health check success rate (0.0-1.0, if available)
+    pub health_check_success_rate: Option<f64>,
+    
+    /// Next health check timestamp (Unix epoch seconds, if scheduled)
+    pub next_health_check_at: Option<u64>,
+    
+    /// System proxy URL (if detected, sanitized)
+    pub system_proxy_url: Option<String>,
+    
+    /// Whether custom transport layer is disabled
+    pub custom_transport_disabled: bool,
 }
 
 impl ProxyStateEvent {
-    /// Create a new proxy state event
+    /// Create a new proxy state event with basic fields
     pub fn new(
         previous_state: ProxyState,
         current_state: ProxyState,
@@ -38,6 +64,44 @@ impl ProxyStateEvent {
             current_state,
             reason,
             timestamp: current_timestamp(),
+            proxy_mode: ProxyMode::Off,
+            proxy_state: current_state,
+            fallback_reason: None,
+            failure_count: None,
+            health_check_success_rate: None,
+            next_health_check_at: None,
+            system_proxy_url: None,
+            custom_transport_disabled: false,
+        }
+    }
+    
+    /// Create a new proxy state event with all fields (P5.6 extended)
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_extended(
+        previous_state: ProxyState,
+        current_state: ProxyState,
+        reason: Option<String>,
+        proxy_mode: ProxyMode,
+        fallback_reason: Option<String>,
+        failure_count: Option<u32>,
+        health_check_success_rate: Option<f64>,
+        next_health_check_at: Option<u64>,
+        system_proxy_url: Option<String>,
+        custom_transport_disabled: bool,
+    ) -> Self {
+        Self {
+            previous_state,
+            current_state,
+            reason,
+            timestamp: current_timestamp(),
+            proxy_mode,
+            proxy_state: current_state,
+            fallback_reason,
+            failure_count,
+            health_check_success_rate,
+            next_health_check_at,
+            system_proxy_url,
+            custom_transport_disabled,
         }
     }
 }
