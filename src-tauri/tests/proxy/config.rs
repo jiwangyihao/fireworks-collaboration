@@ -262,6 +262,7 @@ fn test_config_json_roundtrip() {
         probe_url: "www.google.com:443".to_string(),
         probe_timeout_seconds: 20,
         recovery_consecutive_threshold: 5,
+        debug_proxy_logging: true,
     };
     
     let json = serde_json::to_string(&original).unwrap();
