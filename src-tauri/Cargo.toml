@@ -203,3 +203,184 @@ required-features = []
 name = "e2e_public_git"
 path = "tests/e2e/e2e_public_git.rs"
 required-features = []
+
+[[test]]
+name = "logging_tests"
+path = "tests/core/logging_tests.rs"
+required-features = []
+
+[[test]]
+name = "structured_tests"
+path = "tests/events/structured_tests.rs"
+required-features = []
+
+[[test]]
+name = "app_tests"
+path = "tests/core/app_tests.rs"
+required-features = ["tauri-app"]
+
+[[test]]
+name = "verifier_tests"
+path = "tests/core/tls/verifier_tests.rs"
+required-features = []
+
+[[test]]
+name = "util_tests"
+path = "tests/core/tls/util_tests.rs"
+required-features = []
+
+[[test]]
+name = "spki_tests"
+path = "tests/core/tls/spki_tests.rs"
+required-features = []
+
+[[test]]
+name = "retry_tests"
+path = "tests/core/tasks/retry_tests.rs"
+required-features = []
+
+[[test]]
+name = "config_tests"
+path = "tests/proxy/config_tests.rs"
+required-features = []
+
+[[test]]
+name = "detector_tests"
+path = "tests/proxy/detector_tests.rs"
+required-features = []
+
+[[test]]
+name = "errors_tests"
+path = "tests/proxy/errors_tests.rs"
+required-features = []
+
+[[test]]
+name = "events_tests"
+path = "tests/proxy/events_tests.rs"
+required-features = []
+
+[[test]]
+name = "mod_tests"
+path = "tests/proxy/mod_tests.rs"
+required-features = []
+
+[[test]]
+name = "system_detector_tests"
+path = "tests/proxy/system_detector_tests.rs"
+required-features = []
+
+[[test]]
+name = "state_tests"
+path = "tests/proxy/state_tests.rs"
+required-features = []
+
+[[test]]
+name = "socks5_connector_tests"
+path = "tests/proxy/socks5_connector_tests.rs"
+required-features = []
+
+[[test]]
+name = "http_connector_tests"
+path = "tests/proxy/http_connector_tests.rs"
+required-features = []
+
+[[test]]
+name = "manager_tests"
+path = "tests/proxy/manager_tests.rs"
+required-features = []
+
+[[test]]
+name = "fingerprint_tests"
+path = "tests/git/transport/fingerprint_tests.rs"
+required-features = []
+
+[[test]]
+name = "fallback_tests"
+path = "tests/git/transport/fallback_tests.rs"
+required-features = []
+
+[[test]]
+name = "runtime_tests"
+path = "tests/git/transport/runtime_tests.rs"
+required-features = []
+
+[[test]]
+name = "rewrite_tests"
+path = "tests/git/transport/rewrite_tests.rs"
+required-features = []
+
+[[test]]
+name = "register_tests"
+path = "tests/git/transport/register_tests.rs"
+required-features = []
+
+[[test]]
+name = "metrics_tests"
+path = "tests/git/transport/metrics_tests.rs"
+required-features = []
+
+[[test]]
+name = "types_tests"
+path = "tests/http/types_tests.rs"
+required-features = []
+
+[[test]]
+name = "model_tests"
+path = "tests/config/model_tests.rs"
+required-features = []
+
+[[test]]
+name = "loader_tests"
+path = "tests/config/loader_tests.rs"
+required-features = []
+
+[[test]]
+name = "client_tests"
+path = "tests/http/client_tests.rs"
+required-features = []
+
+[[test]]
+name = "opts_tests"
+path = "tests/git/default_impl/opts_tests.rs"
+required-features = []
+
+[[test]]
+name = "helpers_tests"
+path = "tests/tasks/registry/git/helpers_tests.rs"
+required-features = []
+
+[[test]]
+name = "cache_tests"
+path = "tests/ip_pool/cache_tests.rs"
+required-features = []
+
+[[test]]
+name = "ip_pool_manager_tests"
+path = "tests/ip_pool/manager_tests.rs"
+required-features = []
+
+[[test]]
+name = "ip_pool_events_tests"
+path = "tests/ip_pool/events_tests.rs"
+
+[[test]]
+name = "ip_pool_config_tests"
+path = "tests/ip_pool/config_tests.rs"
+
+[[test]]
+name = "ip_pool_circuit_breaker_tests"
+path = "tests/ip_pool/circuit_breaker_tests.rs"
+
+[[test]]
+name = "ip_pool_history_tests"
+path = "tests/ip_pool/history_tests.rs"
+
+[[test]]
+name = "ip_pool_preheat_tests"
+path = "tests/ip_pool/preheat_tests.rs"
+required-features = []
+
+[[test]]
+name = "soak_mod_tests"
+path = "tests/soak/mod_tests.rs"
+required-features = []

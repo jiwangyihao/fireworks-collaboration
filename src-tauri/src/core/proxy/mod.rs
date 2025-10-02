@@ -69,18 +69,3 @@ impl ProxyConnector for PlaceholderConnector {
         "placeholder"
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_placeholder_connector() {
-        let connector = PlaceholderConnector;
-        assert_eq!(connector.proxy_type(), "placeholder");
-        
-        // Test connecting to a well-known host (will fail in CI but tests the interface)
-        // This is just to verify the trait implementation compiles
-        let _ = connector.connect("example.com", 80);
-    }
-}

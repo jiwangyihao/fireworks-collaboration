@@ -512,7 +512,7 @@ async fn git_remote_remove(
 }
 
 // ========== P0.5 http_fake_request ==========
-fn redact_auth_in_headers(
+pub(crate) fn redact_auth_in_headers(
     mut h: std::collections::HashMap<String, String>,
     mask: bool,
 ) -> std::collections::HashMap<String, String> {
@@ -529,7 +529,7 @@ fn redact_auth_in_headers(
     h
 }
 
-fn host_in_whitelist(host: &str, cfg: &AppConfig) -> bool {
+pub(crate) fn host_in_whitelist(host: &str, cfg: &AppConfig) -> bool {
     let wl = &cfg.tls.san_whitelist;
     if wl.is_empty() {
         return false;
@@ -537,7 +537,7 @@ fn host_in_whitelist(host: &str, cfg: &AppConfig) -> bool {
     wl.iter().any(|p| match_domain(p, host))
 }
 
-fn classify_error_msg(e: &str) -> (&'static str, String) {
+pub(crate) fn classify_error_msg(e: &str) -> (&'static str, String) {
     let msg = e.to_string();
     if msg.contains("SAN whitelist mismatch") {
         ("Verify", msg)
@@ -555,66 +555,6 @@ fn classify_error_msg(e: &str) -> (&'static str, String) {
         ("Input", msg)
     } else {
         ("Internal", msg)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_redact_auth_in_headers_case_insensitive() {
-        let mut h = std::collections::HashMap::new();
-        h.insert("Authorization".to_string(), "Bearer abc".to_string());
-        h.insert("x-other".to_string(), "1".to_string());
-        let out = redact_auth_in_headers(h, true);
-        assert_eq!(out.get("Authorization").unwrap(), "REDACTED");
-        assert_eq!(out.get("x-other").unwrap(), "1");
-
-        let mut h2 = std::collections::HashMap::new();
-        h2.insert("aUtHoRiZaTiOn".to_string(), "token".to_string());
-        let out2 = redact_auth_in_headers(h2, true);
-        assert_eq!(out2.get("aUtHoRiZaTiOn").unwrap(), "REDACTED");
-    }
-
-    #[test]
-    fn test_redact_auth_no_mask_keeps_original() {
-        let mut h = std::collections::HashMap::new();
-        h.insert("Authorization".to_string(), "Bearer xyz".to_string());
-        let out = redact_auth_in_headers(h, false);
-        assert_eq!(out.get("Authorization").unwrap(), "Bearer xyz");
-    }
-
-    #[test]
-    fn test_host_in_whitelist_exact_and_wildcard() {
-        let mut cfg = AppConfig::default();
-        // default has github.com and *.github.com
-        assert!(host_in_whitelist("github.com", &cfg));
-        assert!(host_in_whitelist("api.github.com", &cfg));
-        assert!(!host_in_whitelist("example.com", &cfg));
-
-        // empty whitelist -> reject any
-        cfg.tls.san_whitelist.clear();
-        assert!(!host_in_whitelist("github.com", &cfg));
-    }
-
-    #[test]
-    fn test_classify_error_msg_mapping() {
-        let cases = vec![
-            ("SAN whitelist mismatch", "Verify"),
-            ("Tls: tls handshake", "Tls"),
-            ("connect timeout", "Network"),
-            ("connect error", "Network"),
-            ("read body", "Network"),
-            ("only https", "Input"),
-            ("invalid URL", "Input"),
-            ("url host missing", "Input"),
-            ("some other error", "Internal"),
-        ];
-        for (msg, cat) in cases {
-            let (got, _m) = classify_error_msg(msg);
-            assert_eq!(got, cat, "msg={}", msg);
-        }
     }
 }
 

@@ -164,32 +164,3 @@ pub fn record_certificate(
     }
     Some((changed, spki, cert))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::config::loader;
-
-    #[test]
-    fn test_log_path_disabled_when_cfg_off() {
-        let temp = tempfile::tempdir().expect("create temp dir for config override");
-        loader::test_override_global_base_dir(temp.path());
-        test_reset_fp_state();
-
-        // 默认配置开启证书指纹日志，应返回 Some 路径
-        let cfg = loader::load_or_init().expect("load default config");
-        assert!(
-            cfg.tls.cert_fp_log_enabled,
-            "default config should enable cert fp log"
-        );
-        assert!(log_path().is_some());
-
-        // 人为关闭后应返回 None
-        let mut cfg = cfg;
-        cfg.tls.cert_fp_log_enabled = false;
-        loader::save(&cfg).expect("save updated config");
-        assert!(log_path().is_none());
-
-        loader::test_clear_global_base_dir();
-    }
-}

@@ -62,7 +62,7 @@ pub fn ensure_registered(cfg: &AppConfig) -> Result<(), Error> {
             transport::register("https+custom", move |remote: &Remote| {
                 // HTTP(s) 是无状态 smart 协议：需要启用 stateless-rpc 模式
                 let rpc = true;
-                // 每次创建传输时加载“最新配置”，避免保存后需重启
+                // 每次创建传输时加载"最新配置"，避免保存后需重启
                 let cfg_now = load_or_init().unwrap_or_else(|_| AppConfig::default());
                 let sub = CustomHttpsSubtransport::new(cfg_now);
                 transport::Transport::smart(remote, rpc, sub)
@@ -76,89 +76,4 @@ pub fn ensure_registered(cfg: &AppConfig) -> Result<(), Error> {
         return Err(e);
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::proxy::{ProxyConfig, ProxyMode};
-
-    #[test]
-    fn test_register_once_ok() {
-        let cfg = AppConfig::default();
-        // 多次调用不应 panic
-        let _ = ensure_registered(&cfg);
-        let _ = ensure_registered(&cfg);
-    }
-
-    #[test]
-    fn test_should_skip_custom_transport_when_proxy_off() {
-        let cfg = AppConfig::default();
-        assert!(!should_skip_custom_transport(&cfg));
-    }
-
-    #[test]
-    fn test_should_skip_custom_transport_when_http_proxy_enabled() {
-        let mut cfg = AppConfig::default();
-        cfg.proxy = ProxyConfig {
-            mode: ProxyMode::Http,
-            url: "http://proxy:8080".to_string(),
-            ..Default::default()
-        };
-        assert!(should_skip_custom_transport(&cfg));
-    }
-
-    #[test]
-    fn test_should_skip_custom_transport_when_socks5_proxy_enabled() {
-        let mut cfg = AppConfig::default();
-        cfg.proxy = ProxyConfig {
-            mode: ProxyMode::Socks5,
-            url: "socks5://proxy:1080".to_string(),
-            ..Default::default()
-        };
-        assert!(should_skip_custom_transport(&cfg));
-    }
-
-    #[test]
-    fn test_ensure_registered_skips_when_proxy_enabled() {
-        let mut cfg = AppConfig::default();
-        cfg.proxy = ProxyConfig {
-            mode: ProxyMode::Http,
-            url: "http://proxy:8080".to_string(),
-            ..Default::default()
-        };
-        
-        // 代理启用时应该直接返回Ok，不注册自定义传输层
-        let result = ensure_registered(&cfg);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_should_skip_when_disable_custom_transport_set() {
-        let mut cfg = AppConfig::default();
-        cfg.proxy.disable_custom_transport = true;
-        assert!(should_skip_custom_transport(&cfg));
-    }
-
-    #[test]
-    fn test_should_skip_custom_transport_when_system_proxy_enabled() {
-        let mut cfg = AppConfig::default();
-        cfg.proxy = ProxyConfig {
-            mode: ProxyMode::System,
-            ..Default::default()
-        };
-        assert!(should_skip_custom_transport(&cfg));
-    }
-
-    #[test]
-    fn test_should_not_skip_with_empty_proxy_url() {
-        let mut cfg = AppConfig::default();
-        cfg.proxy = ProxyConfig {
-            mode: ProxyMode::Http,
-            url: "".to_string(),  // Empty URL means proxy not enabled
-            ..Default::default()
-        };
-        // HTTP mode with empty URL is NOT enabled, so should not skip
-        assert!(!should_skip_custom_transport(&cfg));
-    }
 }

@@ -5,13 +5,13 @@
 // - set_push_auth_header_value
 
 mod fallback;
-mod fingerprint;
+pub mod fingerprint; // made public for testing
 #[path = "http/mod.rs"]
 mod http;
 pub mod metrics; // made public for test helpers needing crate::core::git::transport::metrics::*
 mod register;
-mod rewrite;
-mod runtime;
+pub mod rewrite; // made public for testing
+pub mod runtime; // made public for testing
 
 pub use fallback::{DecisionCtx, FallbackDecision, FallbackReason, FallbackStage};
 pub use http::set_push_auth_header_value;

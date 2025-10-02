@@ -20,17 +20,3 @@ pub fn init_logging() {
     let _ = tracing::subscriber::set_global_default(subscriber);
     tracing::info!(target = "app", "tracing initialized");
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_init_logging_idempotent() {
-        // 调用两次不应 panic
-        init_logging();
-        init_logging();
-        // 发一条日志确保不会崩
-        tracing::info!(target = "app", "test log after init");
-    }
-}

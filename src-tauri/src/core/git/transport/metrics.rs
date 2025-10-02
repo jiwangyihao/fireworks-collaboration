@@ -240,7 +240,7 @@ pub fn metrics_enabled() -> bool {
         }
     }
     // Test override (only in test builds) for deterministic gating validation
-    #[cfg(test)]
+    #[cfg(not(feature = "tauri-app"))]
     {
         use std::sync::atomic::{AtomicU8, Ordering};
         // 0 = no override, 1 = force false, 2 = force true
@@ -271,12 +271,12 @@ pub fn finish_and_store(rec: &mut TimingRecorder) {
 }
 
 // Test-only override API
-#[cfg(test)]
+#[cfg(not(feature = "tauri-app"))]
 use std::sync::atomic::{AtomicU8, Ordering};
-#[cfg(test)]
+#[cfg(not(feature = "tauri-app"))]
 #[no_mangle]
-static TEST_METRICS_OVERRIDE: AtomicU8 = AtomicU8::new(0);
-#[cfg(test)]
+pub static TEST_METRICS_OVERRIDE: AtomicU8 = AtomicU8::new(0);
+#[cfg(not(feature = "tauri-app"))]
 pub fn test_override_metrics_enabled(v: Option<bool>) {
     match v {
         None => TEST_METRICS_OVERRIDE.store(0, Ordering::Relaxed),
@@ -285,76 +285,3 @@ pub fn test_override_metrics_enabled(v: Option<bool>) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn finish_respects_metrics_enabled_flag() {
-        let _lock = metrics_env_lock().lock().unwrap();
-        
-        tl_reset();
-        test_override_metrics_enabled(Some(false));
-        let mut recorder = TimingRecorder::new();
-        finish_and_store(&mut recorder);
-        let snap_disabled = tl_snapshot();
-        assert!(
-            snap_disabled.timing.is_none(),
-            "timing should remain unset when metrics disabled"
-        );
-
-        tl_reset();
-        test_override_metrics_enabled(Some(true));
-        let mut recorder_enabled = TimingRecorder::new();
-        finish_and_store(&mut recorder_enabled);
-        let snap_enabled = tl_snapshot();
-        assert!(
-            snap_enabled.timing.is_some(),
-            "timing should be captured when metrics enabled"
-        );
-
-        tl_reset();
-        test_override_metrics_enabled(None);
-    }
-
-    fn metrics_env_lock() -> &'static std::sync::Mutex<()> {
-        use std::sync::{Mutex, OnceLock};
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    struct EnvGuard {
-        prev: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn new() -> Self {
-            Self {
-                prev: std::env::var("FWC_TEST_FORCE_METRICS").ok(),
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match self.prev.take() {
-                Some(v) => std::env::set_var("FWC_TEST_FORCE_METRICS", v),
-                None => std::env::remove_var("FWC_TEST_FORCE_METRICS"),
-            }
-        }
-    }
-
-    #[test]
-    fn metrics_enabled_env_override_takes_precedence() {
-        let _lock = metrics_env_lock().lock().unwrap();
-        let _guard = EnvGuard::new();
-
-        std::env::set_var("FWC_TEST_FORCE_METRICS", "0");
-        assert!(!metrics_enabled(), "env=0 should disable metrics");
-
-        std::env::set_var("FWC_TEST_FORCE_METRICS", "1");
-        assert!(metrics_enabled(), "env=1 should enable metrics");
-
-        std::env::remove_var("FWC_TEST_FORCE_METRICS");
-    }
-}
