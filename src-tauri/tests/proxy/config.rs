@@ -259,6 +259,9 @@ fn test_config_json_roundtrip() {
         recovery_cooldown_seconds: 600,
         health_check_interval_seconds: 90,
         recovery_strategy: "exponential-backoff".to_string(),
+        probe_url: "www.google.com:443".to_string(),
+        probe_timeout_seconds: 20,
+        recovery_consecutive_threshold: 5,
     };
     
     let json = serde_json::to_string(&original).unwrap();
@@ -275,6 +278,9 @@ fn test_config_json_roundtrip() {
     assert_eq!(restored.recovery_cooldown_seconds, original.recovery_cooldown_seconds);
     assert_eq!(restored.health_check_interval_seconds, original.health_check_interval_seconds);
     assert_eq!(restored.recovery_strategy, original.recovery_strategy);
+    assert_eq!(restored.probe_url, original.probe_url);
+    assert_eq!(restored.probe_timeout_seconds, original.probe_timeout_seconds);
+    assert_eq!(restored.recovery_consecutive_threshold, original.recovery_consecutive_threshold);
 }
 
 #[test]

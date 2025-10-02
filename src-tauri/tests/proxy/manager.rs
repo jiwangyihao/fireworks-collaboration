@@ -1033,3 +1033,211 @@ fn test_recovery_resets_detector() {
     assert_eq!(stats_after.failure_rate, 0.0);
     assert!(!stats_after.fallback_triggered);
 }
+
+// ============================================================================
+// P5.5 Configuration Enhancement Tests
+// ============================================================================
+
+#[test]
+fn test_config_update_with_custom_probe_settings() {
+    // Test that config update propagates new probe settings
+    
+    let config = ProxyConfig {
+        mode: ProxyMode::Http,
+        url: "http://proxy.example.com:8080".to_string(),
+        probe_url: "www.github.com:443".to_string(),
+        probe_timeout_seconds: 10,
+        recovery_consecutive_threshold: 3,
+        ..Default::default()
+    };
+    
+    let manager = ProxyManager::new(config);
+    
+    // Update with new probe settings
+    let new_config = ProxyConfig {
+        mode: ProxyMode::Http,
+        url: "http://proxy.example.com:8080".to_string(),
+        probe_url: "www.google.com:443".to_string(),
+        probe_timeout_seconds: 20,
+        recovery_consecutive_threshold: 5,
+        ..Default::default()
+    };
+    
+    let result = manager.update_config(new_config);
+    assert!(result.is_ok());
+    
+    // Config update should succeed and manager should remain operational
+    assert!(manager.is_enabled());
+    assert_eq!(manager.mode(), ProxyMode::Http);
+}
+
+#[test]
+fn test_config_update_preserves_state_with_new_fields() {
+    // Test that updating config with new P5.5 fields doesn't affect state
+    
+    let config = ProxyConfig {
+        mode: ProxyMode::Http,
+        url: "http://proxy.example.com:8080".to_string(),
+        ..Default::default()
+    };
+    
+    let manager = ProxyManager::new(config);
+    
+    // Trigger fallback
+    manager.manual_fallback("Test").unwrap();
+    assert_eq!(manager.state(), ProxyState::Fallback);
+    
+    // Update config while in fallback
+    let new_config = ProxyConfig {
+        mode: ProxyMode::Http,
+        url: "http://proxy.example.com:8080".to_string(),
+        probe_url: "www.cloudflare.com:443".to_string(),
+        probe_timeout_seconds: 15,
+        recovery_consecutive_threshold: 4,
+        ..Default::default()
+    };
+    
+    manager.update_config(new_config).unwrap();
+    
+    // Should still be in fallback state
+    assert_eq!(manager.state(), ProxyState::Fallback);
+    
+    // Recovery should work with new config
+    manager.manual_recover().unwrap();
+    assert_eq!(manager.state(), ProxyState::Enabled);
+}
+
+#[test]
+fn test_extreme_probe_timeout_values() {
+    // Test minimum and maximum probe timeout values
+    
+    // Minimum (1 second)
+    let config_min = ProxyConfig {
+        mode: ProxyMode::Http,
+        url: "http://proxy.example.com:8080".to_string(),
+        probe_timeout_seconds: 1,
+        ..Default::default()
+    };
+    
+    let manager = ProxyManager::new(config_min);
+    assert!(manager.is_enabled());
+    
+    // Maximum (60 seconds)
+    let config_max = ProxyConfig {
+        mode: ProxyMode::Http,
+        url: "http://proxy.example.com:8080".to_string(),
+        probe_timeout_seconds: 60,
+        ..Default::default()
+    };
+    
+    manager.update_config(config_max).unwrap();
+    assert!(manager.is_enabled());
+}
+
+#[test]
+fn test_extreme_recovery_threshold_values() {
+    // Test minimum and maximum recovery threshold values
+    
+    // Minimum (1)
+    let config_min = ProxyConfig {
+        mode: ProxyMode::Http,
+        url: "http://proxy.example.com:8080".to_string(),
+        recovery_consecutive_threshold: 1,
+        ..Default::default()
+    };
+    
+    let manager = ProxyManager::new(config_min);
+    assert!(manager.is_enabled());
+    
+    // Maximum (10)
+    let config_max = ProxyConfig {
+        mode: ProxyMode::Http,
+        url: "http://proxy.example.com:8080".to_string(),
+        recovery_consecutive_threshold: 10,
+        ..Default::default()
+    };
+    
+    manager.update_config(config_max).unwrap();
+    assert!(manager.is_enabled());
+}
+
+#[test]
+fn test_health_check_with_custom_probe_url() {
+    // Test health check execution with custom probe URL
+    
+    let config = ProxyConfig {
+        mode: ProxyMode::Http,
+        url: "http://proxy.example.com:8080".to_string(),
+        probe_url: "www.example.com:443".to_string(),
+        recovery_cooldown_seconds: 0,
+        ..Default::default()
+    };
+    
+    let manager = ProxyManager::new(config);
+    
+    // Trigger fallback to enable health checks
+    manager.manual_fallback("Test").unwrap();
+    assert_eq!(manager.state(), ProxyState::Fallback);
+    
+    // Execute health check (should use custom probe URL)
+    let result = manager.health_check();
+    assert!(result.is_ok());
+    
+    let probe_result = result.unwrap();
+    // In fallback state, probe should be attempted (not skipped)
+    assert!(!probe_result.is_skipped() || probe_result.is_failure());
+}
+
+#[test]
+fn test_config_serialization_with_new_fields() {
+    // Test that new P5.5 fields serialize/deserialize correctly
+    
+    let config = ProxyConfig {
+        mode: ProxyMode::Socks5,
+        url: "socks5://proxy.example.com:1080".to_string(),
+        probe_url: "www.github.com:443".to_string(),
+        probe_timeout_seconds: 25,
+        recovery_consecutive_threshold: 7,
+        recovery_cooldown_seconds: 180,
+        health_check_interval_seconds: 45,
+        ..Default::default()
+    };
+    
+    // Serialize to JSON
+    let json = serde_json::to_string(&config).unwrap();
+    
+    // Verify camelCase field names
+    assert!(json.contains("probeUrl"));
+    assert!(json.contains("probeTimeoutSeconds"));
+    assert!(json.contains("recoveryConsecutiveThreshold"));
+    
+    // Deserialize back
+    let restored: ProxyConfig = serde_json::from_str(&json).unwrap();
+    
+    // Verify fields match
+    assert_eq!(restored.probe_url, config.probe_url);
+    assert_eq!(restored.probe_timeout_seconds, config.probe_timeout_seconds);
+    assert_eq!(restored.recovery_consecutive_threshold, config.recovery_consecutive_threshold);
+}
+
+#[test]
+fn test_multiple_config_updates_with_varying_thresholds() {
+    // Test multiple config updates changing recovery thresholds
+    
+    let manager = ProxyManager::default();
+    
+    let thresholds = vec![1, 3, 5, 10, 2];
+    
+    for threshold in thresholds {
+        let config = ProxyConfig {
+            mode: ProxyMode::Http,
+            url: "http://proxy.example.com:8080".to_string(),
+            recovery_consecutive_threshold: threshold,
+            ..Default::default()
+        };
+        
+        let result = manager.update_config(config);
+        assert!(result.is_ok());
+        assert!(manager.is_enabled());
+    }
+}
