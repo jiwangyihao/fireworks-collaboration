@@ -1,5 +1,13 @@
 <template>
   <div class="p-4 pt-16 space-y-3">
+    <!-- Tabs for HTTP Tester and Proxy Config -->
+    <div class="tabs tabs-boxed">
+      <a class="tab" :class="{ 'tab-active': activeTab === 'http' }" @click="activeTab = 'http'">HTTP 测试</a>
+      <a class="tab" :class="{ 'tab-active': activeTab === 'proxy' }" @click="activeTab = 'proxy'">代理配置</a>
+    </div>
+
+    <!-- HTTP Tester Tab -->
+    <div v-show="activeTab === 'http'" class="space-y-3">
     <div class="flex gap-2">
       <select v-model="method" class="select select-bordered select-sm w-28">
         <option>GET</option>
@@ -73,6 +81,15 @@
         <div v-if="err" class="text-red-600 mt-2">Error: {{ err }}</div>
       </div>
     </div>
+    </div>
+
+    <!-- Proxy Config Tab -->
+    <div v-show="activeTab === 'proxy'" class="space-y-4">
+      <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <ProxyConfig />
+        <ProxyStatusPanel />
+      </div>
+    </div>
   </div>
 </template>
 
@@ -81,6 +98,11 @@ import { ref, computed, onMounted } from "vue";
 import { httpFakeRequest, type HttpRequestInput, type HttpResponseOutput } from "../api/http";
 import { getConfig, setConfig, type AppConfig } from "../api/config";
 import { useLogsStore } from "../stores/logs";
+import ProxyConfig from "../components/ProxyConfig.vue";
+import ProxyStatusPanel from "../components/ProxyStatusPanel.vue";
+
+// Tab state
+const activeTab = ref<"http" | "proxy">("http");
 
 const method = ref("GET");
 const url = ref("https://github.com/");
