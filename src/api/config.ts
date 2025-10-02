@@ -27,10 +27,28 @@ export interface LoggingCfg {
   authHeaderMasked: boolean;
   logLevel: string;
 }
+export interface ProxyCfg {
+  mode: 'off' | 'http' | 'socks5' | 'system';
+  url: string;
+  username?: string;
+  password?: string;
+  disableCustomTransport: boolean;
+  timeoutSeconds: number;
+  fallbackThreshold: number;
+  fallbackWindowSeconds: number;
+  recoveryCooldownSeconds: number;
+  healthCheckIntervalSeconds: number;
+  recoveryStrategy: string;
+  probeUrl: string;
+  probeTimeoutSeconds: number;
+  recoveryConsecutiveThreshold: number;
+  debugProxyLogging: boolean;
+}
 export interface AppConfig {
   http: HttpCfg;
   tls: TlsCfg;
   logging: LoggingCfg;
+  proxy: ProxyCfg;
 }
 
 export async function getConfig(): Promise<AppConfig> {
