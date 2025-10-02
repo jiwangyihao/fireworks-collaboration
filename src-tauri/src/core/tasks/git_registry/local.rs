@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::core::git::errors::GitError;
 use crate::events::emitter::{emit_all, AppHandle};
 
-use super::super::base::{TaskRegistry, EV_PROGRESS};
+use super::super::registry::{TaskRegistry, EV_PROGRESS};
 use super::helpers::{handle_cancel, report_failure};
 use crate::core::tasks::model::TaskProgressEvent;
 

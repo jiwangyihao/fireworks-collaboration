@@ -1,3 +1,4 @@
+pub mod git_registry;
 pub mod model;
 pub mod registry;
 pub mod retry;

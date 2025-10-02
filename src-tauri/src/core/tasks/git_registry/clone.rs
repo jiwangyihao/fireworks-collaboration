@@ -14,7 +14,7 @@ use crate::events::structured::{
     StrategyEvent as StructuredStrategyEvent, TransportEvent as StructuredTransportEvent,
 };
 
-use super::super::base::{TaskRegistry, EV_PROGRESS};
+use super::super::registry::{TaskRegistry, EV_PROGRESS};
 use super::helpers::{handle_cancel, report_failure};
 use crate::core::tasks::model::{TaskErrorEvent, TaskProgressEvent};
 

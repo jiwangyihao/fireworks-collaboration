@@ -12,7 +12,7 @@ use crate::events::structured::{
     TransportEvent as StructuredTransportEvent,
 };
 
-use super::super::base::{TaskRegistry, EV_PROGRESS};
+use super::super::registry::{TaskRegistry, EV_PROGRESS};
 use crate::core::tasks::model::{TaskErrorEvent, TaskProgressEvent, TaskState};
 
 impl TaskRegistry {

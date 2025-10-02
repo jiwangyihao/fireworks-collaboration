@@ -19,13 +19,13 @@ use crate::core::tasks::model::{
     TaskStateEvent,
 };
 
-pub(crate) const EV_STATE: &str = "task://state";
-pub(crate) const EV_PROGRESS: &str = "task://progress";
-pub(crate) const EV_ERROR: &str = "task://error";
+pub(in crate::core::tasks) const EV_STATE: &str = "task://state";
+pub(in crate::core::tasks) const EV_PROGRESS: &str = "task://progress";
+pub(in crate::core::tasks) const EV_ERROR: &str = "task://error";
 
 pub struct TaskRegistry {
-    pub(super) inner: Mutex<HashMap<Uuid, TaskMeta>>,
-    pub(super) structured_bus: Mutex<Option<Arc<dyn crate::events::structured::EventBusAny>>>,
+    pub(in crate::core::tasks) inner: Mutex<HashMap<Uuid, TaskMeta>>,
+    pub(in crate::core::tasks) structured_bus: Mutex<Option<Arc<dyn crate::events::structured::EventBusAny>>>,
 }
 
 impl TaskRegistry {
@@ -41,7 +41,7 @@ impl TaskRegistry {
         *self.structured_bus.lock().unwrap() = Some(bus);
     }
 
-    pub(super) fn publish_structured(&self, evt: crate::events::structured::Event) {
+    pub(in crate::core::tasks) fn publish_structured(&self, evt: crate::events::structured::Event) {
         if let Some(bus) = self.structured_bus.lock().unwrap().as_ref() {
             bus.publish(evt.clone());
         }
@@ -89,7 +89,7 @@ impl TaskRegistry {
             .unwrap_or(false)
     }
 
-    pub(super) fn with_meta<F: FnOnce(&mut TaskMeta)>(&self, id: &Uuid, f: F) -> Option<TaskMeta> {
+    pub(in crate::core::tasks) fn with_meta<F: FnOnce(&mut TaskMeta)>(&self, id: &Uuid, f: F) -> Option<TaskMeta> {
         let mut guard = self.inner.lock().unwrap();
         if let Some(m) = guard.get_mut(id) {
             f(m);
@@ -99,24 +99,24 @@ impl TaskRegistry {
         }
     }
 
-    pub(super) fn emit_state(&self, app: &AppHandle, id: &Uuid) {
+    pub(in crate::core::tasks) fn emit_state(&self, app: &AppHandle, id: &Uuid) {
         if let Some(m) = self.inner.lock().unwrap().get(id) {
             let evt = TaskStateEvent::new(m);
             emit_all(app, EV_STATE, &evt);
         }
     }
 
-    pub(super) fn set_state_emit(&self, app: &AppHandle, id: &Uuid, state: TaskState) {
+    pub(in crate::core::tasks) fn set_state_emit(&self, app: &AppHandle, id: &Uuid, state: TaskState) {
         if self.with_meta(id, |m| m.state = state).is_some() {
             self.emit_state(app, id);
         }
     }
 
-    pub(super) fn set_state_noemit(&self, id: &Uuid, state: TaskState) {
+    pub(in crate::core::tasks) fn set_state_noemit(&self, id: &Uuid, state: TaskState) {
         let _ = self.with_meta(id, |m| m.state = state);
     }
 
-    pub(super) fn emit_error_structured(&self, evt: &TaskErrorEvent) {
+    pub(in crate::core::tasks) fn emit_error_structured(&self, evt: &TaskErrorEvent) {
         use crate::events::structured::{
             Event as StructuredEvent, TaskEvent as StructuredTaskEvent,
         };
@@ -135,7 +135,7 @@ impl TaskRegistry {
     }
 
     /// 幂等生命周期事件发布
-    pub(super) fn publish_lifecycle_started(&self, id: &Uuid, kind: &str) {
+    pub(in crate::core::tasks) fn publish_lifecycle_started(&self, id: &Uuid, kind: &str) {
         use crate::events::structured::{
             Event as StructuredEvent, TaskEvent as StructuredTaskEvent,
         };
@@ -158,7 +158,7 @@ impl TaskRegistry {
         }
     }
 
-    pub(super) fn publish_lifecycle_completed(&self, id: &Uuid) {
+    pub(in crate::core::tasks) fn publish_lifecycle_completed(&self, id: &Uuid) {
         use crate::events::structured::{
             Event as StructuredEvent, TaskEvent as StructuredTaskEvent,
         };
@@ -179,7 +179,7 @@ impl TaskRegistry {
         }
     }
 
-    pub(super) fn publish_lifecycle_canceled(&self, id: &Uuid) {
+    pub(in crate::core::tasks) fn publish_lifecycle_canceled(&self, id: &Uuid) {
         use crate::events::structured::{
             Event as StructuredEvent, TaskEvent as StructuredTaskEvent,
         };
@@ -200,7 +200,7 @@ impl TaskRegistry {
         }
     }
 
-    pub(super) fn publish_lifecycle_failed_if_needed(&self, id: &Uuid, message: &str) {
+    pub(in crate::core::tasks) fn publish_lifecycle_failed_if_needed(&self, id: &Uuid, message: &str) {
         use crate::events::structured::{
             Event as StructuredEvent, TaskEvent as StructuredTaskEvent,
         };
@@ -224,12 +224,12 @@ impl TaskRegistry {
         }
     }
 
-    pub(super) fn emit_error(&self, app: &AppHandle, evt: &TaskErrorEvent) {
+    pub(in crate::core::tasks) fn emit_error(&self, app: &AppHandle, evt: &TaskErrorEvent) {
         emit_all(app, EV_ERROR, evt);
         self.emit_error_structured(evt);
     }
 
-    pub(super) fn emit_error_if_app<F>(&self, app: &Option<AppHandle>, build: F)
+    pub(in crate::core::tasks) fn emit_error_if_app<F>(&self, app: &Option<AppHandle>, build: F)
     where
         F: FnOnce() -> TaskErrorEvent,
     {
@@ -239,7 +239,7 @@ impl TaskRegistry {
         }
     }
 
-    pub(super) fn mark_running(&self, app: &Option<AppHandle>, id: &Uuid, kind: &str) {
+    pub(in crate::core::tasks) fn mark_running(&self, app: &Option<AppHandle>, id: &Uuid, kind: &str) {
         match app {
             Some(app_ref) => self.set_state_emit(app_ref, id, TaskState::Running),
             None => self.set_state_noemit(id, TaskState::Running),
@@ -247,7 +247,7 @@ impl TaskRegistry {
         self.publish_lifecycle_started(id, kind);
     }
 
-    pub(super) fn mark_completed(&self, app: &Option<AppHandle>, id: &Uuid) {
+    pub(in crate::core::tasks) fn mark_completed(&self, app: &Option<AppHandle>, id: &Uuid) {
         match app {
             Some(app_ref) => self.set_state_emit(app_ref, id, TaskState::Completed),
             None => self.set_state_noemit(id, TaskState::Completed),
@@ -255,7 +255,7 @@ impl TaskRegistry {
         self.publish_lifecycle_completed(id);
     }
 
-    pub(super) fn mark_canceled(&self, app: &Option<AppHandle>, id: &Uuid) {
+    pub(in crate::core::tasks) fn mark_canceled(&self, app: &Option<AppHandle>, id: &Uuid) {
         match app {
             Some(app_ref) => self.set_state_emit(app_ref, id, TaskState::Canceled),
             None => self.set_state_noemit(id, TaskState::Canceled),
@@ -263,7 +263,7 @@ impl TaskRegistry {
         self.publish_lifecycle_canceled(id);
     }
 
-    pub(super) fn mark_failed(&self, app: &Option<AppHandle>, id: &Uuid, fallback_message: &str) {
+    pub(in crate::core::tasks) fn mark_failed(&self, app: &Option<AppHandle>, id: &Uuid, fallback_message: &str) {
         match app {
             Some(app_ref) => self.set_state_emit(app_ref, id, TaskState::Failed),
             None => {

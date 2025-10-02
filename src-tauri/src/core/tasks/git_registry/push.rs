@@ -14,7 +14,7 @@ use crate::events::structured::{
     StrategyEvent as StructuredStrategyEvent,
 };
 
-use super::super::base::{TaskRegistry, EV_PROGRESS};
+use super::super::registry::{TaskRegistry, EV_PROGRESS};
 use crate::core::tasks::model::{TaskErrorEvent, TaskProgressEvent, TaskState};
 
 impl TaskRegistry {
