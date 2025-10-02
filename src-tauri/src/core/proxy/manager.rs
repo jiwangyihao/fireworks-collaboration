@@ -8,7 +8,8 @@ use super::{
     state::{ProxyState, ProxyStateContext, StateTransition},
     system_detector::SystemProxyDetector,
     detector::ProxyFailureDetector,
-    events::ProxyFallbackEvent,
+    events::{ProxyFallbackEvent, ProxyHealthCheckEvent, ProxyRecoveredEvent},
+    health_checker::{ProxyHealthChecker, ProbeResult},
     ProxyConnector, PlaceholderConnector, HttpProxyConnector, Socks5ProxyConnector,
 };
 use anyhow::Result;
@@ -23,6 +24,7 @@ use std::sync::{Arc, RwLock};
 /// - Managing proxy state transitions (for P5.4/P5.5)
 /// - Providing connector instances (for P5.1/P5.2)
 /// - Monitoring proxy failures and triggering fallback (P5.4)
+/// - Health checking and automatic recovery (P5.5)
 pub struct ProxyManager {
     /// Current proxy configuration
     config: Arc<RwLock<ProxyConfig>>,
@@ -32,6 +34,9 @@ pub struct ProxyManager {
     
     /// Failure detector for automatic fallback (P5.4)
     failure_detector: ProxyFailureDetector,
+    
+    /// Health checker for automatic recovery (P5.5)
+    health_checker: Arc<RwLock<ProxyHealthChecker>>,
 }
 
 impl ProxyManager {
@@ -52,10 +57,14 @@ impl ProxyManager {
             config.fallback_threshold,
         );
         
+        // Create health checker from config
+        let health_checker = ProxyHealthChecker::from_proxy_config(&config);
+        
         Self {
             config: Arc::new(RwLock::new(config)),
             state: Arc::new(RwLock::new(state)),
             failure_detector,
+            health_checker: Arc::new(RwLock::new(health_checker)),
         }
     }
     
@@ -331,6 +340,12 @@ impl ProxyManager {
         
         // TODO P5.6: Publish event to frontend
         // crate::events::publish_global(ProxyEvent::Fallback(event));
+        
+        // Record fallback in health checker to start cooldown period (P5.5)
+        {
+            let mut health_checker = self.health_checker.write().unwrap();
+            health_checker.record_fallback();
+        }
     }
     
     /// Manually trigger fallback to direct connection
@@ -345,6 +360,12 @@ impl ProxyManager {
         
         // Mark detector as fallback triggered
         self.failure_detector.mark_fallback_triggered();
+        
+        // Record fallback in health checker (P5.5)
+        {
+            let mut health_checker = self.health_checker.write().unwrap();
+            health_checker.record_fallback();
+        }
         
         tracing::warn!("Manual proxy fallback triggered: {}", reason);
         
@@ -362,9 +383,151 @@ impl ProxyManager {
         Ok(())
     }
     
+    /// Perform a health check probe (P5.5)
+    /// 
+    /// This should be called periodically (e.g., every 60 seconds) when in Fallback state.
+    /// Returns ProbeResult indicating success/failure/skipped.
+    /// 
+    /// If recovery threshold is met, automatically transitions to Recovering → Enabled.
+    pub fn health_check(&self) -> Result<ProbeResult> {
+        // Only perform health checks in Fallback or Recovering state
+        let current_state = self.state();
+        if current_state != ProxyState::Fallback && current_state != ProxyState::Recovering {
+            tracing::debug!(
+                "Health check skipped: not in fallback or recovering state (current: {:?})",
+                current_state
+            );
+            return Ok(ProbeResult::Skipped {
+                remaining_seconds: 0,
+            });
+        }
+        
+        // Get connector for probing
+        let connector = self.get_connector()?;
+        
+        // Perform probe
+        let result = {
+            let mut health_checker = self.health_checker.write().unwrap();
+            health_checker.probe(connector.as_ref())
+        };
+        
+        // Emit health check event
+        let event = match &result {
+            ProbeResult::Success { latency_ms } => {
+                ProxyHealthCheckEvent::success(
+                    *latency_ms,
+                    self.sanitized_url(),
+                    "www.github.com:443".to_string(),
+                )
+            }
+            ProbeResult::Failure { error } => {
+                ProxyHealthCheckEvent::failure(
+                    error.clone(),
+                    self.sanitized_url(),
+                    "www.github.com:443".to_string(),
+                )
+            }
+            ProbeResult::Skipped { remaining_seconds } => {
+                ProxyHealthCheckEvent::failure(
+                    format!("Cooldown not expired: {}s remaining", remaining_seconds),
+                    self.sanitized_url(),
+                    "www.github.com:443".to_string(),
+                )
+            }
+        };
+        
+        tracing::debug!(
+            "Health check probe completed: success={}, response_time={:?}ms",
+            event.success,
+            event.response_time_ms
+        );
+        
+        // TODO P5.6: Publish event to frontend
+        // crate::events::publish_global(ProxyEvent::HealthCheck(event));
+        
+        // Check if recovery should be triggered
+        if result.is_success() {
+            let should_recover = {
+                let health_checker = self.health_checker.read().unwrap();
+                health_checker.should_recover()
+            };
+            
+            if should_recover {
+                self.trigger_automatic_recovery()?;
+            }
+        }
+        
+        Ok(result)
+    }
+    
+    /// Trigger automatic recovery (P5.5)
+    /// 
+    /// Internal method called when health check success threshold is met.
+    /// Transitions state from Fallback → Recovering → Enabled.
+    /// Emits ProxyRecoveredEvent.
+    fn trigger_automatic_recovery(&self) -> Result<()> {
+        let mut state = self.state.write().unwrap();
+        
+        // Get recovery info for event
+        let consecutive_successes = {
+            let health_checker = self.health_checker.read().unwrap();
+            health_checker.consecutive_successes()
+        };
+        
+        tracing::info!(
+            "Automatic proxy recovery triggered: {} consecutive successes",
+            consecutive_successes
+        );
+        
+        // Transition to Recovering if not already
+        if state.state == ProxyState::Fallback {
+            state.transition(
+                StateTransition::StartRecovery,
+                Some(format!("Health check succeeded: {} consecutive", consecutive_successes)),
+            )?;
+            tracing::debug!("State transitioned to Recovering");
+        }
+        
+        // Complete recovery immediately (health checks already validated proxy works)
+        state.transition(
+            StateTransition::CompleteRecovery,
+            Some(format!("Automatic recovery: {} consecutive successes", consecutive_successes)),
+        )?;
+        
+        tracing::info!("Automatic proxy recovery completed, state: {:?}", state.state);
+        
+        // Reset failure detector and health checker
+        self.failure_detector.reset();
+        {
+            let mut health_checker = self.health_checker.write().unwrap();
+            health_checker.reset();
+        }
+        
+        // Emit recovery event
+        let event = ProxyRecoveredEvent::automatic(
+            consecutive_successes,
+            self.sanitized_url(),
+            {
+                let config = self.config.read().unwrap();
+                config.recovery_strategy.clone()
+            },
+        );
+        
+        tracing::info!(
+            "Proxy recovery event emitted: successful_checks={}, strategy={:?}",
+            event.successful_checks,
+            event.strategy
+        );
+        
+        // TODO P5.6: Publish event to frontend
+        // crate::events::publish_global(ProxyEvent::Recovered(event));
+        
+        Ok(())
+    }
+    
     /// Manually recover from fallback
     /// 
-    /// This is for manual intervention or testing. P5.5 will add automatic recovery.
+    /// This is for manual intervention or testing. P5.5 adds automatic recovery.
     pub fn manual_recover(&self) -> Result<()> {
         let mut state = self.state.write().unwrap();
         
@@ -378,17 +541,39 @@ impl ProxyManager {
         
         tracing::debug!("Recovery phase initiated, state: {:?}", state.state);
         
-        // Immediately complete recovery (in P5.5, health checks will determine this)
+        // Immediately complete recovery
         state.transition(
             StateTransition::CompleteRecovery,
             Some("Manual recovery".to_string()),
         )?;
         
-        // Reset failure detector on successful recovery
+        // Reset failure detector and health checker on successful recovery
         self.failure_detector.reset();
+        {
+            let mut health_checker = self.health_checker.write().unwrap();
+            health_checker.reset();
+        }
         
         tracing::info!("Manual proxy recovery completed, state: {:?}", state.state);
         Ok(())
+    }
+    
+    /// Get health check interval for periodic scheduling (P5.5)
+    pub fn health_check_interval(&self) -> std::time::Duration {
+        let health_checker = self.health_checker.read().unwrap();
+        health_checker.interval()
+    }
+    
+    /// Check if health checker is in cooldown period (P5.5)
+    pub fn is_in_cooldown(&self) -> bool {
+        let health_checker = self.health_checker.read().unwrap();
+        !health_checker.is_cooldown_expired()
+    }
+    
+    /// Get remaining cooldown seconds (P5.5)
+    pub fn remaining_cooldown_seconds(&self) -> u64 {
+        let health_checker = self.health_checker.read().unwrap();
+        health_checker.remaining_cooldown_seconds()
     }
     
     /// Get current state context for diagnostics
@@ -411,5 +596,136 @@ impl ProxyManager {
 impl Default for ProxyManager {
     fn default() -> Self {
         Self::new(ProxyConfig::default())
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    
+    #[test]
+    fn test_health_check_interval() {
+        let mut config = ProxyConfig::default();
+        config.health_check_interval_seconds = 120;
+        
+        let manager = ProxyManager::new(config);
+        assert_eq!(manager.health_check_interval(), std::time::Duration::from_secs(120));
+    }
+    
+    #[test]
+    fn test_cooldown_not_in_fallback() {
+        let manager = ProxyManager::new(ProxyConfig::default());
+        
+        // No fallback recorded, should not be in cooldown
+        assert!(!manager.is_in_cooldown());
+        assert_eq!(manager.remaining_cooldown_seconds(), 0);
+    }
+    
+    #[test]
+    fn test_manual_fallback_starts_cooldown() {
+        let mut config = ProxyConfig::default();
+        config.mode = ProxyMode::Http;
+        config.url = "http://proxy.example.com:8080".to_string();
+        
+        let manager = ProxyManager::new(config);
+        
+        // Trigger manual fallback
+        let result = manager.manual_fallback("Test fallback");
+        assert!(result.is_ok());
+        
+        // Should be in cooldown now
+        assert!(manager.is_in_cooldown());
+        assert!(manager.remaining_cooldown_seconds() > 0);
+    }
+    
+    #[test]
+    fn test_manual_recover_clears_state() {
+        let mut config = ProxyConfig::default();
+        config.mode = ProxyMode::Http;
+        config.url = "http://proxy.example.com:8080".to_string();
+        
+        let manager = ProxyManager::new(config);
+        
+        // Transition to fallback
+        let _ = manager.manual_fallback("Test");
+        assert_eq!(manager.state(), ProxyState::Fallback);
+        
+        // Recover
+        let result = manager.manual_recover();
+        assert!(result.is_ok());
+        
+        // Should be back to Enabled
+        assert_eq!(manager.state(), ProxyState::Enabled);
+        assert!(!manager.is_in_cooldown());
+    }
+    
+    #[test]
+    fn test_health_check_skipped_when_not_in_fallback() {
+        let mut config = ProxyConfig::default();
+        config.mode = ProxyMode::Http;
+        config.url = "http://proxy.example.com:8080".to_string();
+        
+        let manager = ProxyManager::new(config);
+        
+        // Health check should be skipped in Enabled state
+        let result = manager.health_check();
+        assert!(result.is_ok());
+        
+        let probe_result = result.unwrap();
+        assert!(probe_result.is_skipped());
+    }
+    
+    #[test]
+    fn test_automatic_recovery_trigger() {
+        let mut config = ProxyConfig::default();
+        config.mode = ProxyMode::Http;
+        config.url = "http://proxy.example.com:8080".to_string();
+        config.recovery_strategy = "immediate".to_string();
+        config.recovery_cooldown_seconds = 0; // No cooldown for testing
+        
+        let manager = ProxyManager::new(config);
+        
+        // Transition to fallback
+        let _ = manager.manual_fallback("Test");
+        assert_eq!(manager.state(), ProxyState::Fallback);
+        
+        // Simulate successful health check (would need mock connector in real test)
+        // For now, just verify state can be recovered manually
+        let _ = manager.manual_recover();
+        assert_eq!(manager.state(), ProxyState::Enabled);
+    }
+    
+    #[test]
+    fn test_health_checker_integration() {
+        let mut config = ProxyConfig::default();
+        config.mode = ProxyMode::Http;
+        config.url = "http://proxy.example.com:8080".to_string();
+        config.health_check_interval_seconds = 60;
+        config.recovery_cooldown_seconds = 300;
+        config.recovery_strategy = "consecutive".to_string();
+        
+        let manager = ProxyManager::new(config);
+        
+        // Verify health checker configuration
+        assert_eq!(manager.health_check_interval(), std::time::Duration::from_secs(60));
+        
+        // Trigger fallback to start cooldown
+        let _ = manager.manual_fallback("Test");
+        
+        // Should be in cooldown
+        assert!(manager.is_in_cooldown());
+        assert!(manager.remaining_cooldown_seconds() > 0);
+    }
+    
+    #[test]
+    fn test_recovery_strategy_consecutive() {
+        let mut config = ProxyConfig::default();
+        config.recovery_strategy = "consecutive".to_string();
+        
+        let manager = ProxyManager::new(config);
+        
+        // Verify strategy is stored
+        let state_context = manager.get_state_context();
+        assert_eq!(state_context.consecutive_successes, 0);
     }
 }

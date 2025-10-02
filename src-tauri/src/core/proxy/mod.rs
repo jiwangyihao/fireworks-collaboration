@@ -11,6 +11,7 @@ pub mod config;
 pub mod detector;
 pub mod errors;
 pub mod events;
+pub mod health_checker;
 pub mod http_connector;
 pub mod manager;
 pub mod socks5_connector;
@@ -23,6 +24,7 @@ pub use errors::ProxyError;
 pub use events::{
     ProxyFallbackEvent, ProxyHealthCheckEvent, ProxyRecoveredEvent, ProxyStateEvent,
 };
+pub use health_checker::{HealthCheckConfig, ProbeResult, ProxyHealthChecker};
 pub use http_connector::HttpProxyConnector;
 pub use manager::ProxyManager;
 pub use socks5_connector::Socks5ProxyConnector;
