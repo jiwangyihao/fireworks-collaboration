@@ -6,7 +6,7 @@ use crate::core::{
         types::{HttpRequestInput, HttpResponseOutput, RedirectInfo},
     },
     ip_pool::{self, IpPool},
-    proxy::{ProxyManager, ProxyMode},
+    proxy::{ProxyManager, ProxyMode, SystemProxyDetector},
     tasks::{SharedTaskRegistry, TaskKind, TaskRegistry, TaskSnapshot},
     tls::util::match_domain,
 };
@@ -511,6 +511,80 @@ async fn git_remote_remove(
     Ok(id.to_string())
 }
 
+// ===== Proxy Commands =====
+
+/// System proxy detection result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemProxyResult {
+    pub url: Option<String>,
+    #[serde(rename = "type")]
+    pub proxy_type: Option<String>,
+}
+
+/// Detect system proxy settings
+#[tauri::command]
+async fn detect_system_proxy() -> Result<SystemProxyResult, String> {
+    tracing::info!("detect_system_proxy called");
+    
+    match SystemProxyDetector::detect() {
+        Some(config) => {
+            let proxy_type = match config.mode {
+                ProxyMode::Http => Some("http".to_string()),
+                ProxyMode::Socks5 => Some("socks5".to_string()),
+                ProxyMode::System => Some("system".to_string()),
+                ProxyMode::Off => None,
+            };
+            
+            Ok(SystemProxyResult {
+                url: Some(config.url.clone()),
+                proxy_type,
+            })
+        }
+        None => {
+            tracing::info!("No system proxy detected");
+            Ok(SystemProxyResult {
+                url: None,
+                proxy_type: None,
+            })
+        }
+    }
+}
+
+/// Force proxy fallback to direct connection
+#[tauri::command]
+async fn force_proxy_fallback(
+    reason: Option<String>,
+    cfg: State<'_, SharedConfig>,
+) -> Result<bool, String> {
+    tracing::info!("force_proxy_fallback called");
+    
+    let config = cfg.lock().map_err(|e| format!("Failed to lock config: {e}"))?;
+    let mut manager = ProxyManager::new(config.proxy.clone());
+    
+    let reason = reason.unwrap_or_else(|| "Manual fallback triggered".to_string());
+    manager.force_fallback(&reason)
+        .map_err(|e| format!("Failed to trigger fallback: {e}"))?;
+    
+    Ok(true)
+}
+
+/// Force proxy recovery from fallback
+#[tauri::command]
+async fn force_proxy_recovery(
+    cfg: State<'_, SharedConfig>,
+) -> Result<bool, String> {
+    tracing::info!("force_proxy_recovery called");
+    
+    let config = cfg.lock().map_err(|e| format!("Failed to lock config: {e}"))?;
+    let mut manager = ProxyManager::new(config.proxy.clone());
+    
+    manager.force_recovery()
+        .map_err(|e| format!("Failed to trigger recovery: {e}"))?;
+    
+    Ok(true)
+}
+
 // ========== P0.5 http_fake_request ==========
 pub(crate) fn redact_auth_in_headers(
     mut h: std::collections::HashMap<String, String>,
@@ -711,7 +785,10 @@ pub fn run() {
             git_remote_set,
             git_remote_add,
             git_remote_remove,
-            http_fake_request
+            http_fake_request,
+            detect_system_proxy,
+            force_proxy_fallback,
+            force_proxy_recovery
         ]);
     builder = builder.setup(|app| {
         let base_dir: PathBuf = app.path().app_config_dir().unwrap_or_else(|_| {
