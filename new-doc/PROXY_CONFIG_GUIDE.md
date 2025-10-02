@@ -1,14 +1,17 @@
-# Proxy Configuration Guide (P5.0-P5.2)
+# Proxy Configuration Guide (P5.0-P5.5)
 
 ## Overview
 
-Starting from P5.0, the application supports proxy configuration for HTTP/HTTPS and SOCKS5 proxies, including automatic system proxy detection.
+Starting from P5.0, the application supports proxy configuration for HTTP/HTTPS and SOCKS5 proxies, including automatic system proxy detection, automatic fallback, and automatic recovery.
 
 **Implementation Status**:
 - ✅ **P5.0**: Base architecture, configuration model, state machine, system proxy detection
 - ✅ **P5.1**: HTTP/HTTPS proxy with CONNECT tunnel and Basic Auth
 - ✅ **P5.2**: SOCKS5 proxy with No Auth and Username/Password Auth
-- ⏳ **P5.3+**: Transport layer integration, automatic fallback/recovery (in development)
+- ✅ **P5.3**: Transport layer integration, Fake SNI exclusion
+- ✅ **P5.4**: Automatic fallback with sliding window failure detection
+- ✅ **P5.5**: Automatic recovery with health checks and cooldown
+- ✅ **P5.6**: Frontend UI, proxy commands, event extensions (COMPLETED)
 
 ## Configuration Structure
 
@@ -32,7 +35,10 @@ The proxy configuration is added to the main `config.json` file under the `proxy
     "fallbackWindowSeconds": 300,
     "recoveryCooldownSeconds": 300,
     "healthCheckIntervalSeconds": 60,
-    "recoveryStrategy": "consecutive"
+    "recoveryStrategy": "consecutive",
+    "probeUrl": "www.github.com:443",
+    "probeTimeoutSeconds": 10,
+    "recoveryConsecutiveThreshold": 3
   }
 }
 ```
@@ -137,11 +143,82 @@ Interval in seconds between proxy health checks during recovery. Default is 60 s
 ### `recoveryStrategy` (string, default: `"consecutive"`)
 
 Strategy for determining when to recover proxy after fallback. Possible values:
-- `"single"`: Recover after one successful health check
-- `"consecutive"`: Recover after multiple consecutive successful health checks
-- `"rate"`: Recover based on success rate within a time window
+- `"immediate"`: Recover after one successful health check
+- `"consecutive"`: Recover after N consecutive successful health checks (configurable via `recoveryConsecutiveThreshold`)
+- `"exponential-backoff"`: Use exponential backoff strategy (future implementation)
 
-**Note**: This feature will be implemented in P5.5.
+**Note**: This feature is implemented in P5.5.
+
+### `probeUrl` (string, default: `"www.github.com:443"`)
+
+Target host:port for health check probes during recovery. The health checker attempts TCP connections to this target to verify proxy connectivity.
+
+**Format**: `"host:port"` (e.g., `"www.github.com:443"`, `"example.com:80"`)
+
+**Validation**:
+- Must contain a colon separating host and port
+- Port must be a valid number (1-65535)
+
+**Recommendations**:
+- Use a reliable, publicly accessible endpoint
+- Choose an endpoint relevant to your proxy's primary use case (e.g., GitHub endpoints if proxy is mainly used for git operations)
+
+**Note**: This feature is implemented in P5.5.
+
+### `probeTimeoutSeconds` (number, default: `10`)
+
+Timeout in seconds for each health check probe. If a probe doesn't connect within this time, it's considered a failure.
+
+**Valid Range**: 1-60 seconds
+
+**Validation**:
+- Must be at least 1 second
+- Must not exceed 60 seconds
+- Warning if close to `timeoutSeconds` (within 80%)
+
+**Recommendations**:
+- **Fast networks**: 5-10 seconds
+- **Slow/congested networks**: 15-30 seconds
+- Should be significantly shorter than `timeoutSeconds` to provide useful feedback
+
+**Note**: This feature is implemented in P5.5.
+
+### `recoveryConsecutiveThreshold` (number, default: `3`)
+
+Number of consecutive successful health checks required before recovering from fallback (when using `"consecutive"` recovery strategy).
+
+**Valid Range**: 1-10
+
+**Validation**:
+- Must be at least 1
+- Must not exceed 10
+- Warning if set to 1 with `"consecutive"` strategy (consider `"immediate"` instead)
+
+**Recommendations**:
+- **Reliable proxies**: 1-2 (faster recovery)
+- **Unstable proxies**: 3-5 (more conservative)
+- **Critical operations**: 5-10 (maximum confidence before recovery)
+
+**Note**: This feature is implemented in P5.5.
+
+### `debugProxyLogging` (boolean, default: `false`)
+
+Enable debug-level proxy logging for detailed connection information. When enabled, outputs sanitized proxy URLs, authentication status, connection timing, and custom transport layer status at debug log level.
+
+**Recommendations**:
+- Enable for troubleshooting proxy connection issues
+- Disable in production to reduce log volume
+- Credentials are always sanitized even when enabled
+
+**Log Output Includes**:
+- Proxy URL (sanitized, no credentials)
+- Proxy type (HTTP/SOCKS5)
+- Authentication status (present/absent, not actual credentials)
+- Connection establishment timing
+- Custom transport layer status
+- Failure reasons and retry attempts
+
+**Note**: This feature is implemented in P5.6.
 
 ## Configuration Examples
 
@@ -295,6 +372,126 @@ The application will automatically detect proxy settings from:
 **Trade-offs**:
 - Slower to react to persistent proxy failures
 - Users may experience more failed requests before fallback
+
+### Example 9: Fast Recovery for Reliable Proxies (P5.5)
+
+```json
+{
+  "proxy": {
+    "mode": "http",
+    "url": "http://proxy.company.com:8080",
+    "username": "user",
+    "password": "pass",
+    "recoveryStrategy": "immediate",
+    "recoveryCooldownSeconds": 60,
+    "healthCheckIntervalSeconds": 30,
+    "probeUrl": "www.github.com:443",
+    "probeTimeoutSeconds": 5,
+    "recoveryConsecutiveThreshold": 1
+  }
+}
+```
+
+**Use Case**: Stable enterprise proxies with occasional maintenance windows.
+
+**Behavior**:
+- Single successful health check triggers recovery (`recoveryConsecutiveThreshold`: 1)
+- Short cooldown (1 minute) after fallback
+- Frequent health checks (every 30 seconds)
+- Fast probe timeout (5 seconds) for quick feedback
+- Best for: Reliable corporate proxies, managed infrastructure
+
+**Trade-offs**:
+- May attempt recovery too quickly after transient failures
+- More health check overhead (higher probe frequency)
+
+### Example 10: Conservative Recovery for Unstable Proxies (P5.5)
+
+```json
+{
+  "proxy": {
+    "mode": "socks5",
+    "url": "socks5://proxy.example.com:1080",
+    "recoveryStrategy": "consecutive",
+    "recoveryCooldownSeconds": 600,
+    "healthCheckIntervalSeconds": 120,
+    "probeUrl": "www.google.com:443",
+    "probeTimeoutSeconds": 20,
+    "recoveryConsecutiveThreshold": 5
+  }
+}
+```
+
+**Use Case**: Unreliable proxies that may fail intermittently.
+
+**Behavior**:
+- Requires 5 consecutive successful health checks (`recoveryConsecutiveThreshold`: 5)
+- Long cooldown (10 minutes) after fallback
+- Infrequent health checks (every 2 minutes)
+- Generous probe timeout (20 seconds) for slow connections
+- Best for: Unstable proxies, shared/overloaded infrastructure
+
+**Trade-offs**:
+- Slower to recover even when proxy is stable
+- May stay in direct connection mode longer than necessary
+
+### Example 11: Balanced Fallback and Recovery (P5.5)
+
+```json
+{
+  "proxy": {
+    "mode": "http",
+    "url": "http://proxy.company.com:8080",
+    "fallbackThreshold": 0.2,
+    "fallbackWindowSeconds": 300,
+    "recoveryStrategy": "consecutive",
+    "recoveryCooldownSeconds": 300,
+    "healthCheckIntervalSeconds": 60,
+    "probeUrl": "www.github.com:443",
+    "probeTimeoutSeconds": 10,
+    "recoveryConsecutiveThreshold": 3
+  }
+}
+```
+
+**Use Case**: Most common production scenarios with balanced reliability.
+
+**Behavior**:
+- Default fallback: 20% failure rate over 5 minutes
+- Default recovery: 3 consecutive successes (`recoveryConsecutiveThreshold`: 3)
+- Default cooldown: 5 minutes
+- Default health checks: every 60 seconds
+- Standard probe timeout: 10 seconds
+- Best for: General production use, mixed network conditions
+
+**Recommendation**: Start with these defaults and adjust based on observed behavior.
+
+### Example 12: Manual Control with Disabled Auto-Recovery (P5.5)
+
+```json
+{
+  "proxy": {
+    "mode": "http",
+    "url": "http://proxy.company.com:8080",
+    "fallbackThreshold": 0.2,
+    "fallbackWindowSeconds": 300,
+    "recoveryStrategy": "consecutive",
+    "recoveryCooldownSeconds": 3600,
+    "healthCheckIntervalSeconds": 300
+  }
+}
+```
+
+**Use Case**: Environments requiring manual intervention for recovery.
+
+**Behavior**:
+- Automatic fallback still enabled (20% threshold)
+- Very long cooldown (1 hour) effectively disables auto-recovery
+- Infrequent health checks (every 5 minutes) for monitoring only
+- Requires manual recovery via UI or API
+- Best for: Strict change control environments, manual approval workflows
+
+**Note**: Set `recoveryCooldownSeconds` to a very high value (e.g., 86400 for 24 hours) to effectively disable automatic recovery while maintaining manual recovery capability.
 
 ## Troubleshooting Automatic Fallback (P5.4)
 
@@ -487,6 +684,155 @@ This is by design to prevent credential leakage. Full URLs with credentials are 
 
 4. **Trust**: Ensure you trust the proxy server, as it can see all your Git traffic.
 
+## P5.6 Frontend UI Usage (NEW)
+
+### Proxy Configuration Panel
+
+The proxy configuration UI is integrated into the main configuration view and provides an intuitive interface for all proxy settings.
+
+#### Accessing Proxy Settings
+
+1. Open the application
+2. Navigate to the configuration/settings page
+3. Find the "Proxy Configuration" section
+
+#### Configuration Steps
+
+**Method 1: Manual Configuration**
+
+1. Select proxy mode from dropdown:
+   - **Off**: Disable proxy (direct connection)
+   - **HTTP/HTTPS**: Use HTTP CONNECT tunnel
+   - **SOCKS5**: Use SOCKS5 protocol
+   - **System**: Auto-detect from system settings
+
+2. Enter proxy server address:
+   - Format: `http://proxy.example.com:8080` or `socks5://127.0.0.1:1080`
+   - For System mode, this field is auto-filled after detection
+
+3. (Optional) Enter authentication credentials:
+   - Username
+   - Password
+   - Leave blank if proxy doesn't require authentication
+
+4. Review advanced settings:
+   - **Disable Custom Transport**: Automatically enabled when proxy is active
+   - **Enable Proxy Debug Logging**: Show detailed connection information in logs
+
+5. Click "Save Configuration" to apply changes
+
+**Method 2: System Proxy Detection**
+
+1. Select "System" mode from the dropdown
+2. Click "Detect System Proxy" button
+3. Wait for detection result:
+   - If detected: Shows proxy URL and type
+   - If not detected: Shows "No system proxy detected"
+4. Click "One-Click Apply" to auto-fill the configuration
+5. Adjust mode if needed (e.g., change from auto-detected HTTP to SOCKS5)
+6. Click "Save Configuration"
+
+#### Proxy Status Panel
+
+The status panel provides real-time information about proxy operation:
+
+**Status Indicators**:
+- **Current Mode**: Shows Off/HTTP/SOCKS5/System
+- **Running State**: 
+  - 🟢 Enabled: Proxy is active and working
+  - ⚪ Disabled: Proxy is turned off
+  - 🟠 Fallback: Auto-downgraded to direct connection due to failures
+  - 🔵 Recovering: Testing proxy availability for recovery
+- **Proxy Server**: Displays configured proxy address (credentials hidden)
+- **Custom Transport Layer**: Shows if custom transport is enabled/disabled
+
+**Fallback Information** (shown when in Fallback state):
+- Reason for fallback
+- Number of consecutive failures
+- Automatic recovery status
+
+**Recovery Information** (shown when in Recovering state):
+- Current recovery progress
+- Next health check countdown
+
+**Health Check Stats**:
+- Success rate progress bar with color coding:
+  - Green: ≥80% success rate
+  - Orange: 50-80% success rate
+  - Red: <50% success rate
+
+#### Manual Control
+
+**Force Fallback** (available when proxy is enabled):
+- Click "Force Fallback" button to manually switch to direct connection
+- Useful for troubleshooting or bypassing proxy temporarily
+- Can be reversed with "Force Recovery"
+
+**Force Recovery** (available in Fallback/Recovering state):
+- Click "Force Recovery" button to immediately re-enable proxy
+- Bypasses cooldown period and recovery threshold
+- Use when you've confirmed proxy is available again
+
+### Debug Logging
+
+To enable detailed proxy connection logs:
+
+1. In Proxy Configuration panel, check "Enable Proxy Debug Logging"
+2. Save configuration
+3. View logs in the application's log viewer or log files
+4. Debug logs include (with credentials sanitized):
+   - Proxy URL and type
+   - Connection establishment steps
+   - Authentication status
+   - Connection timing
+   - Custom transport layer status
+   - Failure reasons
+
+**Log Levels**:
+- **Info**: Basic proxy state changes
+- **Debug**: Detailed connection information (only when `debugProxyLogging` is enabled)
+- **Warn**: Connection failures, fallback triggers
+- **Error**: Critical proxy errors
+
+### System Proxy Compatibility
+
+**Windows**:
+- Reads from Registry: `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`
+- Supports HTTP and SOCKS5 detection
+- Requires proxy to be enabled in "Internet Options"
+
+**macOS**:
+- Reads from `scutil --proxy` command output
+- Supports HTTP, HTTPS, and SOCKS5 detection
+- Requires proxy configuration in "System Preferences > Network"
+
+**Linux**:
+- Reads from environment variables: `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`
+- Case-insensitive detection
+- Supports all proxy types
+
+### Troubleshooting with UI
+
+1. **Proxy not connecting**:
+   - Check status panel for error messages
+   - Enable debug logging to see detailed connection attempts
+   - Try "Force Fallback" then "Force Recovery" to reset connection
+
+2. **Frequent fallbacks**:
+   - Check health check success rate in status panel
+   - Review fallback reason message
+   - Consider adjusting `fallbackThreshold` in config.json if needed
+
+3. **System detection fails**:
+   - Status will show "No system proxy detected"
+   - Verify proxy is configured in OS settings
+   - Try manual configuration as fallback
+
+4. **Credentials not working**:
+   - Double-check username/password (shown as masked in UI)
+   - Enable debug logging to verify auth headers are sent
+   - Confirm proxy supports Basic Authentication
+
 ## Future Enhancements (P5.3-P5.7)
 
 The following features are planned for future releases:
@@ -499,8 +845,14 @@ The following features are planned for future releases:
   - Configurable threshold and window
   - Comprehensive edge case handling and logging
   - 234 unit tests with 100% pass rate
-- ⏳ **P5.5**: Automatic recovery with health check probing
-- ⏳ **P5.6**: Frontend UI for proxy configuration and status display
+- ✅ **P5.5**: Automatic recovery with health check probing (Completed)
+- ✅ **P5.6**: Frontend UI for proxy configuration and status display (Completed)
+  - ProxyConfig.vue component with system proxy detection
+  - ProxyStatusPanel.vue for real-time status monitoring
+  - Tauri commands: detect_system_proxy, force_proxy_fallback, force_proxy_recovery
+  - Extended events with all required fields
+  - Debug logging support
+  - 10 new integration tests
 - ⏳ **P5.7**: Comprehensive testing and production readiness validation
 
 **Note**: P5.3 transport layer integration is complete. Proxy support is fully functional in Git operations.
