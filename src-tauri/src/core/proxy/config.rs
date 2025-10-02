@@ -84,6 +84,21 @@ pub struct ProxyConfig {
     /// Recovery strategy: "single" (one success), "consecutive" (multiple success), "rate" (success rate)
     #[serde(default = "default_recovery_strategy")]
     pub recovery_strategy: String,
+    
+    /// Health check probe URL (default: "www.github.com:443")
+    /// Target host:port to probe for proxy availability
+    #[serde(default = "default_probe_url")]
+    pub probe_url: String,
+    
+    /// Health check probe timeout in seconds (default: 10)
+    /// Should be shorter than connection timeout
+    #[serde(default = "default_probe_timeout_seconds")]
+    pub probe_timeout_seconds: u64,
+    
+    /// Number of consecutive successes required for recovery (default: 3)
+    /// Used by "consecutive" recovery strategy
+    #[serde(default = "default_recovery_consecutive_threshold")]
+    pub recovery_consecutive_threshold: u32,
 }
 
 pub fn default_timeout_seconds() -> u64 {
@@ -110,6 +125,18 @@ pub fn default_recovery_strategy() -> String {
     "consecutive".to_string()
 }
 
+pub fn default_probe_url() -> String {
+    "www.github.com:443".to_string()
+}
+
+pub fn default_probe_timeout_seconds() -> u64 {
+    10 // 10 seconds, shorter than connection timeout
+}
+
+pub fn default_recovery_consecutive_threshold() -> u32 {
+    3 // Require 3 consecutive successes
+}
+
 impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
@@ -124,6 +151,9 @@ impl Default for ProxyConfig {
             recovery_cooldown_seconds: default_recovery_cooldown_seconds(),
             health_check_interval_seconds: default_health_check_interval_seconds(),
             recovery_strategy: default_recovery_strategy(),
+            probe_url: default_probe_url(),
+            probe_timeout_seconds: default_probe_timeout_seconds(),
+            recovery_consecutive_threshold: default_recovery_consecutive_threshold(),
         }
     }
 }
@@ -180,6 +210,15 @@ impl ProxyConfig {
                 
                 // Validate recovery strategy
                 self.validate_recovery_strategy()?;
+                
+                // Validate probe URL
+                self.validate_probe_url()?;
+                
+                // Validate probe timeout
+                self.validate_probe_timeout()?;
+                
+                // Validate recovery threshold
+                self.validate_recovery_threshold()?;
                 
                 Ok(())
             }
@@ -270,6 +309,18 @@ impl ProxyConfig {
             anyhow::bail!("Health check interval must not exceed 3600 seconds (1 hour)");
         }
         
+        // Probe timeout: must be reasonable
+        if self.probe_timeout_seconds == 0 {
+            anyhow::bail!("probeTimeoutSeconds: Probe timeout must be greater than 0");
+        }
+        if self.probe_timeout_seconds > self.timeout_seconds {
+            tracing::warn!(
+                "Probe timeout ({}s) is greater than connection timeout ({}s), will be capped",
+                self.probe_timeout_seconds,
+                self.timeout_seconds
+            );
+        }
+        
         Ok(())
     }
     
@@ -303,6 +354,74 @@ impl ProxyConfig {
                 )
             }
         }
+    }
+    
+    /// Validate probe URL format
+    fn validate_probe_url(&self) -> anyhow::Result<()> {
+        // Probe URL should be in format "host:port"
+        if self.probe_url.is_empty() {
+            anyhow::bail!("probeUrl: Probe URL cannot be empty");
+        }
+        
+        // Check format: must contain ':'
+        if !self.probe_url.contains(':') {
+            anyhow::bail!("probeUrl: Probe URL must be in format 'host:port'");
+        }
+        
+        // Parse and validate port
+        if let Some(colon_pos) = self.probe_url.rfind(':') {
+            let port_str = &self.probe_url[colon_pos + 1..];
+            
+            match port_str.parse::<u16>() {
+                Ok(port) if port > 0 => Ok(()),
+                Ok(_) => anyhow::bail!("probeUrl: Probe URL port must be between 1 and 65535"),
+                Err(_) => anyhow::bail!("probeUrl: Probe URL port is not a valid number: {}", port_str),
+            }
+        } else {
+            Ok(())
+        }
+    }
+    
+    /// Validate probe timeout
+    fn validate_probe_timeout(&self) -> anyhow::Result<()> {
+        if self.probe_timeout_seconds == 0 {
+            anyhow::bail!("probeTimeoutSeconds: Probe timeout must be greater than 0");
+        }
+        
+        if self.probe_timeout_seconds > 60 {
+            anyhow::bail!("probeTimeoutSeconds: Probe timeout must not exceed 60 seconds");
+        }
+        
+        // Warn if probe timeout is too close to connection timeout
+        if self.probe_timeout_seconds > self.timeout_seconds * 80 / 100 {
+            tracing::warn!(
+                "Probe timeout ({}s) is close to connection timeout ({}s), may not provide benefit",
+                self.probe_timeout_seconds,
+                self.timeout_seconds
+            );
+        }
+        
+        Ok(())
+    }
+    
+    /// Validate recovery consecutive threshold
+    fn validate_recovery_threshold(&self) -> anyhow::Result<()> {
+        if self.recovery_consecutive_threshold == 0 {
+            anyhow::bail!("recoveryConsecutiveThreshold: Recovery consecutive threshold must be at least 1");
+        }
+        
+        if self.recovery_consecutive_threshold > 10 {
+            anyhow::bail!("recoveryConsecutiveThreshold: Recovery consecutive threshold must not exceed 10");
+        }
+        
+        // Warn if threshold is 1 with consecutive strategy
+        if self.recovery_consecutive_threshold == 1 && self.recovery_strategy == "consecutive" {
+            tracing::warn!(
+                "Recovery consecutive threshold is 1, consider using 'immediate' strategy instead"
+            );
+        }
+        
+        Ok(())
     }
     
     /// Get sanitized URL for logging (hide password if present)
