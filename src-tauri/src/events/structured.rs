@@ -181,6 +181,40 @@ pub enum StrategyEvent {
         max_latency_ms: Option<u32>,
         reason: String,
     },
+    /// 代理状态变更事件
+    ProxyState {
+        id: String,
+        state: String, // "enabled", "disabled", "fallback", "recovering"
+        mode: String,  // "off", "http", "socks5", "system"
+        reason: Option<String>,
+    },
+    /// 代理降级事件
+    ProxyFallback {
+        id: String,
+        reason: String,
+        failure_count: u32,
+        window_seconds: u64,
+    },
+    /// 代理恢复事件
+    ProxyRecovered {
+        id: String,
+        cooldown_seconds: u64,
+        consecutive_successes: u32,
+    },
+    /// 代理健康检查事件
+    ProxyHealthCheck {
+        id: String,
+        success: bool,
+        latency_ms: Option<u32>,
+        probe_url: String,
+    },
+    /// 系统代理检测事件
+    SystemProxyDetected {
+        id: String,
+        success: bool,
+        mode: Option<String>,
+        url: Option<String>,
+    },
 }
 
 /// 统一顶层事件枚举
