@@ -1,6 +1,7 @@
-// Split from previous single-file http.rs into smaller modules without changing behavior.
-// Public surface from transport remains:
-// - struct CustomHttpsSubtransport (used by register.rs)
+// HTTP transport implementation for git operations.
+// This module was extracted from transport::http to reduce module nesting depth.
+// Public API:
+// - struct CustomHttpsSubtransport (used by transport::register)
 // - fn set_push_auth_header_value (re-exported to transport::)
 
 mod auth;
@@ -10,7 +11,7 @@ mod subtransport;
 mod util;
 
 pub use auth::set_push_auth_header_value;
-pub(super) use subtransport::CustomHttpsSubtransport;
+pub use subtransport::CustomHttpsSubtransport;
 
 /// HTTP 操作类型（smart 协议的四种阶段），仅限本模块及子模块使用。
 pub(super) enum HttpOp {

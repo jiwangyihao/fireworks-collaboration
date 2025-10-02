@@ -27,7 +27,7 @@ use super::fallback::{classify_and_count_fallback, reason_label, stage_label};
 use super::util::format_ip_sources;
 use super::{stream, HttpOp};
 
-pub(in crate::core::git::transport) struct CustomHttpsSubtransport {
+pub struct CustomHttpsSubtransport {
     pub(super) cfg: AppConfig,
     pub(super) tls: Arc<ClientConfig>,
     pub(super) pool: Arc<Mutex<IpPool>>,
@@ -118,7 +118,7 @@ impl git2::transport::SmartSubtransport for CustomHttpsSubtransport {
 }
 
 impl CustomHttpsSubtransport {
-    pub(in crate::core::git::transport) fn new(cfg: AppConfig) -> Self {
+    pub fn new(cfg: AppConfig) -> Self {
         let tls = Arc::new(create_client_config(&cfg.tls));
         let pool = ip_pool::global::obtain_global_pool();
         Self { cfg, tls, pool }

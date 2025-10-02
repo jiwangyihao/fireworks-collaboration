@@ -5,8 +5,8 @@ use git2::{transport, Error, Remote};
 use crate::core::config::loader::load_or_init;
 use crate::core::config::model::AppConfig;
 use crate::core::proxy::ProxyManager;
+use crate::core::git::http_transport::CustomHttpsSubtransport;
 
-use super::http::CustomHttpsSubtransport;
 use super::metrics::tl_set_proxy_usage;
 
 /// 仅注册一次自定义传输前缀 "https+custom"。注册后，所有该 scheme 的 URL 都会通过本实现建立连接。
