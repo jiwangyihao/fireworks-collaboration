@@ -2,7 +2,7 @@ use fireworks_collaboration_lib::core::tasks::model::TaskState;
 use fireworks_collaboration_lib::events::structured::{Event, StrategyEvent};
 use fireworks_collaboration_lib::soak::{
     build_comparison_summary, run, run_from_env, AutoDisableSummary, FallbackSummary,
-    FieldStats, IpPoolSummary, SoakAggregator, SoakOptions, SoakOptionsSnapshot, SoakReport,
+    FieldStats, IpPoolSummary, ProxySummary, SoakAggregator, SoakOptions, SoakOptionsSnapshot, SoakReport,
     SoakThresholds, ThresholdCheck, ThresholdSummary, TimingSummary, TotalsSummary,
 };
 use std::collections::HashMap;
@@ -315,6 +315,16 @@ fn soak_report_serialization_includes_ip_pool() {
             refresh_failure: 1,
             refresh_success_rate: 0.8,
         },
+        proxy: ProxySummary {
+            fallback_count: 0,
+            recovered_count: 0,
+            health_check_total: 0,
+            health_check_success: 0,
+            avg_health_check_latency_ms: None,
+            system_proxy_detect_total: 0,
+            system_proxy_detect_success: 0,
+            system_proxy_detect_success_rate: 0.0,
+        },
         totals: TotalsSummary {
             total_operations: 1,
             completed: 1,
@@ -375,6 +385,16 @@ fn comparison_summary_detects_regressions() {
             refresh_success: 0,
             refresh_failure: 0,
             refresh_success_rate: 1.0,
+        },
+        proxy: ProxySummary {
+            fallback_count: 0,
+            recovered_count: 0,
+            health_check_total: 0,
+            health_check_success: 0,
+            avg_health_check_latency_ms: None,
+            system_proxy_detect_total: 0,
+            system_proxy_detect_success: 0,
+            system_proxy_detect_success_rate: 0.0,
         },
         totals: TotalsSummary {
             total_operations: 3,
@@ -553,6 +573,16 @@ fn comparison_summary_computes_latency_improvement() {
             refresh_failure: 0,
             refresh_success_rate: 1.0,
         },
+        proxy: ProxySummary {
+            fallback_count: 0,
+            recovered_count: 0,
+            health_check_total: 0,
+            health_check_success: 0,
+            avg_health_check_latency_ms: None,
+            system_proxy_detect_total: 0,
+            system_proxy_detect_success: 0,
+            system_proxy_detect_success_rate: 0.0,
+        },
         totals: TotalsSummary {
             total_operations: 0,
             completed: 0,
@@ -625,6 +655,16 @@ fn comparison_summary_computes_latency_improvement() {
             refresh_success: 0,
             refresh_failure: 0,
             refresh_success_rate: 1.0,
+        },
+        proxy: ProxySummary {
+            fallback_count: 0,
+            recovered_count: 0,
+            health_check_total: 0,
+            health_check_success: 0,
+            avg_health_check_latency_ms: None,
+            system_proxy_detect_total: 0,
+            system_proxy_detect_success: 0,
+            system_proxy_detect_success_rate: 0.0,
         },
         totals: TotalsSummary {
             total_operations: 0,
