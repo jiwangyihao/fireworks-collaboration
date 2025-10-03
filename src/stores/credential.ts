@@ -55,36 +55,36 @@ export const useCredentialStore = defineStore("credential", {
      * Get credentials sorted by creation time (newest first)
      */
     sortedCredentials: (state) => {
-      return [...state.credentials].sort(
+      return [...(state.credentials || [])].sort(
         (a, b) => b.createdAt - a.createdAt
       );
-    },
-
-    /**
-     * Get expired credentials
-     */
-    expiredCredentials: (state) => {
-      return state.credentials.filter((c) => c.isExpired);
     },
 
     /**
      * Get active (non-expired) credentials
      */
     activeCredentials: (state) => {
-      return state.credentials.filter((c) => !c.isExpired);
+      return (state.credentials || []).filter((c) => !c.isExpired);
+    },
+
+    /**
+     * Get expired credentials
+     */
+    expiredCredentials: (state) => {
+      return (state.credentials || []).filter((c) => c.isExpired);
     },
 
     /**
      * Get credentials expiring soon (within 7 days)
      */
     expiringSoonCredentials: (state) => {
-      return state.credentials.filter((c) => !c.isExpired && c.expiresAt && isExpiringSoon(c.expiresAt));
+      return (state.credentials || []).filter((c) => !c.isExpired && c.expiresAt && isExpiringSoon(c.expiresAt));
     },
 
     /**
      * Count of credentials
      */
-    credentialCount: (state) => state.credentials.length,
+    credentialCount: (state) => (state.credentials || []).length,
 
     /**
      * Check if store needs unlocking (file storage mode)
@@ -93,7 +93,7 @@ export const useCredentialStore = defineStore("credential", {
       return (
         state.config?.storage === "file" &&
         !state.isUnlocked &&
-        state.credentials.length === 0
+        (state.credentials || []).length === 0
       );
     },
   },
