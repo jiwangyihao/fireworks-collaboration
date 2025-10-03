@@ -13,6 +13,25 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn().mockResolvedValue(() => {})
 }))
 
+// Helper to create a wrapper with event handler access
+async function createWrapperWithEventHandler() {
+  const { listen } = await import('@tauri-apps/api/event')
+  const mockListen = listen as ReturnType<typeof vi.fn>
+  
+  let eventHandler: any
+  mockListen.mockImplementation((eventName, handler) => {
+    if (eventName === 'proxy://state') {
+      eventHandler = handler
+    }
+    return Promise.resolve(() => {})
+  })
+  
+  const wrapper = mount(ProxyStatusPanel)
+  await wrapper.vm.$nextTick()
+  
+  return { wrapper, eventHandler }
+}
+
 describe('ProxyStatusPanel.vue', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -88,10 +107,14 @@ describe('ProxyStatusPanel.vue', () => {
   })
 
   it('shows fallback button when state is enabled', async () => {
-    const wrapper = mount(ProxyStatusPanel)
+    const { wrapper, eventHandler } = await createWrapperWithEventHandler()
     
-    // Manually set state to enabled
-    await wrapper.vm.$data.proxyState = 'enabled'
+    // Trigger event to set state to enabled
+    eventHandler({
+      payload: {
+        proxy_state: 'Enabled'
+      }
+    })
     await wrapper.vm.$nextTick()
     
     const fallbackBtn = wrapper.find('.fallback-btn')
@@ -100,10 +123,14 @@ describe('ProxyStatusPanel.vue', () => {
   })
 
   it('shows recovery button when state is fallback', async () => {
-    const wrapper = mount(ProxyStatusPanel)
+    const { wrapper, eventHandler } = await createWrapperWithEventHandler()
     
-    // Set state to fallback
-    wrapper.vm.proxyState = 'fallback'
+    // Trigger event to set state to fallback
+    eventHandler({
+      payload: {
+        proxy_state: 'Fallback'
+      }
+    })
     await wrapper.vm.$nextTick()
     
     const recoveryBtn = wrapper.find('.recovery-btn')
@@ -116,8 +143,14 @@ describe('ProxyStatusPanel.vue', () => {
     const mockInvoke = invoke as ReturnType<typeof vi.fn>
     mockInvoke.mockResolvedValue(undefined)
 
-    const wrapper = mount(ProxyStatusPanel)
-    wrapper.vm.proxyState = 'enabled'
+    const { wrapper, eventHandler } = await createWrapperWithEventHandler()
+    
+    // Set state to enabled
+    eventHandler({
+      payload: {
+        proxy_state: 'Enabled'
+      }
+    })
     await wrapper.vm.$nextTick()
     
     const fallbackBtn = wrapper.find('.fallback-btn')
@@ -133,8 +166,14 @@ describe('ProxyStatusPanel.vue', () => {
     const mockInvoke = invoke as ReturnType<typeof vi.fn>
     mockInvoke.mockResolvedValue(undefined)
 
-    const wrapper = mount(ProxyStatusPanel)
-    wrapper.vm.proxyState = 'fallback'
+    const { wrapper, eventHandler } = await createWrapperWithEventHandler()
+    
+    // Set state to fallback
+    eventHandler({
+      payload: {
+        proxy_state: 'Fallback'
+      }
+    })
     await wrapper.vm.$nextTick()
     
     const recoveryBtn = wrapper.find('.recovery-btn')
@@ -144,20 +183,30 @@ describe('ProxyStatusPanel.vue', () => {
   })
 
   it('displays fallback reason when in fallback state', async () => {
-    const wrapper = mount(ProxyStatusPanel)
+    const { wrapper, eventHandler } = await createWrapperWithEventHandler()
     
-    wrapper.vm.proxyState = 'fallback'
-    wrapper.vm.fallbackReason = '连接超时'
+    // Set state to fallback with reason
+    eventHandler({
+      payload: {
+        proxy_state: 'Fallback',
+        fallback_reason: '连接超时'
+      }
+    })
     await wrapper.vm.$nextTick()
     
     expect(wrapper.text()).toContain('连接超时')
   })
 
   it('displays failure count in fallback state', async () => {
-    const wrapper = mount(ProxyStatusPanel)
+    const { wrapper, eventHandler } = await createWrapperWithEventHandler()
     
-    wrapper.vm.proxyState = 'fallback'
-    wrapper.vm.failureCount = 5
+    // Set state to fallback with failure count
+    eventHandler({
+      payload: {
+        proxy_state: 'Fallback',
+        failure_count: 5
+      }
+    })
     await wrapper.vm.$nextTick()
     
     expect(wrapper.text()).toContain('失败次数')
@@ -165,9 +214,14 @@ describe('ProxyStatusPanel.vue', () => {
   })
 
   it('shows health check stats when available', async () => {
-    const wrapper = mount(ProxyStatusPanel)
+    const { wrapper, eventHandler } = await createWrapperWithEventHandler()
     
-    wrapper.vm.healthCheckSuccessRate = 0.85
+    // Set health check success rate
+    eventHandler({
+      payload: {
+        health_check_success_rate: 0.85
+      }
+    })
     await wrapper.vm.$nextTick()
     
     expect(wrapper.text()).toContain('健康检查成功率')
@@ -175,10 +229,15 @@ describe('ProxyStatusPanel.vue', () => {
   })
 
   it('shows next health check countdown in recovering state', async () => {
-    const wrapper = mount(ProxyStatusPanel)
+    const { wrapper, eventHandler } = await createWrapperWithEventHandler()
     
-    wrapper.vm.proxyState = 'recovering'
-    wrapper.vm.nextHealthCheckIn = 30
+    // Set state to recovering with countdown
+    eventHandler({
+      payload: {
+        proxy_state: 'Recovering',
+        next_health_check_in: 30
+      }
+    })
     await wrapper.vm.$nextTick()
     
     expect(wrapper.text()).toContain('下次健康检查')
@@ -233,9 +292,10 @@ describe('ProxyStatusPanel.vue', () => {
     
     await wrapper.vm.$nextTick()
     
-    expect(wrapper.vm.proxyState).toBe('fallback')
-    expect(wrapper.vm.fallbackReason).toBe('Health check failed')
-    expect(wrapper.vm.failureCount).toBe(3)
+    // Check that the UI reflects the updated state
+    expect(wrapper.text()).toContain('已降级')
+    expect(wrapper.text()).toContain('Health check failed')
+    expect(wrapper.text()).toContain('3')
   })
 
   it('disables control buttons while controlling', async () => {
@@ -243,8 +303,14 @@ describe('ProxyStatusPanel.vue', () => {
     const mockInvoke = invoke as ReturnType<typeof vi.fn>
     mockInvoke.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 100)))
 
-    const wrapper = mount(ProxyStatusPanel)
-    wrapper.vm.proxyState = 'enabled'
+    const { wrapper, eventHandler } = await createWrapperWithEventHandler()
+    
+    // Set state to enabled
+    eventHandler({
+      payload: {
+        proxy_state: 'Enabled'
+      }
+    })
     await wrapper.vm.$nextTick()
     
     const fallbackBtn = wrapper.find('.fallback-btn')
@@ -254,21 +320,45 @@ describe('ProxyStatusPanel.vue', () => {
     expect(fallbackBtn.attributes('disabled')).toBeDefined()
   })
 
-  it('applies correct health check status class', () => {
-    const wrapper = mount(ProxyStatusPanel)
+  it('applies correct health check status class', async () => {
+    const { wrapper, eventHandler } = await createWrapperWithEventHandler()
     
     // High success rate - success class
-    expect(wrapper.vm.getHealthCheckClass(0.9)).toBe('success')
+    eventHandler({
+      payload: {
+        health_check_success_rate: 0.9
+      }
+    })
+    await wrapper.vm.$nextTick()
+    let progressFill = wrapper.find('.progress-fill')
+    expect(progressFill.classes()).toContain('success')
     
     // Medium success rate - warning class
-    expect(wrapper.vm.getHealthCheckClass(0.6)).toBe('warning')
+    eventHandler({
+      payload: {
+        health_check_success_rate: 0.6
+      }
+    })
+    await wrapper.vm.$nextTick()
+    progressFill = wrapper.find('.progress-fill')
+    expect(progressFill.classes()).toContain('warning')
     
     // Low success rate - error class
-    expect(wrapper.vm.getHealthCheckClass(0.3)).toBe('error')
+    eventHandler({
+      payload: {
+        health_check_success_rate: 0.3
+      }
+    })
+    await wrapper.vm.$nextTick()
+    progressFill = wrapper.find('.progress-fill')
+    expect(progressFill.classes()).toContain('error')
   })
 
   it('handles null health check rate', () => {
     const wrapper = mount(ProxyStatusPanel)
-    expect(wrapper.vm.getHealthCheckClass(null)).toBe('')
+    
+    // When no health check data, progress bar should not exist
+    const healthCheckStats = wrapper.find('.health-check-stats')
+    expect(healthCheckStats.exists()).toBe(false)
   })
 })
