@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::core::credential::config::CredentialConfig;
 use crate::core::ip_pool::IpPoolRuntimeConfig;
 use crate::core::proxy::ProxyConfig;
 
@@ -90,6 +91,9 @@ pub struct AppConfig {
     /// P5.0: 代理配置，默认关闭。
     #[serde(default)]
     pub proxy: ProxyConfig,
+    /// P6.0: 凭证存储与安全管理配置，默认使用系统钥匙串。
+    #[serde(default)]
+    pub credential: CredentialConfig,
 }
 
 fn default_true() -> bool {
@@ -186,6 +190,7 @@ impl Default for AppConfig {
             partial_filter_supported: false,
             ip_pool: IpPoolRuntimeConfig::default(),
             proxy: ProxyConfig::default(),
+            credential: CredentialConfig::default(),
         }
     }
 }
