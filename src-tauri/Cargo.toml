@@ -69,6 +69,12 @@ once_cell = "1"
 sha1 = "0.10"
 tempfile = "3"
 metrics = "0.21"
+# P6.0: 凭证存储与安全管理相关依赖
+aes-gcm = "0.10"
+argon2 = "0.5"
+hmac = "0.12"
+sha2 = "0.10"
+zeroize = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 # 与主运行时一致，测试中使用 current_thread 以减少潜在冲突
@@ -92,6 +98,11 @@ winreg = "0.52"
 [[test]]
 name = "git_add_and_commit"
 path = "tests/git/git_add_and_commit.rs"
+required-features = []
+
+[[test]]
+name = "credential"
+path = "tests/credential/mod.rs"
 required-features = []
 
 [[test]]
