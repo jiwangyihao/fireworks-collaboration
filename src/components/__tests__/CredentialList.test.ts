@@ -1,9 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mount, VueWrapper } from '@vue/test-utils';
+import { mount, VueWrapper, flushPromises } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import CredentialList from '../CredentialList.vue';
 import { useCredentialStore } from '../../stores/credential';
 import type { CredentialInfo } from '../../api/credential';
+
+// Mock ConfirmDialog
+vi.mock('../ConfirmDialog.vue', () => ({
+  default: {
+    name: 'ConfirmDialog',
+    template: '<div class="mock-confirm-dialog" v-if="show"><button class="confirm-btn" @click="$emit(\'confirm\')">确认</button><button class="cancel-btn" @click="$emit(\'cancel\')">取消</button></div>',
+    props: ['show', 'title', 'message', 'variant'],
+    emits: ['confirm', 'cancel'],
+  },
+}));
 
 // Mock credential API
 vi.mock('../../api/credential', () => ({
@@ -245,13 +255,15 @@ describe('CredentialList.vue', () => {
     credentialStore.credentials = [mockCredentials[0]];
     wrapper = mount(CredentialList);
     
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    
     const deleteButton = wrapper.find('button[title="删除"]');
     await deleteButton.trigger('click');
+    await wrapper.vm.$nextTick();
     
-    expect(confirmSpy).toHaveBeenCalledWith('确定要删除凭证 github.com (user1) 吗？');
-    confirmSpy.mockRestore();
+    // Check ConfirmDialog is shown
+    const confirmDialog = wrapper.findComponent({ name: 'ConfirmDialog' });
+    expect(confirmDialog.props('show')).toBe(true);
+    expect(confirmDialog.props('message')).toContain('github.com');
+    expect(confirmDialog.props('message')).toContain('user1');
   });
 
   it('calls store.delete when deletion confirmed', async () => {
@@ -259,14 +271,18 @@ describe('CredentialList.vue', () => {
     wrapper = mount(CredentialList);
     
     const deleteSpy = vi.spyOn(credentialStore, 'delete').mockResolvedValue();
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     
     const deleteButton = wrapper.find('button[title="删除"]');
     await deleteButton.trigger('click');
+    await wrapper.vm.$nextTick();
+    
+    // Trigger confirm event from ConfirmDialog
+    const confirmDialog = wrapper.findComponent({ name: 'ConfirmDialog' });
+    await confirmDialog.vm.$emit('confirm');
+    await flushPromises();
     
     expect(deleteSpy).toHaveBeenCalledWith('github.com', 'user1');
     
-    confirmSpy.mockRestore();
     deleteSpy.mockRestore();
   });
 
@@ -275,14 +291,18 @@ describe('CredentialList.vue', () => {
     wrapper = mount(CredentialList);
     
     const deleteSpy = vi.spyOn(credentialStore, 'delete').mockResolvedValue();
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     
     const deleteButton = wrapper.find('button[title="删除"]');
     await deleteButton.trigger('click');
+    await wrapper.vm.$nextTick();
+    
+    // Trigger cancel event from ConfirmDialog
+    const confirmDialog = wrapper.findComponent({ name: 'ConfirmDialog' });
+    await confirmDialog.vm.$emit('cancel');
+    await flushPromises();
     
     expect(deleteSpy).not.toHaveBeenCalled();
     
-    confirmSpy.mockRestore();
     deleteSpy.mockRestore();
   });
 
@@ -291,18 +311,22 @@ describe('CredentialList.vue', () => {
     wrapper = mount(CredentialList);
     
     const deleteSpy = vi.spyOn(credentialStore, 'delete').mockRejectedValue(new Error('Network error'));
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
     
     const deleteButton = wrapper.find('button[title="删除"]');
     await deleteButton.trigger('click');
+    await wrapper.vm.$nextTick();
+    
+    // Trigger confirm event from ConfirmDialog
+    const confirmDialog = wrapper.findComponent({ name: 'ConfirmDialog' });
+    await confirmDialog.vm.$emit('confirm');
+    await flushPromises();
     
     // Wait for async operation
     await new Promise(resolve => setTimeout(resolve, 10));
     
     expect(alertSpy).toHaveBeenCalledWith('删除失败: Network error');
     
-    confirmSpy.mockRestore();
     deleteSpy.mockRestore();
     alertSpy.mockRestore();
   });
