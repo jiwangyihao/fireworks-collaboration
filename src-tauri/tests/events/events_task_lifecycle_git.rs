@@ -23,10 +23,8 @@
 //!   - 保留最小进度事件（未断言），为将来结构化扩展预留位置。
 //! 后续潜在升级：接入真实结构化事件枚举后，把字符串模拟替换为强类型构造，再次收敛到公共构造模块。
 
-#[path = "../common/mod.rs"]
-mod common;
-use common::event_assert::{assert_terminal_exclusive, expect_optional_tags_subsequence};
-use common::test_env::init_test_env;
+use super::common::event_assert::{assert_terminal_exclusive, expect_optional_tags_subsequence};
+use super::common::test_env::init_test_env;
 
 #[ctor::ctor]
 fn __init_env() {

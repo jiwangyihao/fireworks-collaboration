@@ -19,12 +19,10 @@
 //! Post-audit(v1): legacy 已替换为占位文件；此文件为唯一逻辑聚合入口。
 //! Post-audit(v2): 补充说明：后续将把 OutcomeKind 融入统一 TaskStatus/FailureCategory；timeout/cancel 将接入 mock clock + cancellation token；当前字符串事件保持最小锚点前缀以便 12.12 DSL 迁移。
 
-#[path = "../common/mod.rs"]
-mod common;
-use common::event_assert::{
+use super::common::event_assert::{
     assert_terminal_exclusive, expect_optional_tags_subsequence, expect_subsequence,
 };
-use common::test_env::init_test_env;
+use super::common::test_env::init_test_env;
 
 // 小辅助：若标签可映射，则断言最小锚点子序列
 fn expect_tag_subseq_min(events: &[String], anchors: &[&str]) {

@@ -53,9 +53,7 @@
 //!   * 当前文件行数（approx）：~780 (<800 OK)
 //!   * TODO(Phase4): 若继续增长 >800, 考虑拆分 extended TLS/HTTP/retry 子模块。
 
-#[path = "../common/mod.rs"]
-mod common;
-use common::{
+use super::common::{
     event_assert::{expect_optional_tags_subsequence, expect_subsequence},
     git_scenarios::GitOp,
     http_override_stub::{

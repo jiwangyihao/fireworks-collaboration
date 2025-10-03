@@ -23,8 +23,7 @@
 //!   - 12.11 中取消/超时 outcome 计划将复用结构化事件枚举
 //! Post-audit(v1): 初版聚合采用静态 JSON 对比；后续可考虑引入 insta snapshot 或基于字段子集的宽松匹配以降低微字段变更噪音。
 
-#[path = "../common/mod.rs"]
-mod common;
+
 use crate::common::event_assert::expect_subsequence;
 use crate::common::test_env::init_test_env;
 use fireworks_collaboration_lib::events::structured::{

@@ -1,20 +1,8 @@
 #![cfg(not(feature = "tauri-app"))]
-//! 聚合测试：Git Fetch Core & Shallow
-//! -----------------------------------
-//! 精简分区：
-//!   section_basic              -> 基础状态：invalid dest / cancel / 正常
-//!   section_shallow_and_ignore -> depth=Some(N) 及本地忽略（统一循环）
-//!   section_deepen             -> 深度递进 (from->to)
-//!   section_invalid_depth      -> invalid depth 案例（矩阵）
-//! 说明：
-//! * 复用 `shallow_matrix`（depth/deepen/invalid/ignore）统一来源，避免手写重复 case。
-//! * 占位实现：当前 fetch 不产生 shallow 语义差异，断言仅验证不 Canceled + 可接受 Ok/Failed（宽松）。
-//! * 去除旧 `ignored` 布尔；后续真实 shallow 支持将引入对象/提交计数 + shallow 文件判定 helper。
-//! * 事件 DSL 尚未引入 fetch：留 TODO 以便未来添加 tag 序列断言。
-//! 未来改进：对象计数、shallow 文件、事件 DSL、与 partial filter fetch 聚合矩阵。
+//! 聚合测试：Git Fetch（浅克隆 + 分支合并）
+//!
+//! 验证点已全部合并到 `section_fetch_shallow` + `section_fetch_branches` + `section_fetch_task`，移除重复原子测试文件。
 
-#[path = "../common/mod.rs"]
-mod common;
 // ---------------- helpers ----------------
 mod helpers {
     use crate::common::task_wait::wait_until_task_done;

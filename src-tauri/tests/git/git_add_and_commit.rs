@@ -15,12 +15,9 @@
 //!   * 移除冗余：add_duplicate_paths_dedupes / initial_empty_repo_allow_empty_toggle 及单独作者非法变体测试。
 //!   * 仅保留最小覆盖 + 代表性路径，减少维护成本。
 
-#[path = "../common/mod.rs"]
-mod common;
-
 // ---------------- section_add_basic ----------------
 mod section_add_basic {
-    use crate::common::{fixtures, git_helpers, test_env};
+    use super::super::common::{fixtures, git_helpers, test_env};
     use fireworks_collaboration_lib::core::git::default_impl::{add::git_add, init::git_init};
     use fireworks_collaboration_lib::core::git::service::ProgressPayload;
     use std::sync::atomic::AtomicBool;

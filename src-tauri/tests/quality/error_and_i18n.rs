@@ -29,11 +29,7 @@
 //!   - git_* 聚合文件中已经使用 ErrorCategory 进行分类断言
 //!   - events_* 聚合文件中的失败/取消终态映射将在 12.15 之后结合 AppErrorKind 统一
 
-use crate::common::test_env::init_test_env;
-
-#[path = "../common/mod.rs"]
-mod common; // 引入 test_env / prelude
-            // use crate::common::prelude::*; // 此文件内分区各自按需引用，避免未使用导入
+use super::common::test_env::init_test_env;
 
 #[ctor::ctor]
 fn __init_env() {

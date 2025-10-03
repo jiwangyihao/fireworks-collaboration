@@ -9,11 +9,8 @@
 //!
 //! 目标：确保回退链路按预期工作，事件记录完整，系统不崩溃。
 
-#[path = "../common/mod.rs"]
-mod common;
-
-use crate::common::prelude::*;
-use crate::common::test_env::init_test_env;
+use super::common::prelude::*;
+use super::common::test_env::init_test_env;
 
 use fireworks_collaboration_lib::core::config::loader;
 use fireworks_collaboration_lib::core::ip_pool::config::{

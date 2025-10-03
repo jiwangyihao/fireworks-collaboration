@@ -12,12 +12,9 @@
 //!   * 删除冗余的 `branch_force_moves`，保留引用更新验证。
 //!   * 使用 `fixtures::commit_files` & `repo_with_staged` 减少重复。
 
-#[path = "../common/mod.rs"]
-mod common;
-
 // ---------------- section_branch_create ----------------
 mod section_branch_create {
-    use crate::common::{fixtures, git_helpers, test_env};
+    use super::super::common::{fixtures, git_helpers, test_env};
     use fireworks_collaboration_lib::core::git::default_impl::{
         branch::git_branch, commit::git_commit, init::git_init,
     };

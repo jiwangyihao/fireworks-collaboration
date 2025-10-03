@@ -33,9 +33,7 @@
 //!   - 将 refname 测试拆分加入更多“合法但边界长度”用例（例如 250 字符路径）并引入 fuzz harness
 //!   - 针对 remote URL 校验补充 ssh/file 本地路径合法性正例集合
 
-#[path = "../common/mod.rs"]
-mod common; // 复用 fixtures/test_env 等公共实现
-use common::{
+use super::common::{
     fixtures::{commit_files, create_empty_repo},
     test_env::init_test_env,
 };

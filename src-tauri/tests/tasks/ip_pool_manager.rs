@@ -1,18 +1,9 @@
 #![cfg(not(feature = "tauri-app"))]
-//! 聚合测试：IpPool 管理器核心行为（P4.2 回归）
-//! -------------------------------------------------
-//! 迁移来源：`core::ip_pool::manager` 内部单元测试；按模块化策略拆分至 integration suite。
-//! 覆盖范围：
-//!   * 选择逻辑：缓存命中 / 采样回退 / 单飞控制
-//!   * 配置更新：历史路径切换 / app 配置加载
-//!   * 维护流程：过期裁剪 / 容量限制 / 预热豁免
-//!   * 指标曝光：Outcome 统计
-//! 辅助：复用 `tests/common/ip_pool.rs` 中的构造方法，减少重复样板代码。
+//! IP Pool Manager 集成测试
+//!
+//! 测试 IP 池管理器的全生命周期功能。
 
-#[path = "../common/mod.rs"]
-mod common;
-
-use crate::common::test_env::init_test_env;
+use super::common::test_env::init_test_env;
 
 #[ctor::ctor]
 fn __init_env() {
@@ -21,7 +12,7 @@ fn __init_env() {
 
 // ---------------- section_selection_behaviour ----------------
 mod section_selection_behaviour {
-    use super::common::prelude::*;
+    use super::super::common::prelude::*;
     use fireworks_collaboration_lib::core::ip_pool::config::IpPoolSourceToggle;
     use fireworks_collaboration_lib::core::ip_pool::IpScoreCache;
     use fireworks_collaboration_lib::core::ip_pool::{IpPool, IpSource};
@@ -177,8 +168,8 @@ mod section_selection_behaviour {
 
 // ---------------- section_config_mutation ----------------
 mod section_config_mutation {
-    use super::common::fixtures;
-    use super::common::prelude::*;
+    use super::super::common::fixtures;
+    use super::super::common::prelude::*;
     use fireworks_collaboration_lib::core::config::loader as cfg_loader;
     use fireworks_collaboration_lib::core::config::model::AppConfig;
     use fireworks_collaboration_lib::core::ip_pool::config::{save_file_at, IpPoolFileConfig};
@@ -324,7 +315,7 @@ mod section_config_mutation {
 
 // ---------------- section_cache_maintenance ----------------
 mod section_cache_maintenance {
-    use super::common::prelude::*;
+    use super::super::common::prelude::*;
     use fireworks_collaboration_lib::core::ip_pool::config::PreheatDomain;
     use fireworks_collaboration_lib::core::ip_pool::IpScoreCache;
     use fireworks_collaboration_lib::core::ip_pool::{IpPool, IpSource};
@@ -496,7 +487,7 @@ mod section_cache_maintenance {
 
 // ---------------- section_outcome_metrics ----------------
 mod section_outcome_metrics {
-    use super::common::prelude::*;
+    use super::super::common::prelude::*;
     use fireworks_collaboration_lib::core::ip_pool::{
         IpOutcome, IpPool, IpScoreCache, IpSelection, IpSource,
     };
@@ -531,7 +522,7 @@ mod section_outcome_metrics {
 
 // ---------------- section_event_emission ----------------
 mod section_event_emission {
-    use super::common::prelude::*;
+    use super::super::common::prelude::*;
     use fireworks_collaboration_lib::core::ip_pool::config::EffectiveIpPoolConfig;
     use fireworks_collaboration_lib::core::ip_pool::events::{
         emit_ip_pool_auto_disable, emit_ip_pool_auto_enable, emit_ip_pool_cidr_filter,
@@ -962,8 +953,8 @@ mod section_event_emission {
 
 // ---------------- section_history_auto_cleanup ----------------
 mod section_history_auto_cleanup {
-    use super::common::fixtures;
-    use super::common::prelude::*;
+    use super::super::common::fixtures;
+    use super::super::common::prelude::*;
     use fireworks_collaboration_lib::core::ip_pool::{IpPool, IpScoreCache, IpSource};
     use std::fs;
 

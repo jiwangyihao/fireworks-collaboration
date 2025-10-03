@@ -6,10 +6,7 @@
 //! - ip_source, ip_latency_ms 在 AdaptiveTlsFallback 中
 //! - 确保旧版本客户端能正常解析新事件（字段缺失时为 None）
 
-#[path = "../common/mod.rs"]
-mod common;
-
-use crate::common::test_env::init_test_env;
+use super::common::test_env::init_test_env;
 
 #[ctor::ctor]
 fn __init_env() {

@@ -13,12 +13,9 @@
 //!   * 事件 DSL 引入后增加最小子序列验证 shallow/deepen 行为
 //!   * 与 fetch 聚合共享 deepen 逻辑（当前已局部对齐）
 
-#[path = "../common/mod.rs"]
-mod common;
-
 // ---------------- helpers ----------------
 mod helpers {
-    use crate::common::{
+    use super::super::common::{
         fixtures::{path_slug, shallow_file_lines},
         repo_factory::rev_count,
         repo_factory::RepoBuilder,

@@ -3,15 +3,12 @@
 //! 合并了 git_clone_core.rs, git_init_and_repo_structure.rs,
 //! git_clone_partial_filter.rs, git_fetch_partial_filter.rs
 
-#[path = "../common/mod.rs"]
-mod common;
-
 // ============================================================================
 // git_clone_core.rs 的测试
 // ============================================================================
 
 mod clone_core {
-    use crate::common::git_scenarios::{
+    use super::super::common::git_scenarios::{
         run_clone, CloneParams, _run_clone_with_cancel, assert_clone_events,
     };
     use std::sync::atomic::AtomicBool;
@@ -88,8 +85,8 @@ mod init_and_structure {
     use fireworks_collaboration_lib::core::git::errors::ErrorCategory;
     use std::sync::atomic::AtomicBool;
 
-    use crate::common::git_helpers;
-    use crate::common::{fixtures, test_env};
+    use super::super::common::git_helpers;
+    use super::super::common::{fixtures, test_env};
 
     #[test]
     fn git_init_success_and_idempotent() {
@@ -144,7 +141,7 @@ mod init_and_structure {
 // ============================================================================
 
 mod clone_partial_filter {
-    use crate::common::{
+    use super::super::common::{
         git_scenarios::{run_clone, CloneParams},
         partial_filter_support::{
             assess_partial_filter, warn_if_no_filter_marker, PartialFilterOutcome, SupportLevel,
@@ -179,7 +176,7 @@ mod clone_partial_filter {
     #[test]
     fn capability_matrix_cases() {
         test_env::init_test_env();
-        use crate::common::partial_filter_matrix::clone_partial_filter_cases;
+        use super::super::common::partial_filter_matrix::clone_partial_filter_cases;
         for case in clone_partial_filter_cases() {
             let (label, depth) = match case.kind {
                 crate::common::partial_filter_matrix::PartialFilterKind::EventOnly => {
@@ -265,8 +262,8 @@ mod clone_partial_filter {
 // ============================================================================
 
 mod fetch_partial_filter {
-    use crate::common::git_scenarios::{run_fetch, FetchParams};
-    use crate::common::{
+    use super::super::common::git_scenarios::{run_fetch, FetchParams};
+    use super::super::common::{
         event_assert::expect_optional_tags_subsequence,
         partial_filter_matrix::{
             partial_filter_cases_for, PartialFilterCase, PartialFilterKind, PartialFilterOp,
@@ -439,3 +436,4 @@ mod fetch_partial_filter {
         warn_if_no_filter_marker("fetch_fallback", "filter:unsupported-case", &out);
     }
 }
+

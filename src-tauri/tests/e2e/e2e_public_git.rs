@@ -7,14 +7,12 @@
 //!   * 仅保留对事件最小子序列的断言，遵循“最小锚点”原则。
 //! 目标：验证不同场景（成功新增提交/只读/故障不前进）的核心行为与事件序列。
 
-#[path = "../common/mod.rs"]
-mod common;
-use common::event_assert::expect_subsequence;
-use common::pipeline::{
+use super::common::event_assert::expect_subsequence;
+use super::common::pipeline::{
     assert_commit_growth_at_least, assert_commit_unchanged, assert_failure_commit_not_advanced,
     run_pipeline_with, FaultKind, PipelineConfig, PipelineSpec,
 };
-use common::test_env::init_test_env;
+use super::common::test_env::init_test_env;
 
 #[ctor::ctor]
 fn __init_env() {

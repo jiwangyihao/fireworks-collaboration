@@ -45,8 +45,8 @@
 //!   * 对 fast fail 场景增加错误分类断言（区分 Protocol / Cancel / IO）。
 //!   * 评估将轮询超时/步长调优为指数退避降低 CI 抖动。
 
-#[path = "../common/mod.rs"]
-mod common;
+// 导入 common 模块
+use super::common::{task_wait, test_env};
 
 // 轻量进度阶段断言辅助（复用到 service_progress 内部，不扩大公共 API）
 
@@ -74,11 +74,11 @@ mod section_registry_lifecycle {
 
     #[tokio::test]
     async fn test_sleep_task_complete_integration() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let reg = Arc::new(TaskRegistry::new());
         let (id, token) = reg.create(TaskKind::Sleep { ms: 150 });
         reg.clone().spawn_sleep_task(None, id, token, 150);
-        let ok = super::common::task_wait::wait_predicate(
+        let ok = super::task_wait::wait_predicate(
             || {
                 reg.snapshot(&id)
                     .map(|s| matches!(s.state, TaskState::Completed))
@@ -93,7 +93,7 @@ mod section_registry_lifecycle {
 
     #[tokio::test]
     async fn test_list_contains_created_tasks() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let reg = Arc::new(TaskRegistry::new());
         let mut ids = vec![];
         for i in 0..3 {
@@ -115,11 +115,11 @@ mod section_registry_cancel {
 
     #[tokio::test]
     async fn test_sleep_task_cancel_integration() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let reg = Arc::new(TaskRegistry::new());
         let (id, token) = reg.create(TaskKind::Sleep { ms: 1_000 });
         reg.clone().spawn_sleep_task(None, id, token.clone(), 1_000);
-        let running = super::common::task_wait::wait_predicate(
+        let running = super::task_wait::wait_predicate(
             || {
                 reg.snapshot(&id)
                     .map(|s| matches!(s.state, TaskState::Running))
@@ -131,7 +131,7 @@ mod section_registry_cancel {
         .await;
         assert!(running, "task should enter running state");
         token.cancel();
-        let canceled = super::common::task_wait::wait_predicate(
+        let canceled = super::task_wait::wait_predicate(
             || {
                 reg.snapshot(&id)
                     .map(|s| matches!(s.state, TaskState::Canceled))
@@ -149,11 +149,11 @@ mod section_registry_cancel {
 
     #[tokio::test]
     async fn test_immediate_cancel_before_completion() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let reg = Arc::new(TaskRegistry::new());
         let (id, token) = reg.create(TaskKind::Sleep { ms: 400 });
         reg.clone().spawn_sleep_task(None, id, token.clone(), 400);
-        let running = super::common::task_wait::wait_predicate(
+        let running = super::task_wait::wait_predicate(
             || {
                 reg.snapshot(&id)
                     .map(|s| matches!(s.state, TaskState::Running))
@@ -165,7 +165,7 @@ mod section_registry_cancel {
         .await;
         assert!(running, "task should reach running state");
         token.cancel();
-        let canceled = super::common::task_wait::wait_predicate(
+        let canceled = super::task_wait::wait_predicate(
             || {
                 reg.snapshot(&id)
                     .map(|s| matches!(s.state, TaskState::Canceled))
@@ -180,11 +180,11 @@ mod section_registry_cancel {
 
     #[tokio::test]
     async fn cancel_idempotent() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let reg = Arc::new(TaskRegistry::new());
         let (id, token) = reg.create(TaskKind::Sleep { ms: 200 });
         reg.clone().spawn_sleep_task(None, id, token.clone(), 200);
-        let _ = super::common::task_wait::wait_task_state(&reg, &id, TaskState::Running, 1_000, 25)
+        let _ = super::task_wait::wait_task_state(&reg, &id, TaskState::Running, 1_000, 25)
             .await; // 宽松等待
         assert!(reg.cancel(&id));
         assert!(reg.cancel(&id));
@@ -192,7 +192,7 @@ mod section_registry_cancel {
 
     #[tokio::test]
     async fn cancel_after_completion_returns_true_and_keeps_completed_state() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let reg = Arc::new(TaskRegistry::new());
         let (id, token) = reg.create(TaskKind::Sleep { ms: 80 });
         reg.clone().spawn_sleep_task(None, id, token, 80);
@@ -221,7 +221,7 @@ mod section_registry_concurrency {
 
     #[tokio::test]
     async fn test_multi_tasks_parallel() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let reg = Arc::new(TaskRegistry::new());
         let mut ids = vec![];
         for _ in 0..5 {
@@ -229,7 +229,7 @@ mod section_registry_concurrency {
             reg.clone().spawn_sleep_task(None, id, token, 120);
             ids.push(id);
         }
-        let all_done = super::common::task_wait::wait_predicate(
+        let all_done = super::task_wait::wait_predicate(
             || {
                 ids.iter().all(|id| {
                     reg.snapshot(id)
@@ -246,7 +246,7 @@ mod section_registry_concurrency {
 
     #[tokio::test]
     async fn test_high_parallel_short_tasks() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let reg = Arc::new(TaskRegistry::new());
         let mut ids = vec![];
         for _ in 0..20 {
@@ -254,7 +254,7 @@ mod section_registry_concurrency {
             reg.clone().spawn_sleep_task(None, id, token, 90);
             ids.push(id);
         }
-        let all_completed = super::common::task_wait::wait_predicate(
+        let all_completed = super::task_wait::wait_predicate(
             || {
                 ids.iter().all(|id| {
                     reg.snapshot(id)
@@ -271,7 +271,7 @@ mod section_registry_concurrency {
 
     #[tokio::test]
     async fn test_partial_cancel_mixture() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let reg = Arc::new(TaskRegistry::new());
         let mut cancel_tokens = vec![];
         let mut ids = vec![];
@@ -286,7 +286,7 @@ mod section_registry_concurrency {
         for t in cancel_tokens {
             t.cancel();
         }
-        let done = super::common::task_wait::wait_predicate(
+        let done = super::task_wait::wait_predicate(
             || {
                 ids.iter().all(|id| {
                     reg.snapshot(id)
@@ -311,7 +311,7 @@ mod section_registry_edge {
 
     #[tokio::test]
     async fn snapshot_unknown_returns_none() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let reg = TaskRegistry::new();
         let random = uuid::Uuid::new_v4();
         assert!(reg.snapshot(&random).is_none());
@@ -319,7 +319,7 @@ mod section_registry_edge {
 
     #[tokio::test]
     async fn cancel_unknown_returns_false() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let reg = TaskRegistry::new();
         let random = uuid::Uuid::new_v4();
         assert!(!reg.cancel(&random));
@@ -327,14 +327,14 @@ mod section_registry_edge {
 
     #[tokio::test]
     async fn list_snapshots_are_independent_clones() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let reg = Arc::new(TaskRegistry::new());
         let (id, token) = reg.create(TaskKind::Sleep { ms: 50 });
         reg.clone().spawn_sleep_task(None, id, token, 50);
         let list_before = reg.list();
         assert_eq!(list_before.len(), 1);
         let _ =
-            super::common::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 1_000, 25)
+            super::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 1_000, 25)
                 .await;
         let list_after = reg.list();
         assert_eq!(list_after.len(), 1);
@@ -360,7 +360,7 @@ mod section_service_progress {
 
     #[test]
     fn clone_reports_initial_negotiating_progress() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let service = DefaultGitService::new();
         let dest = fixtures::create_empty_dir();
         let flag = AtomicBool::new(true); // 立刻取消，避免真实网络
@@ -381,7 +381,7 @@ mod section_service_progress {
 
     #[test]
     fn clone_from_local_repo_succeeds_and_completes_with_valid_progress() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let work = fixtures::create_repo_with_initial_commit("init").path;
         let service = DefaultGitService::new();
         let dest = fixtures::create_empty_dir();
@@ -409,7 +409,7 @@ mod section_service_progress {
 
     #[test]
     fn fetch_updates_remote_tracking_refs() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         use std::process::Command;
         let src = fixtures::create_empty_dir();
         std::fs::create_dir_all(&src).unwrap();
@@ -471,7 +471,7 @@ mod section_service_progress {
 
     #[tokio::test]
     async fn registry_clone_local_repo_completes() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let src = fixtures::create_repo_with_initial_commit("init").path;
         let reg = Arc::new(TaskRegistry::new());
         let dest = fixtures::create_empty_dir().to_string_lossy().to_string();
@@ -490,7 +490,7 @@ mod section_service_progress {
             dest.clone(),
         );
         let completed =
-            super::common::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 10_000, 25)
+            super::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 10_000, 25)
                 .await;
         assert!(completed, "local clone task should complete");
         let _ = handle.await;
@@ -498,7 +498,7 @@ mod section_service_progress {
 
     #[tokio::test]
     async fn registry_fetch_local_repo_completes() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         use std::process::Command;
         let src = fixtures::create_repo_with_initial_commit("init").path;
         let dst = fixtures::create_empty_dir();
@@ -540,7 +540,7 @@ mod section_service_progress {
             None,
         );
         let completed =
-            super::common::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 10_000, 25)
+            super::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 10_000, 25)
                 .await;
         assert!(completed, "local fetch task should complete");
         let _ = handle.await;
@@ -563,7 +563,7 @@ mod section_service_cancel_fast {
     // ---- Blocking GitService cancel / fail-fast ----
     #[test]
     fn clone_cancel_flag_results_in_cancel_error() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let service = DefaultGitService::new();
         let dest = fixtures::create_empty_dir();
         let flag = AtomicBool::new(true);
@@ -577,7 +577,7 @@ mod section_service_cancel_fast {
 
     #[test]
     fn fetch_cancel_flag_results_in_cancel_error() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         use std::process::Command;
         let target = fixtures::create_empty_dir();
         std::fs::create_dir_all(&target).unwrap();
@@ -605,7 +605,7 @@ mod section_service_cancel_fast {
 
     #[test]
     fn clone_invalid_local_path_fails_quick() {
-        super::common::test_env::init_test_env();
+        super::test_env::init_test_env();
         let service = DefaultGitService::new();
         let dest = fixtures::create_empty_dir();
         let repo = std::path::PathBuf::from("C:/this-path-should-not-exist-xyz/repo");
@@ -679,7 +679,7 @@ mod section_service_cancel_fast {
             let handle = reg
                 .clone()
                 .spawn_git_clone_task(None, id, token.clone(), repo, dest);
-            let running = super::common::task_wait::wait_predicate(
+            let running = super::task_wait::wait_predicate(
                 || {
                     reg.snapshot(&id)
                         .map(|s| matches!(s.state, TaskState::Running))
@@ -691,7 +691,7 @@ mod section_service_cancel_fast {
             .await;
             assert!(running, "task should enter running state");
             token.cancel();
-            let canceled = super::common::task_wait::wait_predicate(
+            let canceled = super::task_wait::wait_predicate(
                 || {
                     reg.snapshot(&id)
                         .map(|s| matches!(s.state, TaskState::Canceled))
@@ -735,15 +735,15 @@ mod section_service_cancel_fast {
                 .clone()
                 .spawn_git_clone_task(None, id, token, repo, dest);
             let running =
-                super::common::task_wait::wait_task_state(&reg, &id, TaskState::Running, 1_000, 25)
+                super::task_wait::wait_task_state(&reg, &id, TaskState::Running, 1_000, 25)
                     .await;
             assert!(running, "should enter running");
             let failed_quick =
-                super::common::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25)
+                super::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25)
                     .await;
             let _ = reg.cancel(&id);
             if !failed_quick {
-                let canceled = super::common::task_wait::wait_task_state(
+                let canceled = super::task_wait::wait_task_state(
                     &reg,
                     &id,
                     TaskState::Canceled,
@@ -784,7 +784,7 @@ mod section_service_cancel_fast {
             let handle = reg
                 .clone()
                 .spawn_git_clone_task(None, id, token, repo, dest);
-            let canceled = super::common::task_wait::wait_task_state(
+            let canceled = super::task_wait::wait_task_state(
                 &reg,
                 &id,
                 TaskState::Canceled,
@@ -821,11 +821,11 @@ mod section_service_cancel_fast {
                 .clone()
                 .spawn_git_clone_task(None, id, token, repo, dest);
             let running =
-                super::common::task_wait::wait_task_state(&reg, &id, TaskState::Running, 800, 25)
+                super::task_wait::wait_task_state(&reg, &id, TaskState::Running, 800, 25)
                     .await;
             assert!(running, "should enter running");
             let failed =
-                super::common::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25)
+                super::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25)
                     .await;
             assert!(failed, "invalid url should fail quickly");
             let _ = reg.cancel(&id);
@@ -857,13 +857,13 @@ mod section_service_cancel_fast {
                 .clone()
                 .spawn_git_clone_task(None, id, token, repo, dest);
             let running =
-                super::common::task_wait::wait_task_state(&reg, &id, TaskState::Running, 800, 25)
+                super::task_wait::wait_task_state(&reg, &id, TaskState::Running, 800, 25)
                     .await;
             assert!(running, "should enter running");
             let failed =
-                super::common::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25)
+                super::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25)
                     .await;
-            assert!(failed, "invalid scheme should fail quickly");
+            assert!(failed, "invalid scheme (ftp) should fail quickly");
             let _ = reg.cancel(&id);
             let _ = timeout(Duration::from_secs(2), async {
                 let _ = handle.await;

@@ -18,14 +18,13 @@
 //!   section_retry_policy   -> 不同 backoff 序列形状验证
 //!   section_retry_event    -> 事件锚点子序列验证
 
-#[path = "../common/mod.rs"]
-mod common;
-use common::{
+use super::common::{
     event_assert::{
         assert_terminal_exclusive, expect_optional_tags_subsequence, expect_subsequence,
     },
     git_scenarios::{run_push_with_retry, PushResultKind, PushRetrySpec},
-    retry_matrix::{retry_cases, PolicyOverride},
+    retry_matrix::{retry_cases, compute_backoff_sequence, PolicyOverride},
+    test_env,
 };
 
 // 小辅助：若标签可映射，则断言最小锚点子序列
@@ -38,7 +37,7 @@ mod section_push_basic {
     use super::*;
     #[test]
     fn push_basic_success_placeholder() {
-        common::test_env::init_test_env();
+        test_env::init_test_env();
         // 使用一个 attempts=1 且不模拟冲突的 case：直接成功
         let case = retry_cases()
             .into_iter()
@@ -68,7 +67,7 @@ mod section_push_conflict {
     use super::*;
     #[test]
     fn push_conflict_variants_behave_as_expected() {
-        common::test_env::init_test_env();
+        test_env::init_test_env();
         // 预备不同策略 case 选择器
         let pick_exhausted = || {
             retry_cases()
@@ -159,7 +158,7 @@ mod section_retry_policy {
     fn backoff_sequence_shapes_match_matrix() {
         // 简化：当前已不再在 Outcome 中携带 backoff_seq，验证逻辑改为再计算基准序列长度不为 0。
         for case in retry_cases() {
-            let seq = common::retry_matrix::compute_backoff_sequence(&case);
+            let seq = compute_backoff_sequence(&case);
             assert_eq!(seq.len() as u8, case.attempts);
         }
     }
@@ -170,7 +169,7 @@ mod section_retry_event {
     use super::*;
     #[test]
     fn event_attempt_and_result_subsequences() {
-        common::test_env::init_test_env();
+        test_env::init_test_env();
         #[derive(Copy, Clone)]
         enum PathKind {
             RetryThenExhausted,
