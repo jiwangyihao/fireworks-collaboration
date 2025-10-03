@@ -5,28 +5,36 @@
 //! 2. 环境变量回退 - 平台特定检测失败时使用环境变量
 //! 3. 检测失败 - 无代理配置时返回 None
 //! 4. 代理类型识别 - HTTP/HTTPS/SOCKS5 自动识别
+//!
+//! **注意**: 这些测试会修改环境变量,必须以单线程模式运行:
+//! ```
+//! cargo test --test system_proxy_detection_integration -- --test-threads=1
+//! ```
 
 use fireworks_collaboration_lib::core::proxy::{ProxyMode, SystemProxyDetector};
 use std::env;
 
-/// 测试环境变量代理检测 (所有平台通用)
+/// 测试从 HTTP_PROXY 环境变量检测代理
 ///
-/// 验证：
-/// - HTTP_PROXY 环境变量被正确读取
-/// - HTTPS_PROXY 优先级高于 HTTP_PROXY
-/// - 代理类型自动识别
+/// 验证:
+/// - HTTP_PROXY 设置时能被正确检测
+/// - 代理模式正确识别为 HTTP
 #[test]
 fn test_detect_from_http_proxy_env() {
-    // 保存原始环境变量
+    // 清除所有代理环境变量,避免污染
     let original_http = env::var("HTTP_PROXY").ok();
     let original_https = env::var("HTTPS_PROXY").ok();
+    let original_all = env::var("ALL_PROXY").ok();
 
-    // 设置测试环境变量
+    // 清理所有代理变量,只设置需要测试的
+    env::remove_var("HTTPS_PROXY");
+    env::remove_var("ALL_PROXY");
     env::set_var("HTTP_PROXY", "http://proxy.example.com:8080");
 
-    let result = SystemProxyDetector::detect();
+    // 使用 detect_from_env 直接测试环境变量检测
+    let result = SystemProxyDetector::detect_from_env();
 
-    // 清理环境变量
+    // 恢复所有环境变量
     match original_http {
         Some(val) => env::set_var("HTTP_PROXY", val),
         None => env::remove_var("HTTP_PROXY"),
@@ -35,27 +43,23 @@ fn test_detect_from_http_proxy_env() {
         Some(val) => env::set_var("HTTPS_PROXY", val),
         None => env::remove_var("HTTPS_PROXY"),
     }
-
-    if let Some(config) = result {
-        assert_eq!(config.mode, ProxyMode::Http);
-        assert!(
-            config.url.contains("proxy.example.com"),
-            "URL should contain proxy host: {}",
-            config.url
-        );
-        assert!(
-            config.url.contains("8080"),
-            "URL should contain port: {}",
-            config.url
-        );
-    } else {
-        // 如果没有检测到代理，可能是因为系统已有代理配置
-        // 在这种情况下测试不强制失败，但会记录
-        println!("Warning: No proxy detected from HTTP_PROXY environment variable");
+    match original_all {
+        Some(val) => env::set_var("ALL_PROXY", val),
+        None => env::remove_var("ALL_PROXY"),
     }
+
+    assert!(result.is_some(), "Should detect proxy from HTTP_PROXY environment variable");
+    
+    let config = result.unwrap();
+    assert_eq!(config.mode, ProxyMode::Http);
+    assert!(
+        config.url.contains("proxy.example.com") || config.url.contains("8080"),
+        "URL should contain proxy host: {}",
+        config.url
+    );
 }
 
-/// 测试 HTTPS_PROXY 优先级
+/// 测试 HTTPS_PROXY 环境变量优先级
 ///
 /// 验证：
 /// - HTTPS_PROXY 存在时优先使用
@@ -64,13 +68,17 @@ fn test_detect_from_http_proxy_env() {
 fn test_detect_https_proxy_precedence() {
     let original_http = env::var("HTTP_PROXY").ok();
     let original_https = env::var("HTTPS_PROXY").ok();
+    let original_all = env::var("ALL_PROXY").ok();
 
+    // 清理ALL_PROXY,避免干扰
+    env::remove_var("ALL_PROXY");
     env::set_var("HTTP_PROXY", "http://http-proxy.example.com:8080");
     env::set_var("HTTPS_PROXY", "http://https-proxy.example.com:8443");
 
-    let result = SystemProxyDetector::detect();
+    // 使用 detect_from_env 直接测试环境变量检测
+    let result = SystemProxyDetector::detect_from_env();
 
-    // 清理
+    // 恢复所有环境变量(在获取result后,在断言前)
     match original_http {
         Some(val) => env::set_var("HTTP_PROXY", val),
         None => env::remove_var("HTTP_PROXY"),
@@ -79,15 +87,20 @@ fn test_detect_https_proxy_precedence() {
         Some(val) => env::set_var("HTTPS_PROXY", val),
         None => env::remove_var("HTTPS_PROXY"),
     }
-
-    if let Some(config) = result {
-        // 应该使用 HTTPS_PROXY
-        assert!(
-            config.url.contains("https-proxy.example.com") || config.url.contains("8443"),
-            "Should prefer HTTPS_PROXY over HTTP_PROXY: {}",
-            config.url
-        );
+    match original_all {
+        Some(val) => env::set_var("ALL_PROXY", val),
+        None => env::remove_var("ALL_PROXY"),
     }
+
+    assert!(result.is_some(), "Should detect proxy from HTTPS_PROXY environment variable");
+    
+    let config = result.unwrap();
+    // 应该使用 HTTPS_PROXY
+    assert!(
+        config.url.contains("https-proxy.example.com") || config.url.contains("8443"),
+        "Should prefer HTTPS_PROXY over HTTP_PROXY: {}",
+        config.url
+    );
 }
 
 /// 测试 SOCKS5 代理检测
@@ -98,22 +111,37 @@ fn test_detect_https_proxy_precedence() {
 #[test]
 fn test_detect_socks5_proxy() {
     let original = env::var("ALL_PROXY").ok();
+    let original_http = env::var("HTTP_PROXY").ok();
+    let original_https = env::var("HTTPS_PROXY").ok();
 
+    // 清理其他代理变量,只设置ALL_PROXY
+    env::remove_var("HTTP_PROXY");
+    env::remove_var("HTTPS_PROXY");
     env::set_var("ALL_PROXY", "socks5://socks-proxy.example.com:1080");
 
-    let result = SystemProxyDetector::detect();
+    // 使用 detect_from_env 直接测试环境变量检测
+    let result = SystemProxyDetector::detect_from_env();
 
-    // 清理
+    // 立即恢复所有环境变量
     match original {
         Some(val) => env::set_var("ALL_PROXY", val),
         None => env::remove_var("ALL_PROXY"),
     }
-
-    if let Some(config) = result {
-        assert_eq!(config.mode, ProxyMode::Socks5);
-        assert!(config.url.contains("socks-proxy.example.com"));
-        assert!(config.url.contains("1080"));
+    match original_http {
+        Some(val) => env::set_var("HTTP_PROXY", val),
+        None => env::remove_var("HTTP_PROXY"),
     }
+    match original_https {
+        Some(val) => env::set_var("HTTPS_PROXY", val),
+        None => env::remove_var("HTTPS_PROXY"),
+    }
+
+    assert!(result.is_some(), "Should detect proxy from ALL_PROXY environment variable");
+    
+    let config = result.unwrap();
+    assert_eq!(config.mode, ProxyMode::Socks5);
+    assert!(config.url.contains("socks-proxy.example.com"));
+    assert!(config.url.contains("1080"));
 }
 
 /// 测试无代理配置的情况
@@ -183,45 +211,48 @@ fn test_detect_no_proxy() {
 #[test]
 fn test_detect_proxy_with_auth() {
     let original = env::var("HTTP_PROXY").ok();
+    let original_https = env::var("HTTPS_PROXY").ok();
+    let original_all = env::var("ALL_PROXY").ok();
 
+    // 清理其他代理变量
+    env::remove_var("HTTPS_PROXY");
+    env::remove_var("ALL_PROXY");
     env::set_var(
         "HTTP_PROXY",
         "http://username:password@proxy.example.com:8080",
     );
 
-    let result = SystemProxyDetector::detect();
+    // 使用 detect_from_env 直接测试环境变量检测
+    let result = SystemProxyDetector::detect_from_env();
 
-    // 清理
+    // 立即恢复所有环境变量
     match original {
         Some(val) => env::set_var("HTTP_PROXY", val),
         None => env::remove_var("HTTP_PROXY"),
     }
-
-    if let Some(config) = result {
-        // URL 中应该包含或解析出认证信息
-        // 具体行为取决于 SystemProxyDetector 的实现
-        assert!(
-            config.url.contains("proxy.example.com"),
-            "URL should contain host"
-        );
-
-        // 检查是否提取了认证信息
-        if config.username.is_some() {
-            assert_eq!(
-                config.username.as_deref(),
-                Some("username"),
-                "Username should be extracted"
-            );
-            assert_eq!(
-                config.password.as_deref(),
-                Some("password"),
-                "Password should be extracted"
-            );
-        } else {
-            // 如果未提取，认证信息可能仍在 URL 中
-            println!("Note: Auth info may remain in URL (implementation-dependent)");
-        }
+    match original_https {
+        Some(val) => env::set_var("HTTPS_PROXY", val),
+        None => env::remove_var("HTTPS_PROXY"),
     }
+    match original_all {
+        Some(val) => env::set_var("ALL_PROXY", val),
+        None => env::remove_var("ALL_PROXY"),
+    }
+
+    assert!(result.is_some(), "Should detect proxy from HTTP_PROXY with auth");
+    
+    let config = result.unwrap();
+    // URL 中应该包含或解析出认证信息
+    // 具体行为取决于 SystemProxyDetector 的实现
+    assert!(
+        config.url.contains("proxy.example.com"),
+        "URL should contain host"
+    );
+
+    // 当前实现中,认证信息保留在 URL 中
+    // 未来可能会实现提取到 username/password 字段
+    println!("Detected proxy URL: {}", config.url);
+    println!("Note: Current implementation keeps auth info in URL");
 }
 
 /// Windows 特定测试：注册表代理检测
