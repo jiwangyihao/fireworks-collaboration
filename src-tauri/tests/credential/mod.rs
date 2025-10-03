@@ -15,6 +15,7 @@ mod stress_tests;
 mod error_recovery_tests;
 mod unit_tests;
 mod command_tests;
+mod audit_advanced_tests; // P6.5 新增
 
 use fireworks_collaboration_lib::core::credential::{
     config::{CredentialConfig, StorageType},

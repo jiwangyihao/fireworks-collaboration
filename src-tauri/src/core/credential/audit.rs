@@ -29,8 +29,11 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
+use std::fs::{self, File};
+use std::io::BufWriter;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 /// 凭证操作类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,6 +153,79 @@ pub struct AuditLogger {
 
     /// 哈希盐值（用于防止彩虹表攻击）
     salt: String,
+
+    /// 持久化日志文件路径（可选）
+    log_file_path: Option<PathBuf>,
+
+    /// 访问控制状态
+    access_control: Arc<Mutex<AccessControl>>,
+}
+
+/// 访问控制状态
+#[derive(Debug, Clone)]
+struct AccessControl {
+    /// 认证失败次数
+    failure_count: u32,
+    /// 最后失败时间
+    last_failure_time: Option<SystemTime>,
+    /// 是否已锁定
+    locked: bool,
+    /// 锁定到期时间
+    locked_until: Option<SystemTime>,
+    /// 最大失败次数
+    max_failures: u32,
+    /// 锁定时长（秒）
+    lockout_duration_secs: u64,
+}
+
+impl AccessControl {
+    fn new() -> Self {
+        Self {
+            failure_count: 0,
+            last_failure_time: None,
+            locked: false,
+            locked_until: None,
+            max_failures: 5, // 默认最多5次失败
+            lockout_duration_secs: 1800, // 默认锁定30分钟
+        }
+    }
+
+    /// 记录失败尝试
+    fn record_failure(&mut self) {
+        self.failure_count += 1;
+        self.last_failure_time = Some(SystemTime::now());
+
+        if self.failure_count >= self.max_failures {
+            self.locked = true;
+            self.locked_until = Some(
+                SystemTime::now() + Duration::from_secs(self.lockout_duration_secs),
+            );
+        }
+    }
+
+    /// 检查是否被锁定
+    fn is_locked(&self) -> bool {
+        if !self.locked {
+            return false;
+        }
+
+        // 检查锁定是否已过期
+        if let Some(locked_until) = self.locked_until {
+            if SystemTime::now() >= locked_until {
+                return false; // 锁定已过期
+            }
+        }
+
+        true
+    }
+
+    /// 重置失败计数
+    fn reset(&mut self) {
+        self.failure_count = 0;
+        self.last_failure_time = None;
+        self.locked = false;
+        self.locked_until = None;
+    }
 }
 
 impl AuditLogger {
@@ -163,7 +239,42 @@ impl AuditLogger {
             audit_mode,
             events: Arc::new(Mutex::new(Vec::new())),
             salt: Self::generate_salt(),
+            log_file_path: None,
+            access_control: Arc::new(Mutex::new(AccessControl::new())),
         }
+    }
+
+    /// 创建带持久化日志文件的审计日志记录器
+    ///
+    /// # 参数
+    ///
+    /// - `audit_mode`: 是否启用审计模式
+    /// - `log_file_path`: 日志文件路径
+    pub fn with_log_file<P: AsRef<Path>>(audit_mode: bool, log_file_path: P) -> Result<Self, String> {
+        let path = log_file_path.as_ref().to_path_buf();
+
+        // 确保日志目录存在
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("创建日志目录失败: {}", e))?;
+        }
+
+        let mut logger = Self::new(audit_mode);
+        logger.log_file_path = Some(path.clone());
+
+        // 尝试从文件加载现有日志
+        if path.exists() {
+            match logger.load_from_file(&path) {
+                Ok(_) => {
+                    tracing::info!("已从 {:?} 加载 {} 条审计日志", path, logger.event_count());
+                }
+                Err(e) => {
+                    tracing::warn!("加载审计日志失败: {}, 将创建新日志文件", e);
+                }
+            }
+        }
+
+        Ok(logger)
     }
 
     /// 生成随机盐值
@@ -224,9 +335,136 @@ impl AuditLogger {
             credential_hash,
         };
 
+        // 记录到内存
         if let Ok(mut events) = self.events.lock() {
-            events.push(event);
+            events.push(event.clone());
         }
+
+        // 持久化到文件（如果配置了）
+        if let Some(path) = &self.log_file_path {
+            if let Err(e) = self.append_to_file(&event, path) {
+                tracing::warn!("写入审计日志文件失败: {}", e);
+            }
+        }
+    }
+
+    /// 从文件加载审计日志
+    fn load_from_file(&self, path: &Path) -> Result<(), String> {
+        let content = fs::read_to_string(path)
+            .map_err(|e| format!("读取文件失败: {}", e))?;
+
+        let loaded_events: Vec<AuditEvent> = serde_json::from_str(&content)
+            .map_err(|e| format!("解析JSON失败: {}", e))?;
+
+        if let Ok(mut events) = self.events.lock() {
+            *events = loaded_events;
+        }
+
+        Ok(())
+    }
+
+    /// 追加事件到文件
+    fn append_to_file(&self, event: &AuditEvent, path: &Path) -> Result<(), String> {
+        // 读取现有事件
+        let mut all_events = if path.exists() {
+            let content = fs::read_to_string(path)
+                .map_err(|e| format!("读取文件失败: {}", e))?;
+            serde_json::from_str::<Vec<AuditEvent>>(&content)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        // 添加新事件
+        all_events.push(event.clone());
+
+        // 写回文件
+        let file = File::create(path)
+            .map_err(|e| format!("创建文件失败: {}", e))?;
+        let writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(writer, &all_events)
+            .map_err(|e| format!("写入JSON失败: {}", e))?;
+
+        Ok(())
+    }
+
+    /// 清理过期的审计日志
+    ///
+    /// # 参数
+    ///
+    /// - `retention_days`: 保留天数，早于此时间的日志将被删除
+    ///
+    /// # 返回
+    ///
+    /// 返回删除的日志数量
+    pub fn cleanup_expired_logs(&self, retention_days: u64) -> Result<usize, String> {
+        let cutoff_time = SystemTime::now()
+            - Duration::from_secs(retention_days * 24 * 60 * 60);
+
+        let removed_count = if let Ok(mut events) = self.events.lock() {
+            let original_len = events.len();
+            events.retain(|event| event.timestamp >= cutoff_time);
+            let new_len = events.len();
+
+            // 如果有日志文件，更新它
+            if let Some(path) = &self.log_file_path {
+                if let Err(e) = self.save_to_file(&events, path) {
+                    tracing::warn!("保存清理后的日志文件失败: {}", e);
+                }
+            }
+
+            original_len - new_len
+        } else {
+            0
+        };
+
+        Ok(removed_count)
+    }
+
+    /// 保存事件到文件（覆盖写）
+    fn save_to_file(&self, events: &[AuditEvent], path: &Path) -> Result<(), String> {
+        let file = File::create(path)
+            .map_err(|e| format!("创建文件失败: {}", e))?;
+        let writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(writer, events)
+            .map_err(|e| format!("写入JSON失败: {}", e))?;
+        Ok(())
+    }
+
+    /// 检查是否被锁定
+    pub fn is_locked(&self) -> bool {
+        self.access_control
+            .lock()
+            .map(|ac| ac.is_locked())
+            .unwrap_or(false)
+    }
+
+    /// 记录认证失败
+    pub fn record_auth_failure(&self) {
+        if let Ok(mut ac) = self.access_control.lock() {
+            ac.record_failure();
+        }
+    }
+
+    /// 重置访问控制（用于管理员解锁）
+    pub fn reset_access_control(&self) {
+        if let Ok(mut ac) = self.access_control.lock() {
+            ac.reset();
+        }
+    }
+
+    /// 获取剩余失败次数
+    pub fn remaining_attempts(&self) -> u32 {
+        self.access_control
+            .lock()
+            .map(|ac| {
+                if ac.failure_count < ac.max_failures {
+                    ac.max_failures - ac.failure_count
+                } else {
+                    0
+                }
+            })
+            .unwrap_or(0)
     }
 
     /// 获取所有审计事件（克隆）
@@ -276,6 +514,8 @@ impl Clone for AuditLogger {
             audit_mode: self.audit_mode,
             events: Arc::clone(&self.events),
             salt: self.salt.clone(),
+            log_file_path: self.log_file_path.clone(),
+            access_control: Arc::clone(&self.access_control),
         }
     }
 }
