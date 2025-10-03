@@ -14,6 +14,7 @@ mod security_enhancement_tests;
 mod stress_tests;
 mod error_recovery_tests;
 mod unit_tests;
+mod command_tests;
 
 use fireworks_collaboration_lib::core::credential::{
     config::{CredentialConfig, StorageType},
