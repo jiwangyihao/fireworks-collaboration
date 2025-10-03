@@ -18,6 +18,8 @@ import {
   setMasterPassword,
   unlockStore,
   exportAuditLog,
+  cleanupExpiredCredentials,
+  isExpiringSoon,
 } from "../api/credential";
 
 export const useCredentialStore = defineStore("credential", {
@@ -70,6 +72,13 @@ export const useCredentialStore = defineStore("credential", {
      */
     activeCredentials: (state) => {
       return state.credentials.filter((c) => !c.isExpired);
+    },
+
+    /**
+     * Get credentials expiring soon (within 7 days)
+     */
+    expiringSoonCredentials: (state) => {
+      return state.credentials.filter((c) => !c.isExpired && c.expiresAt && isExpiringSoon(c.expiresAt));
     },
 
     /**
@@ -248,6 +257,28 @@ export const useCredentialStore = defineStore("credential", {
       } catch (e: any) {
         this.error = String(e);
         console.error("Failed to export audit log:", e);
+        throw e;
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    /**
+     * Clean up expired credentials
+     * 
+     * @returns The number of credentials removed
+     */
+    async cleanupExpired(): Promise<number> {
+      this.loading = true;
+      this.error = null;
+      try {
+        const count = await cleanupExpiredCredentials();
+        // Refresh list after cleanup
+        await this.refresh();
+        return count;
+      } catch (e: any) {
+        this.error = String(e);
+        console.error("Failed to cleanup expired credentials:", e);
         throw e;
       } finally {
         this.loading = false;
