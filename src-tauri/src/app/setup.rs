@@ -81,7 +81,8 @@ pub fn run() {
             super::commands::list_credentials,
             super::commands::set_master_password,
             super::commands::unlock_store,
-            super::commands::export_audit_log
+            super::commands::export_audit_log,
+            super::commands::cleanup_expired_credentials
         ]);
 
     // Setup application state and configuration

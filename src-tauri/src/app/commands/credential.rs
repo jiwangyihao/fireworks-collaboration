@@ -452,6 +452,78 @@ pub async fn export_audit_log(audit: State<'_, SharedAuditLogger>) -> Result<Str
         .map_err(|e| format!("Failed to export audit log: {}", e))
 }
 
+/// Clean up expired credentials.
+///
+/// Removes all credentials that have passed their expiration time.
+///
+/// # Arguments
+///
+/// * `factory` - Shared credential store factory
+/// * `audit` - Shared audit logger
+///
+/// # Returns
+///
+/// Returns the number of credentials removed.
+#[tauri::command]
+pub async fn cleanup_expired_credentials(
+    factory: State<'_, SharedCredentialFactory>,
+    audit: State<'_, SharedAuditLogger>,
+) -> Result<usize, String> {
+    let store = factory
+        .lock()
+        .map_err(|e| format!("Failed to acquire factory lock: {}", e))?
+        .as_ref()
+        .ok_or("Credential store not initialized")?
+        .clone();
+
+    // Get all credentials
+    let all_credentials = store
+        .list()
+        .map_err(|e| format!("Failed to list credentials: {}", e))?;
+
+    // Filter expired credentials
+    let mut removed_count = 0;
+    for cred in all_credentials {
+        if cred.is_expired() {
+            // Remove expired credential
+            store
+                .remove(cred.host(), cred.username())
+                .map_err(|e| format!("Failed to remove expired credential: {}", e))?;
+
+            // Log audit event
+            if let Ok(mut logger) = audit.lock() {
+                logger.log_operation(
+                    crate::core::credential::audit::OperationType::Remove,
+                    cred.host(),
+                    cred.username(),
+                    None,
+                    true,
+                    Some("Expired credential auto-cleanup"),
+                );
+            }
+
+            tracing::info!(
+                target = "credential",
+                host = %cred.host(),
+                username = %cred.username(),
+                "Removed expired credential"
+            );
+
+            removed_count += 1;
+        }
+    }
+
+    if removed_count > 0 {
+        tracing::info!(
+            target = "credential",
+            count = removed_count,
+            "Cleaned up expired credentials"
+        );
+    }
+
+    Ok(removed_count)
+}
+
 /// Initialize credential store from configuration.
 ///
 /// This is a helper function (not a Tauri command) used during app setup.
