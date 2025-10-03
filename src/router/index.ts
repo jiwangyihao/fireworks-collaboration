@@ -5,6 +5,7 @@ import ProjectView from "../views/ProjectView.vue";
 import HttpTester from "../views/HttpTester.vue";
 import GitPanel from "../views/GitPanel.vue";
 import CredentialView from "../views/CredentialView.vue";
+import AuditLogView from "../views/AuditLogView.vue";
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -43,6 +44,11 @@ const router = createRouter({
       path: "/credentials",
       name: "credentials",
       component: CredentialView,
+    },
+    {
+      path: "/audit-logs",
+      name: "auditLogs",
+      component: AuditLogView,
     },
   ],
 });
