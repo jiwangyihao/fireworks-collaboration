@@ -90,10 +90,18 @@ rcgen = "0.12"
 name = "adaptive_tls_soak"
 path = "soak/main.rs"
 
-# Windows specific dependencies for registry access
+# Windows specific dependencies for registry access and credential management
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["winreg", "winnt", "minwindef"] }
+winapi = { version = "0.3", features = ["winreg", "winnt", "minwindef", "wincred", "errhandlingapi"] }
 winreg = "0.52"
+
+# macOS specific dependencies for keychain access
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "2"
+
+# Linux specific dependencies for secret service
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = "3"
 
 [[test]]
 name = "git_add_and_commit"
