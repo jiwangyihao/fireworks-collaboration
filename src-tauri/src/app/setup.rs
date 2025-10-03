@@ -11,13 +11,20 @@ use tauri::Manager;
 use crate::{
     core::{
         config::{loader as cfg_loader, model::AppConfig},
+        credential::{audit::AuditLogger, config::CredentialConfig},
         ip_pool,
         tasks::TaskRegistry,
     },
     logging,
 };
 
-use super::types::{ConfigBaseDir, OAuthState, SharedConfig, SharedIpPool, TaskRegistryState};
+use super::{
+    commands::credential::initialize_credential_store,
+    types::{
+        ConfigBaseDir, OAuthState, SharedAuditLogger, SharedConfig, SharedCredentialFactory,
+        SharedIpPool, TaskRegistryState,
+    },
+};
 
 /// Initialize and run the Tauri application.
 ///
@@ -65,7 +72,16 @@ pub fn run() {
             super::commands::http_fake_request,
             super::commands::detect_system_proxy,
             super::commands::force_proxy_fallback,
-            super::commands::force_proxy_recovery
+            super::commands::force_proxy_recovery,
+            // Credential management commands
+            super::commands::add_credential,
+            super::commands::get_credential,
+            super::commands::update_credential,
+            super::commands::delete_credential,
+            super::commands::list_credentials,
+            super::commands::set_master_password,
+            super::commands::unlock_store,
+            super::commands::export_audit_log
         ]);
 
     // Setup application state and configuration
@@ -146,6 +162,41 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
             "Failed to acquire IP pool lock during setup"
         );
     }
+
+    // Initialize credential store
+    let cred_config = cfg.credential.clone().unwrap_or_default();
+    let cred_store = match initialize_credential_store(&cred_config) {
+        Ok(store) => {
+            tracing::info!(
+                target = "credential",
+                storage_type = ?cred_config.storage,
+                "Credential store initialized successfully"
+            );
+            Some(store)
+        }
+        Err(err) => {
+            tracing::warn!(
+                target = "credential",
+                error = %err,
+                "Failed to initialize credential store, credentials will not be available"
+            );
+            None
+        }
+    };
+
+    // Manage credential factory state
+    app.manage(Arc::new(Mutex::new(cred_store)) as SharedCredentialFactory);
+
+    // Initialize audit logger
+    let audit_mode = cred_config.audit_mode;
+    let audit_logger = AuditLogger::new(audit_mode);
+    app.manage(Arc::new(Mutex::new(audit_logger)) as SharedAuditLogger);
+
+    tracing::info!(
+        target = "credential",
+        audit_mode = audit_mode,
+        "Audit logger initialized"
+    );
 
     Ok(())
 }
