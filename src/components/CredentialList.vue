@@ -126,14 +126,25 @@
         </div>
       </div>
     </div>
+
+    <!-- Delete Confirmation Dialog -->
+    <ConfirmDialog
+      :show="showDeleteConfirm"
+      title="删除凭证"
+      :message="`确定要删除凭证 ${credentialToDelete?.host} (${credentialToDelete?.username}) 吗？此操作不可撤销。`"
+      variant="danger"
+      @confirm="handleDeleteConfirm"
+      @cancel="handleDeleteCancel"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useCredentialStore } from '../stores/credential';
 import { formatTimestamp, isExpiringSoon } from '../api/credential';
 import type { CredentialInfo } from '../api/credential';
+import ConfirmDialog from './ConfirmDialog.vue';
 
 const credentialStore = useCredentialStore();
 
@@ -144,6 +155,9 @@ const emit = defineEmits<{
 const credentials = computed(() => credentialStore.sortedCredentials);
 const loading = computed(() => credentialStore.loading);
 
+const showDeleteConfirm = ref(false);
+const credentialToDelete = ref<CredentialInfo | null>(null);
+
 const formatDate = (timestamp: number) => {
   return formatTimestamp(timestamp);
 };
@@ -153,13 +167,27 @@ const editCredential = (cred: CredentialInfo) => {
 };
 
 const deleteCredential = async (cred: CredentialInfo) => {
-  if (confirm(`确定要删除凭证 ${cred.host} (${cred.username}) 吗？`)) {
-    try {
-      await credentialStore.delete(cred.host, cred.username);
-    } catch (error: any) {
-      console.error('Failed to delete credential:', error);
-      alert(`删除失败: ${error.message || error}`);
-    }
+  credentialToDelete.value = cred;
+  showDeleteConfirm.value = true;
+};
+
+const handleDeleteConfirm = async () => {
+  if (!credentialToDelete.value) return;
+  
+  const cred = credentialToDelete.value;
+  showDeleteConfirm.value = false;
+  credentialToDelete.value = null;
+  
+  try {
+    await credentialStore.delete(cred.host, cred.username);
+  } catch (error: any) {
+    console.error('Failed to delete credential:', error);
+    alert(`删除失败: ${error.message || error}`);
   }
+};
+
+const handleDeleteCancel = () => {
+  showDeleteConfirm.value = false;
+  credentialToDelete.value = null;
 };
 </script>

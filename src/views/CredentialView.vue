@@ -213,6 +213,16 @@
       @close="showUnlockDialog = false"
       @success="onUnlockSuccess"
     />
+
+    <!-- Cleanup Confirmation Dialog -->
+    <ConfirmDialog
+      :show="showCleanupConfirm"
+      title="清理过期凭证"
+      :message="`确定要删除 ${credentialStore.expiredCredentials.length} 个已过期的凭证吗？此操作不可撤销。`"
+      variant="warning"
+      @confirm="handleCleanupConfirm"
+      @cancel="showCleanupConfirm = false"
+    />
   </div>
 </template>
 
@@ -222,6 +232,7 @@ import { useCredentialStore } from '../stores/credential';
 import CredentialForm from '../components/CredentialForm.vue';
 import CredentialList from '../components/CredentialList.vue';
 import MasterPasswordDialog from '../components/MasterPasswordDialog.vue';
+import ConfirmDialog from '../components/ConfirmDialog.vue';
 
 const credentialStore = useCredentialStore();
 
@@ -229,6 +240,7 @@ const showAddForm = ref(false);
 const showUnlockDialog = ref(false);
 const isFirstTime = ref(false);
 const exporting = ref(false);
+const showCleanupConfirm = ref(false);
 
 const needsUnlock = computed(() => credentialStore.needsUnlock);
 
@@ -297,10 +309,12 @@ const exportLog = async () => {
 };
 
 const cleanupExpired = async () => {
-  if (!confirm(`确定要删除 ${credentialStore.expiredCredentials.length} 个已过期的凭证吗？`)) {
-    return;
-  }
+  showCleanupConfirm.value = true;
+};
 
+const handleCleanupConfirm = async () => {
+  showCleanupConfirm.value = false;
+  
   try {
     const count = await credentialStore.cleanupExpired();
     alert(`成功清理 ${count} 个过期凭证`);
