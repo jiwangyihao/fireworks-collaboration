@@ -412,13 +412,15 @@ pub async fn set_master_password(
 
 /// Unlock credential store with master password.
 ///
-/// This is an alias for `set_master_password` for semantic clarity.
+/// This command checks access control before attempting to unlock the store.
+/// Failed attempts are logged and may result in temporary lockout.
 ///
 /// # Arguments
 ///
 /// * `password` - Master password
 /// * `config` - Credential configuration
 /// * `factory` - Shared credential store factory
+/// * `audit` - Shared audit logger for access control
 ///
 /// # Returns
 ///
@@ -428,8 +430,53 @@ pub async fn unlock_store(
     password: String,
     config: CredentialConfig,
     factory: State<'_, SharedCredentialFactory>,
+    audit: State<'_, SharedAuditLogger>,
 ) -> Result<(), String> {
-    set_master_password(password, config, factory).await
+    // Check if locked due to failed attempts
+    {
+        let logger = audit
+            .lock()
+            .map_err(|e| format!("Failed to lock audit logger: {}", e))?;
+        
+        if logger.is_locked() {
+            let msg = "Credential store is locked due to too many failed attempts. Please try again later.";
+            tracing::warn!(target = "credential", msg);
+            return Err(msg.to_string());
+        }
+    }
+
+    // Attempt to unlock
+    let result = set_master_password(password.clone(), config, factory).await;
+
+    // Log the result
+    {
+        let mut logger = audit
+            .lock()
+            .map_err(|e| format!("Failed to lock audit logger: {}", e))?;
+        
+        if result.is_ok() {
+            logger.log_operation(
+                crate::core::credential::audit::OperationType::Unlock,
+                "credential_store",
+                "master",
+                Some(&password),
+                true,
+                None,
+            );
+            logger.reset_access_control(); // Reset failures on successful unlock
+        } else {
+            logger.log_operation(
+                crate::core::credential::audit::OperationType::Unlock,
+                "credential_store",
+                "master",
+                Some(&password),
+                false,
+                Some("Invalid master password"),
+            );
+        }
+    }
+
+    result
 }
 
 /// Export audit log as JSON.
@@ -531,4 +578,92 @@ pub fn initialize_credential_store(
     config: &CredentialConfig,
 ) -> Result<Arc<dyn CredentialStore>, String> {
     CredentialStoreFactory::create(config).map_err(|e| format!("Failed to create store: {}", e))
+}
+
+/// Cleanup expired audit logs.
+///
+/// # Arguments
+///
+/// * `retention_days` - Number of days to retain audit logs
+/// * `audit` - Shared audit logger
+///
+/// # Returns
+///
+/// Returns the number of logs removed.
+#[tauri::command]
+pub async fn cleanup_audit_logs(
+    retention_days: u64,
+    audit: State<'_, SharedAuditLogger>,
+) -> Result<usize, String> {
+    if retention_days == 0 {
+        return Err("retention_days must be greater than 0".to_string());
+    }
+
+    let logger = audit
+        .lock()
+        .map_err(|e| format!("Failed to lock audit logger: {}", e))?;
+
+    logger.cleanup_expired_logs(retention_days)
+}
+
+/// Check if credential store is locked due to authentication failures.
+///
+/// # Arguments
+///
+/// * `audit` - Shared audit logger
+///
+/// # Returns
+///
+/// Returns true if the store is locked, false otherwise.
+#[tauri::command]
+pub async fn is_credential_locked(
+    audit: State<'_, SharedAuditLogger>,
+) -> Result<bool, String> {
+    let logger = audit
+        .lock()
+        .map_err(|e| format!("Failed to lock audit logger: {}", e))?;
+
+    Ok(logger.is_locked())
+}
+
+/// Reset credential store access control (admin unlock).
+///
+/// # Arguments
+///
+/// * `audit` - Shared audit logger
+///
+/// # Returns
+///
+/// Returns Ok(()) on success.
+#[tauri::command]
+pub async fn reset_credential_lock(
+    audit: State<'_, SharedAuditLogger>,
+) -> Result<(), String> {
+    let logger = audit
+        .lock()
+        .map_err(|e| format!("Failed to lock audit logger: {}", e))?;
+
+    logger.reset_access_control();
+    tracing::info!(target = "credential", "Credential store access control reset by admin");
+    Ok(())
+}
+
+/// Get remaining authentication attempts before lockout.
+///
+/// # Arguments
+///
+/// * `audit` - Shared audit logger
+///
+/// # Returns
+///
+/// Returns the number of remaining attempts.
+#[tauri::command]
+pub async fn remaining_auth_attempts(
+    audit: State<'_, SharedAuditLogger>,
+) -> Result<u32, String> {
+    let logger = audit
+        .lock()
+        .map_err(|e| format!("Failed to lock audit logger: {}", e))?;
+
+    Ok(logger.remaining_attempts())
 }
