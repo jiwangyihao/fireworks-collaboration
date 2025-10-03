@@ -249,6 +249,16 @@ path = "tests/proxy/manager.rs"
 required-features = []
 
 [[test]]
+name = "proxy_unit_tests"
+path = "tests/proxy/unit_tests.rs"
+required-features = []
+
+[[test]]
+name = "tasks_unit_tests"
+path = "tests/tasks/unit_tests.rs"
+required-features = []
+
+[[test]]
 name = "git_transport"
 path = "tests/git/transport.rs"
 required-features = []

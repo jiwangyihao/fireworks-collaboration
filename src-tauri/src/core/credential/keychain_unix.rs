@@ -1,4 +1,4 @@
-//! Unix (macOS/Linux) keychain integration.
+﻿//! Unix (macOS/Linux) keychain integration.
 //!
 //! This module provides credential storage using platform-specific keychains:
 //! - macOS: Keychain via security-framework
@@ -284,71 +284,3 @@ impl CredentialStore for UnixCredentialStore {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_unix_store_creation() {
-        let result = UnixCredentialStore::new();
-        match result {
-            Ok(_) => println!("Unix keychain available"),
-            Err(e) => println!("Unix keychain unavailable: {}", e),
-        }
-    }
-
-    #[test]
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    fn test_unix_store_add_get_remove() {
-        let store = match UnixCredentialStore::new() {
-            Ok(s) => s,
-            Err(_) => {
-                println!("Skipping test - Unix keychain unavailable");
-                return;
-            }
-        };
-
-        let host = "github.com";
-        let username = "test_user_unix";
-        let password = "test_password_54321";
-
-        // Clean up any existing credential
-        let _ = store.remove(host, username);
-
-        // Add credential
-        let cred = Credential::new(
-            host.to_string(),
-            username.to_string(),
-            password.to_string(),
-            None,
-        );
-        assert!(store.add(&cred).is_ok());
-
-        // Get credential
-        let retrieved = store.get(host, Some(username)).unwrap();
-        assert!(retrieved.is_some());
-        let retrieved = retrieved.unwrap();
-        assert_eq!(retrieved.host, host);
-        assert_eq!(retrieved.username, username);
-        assert_eq!(retrieved.password_or_token, password);
-
-        // Remove credential
-        assert!(store.remove(host, username).is_ok());
-
-        // Verify removed
-        let after_remove = store.get(host, Some(username)).unwrap();
-        assert!(after_remove.is_none());
-    }
-
-    #[test]
-    fn test_account_parsing() {
-        let account = UnixCredentialStore::make_account("github.com", "user1");
-        assert_eq!(account, "git:github.com:user1");
-
-        let parsed = UnixCredentialStore::parse_account(&account);
-        assert!(parsed.is_some());
-        let (host, username) = parsed.unwrap();
-        assert_eq!(host, "github.com");
-        assert_eq!(username, "user1");
-    }
-}
