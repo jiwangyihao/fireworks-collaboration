@@ -196,3 +196,12 @@ required-features = []
 name = "system_proxy_detection_integration"
 path = "tests/system_proxy_detection_integration.rs"
 required-features = []
+
+# Benchmark配置
+[[bench]]
+name = "credential_benchmark"
+harness = false
+
+[[bench]]
+name = "event_throughput"
+harness = false
