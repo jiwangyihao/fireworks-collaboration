@@ -300,8 +300,8 @@ fn test_credential_expiry_in_file_store() {
 
     let store = create_file_store_with_password(test_file.clone(), "expiry_test").unwrap();
 
-    // 创建即将过期的凭证（5秒后过期，Argon2id 密钥派生可能很慢）
-    let expires_at = SystemTime::now() + Duration::from_secs(5);
+    // 创建即将过期的凭证（10秒后过期，给Argon2id密钥派生留出足够时间）
+    let expires_at = SystemTime::now() + Duration::from_secs(10);
     let cred = Credential::new_with_expiry(
         "test.com".to_string(),
         "user".to_string(),
@@ -311,12 +311,12 @@ fn test_credential_expiry_in_file_store() {
 
     store.add(cred).unwrap();
 
-    // 立即查询应该成功
+    // 立即查询应该成功（添加操作可能耗时1-2秒，所以使用10秒过期时间）
     let retrieved = store.get("test.com", Some("user")).unwrap();
     assert!(retrieved.is_some(), "凭证应该还未过期");
 
-    // 等待过期（6秒，确保已过期）
-    std::thread::sleep(Duration::from_secs(6));
+    // 等待过期（11秒，确保已过期）
+    std::thread::sleep(Duration::from_secs(11));
 
     // 过期后查询应该返回 None
     let retrieved = store.get("test.com", Some("user")).unwrap();
