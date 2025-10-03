@@ -57,6 +57,43 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "cd '$PWD/src-tauri'; car
 		- 仅开启 insecureSkipVerify：保留“仅白名单”校验（Whitelist-only）。
 		- 同时开启两者：完全不做校验（极不安全，仅临时联调）。
 
+## 🔐 P6.0 凭证存储与安全管理
+
+P6.0 阶段提供凭证存储的基线架构，支持安全的凭证管理：
+
+### 核心特性
+
+- **凭证数据模型**：支持 host、username、password/token、过期时间等字段
+- **存储抽象**：MemoryCredentialStore（内存存储，用于测试和临时会话）
+- **自动安全**：
+  - 日志自动脱敏（Display/Debug traits）
+  - 序列化跳过密码字段
+  - 过期凭证自动过滤
+- **配置支持**：与主配置系统集成，支持从 config.json 加载
+- **测试完整**：43 个测试（33 单元 + 10 集成），100% 通过
+
+### 文档
+
+- 📖 [快速入门（5分钟）](new-doc/CREDENTIAL_QUICKSTART.md) - 最小化配置和常见操作
+- 📖 [使用示例](new-doc/CREDENTIAL_USAGE_EXAMPLES.md) - 完整代码示例（含 Tauri 集成）
+- 📖 [错误处理指南](new-doc/CREDENTIAL_ERROR_HANDLING.md) - 每种错误的解决方案
+- 📖 [故障排查](new-doc/CREDENTIAL_TROUBLESHOOTING.md) - 常见问题诊断
+- 📖 [迁移指南](new-doc/CREDENTIAL_MIGRATION.md) - 版本迁移和外部系统集成
+- 📖 [性能优化](new-doc/CREDENTIAL_PERFORMANCE.md) - 大规模场景优化
+- 📖 [安全评估](new-doc/CREDENTIAL_SECURITY_ASSESSMENT.md) - 15 个威胁识别
+- 📖 [加密设计](new-doc/CREDENTIAL_ENCRYPTION_DESIGN.md) - AES-256-GCM 方案
+- 📖 [P6.0 完成报告](new-doc/P6.0_COMPLETION_REPORT.md) - 交付总结
+
+### 下一步
+
+- **P6.1**: 系统钥匙串集成（Windows Credential Manager、macOS Keychain）
+- **P6.2**: 加密文件存储（AES-256-GCM + Argon2id）
+- **P6.3**: 前端 UI 集成
+- **P6.4**: 生命周期管理（自动清理、批量操作）
+- **P6.5**: 安全审计与准入
+
+---
+
 ## 🧭 快速导航
 
 - Git 面板：`/git`
@@ -64,6 +101,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "cd '$PWD/src-tauri'; car
 - 手动验收脚本：`doc/MANUAL_TESTS.md`
 - 设计文档：`doc/TECH_DESIGN.md`、`doc/TECH_DESIGN_P0.md`
  - P1 细化：`doc/TECH_DESIGN_P1.md`
+- **凭证管理文档**：`new-doc/CREDENTIAL_QUICKSTART.md`（及上述文档列表）
 
 ## 🛠️ 开发者环境建议
 

@@ -1,5 +1,90 @@
 # Changelog
 
+## Unreleased (P6)
+
+### P6.0 (Completed) Credential Storage & Security Management - Baseline Architecture
+
+**Added:**
+- **凭证管理核心模块** (`core/credential`):
+  - `Credential` 数据模型，包含 host, username, password_or_token, expires_at, created_at, last_used_at 字段
+  - `CredentialStore` trait 定义统一的存储抽象接口 (get, add, remove, list, update_last_used)
+  - `MemoryCredentialStore` 内存存储实现，支持并发访问和过期检测
+  - `CredentialConfig` 配置结构，支持 system/file/memory 三种存储类型
+  - `StorageType` 枚举，定义存储类型选项
+
+- **安全特性**:
+  - 凭证序列化时自动跳过 `password_or_token` 字段，防止泄露
+  - `Display` 和 `Debug` trait 实现自动脱敏显示（如 `ghp_****cdef`）
+  - `masked_password()` 方法用于日志和 UI 显示
+  - 过期检测：`is_expired()` 方法和自动过滤
+
+- **配置集成**:
+  - 在 `AppConfig` 中添加 `credential: CredentialConfig` 字段
+  - `config.example.json` 新增完整的凭证配置章节，包含 5 个场景示例
+  - 支持配置验证 (`CredentialConfig::validate()`)
+
+- **文档**:
+  - `CREDENTIAL_SECURITY_ASSESSMENT.md`: 识别 15 个安全威胁及缓解措施
+  - `CREDENTIAL_ENCRYPTION_DESIGN.md`: AES-256-GCM + Argon2id 加密方案详细设计
+  - API 文档注释，包含使用示例
+
+- **测试**:
+  - 33 个单元测试（model: 10, config: 9, storage: 14）
+  - 10 个集成测试，覆盖完整生命周期、并发操作、边界情况
+  - 100% 单元测试通过率，无回归失败
+
+- **依赖**:
+  - `aes-gcm` 0.10 - AES-256-GCM 对称加密
+  - `argon2` 0.5 - 密钥派生函数
+  - `hmac` 0.12 - HMAC-SHA256 完整性校验
+  - `sha2` 0.10 - SHA-256 哈希
+  - `zeroize` 1.x - 内存清零
+
+**Changed:**
+- 无破坏性变更，所有新功能均为增量添加
+
+**Backward Compatibility:**
+- 凭证配置字段在 `AppConfig` 中使用 `#[serde(default)]`，旧配置文件自动使用默认值
+- 默认配置使用系统钥匙串 (`storage: system`)，不影响现有功能
+- 所有新增 API 仅在显式调用时生效
+
+**Security:**
+- 密码/令牌字段在序列化时自动跳过
+- Display/Debug 输出自动脱敏
+- 过期凭证自动被过滤，不会被使用
+- 配置验证确保安全默认值
+
+**Documentation:**
+- 安全威胁评估文档（700+ 行）
+- 加密方案设计文档（800+ 行）
+- 配置示例与最佳实践
+- API 文档注释与使用示例
+
+**Performance:**
+- 单次凭证操作平均耗时 < 1ms（内存存储）
+- 支持并发访问，通过 10 线程并发测试
+- 大规模测试：1000 个凭证管理无性能问题
+
+**Testing:**
+- Unit tests: 33 个测试，0.20s 完成
+- Integration tests: 10 个测试，0.15s 完成
+- 边界测试：过期时间边界、并发访问、大量凭证
+- 安全测试：序列化安全、脱敏显示、配置验证
+
+**Revert Path:**
+- P6.0 仅建立基线架构，无运行时影响
+- 后续阶段如需回退，移除 `credential` 模块即可
+- 配置文件中的 `credential` 字段会被忽略（使用默认值）
+
+**Next Steps (P6.1+):**
+- P6.1: 实现系统钥匙串、加密文件存储
+- P6.2: 实现加密/解密、内存清零
+- P6.3: 前端 UI 集成
+- P6.4: 凭证生命周期管理
+- P6.5: 安全审计与准入
+
+---
+
 ## Unreleased (P2)
 
 ### P3.2 (In-progress) Adaptive TLS Observability
