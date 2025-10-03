@@ -2,6 +2,14 @@
 //!
 //! 测试凭证管理的完整生命周期和模块间协作。
 
+mod platform_integration;
+mod factory_fallback_tests;
+mod encryption_tests;
+mod file_corruption_tests;
+mod boundary_tests;
+mod key_cache_tests;
+mod advanced_concurrent_tests;
+
 use fireworks_collaboration_lib::core::credential::{
     config::{CredentialConfig, StorageType},
     model::Credential,
