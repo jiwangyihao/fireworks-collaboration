@@ -30,10 +30,14 @@
           <button class="btn btn-accent btn-sm" :disabled="!pushDest || working" @click="startPush">Push</button>
         </div>
         <div class="flex gap-2 items-center">
-          <input v-model="username" class="input input-bordered input-sm w-56" placeholder="用户名（仅 token 可填 x-access-token）" />
-          <input v-model="password" type="password" class="input input-bordered input-sm w-72" placeholder="密码/令牌（可选）" />
+          <input v-model="username" class="input input-bordered input-sm w-56" placeholder="用户名（仅 token 可填 x-access-token）" :disabled="useStoredCredential" />
+          <input v-model="password" type="password" class="input input-bordered input-sm w-72" placeholder="密码/令牌（可选）" :disabled="useStoredCredential" />
+          <label class="label cursor-pointer gap-2">
+            <span class="text-xs">使用已存储凭证</span>
+            <input type="checkbox" v-model="useStoredCredential" class="checkbox checkbox-sm" />
+          </label>
         </div>
-        <div class="text-xs opacity-70">Push 会使用 HTTPS 基础认证；如仅使用 GitHub Token，请将用户名设为 x-access-token，密码填入 token。</div>
+        <div class="text-xs opacity-70">Push 会使用 HTTPS 基础认证；如仅使用 GitHub Token，请将用户名设为 x-access-token，密码填入 token。勾选"使用已存储凭证"将自动从凭证库中查找匹配的凭证。</div>
       </div>
     </div>
 
@@ -165,6 +169,7 @@ const remote = ref('origin');
 const refspec = ref('refs/heads/main:refs/heads/main');
 const username = ref('');
 const password = ref('');
+const useStoredCredential = ref(false);
 // Init / Add 输入
 const initDest = ref('C:/tmp/new-repo');
 const addDest = ref('C:/tmp/log');
@@ -326,6 +331,7 @@ async function startPush() {
     };
     if (username.value.trim()) args.username = username.value.trim();
     if (password.value.trim()) args.password = password.value.trim();
+    if (useStoredCredential.value) args.useStoredCredential = true;
     await startGitPush(args);
     await listTasks().then((arr:any[])=>{
       if (Array.isArray(arr)) {

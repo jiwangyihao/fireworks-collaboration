@@ -87,6 +87,53 @@
 
     <!-- Credential Manager -->
     <div v-else class="space-y-4">
+      <!-- Expiring Soon Alert -->
+      <div v-if="credentialStore.expiringSoonCredentials.length > 0" class="alert alert-warning shadow-sm">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          class="stroke-current shrink-0 h-6 w-6"
+          fill="none"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+          />
+        </svg>
+        <div>
+          <h3 class="font-bold">即将过期提醒</h3>
+          <div class="text-sm">
+            {{ credentialStore.expiringSoonCredentials.length }} 个凭证即将在 7 天内过期，请及时更新。
+          </div>
+        </div>
+      </div>
+
+      <!-- Expired Credentials Alert -->
+      <div v-if="credentialStore.expiredCredentials.length > 0" class="alert alert-error shadow-sm">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          class="stroke-current shrink-0 h-6 w-6"
+          fill="none"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
+          />
+        </svg>
+        <div>
+          <h3 class="font-bold">已过期凭证</h3>
+          <div class="text-sm">
+            {{ credentialStore.expiredCredentials.length }} 个凭证已过期。
+          </div>
+        </div>
+        <button class="btn btn-sm" @click="cleanupExpired">清理过期凭证</button>
+      </div>
+
       <div class="flex gap-2">
         <button
           class="btn btn-primary btn-sm"
@@ -246,6 +293,19 @@ const exportLog = async () => {
     credentialStore.error = `导出失败: ${error.message || error}`;
   } finally {
     exporting.value = false;
+  }
+};
+
+const cleanupExpired = async () => {
+  if (!confirm(`确定要删除 ${credentialStore.expiredCredentials.length} 个已过期的凭证吗？`)) {
+    return;
+  }
+
+  try {
+    const count = await credentialStore.cleanupExpired();
+    alert(`成功清理 ${count} 个过期凭证`);
+  } catch (error: any) {
+    console.error('Failed to cleanup expired credentials:', error);
   }
 };
 </script>
