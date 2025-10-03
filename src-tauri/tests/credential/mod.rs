@@ -9,6 +9,11 @@ mod file_corruption_tests;
 mod boundary_tests;
 mod key_cache_tests;
 mod advanced_concurrent_tests;
+mod security_audit_tests;
+mod security_enhancement_tests;
+mod stress_tests;
+mod error_recovery_tests;
+mod unit_tests;
 
 use fireworks_collaboration_lib::core::credential::{
     config::{CredentialConfig, StorageType},
