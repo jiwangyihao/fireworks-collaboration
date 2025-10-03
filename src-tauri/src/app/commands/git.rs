@@ -3,8 +3,9 @@
 use tauri::State;
 
 use crate::core::tasks::TaskKind;
+use crate::core::credential::storage::CredentialStore;
 
-use super::super::types::TaskRegistryState;
+use super::super::types::{TaskRegistryState, SharedCredentialFactory};
 
 /// Helper to parse optional depth parameter from JSON value.
 fn parse_depth(depth: Option<serde_json::Value>) -> Option<u32> {
@@ -106,6 +107,7 @@ pub async fn git_fetch(
 /// - `refspecs`: Optional list of refspecs to push
 /// - `username`: Optional username for authentication
 /// - `password`: Optional password/token for authentication
+/// - `use_stored_credential`: Whether to attempt to use stored credentials
 /// - `strategy_override`: Optional strategy configuration override
 #[tauri::command]
 pub async fn git_push(
@@ -114,16 +116,39 @@ pub async fn git_push(
     refspecs: Option<Vec<String>>,
     username: Option<String>,
     password: Option<String>,
+    use_stored_credential: Option<bool>,
     strategy_override: Option<serde_json::Value>,
     reg: State<'_, TaskRegistryState>,
+    credential_factory: State<'_, SharedCredentialFactory>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
+    // Determine final username and password
+    let (final_username, final_password) = if use_stored_credential.unwrap_or(false) && username.is_none() && password.is_none() {
+        // Try to get credentials from storage
+        match try_get_git_credentials(&dest, &credential_factory).await {
+            Ok(Some((u, p))) => {
+                tracing::info!("Using stored credentials for git push");
+                (Some(u), Some(p))
+            },
+            Ok(None) => {
+                tracing::debug!("No stored credentials found, using provided credentials");
+                (username.clone(), password.clone())
+            },
+            Err(e) => {
+                tracing::warn!("Failed to retrieve stored credentials: {}, using provided credentials", e);
+                (username.clone(), password.clone())
+            }
+        }
+    } else {
+        (username.clone(), password.clone())
+    };
+
     let (id, token) = reg.create(TaskKind::GitPush {
         dest: dest.clone(),
         remote: remote.clone(),
         refspecs: refspecs.clone(),
-        username: username.clone(),
-        password: password.clone(),
+        username: final_username.clone(),
+        password: final_password.clone(),
         strategy_override: strategy_override.clone(),
     });
 
@@ -134,12 +159,107 @@ pub async fn git_push(
         dest,
         remote,
         refspecs,
-        username,
-        password,
+        final_username,
+        final_password,
         strategy_override,
     );
 
     Ok(id.to_string())
+}
+
+/// Helper function to try to get Git credentials from storage.
+/// 
+/// Extracts the host from the repository path (if it's a Git remote URL)
+/// and looks up credentials in the credential store.
+async fn try_get_git_credentials(
+    repo_path: &str,
+    credential_factory: &State<'_, SharedCredentialFactory>,
+) -> Result<Option<(String, String)>, String> {
+    // Try to extract host from common Git URL formats:
+    // - https://github.com/user/repo.git
+    // - git@github.com:user/repo.git
+    // - ssh://git@github.com/user/repo.git
+    
+    // For now, we'll try to read the remote URL from the Git config
+    // and extract the host from there
+    let host = extract_git_host(repo_path)?;
+    
+    // Get credential store
+    let factory_guard = credential_factory.lock()
+        .map_err(|e| format!("Failed to lock credential factory: {}", e))?;
+    
+    let store = factory_guard.as_ref()
+        .ok_or("Credential store not initialized")?;
+    
+    // Try to get credential for this host (any username)
+    match store.get(&host, None).map_err(|e| e.to_string())? {
+        Some(cred) => Ok(Some((cred.username().to_string(), cred.password_or_token().to_string()))),
+        None => Ok(None),
+    }
+}
+
+/// Extract Git host from a repository path by reading git config.
+/// 
+/// This function attempts to read the remote URL from the Git repository
+/// and extract the host part.
+pub(crate) fn extract_git_host(repo_path: &str) -> Result<String, String> {
+    use std::path::Path;
+    use std::process::Command;
+    
+    let path = Path::new(repo_path);
+    if !path.exists() || !path.join(".git").exists() {
+        return Err("Not a git repository".to_string());
+    }
+    
+    // Try to get the origin remote URL
+    let output = Command::new("git")
+        .arg("config")
+        .arg("--get")
+        .arg("remote.origin.url")
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to run git config: {}", e))?;
+    
+    if !output.status.success() {
+        return Err("Failed to get remote URL".to_string());
+    }
+    
+    let url = String::from_utf8(output.stdout)
+        .map_err(|e| format!("Invalid UTF-8 in remote URL: {}", e))?
+        .trim()
+        .to_string();
+    
+    // Parse host from URL
+    parse_git_host(&url)
+}
+
+/// Parse host from various Git URL formats.
+pub(crate) fn parse_git_host(url: &str) -> Result<String, String> {
+    // HTTPS: https://github.com/user/repo.git
+    if url.starts_with("https://") || url.starts_with("http://") {
+        let without_scheme = url.trim_start_matches("https://").trim_start_matches("http://");
+        let host = without_scheme.split('/').next()
+            .ok_or("Invalid HTTPS URL")?;
+        return Ok(host.to_string());
+    }
+    
+    // SSH: git@github.com:user/repo.git or ssh://git@github.com/user/repo.git
+    if url.starts_with("git@") {
+        let without_user = url.trim_start_matches("git@");
+        let host = without_user.split(':').next()
+            .ok_or("Invalid SSH URL")?;
+        return Ok(host.to_string());
+    }
+    
+    if url.starts_with("ssh://") {
+        let without_scheme = url.trim_start_matches("ssh://");
+        let without_user = without_scheme.trim_start_matches("git@");
+        let host = without_user.split('/').next()
+            .ok_or("Invalid SSH URL")?;
+        return Ok(host.to_string());
+    }
+    
+    Err(format!("Unsupported Git URL format: {}", url))
 }
 
 /// Initialize a new Git repository.
