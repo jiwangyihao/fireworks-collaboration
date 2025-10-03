@@ -95,10 +95,7 @@ fn test_sanitized_url_without_credentials() {
     )
     .unwrap();
 
-    assert_eq!(
-        connector.sanitized_url(),
-        "socks5://proxy.example.com:1080"
-    );
+    assert_eq!(connector.sanitized_url(), "socks5://proxy.example.com:1080");
 }
 
 #[test]
@@ -172,12 +169,7 @@ fn test_parse_proxy_url_port_overflow() {
 fn test_connector_with_very_long_url() {
     let long_host = "a".repeat(255);
     let url = format!("socks5://{}:1080", long_host);
-    let connector = Socks5ProxyConnector::new(
-        url,
-        None,
-        None,
-        Duration::from_secs(30),
-    );
+    let connector = Socks5ProxyConnector::new(url, None, None, Duration::from_secs(30));
     assert!(connector.is_ok());
 }
 
@@ -290,7 +282,7 @@ fn test_sanitized_url_format() {
         Duration::from_secs(30),
     )
     .unwrap();
-    
+
     assert!(connector1.sanitized_url().starts_with("socks5://"));
     assert!(!connector1.sanitized_url().contains("***"));
 
@@ -323,7 +315,8 @@ fn test_proxy_type_method() {
 #[test]
 fn test_parse_url_with_multiple_colons() {
     // IPv6 addresses can have multiple colons
-    let (host, port) = Socks5ProxyConnector::parse_proxy_url("socks5://[2001:db8::1]:1080").unwrap();
+    let (host, port) =
+        Socks5ProxyConnector::parse_proxy_url("socks5://[2001:db8::1]:1080").unwrap();
     assert_eq!(host, "[2001:db8::1]");
     assert_eq!(port, 1080);
 }
@@ -348,7 +341,7 @@ fn test_parse_url_localhost_variations() {
 #[test]
 fn test_protocol_constants() {
     use fireworks_collaboration_lib::core::proxy::socks5_connector::*;
-    
+
     // 验证 SOCKS5 协议常量
     assert_eq!(SOCKS5_VERSION, 0x05);
     assert_eq!(AUTH_NO_AUTH, 0x00);
@@ -475,14 +468,8 @@ fn test_connect_request_domain_length() {
     // 测试域名长度限制（SOCKS5 域名长度字段为 u8，最大 255）
     let long_domain = "a".repeat(250);
     let url = format!("socks5://{}:1080", long_domain);
-    
-    let connector = Socks5ProxyConnector::new(
-        url,
-        None,
-        None,
-        Duration::from_secs(30),
-    )
-    .unwrap();
+
+    let connector = Socks5ProxyConnector::new(url, None, None, Duration::from_secs(30)).unwrap();
 
     assert_eq!(connector.proxy_host.len(), 250);
     assert!(connector.proxy_host.len() <= 255);
@@ -502,13 +489,9 @@ fn test_timeout_value_range() {
     ];
 
     for timeout in timeouts {
-        let connector = Socks5ProxyConnector::new(
-            "socks5://proxy:1080".to_string(),
-            None,
-            None,
-            timeout,
-        )
-        .unwrap();
+        let connector =
+            Socks5ProxyConnector::new("socks5://proxy:1080".to_string(), None, None, timeout)
+                .unwrap();
 
         assert_eq!(connector.timeout, timeout);
     }
@@ -517,11 +500,11 @@ fn test_timeout_value_range() {
 #[test]
 fn test_rep_error_code_coverage() {
     use fireworks_collaboration_lib::core::proxy::socks5_connector::REP_SUCCESS;
-    
+
     // 测试所有 REP 错误码（0x01-0x08）的覆盖
     // 虽然无法实际触发，但验证常量存在
     assert_eq!(REP_SUCCESS, 0x00);
-    
+
     // REP 错误码在 parse_connect_response 中被映射
     // 0x01 - General SOCKS server failure
     // 0x02 - Connection not allowed by ruleset
@@ -554,7 +537,7 @@ fn test_connector_send_sync_trait() {
     // 验证 Socks5ProxyConnector 实现了 Send + Sync
     fn assert_send<T: Send>() {}
     fn assert_sync<T: Sync>() {}
-    
+
     assert_send::<Socks5ProxyConnector>();
     assert_sync::<Socks5ProxyConnector>();
 }
@@ -622,7 +605,7 @@ fn test_sanitized_url_consistency() {
 
     let sanitized1 = connector1.sanitized_url();
     let sanitized2 = connector1.sanitized_url();
-    
+
     // 多次调用应返回相同结果
     assert_eq!(sanitized1, sanitized2);
     assert!(sanitized1.contains("***:***@"));

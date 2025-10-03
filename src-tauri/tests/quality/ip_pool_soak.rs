@@ -126,7 +126,10 @@ fn soak_baseline_without_ip_pool() {
 
     println!("=== Baseline Report (IP Pool Disabled) ===");
     println!("Total operations: {}", view.totals.total_operations);
-    println!("Success rate: {:.2}%", report.thresholds.success_rate.actual * 100.0);
+    println!(
+        "Success rate: {:.2}%",
+        report.thresholds.success_rate.actual * 100.0
+    );
     println!("IP pool selection total: {}", view.ip_pool.selection_total);
     println!("IP pool refresh total: {}", view.ip_pool.refresh_total);
 
@@ -149,13 +152,15 @@ fn soak_with_preheat_domains() {
         // PreheatDomain::new("api.github.com"), // 可选：添加更多域
     ];
 
-    let report =
-        run_soak_with_ip_pool(5, true, preheat).expect("soak with preheat should succeed");
+    let report = run_soak_with_ip_pool(5, true, preheat).expect("soak with preheat should succeed");
     let view = soak_report_view(&report);
 
     println!("=== Report (IP Pool Enabled, Preheat Domains) ===");
     println!("Total operations: {}", view.totals.total_operations);
-    println!("Success rate: {:.2}%", report.thresholds.success_rate.actual * 100.0);
+    println!(
+        "Success rate: {:.2}%",
+        report.thresholds.success_rate.actual * 100.0
+    );
     println!("IP pool selection total: {}", view.ip_pool.selection_total);
     println!("IP pool refresh total: {}", view.ip_pool.refresh_total);
     println!(
@@ -164,18 +169,9 @@ fn soak_with_preheat_domains() {
     );
 
     // 验证 IP 池活动
-    assert!(
-        view.ip_pool.selection_total > 0,
-        "启用 IP 池时应有选择活动"
-    );
-    assert!(
-        view.ip_pool.refresh_total > 0,
-        "预热域名应触发刷新"
-    );
-    assert!(
-        view.ip_pool.refresh_success_rate >= 0.8,
-        "刷新成功率应≥80%"
-    );
+    assert!(view.ip_pool.selection_total > 0, "启用 IP 池时应有选择活动");
+    assert!(view.ip_pool.refresh_total > 0, "预热域名应触发刷新");
+    assert!(view.ip_pool.refresh_success_rate >= 0.8, "刷新成功率应≥80%");
     assert!(report.thresholds.success_rate.pass, "任务成功率应达标");
 
     // 检查策略分布
@@ -199,10 +195,7 @@ fn soak_with_preheat_domains() {
     if view.ip_pool.selection_total > 0 {
         let cached_ratio = cached_count as f64 / view.ip_pool.selection_total as f64;
         println!("Cached ratio: {:.2}%", cached_ratio * 100.0);
-        assert!(
-            cached_ratio >= 0.5,
-            "缓存命中率应≥50%（预热生效）"
-        );
+        assert!(cached_ratio >= 0.5, "缓存命中率应≥50%（预热生效）");
     }
 }
 
@@ -223,7 +216,10 @@ fn soak_mixed_preheat_and_on_demand() {
 
     println!("=== Report (Mixed Preheat + On-Demand) ===");
     println!("Total operations: {}", view.totals.total_operations);
-    println!("Success rate: {:.2}%", report.thresholds.success_rate.actual * 100.0);
+    println!(
+        "Success rate: {:.2}%",
+        report.thresholds.success_rate.actual * 100.0
+    );
     println!("IP pool selection total: {}", view.ip_pool.selection_total);
     println!("IP pool refresh total: {}", view.ip_pool.refresh_total);
 
@@ -240,8 +236,8 @@ fn soak_mixed_preheat_and_on_demand() {
 #[ignore] // 需要运行两次 soak，耗时较长
 fn soak_latency_improvement_comparison() {
     // 第一轮：禁用 IP 池（基线）
-    let baseline_report = run_soak_with_ip_pool(10, false, Vec::new())
-        .expect("baseline soak should succeed");
+    let baseline_report =
+        run_soak_with_ip_pool(10, false, Vec::new()).expect("baseline soak should succeed");
 
     // 第二轮：启用 IP 池（预热 GitHub）
     let preheat = vec![PreheatDomain::new("github.com")];
@@ -283,13 +279,28 @@ fn soak_latency_improvement_comparison() {
 
     // 输出对比报告
     println!("\n=== Baseline Report Summary ===");
-    println!("Success rate: {:.2}%", baseline_report.thresholds.success_rate.actual * 100.0);
-    println!("Fake fallback rate: {:.2}%", baseline_report.thresholds.fake_fallback_rate.actual * 100.0);
+    println!(
+        "Success rate: {:.2}%",
+        baseline_report.thresholds.success_rate.actual * 100.0
+    );
+    println!(
+        "Fake fallback rate: {:.2}%",
+        baseline_report.thresholds.fake_fallback_rate.actual * 100.0
+    );
 
     println!("\n=== Enabled Report Summary ===");
-    println!("Success rate: {:.2}%", enabled_report.thresholds.success_rate.actual * 100.0);
-    println!("Fake fallback rate: {:.2}%", enabled_report.thresholds.fake_fallback_rate.actual * 100.0);
-    println!("IP pool selection total: {}", enabled_view.ip_pool.selection_total);
+    println!(
+        "Success rate: {:.2}%",
+        enabled_report.thresholds.success_rate.actual * 100.0
+    );
+    println!(
+        "Fake fallback rate: {:.2}%",
+        enabled_report.thresholds.fake_fallback_rate.actual * 100.0
+    );
+    println!(
+        "IP pool selection total: {}",
+        enabled_view.ip_pool.selection_total
+    );
     println!(
         "IP pool refresh success rate: {:.2}%",
         enabled_view.ip_pool.refresh_success_rate * 100.0
@@ -310,7 +321,10 @@ fn soak_fallback_success_rate() {
 
     println!("=== Fallback Success Rate Report ===");
     println!("Total operations: {}", view.totals.total_operations);
-    println!("Success rate: {:.2}%", report.thresholds.success_rate.actual * 100.0);
+    println!(
+        "Success rate: {:.2}%",
+        report.thresholds.success_rate.actual * 100.0
+    );
     println!("IP pool selection total: {}", view.ip_pool.selection_total);
 
     // 验证回退场景仍然成功
@@ -328,10 +342,7 @@ fn soak_fallback_success_rate() {
         .unwrap_or(0);
     println!("System DNS fallbacks: {}", system_count);
 
-    assert!(
-        system_count > 0,
-        "无效域名应触发系统 DNS 回退"
-    );
+    assert!(system_count > 0, "无效域名应触发系统 DNS 回退");
 }
 
 /// 测试 6：IP 池事件完整性 - 验证事件记录
@@ -368,7 +379,9 @@ fn soak_ip_pool_events_completeness() {
 
     let bus = MemoryEventBus::new();
     let bus_arc: Arc<dyn EventBusAny> = Arc::new(bus.clone());
-    let using_global = fireworks_collaboration_lib::events::structured::set_global_event_bus(bus_arc.clone()).is_ok();
+    let using_global =
+        fireworks_collaboration_lib::events::structured::set_global_event_bus(bus_arc.clone())
+            .is_ok();
     if !using_global {
         fireworks_collaboration_lib::events::structured::set_test_event_bus(bus_arc.clone());
     }
@@ -384,7 +397,9 @@ fn soak_ip_pool_events_completeness() {
     // 检查事件
     let events = if using_global {
         bus.take_all()
-    } else if let Some(global_bus) = fireworks_collaboration_lib::events::structured::get_global_memory_bus() {
+    } else if let Some(global_bus) =
+        fireworks_collaboration_lib::events::structured::get_global_memory_bus()
+    {
         global_bus.take_all()
     } else {
         bus.take_all()
@@ -405,10 +420,7 @@ fn soak_ip_pool_events_completeness() {
     println!("Selection events: {}", selection_events.len());
 
     // 验证预热触发了刷新事件
-    assert!(
-        !refresh_events.is_empty(),
-        "预热应触发 IpPoolRefresh 事件"
-    );
+    assert!(!refresh_events.is_empty(), "预热应触发 IpPoolRefresh 事件");
 
     // 清理
     let _ = fs::remove_dir_all(&workspace);

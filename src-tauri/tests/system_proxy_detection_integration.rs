@@ -83,8 +83,7 @@ fn test_detect_https_proxy_precedence() {
     if let Some(config) = result {
         // 应该使用 HTTPS_PROXY
         assert!(
-            config.url.contains("https-proxy.example.com")
-                || config.url.contains("8443"),
+            config.url.contains("https-proxy.example.com") || config.url.contains("8443"),
             "Should prefer HTTPS_PROXY over HTTP_PROXY: {}",
             config.url
         );
@@ -255,7 +254,10 @@ fn test_windows_registry_proxy_detection() {
 
             match config {
                 Some(cfg) => {
-                    println!("Detected Windows proxy: mode={:?}, url={}", cfg.mode, cfg.url);
+                    println!(
+                        "Detected Windows proxy: mode={:?}, url={}",
+                        cfg.mode, cfg.url
+                    );
                     assert!(
                         !cfg.url.is_empty(),
                         "Proxy URL should not be empty when detected"
@@ -331,10 +333,12 @@ fn test_linux_env_proxy_detection() {
     }
 
     if let Some(config) = result {
-        println!("Detected Linux proxy: mode={:?}, url={}", config.mode, config.url);
+        println!(
+            "Detected Linux proxy: mode={:?}, url={}",
+            config.mode, config.url
+        );
         assert!(
-            config.url.contains("proxy.linux.example.com")
-                || config.url.contains("3128"),
+            config.url.contains("proxy.linux.example.com") || config.url.contains("3128"),
             "Should detect Linux proxy from lowercase env var"
         );
     } else {
@@ -385,10 +389,7 @@ fn test_proxy_detection_performance() {
 
     let elapsed = start.elapsed();
 
-    println!(
-        "System proxy detection completed in {:?}",
-        elapsed
-    );
+    println!("System proxy detection completed in {:?}", elapsed);
 
     assert!(
         elapsed.as_secs() < 5,
@@ -417,7 +418,10 @@ fn test_proxy_detection_consistency() {
                 cfg1.url, cfg2.url,
                 "Consecutive detections should return same URL"
             );
-            println!("Proxy detection is consistent: mode={:?}, url={}", cfg1.mode, cfg1.url);
+            println!(
+                "Proxy detection is consistent: mode={:?}, url={}",
+                cfg1.mode, cfg1.url
+            );
         }
         (None, None) => {
             println!("Consistently detected no proxy");

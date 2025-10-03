@@ -30,7 +30,7 @@ pub async fn git_clone(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let depth_parsed = parse_depth(depth.clone());
-    
+
     let (id, token) = reg.create(TaskKind::GitClone {
         repo: repo.clone(),
         dest: dest.clone(),
@@ -38,7 +38,7 @@ pub async fn git_clone(
         filter: filter.clone(),
         strategy_override: strategy_override.clone(),
     });
-    
+
     reg.clone().spawn_git_clone_task_with_opts(
         Some(app),
         id,
@@ -49,7 +49,7 @@ pub async fn git_clone(
         filter,
         strategy_override,
     );
-    
+
     Ok(id.to_string())
 }
 
@@ -74,7 +74,7 @@ pub async fn git_fetch(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let depth_parsed = parse_depth(depth.clone());
-    
+
     let (id, token) = reg.create(TaskKind::GitFetch {
         repo: repo.clone(),
         dest: dest.clone(),
@@ -82,7 +82,7 @@ pub async fn git_fetch(
         filter: filter.clone(),
         strategy_override: strategy_override.clone(),
     });
-    
+
     reg.clone().spawn_git_fetch_task_with_opts(
         Some(app),
         id,
@@ -94,7 +94,7 @@ pub async fn git_fetch(
         filter,
         strategy_override,
     );
-    
+
     Ok(id.to_string())
 }
 
@@ -126,7 +126,7 @@ pub async fn git_push(
         password: password.clone(),
         strategy_override: strategy_override.clone(),
     });
-    
+
     reg.clone().spawn_git_push_task(
         Some(app),
         id,
@@ -138,7 +138,7 @@ pub async fn git_push(
         password,
         strategy_override,
     );
-    
+
     Ok(id.to_string())
 }
 
@@ -170,10 +170,10 @@ pub async fn git_add(
         dest: dest.clone(),
         paths: paths.clone(),
     });
-    
+
     reg.clone()
         .spawn_git_add_task(Some(app), id, token, dest, paths);
-    
+
     Ok(id.to_string())
 }
 
@@ -196,7 +196,7 @@ pub async fn git_commit(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let allow_empty_flag = allow_empty.unwrap_or(false);
-    
+
     let (id, token) = reg.create(TaskKind::GitCommit {
         dest: dest.clone(),
         message: message.clone(),
@@ -204,7 +204,7 @@ pub async fn git_commit(
         author_name: author_name.clone(),
         author_email: author_email.clone(),
     });
-    
+
     reg.clone().spawn_git_commit_task(
         Some(app),
         id,
@@ -215,7 +215,7 @@ pub async fn git_commit(
         author_name,
         author_email,
     );
-    
+
     Ok(id.to_string())
 }
 
@@ -237,24 +237,17 @@ pub async fn git_branch(
 ) -> Result<String, String> {
     let checkout_flag = checkout.unwrap_or(false);
     let force_flag = force.unwrap_or(false);
-    
+
     let (id, token) = reg.create(TaskKind::GitBranch {
         dest: dest.clone(),
         name: name.clone(),
         checkout: checkout_flag,
         force: force_flag,
     });
-    
-    reg.clone().spawn_git_branch_task(
-        Some(app),
-        id,
-        token,
-        dest,
-        name,
-        checkout_flag,
-        force_flag,
-    );
-    
+
+    reg.clone()
+        .spawn_git_branch_task(Some(app), id, token, dest, name, checkout_flag, force_flag);
+
     Ok(id.to_string())
 }
 
@@ -273,22 +266,16 @@ pub async fn git_checkout(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let create_flag = create.unwrap_or(false);
-    
+
     let (id, token) = reg.create(TaskKind::GitCheckout {
         dest: dest.clone(),
         reference: reference.clone(),
         create: create_flag,
     });
-    
-    reg.clone().spawn_git_checkout_task(
-        Some(app),
-        id,
-        token,
-        dest,
-        reference,
-        create_flag,
-    );
-    
+
+    reg.clone()
+        .spawn_git_checkout_task(Some(app), id, token, dest, reference, create_flag);
+
     Ok(id.to_string())
 }
 
@@ -312,7 +299,7 @@ pub async fn git_tag(
 ) -> Result<String, String> {
     let annotated_flag = annotated.unwrap_or(false);
     let force_flag = force.unwrap_or(false);
-    
+
     let (id, token) = reg.create(TaskKind::GitTag {
         dest: dest.clone(),
         name: name.clone(),
@@ -320,7 +307,7 @@ pub async fn git_tag(
         annotated: annotated_flag,
         force: force_flag,
     });
-    
+
     reg.clone().spawn_git_tag_task(
         Some(app),
         id,
@@ -331,7 +318,7 @@ pub async fn git_tag(
         annotated_flag,
         force_flag,
     );
-    
+
     Ok(id.to_string())
 }
 
@@ -354,10 +341,10 @@ pub async fn git_remote_set(
         name: name.clone(),
         url: url.clone(),
     });
-    
+
     reg.clone()
         .spawn_git_remote_set_task(Some(app), id, token, dest, name, url);
-    
+
     Ok(id.to_string())
 }
 
@@ -380,10 +367,10 @@ pub async fn git_remote_add(
         name: name.clone(),
         url: url.clone(),
     });
-    
+
     reg.clone()
         .spawn_git_remote_add_task(Some(app), id, token, dest, name, url);
-    
+
     Ok(id.to_string())
 }
 
@@ -403,9 +390,9 @@ pub async fn git_remote_remove(
         dest: dest.clone(),
         name: name.clone(),
     });
-    
+
     reg.clone()
         .spawn_git_remote_remove_task(Some(app), id, token, dest, name);
-    
+
     Ok(id.to_string())
 }

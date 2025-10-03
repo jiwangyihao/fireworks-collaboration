@@ -86,9 +86,7 @@ impl ProxyFailureDetector {
     pub fn new(window_seconds: u64, threshold: f64) -> Self {
         // Validate and correct window_seconds
         let validated_window = if window_seconds == 0 {
-            tracing::warn!(
-                "Invalid window_seconds=0, using default 60 seconds"
-            );
+            tracing::warn!("Invalid window_seconds=0, using default 60 seconds");
             60
         } else {
             window_seconds
@@ -183,7 +181,7 @@ impl ProxyFailureDetector {
     pub fn should_fallback(&self) -> bool {
         let inner = self.inner.lock().unwrap();
         let should_trigger = inner.should_trigger_fallback();
-        
+
         if should_trigger {
             let failure_rate = inner.calculate_failure_rate();
             tracing::warn!(
@@ -192,7 +190,7 @@ impl ProxyFailureDetector {
                 inner.threshold * 100.0
             );
         }
-        
+
         should_trigger
     }
 

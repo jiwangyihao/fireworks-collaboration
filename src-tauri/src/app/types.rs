@@ -5,10 +5,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::core::{
-    config::model::AppConfig,
-    ip_pool::IpPool,
-    proxy::ProxyManager,
-    tasks::SharedTaskRegistry,
+    config::model::AppConfig, ip_pool::IpPool, proxy::ProxyManager, tasks::SharedTaskRegistry,
 };
 
 // ===== OAuth Types =====

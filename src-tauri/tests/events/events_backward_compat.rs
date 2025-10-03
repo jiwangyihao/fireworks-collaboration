@@ -37,8 +37,7 @@ mod section_backward_compatibility {
             }
         });
 
-        let event: StrategyEvent =
-            serde_json::from_value(old_json).expect("deserialize old event");
+        let event: StrategyEvent = serde_json::from_value(old_json).expect("deserialize old event");
         match event {
             StrategyEvent::AdaptiveTlsTiming {
                 id,
@@ -93,10 +92,7 @@ mod section_backward_compatibility {
         // Fields should be omitted when None
         assert!(!obj.as_object().unwrap().contains_key("ip_source"));
         assert!(!obj.as_object().unwrap().contains_key("ip_latency_ms"));
-        assert!(!obj
-            .as_object()
-            .unwrap()
-            .contains_key("ip_selection_stage"));
+        assert!(!obj.as_object().unwrap().contains_key("ip_selection_stage"));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-﻿//! Soak testing module for adaptive TLS and git operations.
+//! Soak testing module for adaptive TLS and git operations.
 //!
 //! This module provides comprehensive soak testing capabilities to validate
 //! the stability and performance of adaptive TLS features, IP pool management,

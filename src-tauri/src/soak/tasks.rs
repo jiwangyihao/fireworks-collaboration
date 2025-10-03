@@ -36,7 +36,17 @@ pub fn run_push_task(
         let registry = Arc::clone(registry);
         let dest = dest_str;
         async move {
-            registry.spawn_git_push_task(None, id, token, dest, Some("origin".to_string()), None, None, None, None)
+            registry.spawn_git_push_task(
+                None,
+                id,
+                token,
+                dest,
+                Some("origin".to_string()),
+                None,
+                None,
+                None,
+                None,
+            )
         }
     });
 
@@ -138,14 +148,7 @@ pub fn run_clone_task(
         let registry = Arc::clone(registry);
         async move {
             registry.spawn_git_clone_task_with_opts(
-                None,
-                id,
-                token,
-                origin_str,
-                dest_str,
-                None,
-                None,
-                None,
+                None, id, token, origin_str, dest_str, None, None, None,
             )
         }
     });

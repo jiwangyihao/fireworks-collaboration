@@ -1,9 +1,10 @@
 // 从 src/core/proxy/config.rs 迁移的测试
-use fireworks_collaboration_lib::core::proxy::{ProxyConfig, ProxyMode};
 use fireworks_collaboration_lib::core::proxy::config::{
-    default_timeout_seconds, default_fallback_threshold, default_fallback_window_seconds,
-    default_recovery_cooldown_seconds, default_health_check_interval_seconds, default_recovery_strategy,
+    default_fallback_threshold, default_fallback_window_seconds,
+    default_health_check_interval_seconds, default_recovery_cooldown_seconds,
+    default_recovery_strategy, default_timeout_seconds,
 };
+use fireworks_collaboration_lib::core::proxy::{ProxyConfig, ProxyMode};
 
 #[test]
 fn test_proxy_mode_default() {
@@ -22,7 +23,7 @@ fn test_proxy_mode_display() {
 fn test_proxy_mode_serialization() {
     let json = serde_json::to_string(&ProxyMode::Http).unwrap();
     assert_eq!(json, "\"http\"");
-    
+
     let mode: ProxyMode = serde_json::from_str("\"socks5\"").unwrap();
     assert_eq!(mode, ProxyMode::Socks5);
 }
@@ -40,18 +41,18 @@ fn test_proxy_config_default() {
 #[test]
 fn test_proxy_config_validation() {
     let mut config = ProxyConfig::default();
-    
+
     assert!(config.validate().is_ok());
-    
+
     config.mode = ProxyMode::Http;
     assert!(config.validate().is_err());
-    
+
     config.url = "http://proxy.example.com:8080".to_string();
     assert!(config.validate().is_ok());
-    
+
     config.fallback_threshold = 1.5;
     assert!(config.validate().is_err());
-    
+
     config.fallback_threshold = 0.2;
     assert!(config.validate().is_ok());
 }
@@ -59,12 +60,12 @@ fn test_proxy_config_validation() {
 #[test]
 fn test_proxy_config_sanitized_url() {
     let mut config = ProxyConfig::default();
-    
+
     assert_eq!(config.sanitized_url(), "");
-    
+
     config.url = "http://proxy.example.com:8080".to_string();
     assert_eq!(config.sanitized_url(), "http://proxy.example.com:8080");
-    
+
     config.url = "http://user:pass@proxy.example.com:8080".to_string();
     assert_eq!(config.sanitized_url(), "http://***@proxy.example.com:8080");
 }
@@ -79,10 +80,10 @@ fn test_proxy_config_serialization() {
         disable_custom_transport: true,
         ..Default::default()
     };
-    
+
     let json = serde_json::to_string(&config).unwrap();
     let deserialized: ProxyConfig = serde_json::from_str(&json).unwrap();
-    
+
     assert_eq!(deserialized.mode, ProxyMode::Http);
     assert_eq!(deserialized.url, "http://proxy.example.com:8080");
     assert_eq!(deserialized.username, Some("user".to_string()));
@@ -115,13 +116,13 @@ fn test_validate_port() {
         ..Default::default()
     };
     assert!(config.validate().is_ok());
-    
+
     config.url = "http://proxy.example.com:0".to_string();
     assert!(config.validate().is_err());
-    
+
     config.url = "http://proxy.example.com:abc".to_string();
     assert!(config.validate().is_err());
-    
+
     config.url = "http://proxy.example.com:65535".to_string();
     assert!(config.validate().is_ok());
 }
@@ -133,16 +134,16 @@ fn test_validate_timeout() {
         url: "http://proxy.example.com:8080".to_string(),
         ..Default::default()
     };
-    
+
     config.timeout_seconds = 30;
     assert!(config.validate().is_ok());
-    
+
     config.timeout_seconds = 0;
     assert!(config.validate().is_err());
-    
+
     config.timeout_seconds = 400;
     assert!(config.validate().is_err());
-    
+
     config.timeout_seconds = 300;
     assert!(config.validate().is_ok());
 }
@@ -154,13 +155,13 @@ fn test_validate_fallback_window() {
         url: "http://proxy.example.com:8080".to_string(),
         ..Default::default()
     };
-    
+
     config.fallback_window_seconds = 5;
     assert!(config.validate().is_err());
-    
+
     config.fallback_window_seconds = 4000;
     assert!(config.validate().is_err());
-    
+
     config.fallback_window_seconds = 60;
     assert!(config.validate().is_ok());
 }
@@ -172,13 +173,13 @@ fn test_validate_recovery_cooldown() {
         url: "http://proxy.example.com:8080".to_string(),
         ..Default::default()
     };
-    
+
     config.recovery_cooldown_seconds = 5;
     assert!(config.validate().is_err());
-    
+
     config.recovery_cooldown_seconds = 4000;
     assert!(config.validate().is_err());
-    
+
     config.recovery_cooldown_seconds = 300;
     assert!(config.validate().is_ok());
 }
@@ -190,13 +191,13 @@ fn test_validate_health_check_interval() {
         url: "http://proxy.example.com:8080".to_string(),
         ..Default::default()
     };
-    
+
     config.health_check_interval_seconds = 5;
     assert!(config.validate().is_err());
-    
+
     config.health_check_interval_seconds = 4000;
     assert!(config.validate().is_err());
-    
+
     config.health_check_interval_seconds = 60;
     assert!(config.validate().is_ok());
 }
@@ -208,16 +209,16 @@ fn test_validate_recovery_strategy() {
         url: "http://proxy.example.com:8080".to_string(),
         ..Default::default()
     };
-    
+
     config.recovery_strategy = "immediate".to_string();
     assert!(config.validate().is_ok());
-    
+
     config.recovery_strategy = "consecutive".to_string();
     assert!(config.validate().is_ok());
-    
+
     config.recovery_strategy = "exponential-backoff".to_string();
     assert!(config.validate().is_ok());
-    
+
     config.recovery_strategy = "invalid-strategy".to_string();
     assert!(config.validate().is_err());
 }
@@ -228,19 +229,19 @@ fn test_validate_url_format() {
         mode: ProxyMode::Http,
         ..Default::default()
     };
-    
+
     config.url = "http://proxy.example.com :8080".to_string();
     assert!(config.validate().is_err());
-    
+
     config.url = "ftp://proxy.example.com:8080".to_string();
     assert!(config.validate().is_err());
-    
+
     config.url = "http://proxy.example.com:8080".to_string();
     assert!(config.validate().is_ok());
-    
+
     config.url = "https://proxy.example.com:8080".to_string();
     assert!(config.validate().is_ok());
-    
+
     config.url = "socks5://proxy.example.com:1080".to_string();
     assert!(config.validate().is_ok());
 }
@@ -264,43 +265,64 @@ fn test_config_json_roundtrip() {
         recovery_consecutive_threshold: 5,
         debug_proxy_logging: true,
     };
-    
+
     let json = serde_json::to_string(&original).unwrap();
     let restored: ProxyConfig = serde_json::from_str(&json).unwrap();
-    
+
     assert_eq!(restored.mode, original.mode);
     assert_eq!(restored.url, original.url);
     assert_eq!(restored.username, original.username);
     assert_eq!(restored.password, original.password);
-    assert_eq!(restored.disable_custom_transport, original.disable_custom_transport);
+    assert_eq!(
+        restored.disable_custom_transport,
+        original.disable_custom_transport
+    );
     assert_eq!(restored.timeout_seconds, original.timeout_seconds);
     assert_eq!(restored.fallback_threshold, original.fallback_threshold);
-    assert_eq!(restored.fallback_window_seconds, original.fallback_window_seconds);
-    assert_eq!(restored.recovery_cooldown_seconds, original.recovery_cooldown_seconds);
-    assert_eq!(restored.health_check_interval_seconds, original.health_check_interval_seconds);
+    assert_eq!(
+        restored.fallback_window_seconds,
+        original.fallback_window_seconds
+    );
+    assert_eq!(
+        restored.recovery_cooldown_seconds,
+        original.recovery_cooldown_seconds
+    );
+    assert_eq!(
+        restored.health_check_interval_seconds,
+        original.health_check_interval_seconds
+    );
     assert_eq!(restored.recovery_strategy, original.recovery_strategy);
     assert_eq!(restored.probe_url, original.probe_url);
-    assert_eq!(restored.probe_timeout_seconds, original.probe_timeout_seconds);
-    assert_eq!(restored.recovery_consecutive_threshold, original.recovery_consecutive_threshold);
+    assert_eq!(
+        restored.probe_timeout_seconds,
+        original.probe_timeout_seconds
+    );
+    assert_eq!(
+        restored.recovery_consecutive_threshold,
+        original.recovery_consecutive_threshold
+    );
 }
 
 #[test]
 fn test_sanitized_url_edge_cases() {
     let mut config = ProxyConfig::default();
-    
+
     assert_eq!(config.sanitized_url(), "");
-    
+
     config.url = "http://user@proxy.example.com:8080".to_string();
     assert_eq!(config.sanitized_url(), "http://***@proxy.example.com:8080");
-    
+
     config.url = "http://user:p@ss:w0rd@proxy.example.com:8080".to_string();
     let sanitized = config.sanitized_url();
     assert!(sanitized.starts_with("http://***@"));
     assert!(sanitized.contains("proxy.example.com"));
-    
+
     config.url = "http://user:pass@proxy.example.com:8080/path".to_string();
-    assert_eq!(config.sanitized_url(), "http://***@proxy.example.com:8080/path");
-    
+    assert_eq!(
+        config.sanitized_url(),
+        "http://***@proxy.example.com:8080/path"
+    );
+
     config.url = "http://proxy.example.com:8080".to_string();
     assert_eq!(config.sanitized_url(), "http://proxy.example.com:8080");
 }
@@ -313,13 +335,13 @@ fn test_credential_fields_combination() {
         ..Default::default()
     };
     assert!(config.validate().is_ok());
-    
+
     config.username = Some("new_user".to_string());
     assert!(config.validate().is_ok());
-    
+
     config.password = Some("new_pass".to_string());
     assert!(config.validate().is_ok());
-    
+
     config.url = "http://proxy.example.com:8080".to_string();
     config.username = None;
     config.password = Some("only_pass".to_string());
@@ -332,17 +354,17 @@ fn test_url_with_ip_address() {
         mode: ProxyMode::Http,
         ..Default::default()
     };
-    
+
     config.url = "http://192.168.1.1:8080".to_string();
     assert!(config.validate().is_ok());
-    
+
     config.url = "http://user:pass@10.0.0.1:3128".to_string();
     assert!(config.validate().is_ok());
     assert!(config.sanitized_url().contains("***"));
-    
+
     config.url = "http://[::1]:8080".to_string();
     assert!(config.validate().is_ok());
-    
+
     config.url = "http://localhost:8080".to_string();
     assert!(config.validate().is_ok());
 }
@@ -353,12 +375,12 @@ fn test_system_mode_validation() {
         mode: ProxyMode::System,
         ..Default::default()
     };
-    
+
     assert!(config.validate().is_ok());
-    
+
     config.timeout_seconds = 0;
     assert!(config.validate().is_err());
-    
+
     config.timeout_seconds = 30;
     config.fallback_threshold = 1.5;
     assert!(config.validate().is_err());
@@ -370,7 +392,7 @@ fn test_timeout_duration_conversion() {
         timeout_seconds: 45,
         ..Default::default()
     };
-    
+
     let duration = config.timeout();
     assert_eq!(duration.as_secs(), 45);
 }
@@ -378,7 +400,7 @@ fn test_timeout_duration_conversion() {
 #[test]
 fn test_default_values_completeness() {
     let config = ProxyConfig::default();
-    
+
     assert_eq!(config.mode, ProxyMode::Off);
     assert_eq!(config.url, "");
     assert_eq!(config.username, None);
@@ -386,11 +408,20 @@ fn test_default_values_completeness() {
     assert_eq!(config.disable_custom_transport, false);
     assert_eq!(config.timeout_seconds, default_timeout_seconds());
     assert_eq!(config.fallback_threshold, default_fallback_threshold());
-    assert_eq!(config.fallback_window_seconds, default_fallback_window_seconds());
-    assert_eq!(config.recovery_cooldown_seconds, default_recovery_cooldown_seconds());
-    assert_eq!(config.health_check_interval_seconds, default_health_check_interval_seconds());
+    assert_eq!(
+        config.fallback_window_seconds,
+        default_fallback_window_seconds()
+    );
+    assert_eq!(
+        config.recovery_cooldown_seconds,
+        default_recovery_cooldown_seconds()
+    );
+    assert_eq!(
+        config.health_check_interval_seconds,
+        default_health_check_interval_seconds()
+    );
     assert_eq!(config.recovery_strategy, default_recovery_strategy());
-    
+
     assert!(config.validate().is_ok());
 }
 
@@ -408,9 +439,9 @@ fn test_camel_case_serialization() {
         recovery_strategy: "immediate".to_string(),
         ..Default::default()
     };
-    
+
     let json = serde_json::to_string(&config).unwrap();
-    
+
     assert!(json.contains("disableCustomTransport"));
     assert!(json.contains("timeoutSeconds"));
     assert!(json.contains("fallbackThreshold"));
@@ -418,7 +449,7 @@ fn test_camel_case_serialization() {
     assert!(json.contains("recoveryCooldownSeconds"));
     assert!(json.contains("healthCheckIntervalSeconds"));
     assert!(json.contains("recoveryStrategy"));
-    
+
     assert!(!json.contains("disable_custom_transport"));
     assert!(!json.contains("timeout_seconds"));
 }
@@ -434,7 +465,7 @@ use fireworks_collaboration_lib::core::proxy::ProxyConnector;
 fn test_placeholder_connector() {
     let connector = PlaceholderConnector;
     assert_eq!(connector.proxy_type(), "placeholder");
-    
+
     // Test connecting to a well-known host (will fail in CI but tests the interface)
     // This is just to verify the trait implementation compiles
     let _ = connector.connect("example.com", 80);
@@ -452,7 +483,10 @@ fn test_proxy_error_display() {
     assert_eq!(error.to_string(), "Network error: Connection refused");
 
     let error = ProxyError::auth("Invalid credentials");
-    assert_eq!(error.to_string(), "Authentication error: Invalid credentials");
+    assert_eq!(
+        error.to_string(),
+        "Authentication error: Invalid credentials"
+    );
 
     let error = ProxyError::proxy("Bad gateway");
     assert_eq!(error.to_string(), "Proxy error: Bad gateway");
@@ -531,7 +565,7 @@ fn test_parse_proxy_url_invalid() {
     // Empty host
     let config = SystemProxyDetector::parse_proxy_url("http://");
     assert!(config.is_none());
-    
+
     // Invalid format
     let config = SystemProxyDetector::parse_proxy_url("not-a-url");
     assert!(config.is_some()); // Will be parsed as "http://not-a-url"
@@ -563,7 +597,7 @@ fn test_parse_scutil_output() {
         "  HTTPProxy : proxy.example.com",
         "  HTTPPort : 8080",
     ];
-    
+
     let config = SystemProxyDetector::parse_scutil_output(&lines, "HTTP");
     assert!(config.is_some());
     let config = config.unwrap();
@@ -580,7 +614,7 @@ fn test_parse_scutil_output_disabled() {
         "  HTTPProxy : proxy.example.com",
         "  HTTPPort : 8080",
     ];
-    
+
     let config = SystemProxyDetector::parse_scutil_output(&lines, "HTTP");
     assert!(config.is_none());
 }

@@ -21,9 +21,7 @@ pub mod system_detector;
 pub use config::{ProxyConfig, ProxyMode};
 pub use detector::{FailureStats, ProxyFailureDetector};
 pub use errors::ProxyError;
-pub use events::{
-    ProxyFallbackEvent, ProxyHealthCheckEvent, ProxyRecoveredEvent, ProxyStateEvent,
-};
+pub use events::{ProxyFallbackEvent, ProxyHealthCheckEvent, ProxyRecoveredEvent, ProxyStateEvent};
 pub use health_checker::{HealthCheckConfig, ProbeResult, ProxyHealthChecker};
 pub use http_connector::HttpProxyConnector;
 pub use manager::ProxyManager;
@@ -34,20 +32,20 @@ pub use system_detector::SystemProxyDetector;
 use std::net::TcpStream;
 
 /// Trait for proxy connectors
-/// 
+///
 /// This trait defines the interface for different proxy types (HTTP/SOCKS5).
 /// Implementations will be added in P5.1 and P5.2.
 pub trait ProxyConnector: Send + Sync {
     /// Connect to the target host through the proxy
-    /// 
+    ///
     /// # Arguments
     /// * `host` - Target host to connect to
     /// * `port` - Target port to connect to
-    /// 
+    ///
     /// # Returns
     /// A TCP stream connected through the proxy, or a ProxyError
     fn connect(&self, host: &str, port: u16) -> Result<TcpStream, ProxyError>;
-    
+
     /// Get the proxy type name for logging
     fn proxy_type(&self) -> &str {
         "unknown"
@@ -55,7 +53,7 @@ pub trait ProxyConnector: Send + Sync {
 }
 
 /// Placeholder proxy connector that always falls back to direct connection
-/// 
+///
 /// This is used in P5.0 to establish the interface without implementing
 /// actual proxy logic. Real implementations will be added in P5.1/P5.2.
 pub struct PlaceholderConnector;
@@ -66,7 +64,7 @@ impl ProxyConnector for PlaceholderConnector {
         TcpStream::connect((host, port))
             .map_err(|e| ProxyError::network(format!("Direct connection failed: {e}")))
     }
-    
+
     fn proxy_type(&self) -> &str {
         "placeholder"
     }

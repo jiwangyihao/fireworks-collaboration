@@ -41,7 +41,10 @@ pub async fn set_config(
         Ok(effective) => {
             if let Ok(mut guard) = pool.inner().lock() {
                 guard.update_config(effective);
-                tracing::info!(target = "config", "IP pool configuration updated successfully");
+                tracing::info!(
+                    target = "config",
+                    "IP pool configuration updated successfully"
+                );
             } else {
                 tracing::error!(
                     target = "ip_pool",

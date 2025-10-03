@@ -4,8 +4,8 @@ use git2::{transport, Error, Remote};
 
 use crate::core::config::loader::load_or_init;
 use crate::core::config::model::AppConfig;
-use crate::core::proxy::ProxyManager;
 use crate::core::git::http_transport::CustomHttpsSubtransport;
+use crate::core::proxy::ProxyManager;
 
 use super::metrics::tl_set_proxy_usage;
 
@@ -13,14 +13,14 @@ use super::metrics::tl_set_proxy_usage;
 static REGISTER_ONCE: OnceLock<()> = OnceLock::new();
 
 /// 检查是否应该跳过自定义传输层注册
-/// 
+///
 /// 当代理启用时，应跳过自定义传输层，直接使用libgit2默认HTTP传输
 fn should_skip_custom_transport(cfg: &AppConfig) -> bool {
     // 创建临时ProxyManager检查配置
     let proxy_manager = ProxyManager::new(cfg.proxy.clone());
     let should_disable = proxy_manager.should_disable_custom_transport();
     let is_enabled = proxy_manager.is_enabled();
-    
+
     // P5.3: 记录proxy使用状态到metrics
     if is_enabled {
         let proxy_type = Some(format!("{}", proxy_manager.mode()).to_lowercase());
@@ -29,7 +29,7 @@ fn should_skip_custom_transport(cfg: &AppConfig) -> bool {
         // 明确配置禁用自定义传输层但代理未启用
         tl_set_proxy_usage(false, None, None, true);
     }
-    
+
     if should_disable {
         tracing::info!(
             proxy_enabled = is_enabled,
@@ -37,7 +37,7 @@ fn should_skip_custom_transport(cfg: &AppConfig) -> bool {
             "Custom transport disabled (proxy enabled or configured to disable), using libgit2 default HTTP"
         );
     }
-    
+
     should_disable
 }
 
@@ -52,9 +52,9 @@ pub fn ensure_registered(cfg: &AppConfig) -> Result<(), Error> {
         );
         return Ok(());
     }
-    
+
     tracing::debug!("Registering custom transport for https+custom");
-    
+
     let mut err: Option<Error> = None;
     REGISTER_ONCE.get_or_init(|| {
         // 安全：register 需外部同步；我们用 OnceLock 保证只注册一次。

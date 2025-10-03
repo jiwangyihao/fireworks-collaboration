@@ -69,7 +69,14 @@ mod section_preheat_event_emission {
                     max_latency_ms,
                     reason,
                     ..
-                }) => Some((domain, success, candidates_count, min_latency_ms, max_latency_ms, reason)),
+                }) => Some((
+                    domain,
+                    success,
+                    candidates_count,
+                    min_latency_ms,
+                    max_latency_ms,
+                    reason,
+                )),
                 _ => None,
             })
             .collect();
@@ -149,7 +156,14 @@ mod section_preheat_event_emission {
                     max_latency_ms,
                     reason,
                     ..
-                }) => Some((domain, success, candidates_count, min_latency_ms, max_latency_ms, reason)),
+                }) => Some((
+                    domain,
+                    success,
+                    candidates_count,
+                    min_latency_ms,
+                    max_latency_ms,
+                    reason,
+                )),
                 _ => None,
             })
             .collect();

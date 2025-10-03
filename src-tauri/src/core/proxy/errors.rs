@@ -7,16 +7,16 @@ use std::fmt;
 pub enum ProxyError {
     /// Network connectivity error (DNS resolution, connection refused, timeout)
     Network(String),
-    
+
     /// Authentication error (407, invalid credentials)
     Auth(String),
-    
+
     /// Proxy server error (5xx responses, protocol errors)
     Proxy(String),
-    
+
     /// Connection timeout
     Timeout(String),
-    
+
     /// Invalid configuration
     Config(String),
 }

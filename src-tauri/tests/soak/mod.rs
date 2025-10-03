@@ -1,8 +1,8 @@
 use fireworks_collaboration_lib::core::tasks::model::TaskState;
 use fireworks_collaboration_lib::events::structured::{Event, StrategyEvent};
 use fireworks_collaboration_lib::soak::{
-    build_comparison_summary, run, run_from_env, AutoDisableSummary, FallbackSummary,
-    FieldStats, IpPoolSummary, ProxySummary, SoakAggregator, SoakOptions, SoakOptionsSnapshot, SoakReport,
+    build_comparison_summary, run, run_from_env, AutoDisableSummary, FallbackSummary, FieldStats,
+    IpPoolSummary, ProxySummary, SoakAggregator, SoakOptions, SoakOptionsSnapshot, SoakReport,
     SoakThresholds, ThresholdCheck, ThresholdSummary, TimingSummary, TotalsSummary,
 };
 use std::collections::HashMap;
@@ -303,13 +303,10 @@ fn soak_report_serialization_includes_ip_pool() {
         cert_fp_events: 0,
         ip_pool: IpPoolSummary {
             selection_total: 10,
-            selection_by_strategy: [
-                ("Cached".to_string(), 8),
-                ("SystemDefault".to_string(), 2),
-            ]
-            .iter()
-            .cloned()
-            .collect(),
+            selection_by_strategy: [("Cached".to_string(), 8), ("SystemDefault".to_string(), 2)]
+                .iter()
+                .cloned()
+                .collect(),
             refresh_total: 5,
             refresh_success: 4,
             refresh_failure: 1,

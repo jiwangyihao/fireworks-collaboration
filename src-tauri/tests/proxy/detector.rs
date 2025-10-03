@@ -148,11 +148,11 @@ fn test_failure_rate_calculation() {
 
     // Test various failure rates
     let test_cases = vec![
-        (0, 10, 0.0),   // 0%
-        (1, 9, 0.1),    // 10%
-        (5, 5, 0.5),    // 50%
-        (9, 1, 0.9),    // 90%
-        (10, 0, 1.0),   // 100%
+        (0, 10, 0.0), // 0%
+        (1, 9, 0.1),  // 10%
+        (5, 5, 0.5),  // 50%
+        (9, 1, 0.9),  // 90%
+        (10, 0, 1.0), // 100%
     ];
 
     for (failures, successes, expected_rate) in test_cases {
@@ -263,7 +263,7 @@ fn test_extreme_window_very_large() {
     let detector = ProxyFailureDetector::new(86400 * 365, 0.2); // 1 year
     detector.report_failure();
     detector.report_success();
-    
+
     let stats = detector.get_stats();
     assert_eq!(stats.window_seconds, 86400 * 365);
     assert_eq!(stats.total_attempts, 2);
@@ -274,11 +274,11 @@ fn test_extreme_window_very_large() {
 fn test_extreme_attempts_many_failures() {
     // Test with very large number of attempts
     let detector = ProxyFailureDetector::new(300, 0.2);
-    
+
     for _ in 0..1000 {
         detector.report_failure();
     }
-    
+
     let stats = detector.get_stats();
     assert_eq!(stats.total_attempts, 1000);
     assert_eq!(stats.failures, 1000);
@@ -290,14 +290,14 @@ fn test_extreme_attempts_many_failures() {
 fn test_stats_snapshot_consistency() {
     // Test that get_stats() returns consistent snapshot
     let detector = ProxyFailureDetector::new(300, 0.2);
-    
+
     detector.report_failure();
     detector.report_success();
     detector.report_failure();
-    
+
     let stats1 = detector.get_stats();
     let stats2 = detector.get_stats();
-    
+
     // Multiple calls should return same values
     assert_eq!(stats1.total_attempts, stats2.total_attempts);
     assert_eq!(stats1.failures, stats2.failures);
@@ -308,18 +308,18 @@ fn test_stats_snapshot_consistency() {
 fn test_mark_fallback_idempotent() {
     // Test that marking fallback multiple times is safe
     let detector = ProxyFailureDetector::new(300, 0.2);
-    
+
     for _ in 0..5 {
         detector.report_failure();
     }
-    
+
     assert!(detector.should_fallback());
-    
+
     // Mark multiple times
     detector.mark_fallback_triggered();
     detector.mark_fallback_triggered();
     detector.mark_fallback_triggered();
-    
+
     let stats = detector.get_stats();
     assert!(stats.fallback_triggered);
     assert!(!detector.should_fallback());
@@ -329,16 +329,16 @@ fn test_mark_fallback_idempotent() {
 fn test_reset_clears_fallback_flag() {
     // Test that reset clears fallback trigger flag
     let detector = ProxyFailureDetector::new(300, 0.2);
-    
+
     for _ in 0..10 {
         detector.report_failure();
     }
-    
+
     detector.mark_fallback_triggered();
     assert!(detector.get_stats().fallback_triggered);
-    
+
     detector.reset();
-    
+
     let stats = detector.get_stats();
     assert!(!stats.fallback_triggered);
     assert_eq!(stats.total_attempts, 0);
@@ -348,18 +348,18 @@ fn test_reset_clears_fallback_flag() {
 fn test_failure_rate_after_window_expiry() {
     // Test that failure rate updates after old attempts are pruned
     let detector = ProxyFailureDetector::new(1, 0.5);
-    
+
     detector.report_failure();
     detector.report_failure();
     let stats_before = detector.get_stats();
     assert_eq!(stats_before.failure_rate, 1.0);
-    
+
     // Wait for window to fully expire (add buffer)
     thread::sleep(Duration::from_millis(2000));
-    
+
     // Add new success - this should trigger pruning
     detector.report_success();
-    
+
     // Check stats - old failures should be gone
     let stats = detector.get_stats();
     assert_eq!(stats.failures, 0, "All old failures should be pruned");
@@ -372,12 +372,12 @@ fn test_concurrent_reset() {
     // Test thread safety of reset operation
     let detector = Arc::new(ProxyFailureDetector::new(300, 0.2));
     let mut handles = vec![];
-    
+
     // Add some initial failures
     for _ in 0..10 {
         detector.report_failure();
     }
-    
+
     // Spawn threads that reset concurrently
     for _ in 0..5 {
         let detector_clone = Arc::clone(&detector);
@@ -386,11 +386,11 @@ fn test_concurrent_reset() {
         });
         handles.push(handle);
     }
-    
+
     for handle in handles {
         handle.join().unwrap();
     }
-    
+
     // Should be reset
     let stats = detector.get_stats();
     assert_eq!(stats.total_attempts, 0);
@@ -402,7 +402,7 @@ fn test_mixed_concurrent_operations() {
     // Test all operations concurrently
     let detector = Arc::new(ProxyFailureDetector::new(300, 0.2));
     let mut handles = vec![];
-    
+
     // Thread 1: Report failures
     let d1 = Arc::clone(&detector);
     handles.push(thread::spawn(move || {
@@ -410,7 +410,7 @@ fn test_mixed_concurrent_operations() {
             d1.report_failure();
         }
     }));
-    
+
     // Thread 2: Report successes
     let d2 = Arc::clone(&detector);
     handles.push(thread::spawn(move || {
@@ -418,7 +418,7 @@ fn test_mixed_concurrent_operations() {
             d2.report_success();
         }
     }));
-    
+
     // Thread 3: Check stats
     let d3 = Arc::clone(&detector);
     handles.push(thread::spawn(move || {
@@ -427,18 +427,18 @@ fn test_mixed_concurrent_operations() {
             let _ = d3.should_fallback();
         }
     }));
-    
+
     // Thread 4: Reset occasionally
     let d4 = Arc::clone(&detector);
     handles.push(thread::spawn(move || {
         thread::sleep(Duration::from_millis(10));
         d4.reset();
     }));
-    
+
     for handle in handles {
         handle.join().unwrap();
     }
-    
+
     // Just ensure no panics occurred
     let _stats = detector.get_stats();
 }
@@ -447,11 +447,11 @@ fn test_mixed_concurrent_operations() {
 fn test_zero_threshold_always_triggers() {
     // Threshold of 0.0 should trigger on any failure
     let detector = ProxyFailureDetector::new(300, 0.0);
-    
+
     detector.report_success();
     detector.report_success();
     detector.report_failure(); // Even 1 failure triggers at 0.0 threshold
-    
+
     assert!(detector.should_fallback());
 }
 
@@ -459,13 +459,13 @@ fn test_zero_threshold_always_triggers() {
 fn test_one_threshold_never_triggers() {
     // Threshold of 1.0 should only trigger at 100% failure
     let detector = ProxyFailureDetector::new(300, 1.0);
-    
+
     detector.report_failure();
     detector.report_failure();
     detector.report_success(); // 66.7% failure rate
-    
+
     assert!(!detector.should_fallback());
-    
+
     // Only all failures trigger
     detector.report_failure();
     detector.report_failure();

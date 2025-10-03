@@ -17,44 +17,42 @@ use super::super::types::{OAuthCallbackData, OAuthState};
 #[tauri::command]
 pub async fn start_oauth_server(state: State<'_, OAuthState>) -> Result<String, String> {
     let oauth_state = Arc::clone(&*state);
-    
-    thread::spawn(move || {
-        match TcpListener::bind("127.0.0.1:3429") {
-            Ok(listener) => {
-                tracing::info!(target = "oauth", "OAuth server started on 127.0.0.1:3429");
-                
-                for stream in listener.incoming() {
-                    match stream {
-                        Ok(s) => {
-                            let st = Arc::clone(&oauth_state);
-                            thread::spawn(move || handle_oauth_request(s, st));
-                        }
-                        Err(e) => {
-                            tracing::error!(target = "oauth", error = %e, "Failed to accept connection");
-                        }
+
+    thread::spawn(move || match TcpListener::bind("127.0.0.1:3429") {
+        Ok(listener) => {
+            tracing::info!(target = "oauth", "OAuth server started on 127.0.0.1:3429");
+
+            for stream in listener.incoming() {
+                match stream {
+                    Ok(s) => {
+                        let st = Arc::clone(&oauth_state);
+                        thread::spawn(move || handle_oauth_request(s, st));
+                    }
+                    Err(e) => {
+                        tracing::error!(target = "oauth", error = %e, "Failed to accept connection");
                     }
                 }
             }
-            Err(e) => {
-                tracing::error!(target = "oauth", error = %e, "Failed to bind OAuth server");
-            }
+        }
+        Err(e) => {
+            tracing::error!(target = "oauth", error = %e, "Failed to bind OAuth server");
         }
     });
-    
+
     Ok("OAuth server started".into())
 }
 
 /// Handle an incoming OAuth callback request.
 fn handle_oauth_request(mut stream: TcpStream, oauth_state: OAuthState) {
     let mut buf = [0u8; 4096];
-    
+
     match stream.read(&mut buf) {
         Ok(n) => {
             let req = String::from_utf8_lossy(&buf[..n]);
-            
+
             if req.starts_with("GET /auth/callback") {
                 let data = parse_oauth_callback(&req);
-                
+
                 // Store callback data
                 if let Ok(mut s) = oauth_state.lock() {
                     tracing::info!(
@@ -65,9 +63,12 @@ fn handle_oauth_request(mut stream: TcpStream, oauth_state: OAuthState) {
                     );
                     *s = Some(data);
                 } else {
-                    tracing::error!(target = "oauth", "Failed to acquire lock for storing OAuth data");
+                    tracing::error!(
+                        target = "oauth",
+                        "Failed to acquire lock for storing OAuth data"
+                    );
                 }
-                
+
                 // Send success response
                 let body = "<html><body><h1>Authorization Complete</h1><p>You can close this window now.</p></body></html>";
                 let resp = format!(
@@ -95,18 +96,16 @@ fn parse_oauth_callback(req: &str) -> OAuthCallbackData {
         error: None,
         error_description: None,
     };
-    
+
     if let Some(q_pos) = req.find('?') {
         let tail = &req[q_pos + 1..];
         let end = tail.find(' ').unwrap_or(tail.len());
-        
+
         for kv in tail[..end].split('&') {
             if let Some(eq) = kv.find('=') {
                 let (k, v) = (&kv[..eq], &kv[eq + 1..]);
-                let v = urlencoding::decode(v)
-                    .unwrap_or_default()
-                    .to_string();
-                
+                let v = urlencoding::decode(v).unwrap_or_default().to_string();
+
                 match k {
                     "code" => data.code = Some(v),
                     "state" => data.state = Some(v),
@@ -117,7 +116,7 @@ fn parse_oauth_callback(req: &str) -> OAuthCallbackData {
             }
         }
     }
-    
+
     data
 }
 

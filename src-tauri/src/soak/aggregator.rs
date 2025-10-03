@@ -361,8 +361,7 @@ impl SoakAggregator {
         let mut cert_fp_changed_samples = 0u64;
 
         for (kind, data) in self.timing.iter() {
-            let connect_vals: Vec<u32> =
-                data.samples.iter().filter_map(|s| s.connect_ms).collect();
+            let connect_vals: Vec<u32> = data.samples.iter().filter_map(|s| s.connect_ms).collect();
             let tls_vals: Vec<u32> = data.samples.iter().filter_map(|s| s.tls_ms).collect();
             let first_byte_vals: Vec<u32> = data
                 .samples

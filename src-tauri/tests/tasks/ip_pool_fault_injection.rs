@@ -177,10 +177,7 @@ fn fault_config_hot_reload_disables_ip_pool() {
 
     // 首次请求应该使用 IP 池
     let selection1 = pool.pick_best_blocking("hotreload.test", port);
-    assert!(
-        !selection1.is_system_default(),
-        "启用时应使用 IP 池候选"
-    );
+    assert!(!selection1.is_system_default(), "启用时应使用 IP 池候选");
 
     // 热更新：禁用 IP 池
     let mut disabled_cfg = cfg.clone();
@@ -189,10 +186,7 @@ fn fault_config_hot_reload_disables_ip_pool() {
 
     // 第二次请求应该回退系统 DNS
     let selection2 = pool.pick_best_blocking("hotreload.test", port);
-    assert!(
-        selection2.is_system_default(),
-        "禁用后应回退系统 DNS"
-    );
+    assert!(selection2.is_system_default(), "禁用后应回退系统 DNS");
 
     // 检查事件
     let events = bus.handle().take_all();
@@ -318,10 +312,7 @@ fn fault_blacklist_filters_candidates() {
         })
         .collect();
 
-    assert!(
-        !filter_events.is_empty(),
-        "应该有 IpPoolCidrFilter 事件"
-    );
+    assert!(!filter_events.is_empty(), "应该有 IpPoolCidrFilter 事件");
 }
 
 /// 场景 6：白名单过滤 - 只允许白名单中的 IP
@@ -397,8 +388,5 @@ fn fault_whitelist_allows_only_listed_ips() {
         })
         .collect();
 
-    assert!(
-        !filter_events.is_empty(),
-        "应该有 IpPoolCidrFilter 事件"
-    );
+    assert!(!filter_events.is_empty(), "应该有 IpPoolCidrFilter 事件");
 }

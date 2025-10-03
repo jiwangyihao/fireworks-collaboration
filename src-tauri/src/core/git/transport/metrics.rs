@@ -284,4 +284,3 @@ pub fn test_override_metrics_enabled(v: Option<bool>) {
         Some(true) => TEST_METRICS_OVERRIDE.store(2, Ordering::Relaxed),
     }
 }
-

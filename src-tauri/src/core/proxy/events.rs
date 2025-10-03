@@ -7,7 +7,7 @@ use super::{state::ProxyState, ProxyMode};
 use serde::{Deserialize, Serialize};
 
 /// Proxy state change event (extended for P5.6)
-/// 
+///
 /// Emitted whenever the proxy state transitions between:
 /// Disabled ↔ Enabled ↔ Fallback ↔ Recovering
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,39 +15,38 @@ use serde::{Deserialize, Serialize};
 pub struct ProxyStateEvent {
     /// Previous state
     pub previous_state: ProxyState,
-    
+
     /// New current state
     pub current_state: ProxyState,
-    
+
     /// Reason for the state change
     pub reason: Option<String>,
-    
+
     /// Timestamp of the transition (Unix epoch seconds)
     pub timestamp: u64,
-    
+
     // === P5.6 Extensions ===
-    
     /// Current proxy mode (off/http/socks5/system)
     pub proxy_mode: ProxyMode,
-    
+
     /// Current proxy state (enabled/disabled/fallback/recovering)
     pub proxy_state: ProxyState,
-    
+
     /// Reason for fallback (if in Fallback state)
     pub fallback_reason: Option<String>,
-    
+
     /// Number of consecutive failures (for Fallback state)
     pub failure_count: Option<u32>,
-    
+
     /// Health check success rate (0.0-1.0, if available)
     pub health_check_success_rate: Option<f64>,
-    
+
     /// Next health check timestamp (Unix epoch seconds, if scheduled)
     pub next_health_check_at: Option<u64>,
-    
+
     /// System proxy URL (if detected, sanitized)
     pub system_proxy_url: Option<String>,
-    
+
     /// Whether custom transport layer is disabled
     pub custom_transport_disabled: bool,
 }
@@ -74,7 +73,7 @@ impl ProxyStateEvent {
             custom_transport_disabled: false,
         }
     }
-    
+
     /// Create a new proxy state event with all fields (P5.6 extended)
     #[allow(clippy::too_many_arguments)]
     pub fn new_extended(
@@ -107,7 +106,7 @@ impl ProxyStateEvent {
 }
 
 /// Proxy fallback event
-/// 
+///
 /// Emitted when proxy falls back to direct connection due to failures.
 /// This is triggered by P5.4 automatic fallback logic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,22 +114,22 @@ impl ProxyStateEvent {
 pub struct ProxyFallbackEvent {
     /// Reason for fallback (e.g., "Failure rate exceeded threshold")
     pub reason: String,
-    
+
     /// Total number of failures in the sliding window
     pub failure_count: usize,
-    
+
     /// Sliding window duration in seconds
     pub window_seconds: u64,
-    
+
     /// Timestamp when fallback was triggered (Unix epoch seconds)
     pub fallback_at: u64,
-    
+
     /// Failure rate that triggered the fallback (0.0 to 1.0)
     pub failure_rate: f64,
-    
+
     /// Proxy URL (sanitized, no credentials)
     pub proxy_url: String,
-    
+
     /// Whether fallback was automatic or manual
     pub is_automatic: bool,
 }
@@ -154,7 +153,7 @@ impl ProxyFallbackEvent {
             is_automatic: true,
         }
     }
-    
+
     /// Create a new manual fallback event
     pub fn manual(reason: String, proxy_url: String) -> Self {
         Self {
@@ -170,7 +169,7 @@ impl ProxyFallbackEvent {
 }
 
 /// Proxy recovered event
-/// 
+///
 /// Emitted when proxy successfully recovers from fallback.
 /// This is triggered by P5.5 automatic recovery logic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,16 +177,16 @@ impl ProxyFallbackEvent {
 pub struct ProxyRecoveredEvent {
     /// Number of successful health checks that confirmed recovery
     pub successful_checks: u32,
-    
+
     /// Proxy URL (sanitized, no credentials)
     pub proxy_url: String,
-    
+
     /// Whether recovery was automatic or manual
     pub is_automatic: bool,
-    
+
     /// Recovery strategy used (if automatic)
     pub strategy: Option<String>,
-    
+
     /// Timestamp of the recovery (Unix epoch seconds)
     pub timestamp: u64,
 }
@@ -203,7 +202,7 @@ impl ProxyRecoveredEvent {
             timestamp: current_timestamp(),
         }
     }
-    
+
     /// Create a new manual recovery event
     pub fn manual(proxy_url: String) -> Self {
         Self {
@@ -217,7 +216,7 @@ impl ProxyRecoveredEvent {
 }
 
 /// Proxy health check event
-/// 
+///
 /// Emitted when a health check is performed (P5.5).
 /// Useful for monitoring and debugging proxy connectivity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -225,19 +224,19 @@ impl ProxyRecoveredEvent {
 pub struct ProxyHealthCheckEvent {
     /// Whether the health check succeeded
     pub success: bool,
-    
+
     /// Response time in milliseconds (if successful)
     pub response_time_ms: Option<u64>,
-    
+
     /// Error message (if failed)
     pub error: Option<String>,
-    
+
     /// Proxy URL (sanitized, no credentials)
     pub proxy_url: String,
-    
+
     /// Test URL used for health check
     pub test_url: String,
-    
+
     /// Timestamp of the health check (Unix epoch seconds)
     pub timestamp: u64,
 }
@@ -254,7 +253,7 @@ impl ProxyHealthCheckEvent {
             timestamp: current_timestamp(),
         }
     }
-    
+
     /// Create a failed health check event
     pub fn failure(error: String, proxy_url: String, test_url: String) -> Self {
         Self {

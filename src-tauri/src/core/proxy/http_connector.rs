@@ -21,13 +21,13 @@ use url::Url;
 pub struct HttpProxyConnector {
     /// Proxy server URL (e.g., "http://proxy.example.com:8080")
     pub proxy_url: String,
-    
+
     /// Optional username for Basic authentication
     pub username: Option<String>,
-    
+
     /// Optional password for Basic authentication
     pub password: Option<String>,
-    
+
     /// Connection timeout in seconds
     pub timeout: Duration,
 }
@@ -61,13 +61,14 @@ impl HttpProxyConnector {
     pub fn parse_proxy_url(&self) -> Result<(String, u16), ProxyError> {
         let url = Url::parse(&self.proxy_url)
             .map_err(|e| ProxyError::config(format!("Invalid proxy URL: {e}")))?;
-        
-        let host = url.host_str()
+
+        let host = url
+            .host_str()
             .ok_or_else(|| ProxyError::config("Proxy URL missing host"))?
             .to_string();
-        
+
         let port = url.port().unwrap_or(8080); // Default HTTP proxy port
-        
+
         Ok((host, port))
     }
 
@@ -109,15 +110,18 @@ impl HttpProxyConnector {
         tracing::debug!("Sending CONNECT request to {}:{}", target_host, target_port);
 
         // Send request
-        stream.write_all(request.as_bytes())
+        stream
+            .write_all(request.as_bytes())
             .map_err(|e| ProxyError::network(format!("Failed to send CONNECT request: {e}")))?;
-        stream.flush()
+        stream
+            .flush()
             .map_err(|e| ProxyError::network(format!("Failed to flush CONNECT request: {e}")))?;
 
         // Read and parse response
         let mut reader = BufReader::new(stream);
         let mut status_line = String::new();
-        reader.read_line(&mut status_line)
+        reader
+            .read_line(&mut status_line)
             .map_err(|e| ProxyError::network(format!("Failed to read proxy response: {e}")))?;
 
         tracing::debug!("Received proxy response: {}", status_line.trim());
@@ -125,11 +129,15 @@ impl HttpProxyConnector {
         // Parse status code
         let parts: Vec<&str> = status_line.split_whitespace().collect();
         if parts.len() < 2 {
-            return Err(ProxyError::proxy(format!("Invalid proxy response: {}", status_line.trim())));
+            return Err(ProxyError::proxy(format!(
+                "Invalid proxy response: {}",
+                status_line.trim()
+            )));
         }
 
-        let status_code = parts[1].parse::<u16>()
-            .map_err(|_| ProxyError::proxy(format!("Invalid status code in response: {}", parts[1])))?;
+        let status_code = parts[1].parse::<u16>().map_err(|_| {
+            ProxyError::proxy(format!("Invalid status code in response: {}", parts[1]))
+        })?;
 
         tracing::debug!("Proxy response status code: {}", status_code);
 
@@ -137,19 +145,23 @@ impl HttpProxyConnector {
             200 => {
                 tracing::debug!("CONNECT tunnel established successfully");
                 Ok(())
-            },
+            }
             407 => {
                 tracing::warn!("Proxy authentication required (407)");
                 Err(ProxyError::auth("Proxy authentication required (407)"))
-            },
+            }
             502 => {
                 tracing::warn!("Proxy cannot reach target (502 Bad Gateway)");
-                Err(ProxyError::proxy("Bad gateway (502) - proxy cannot reach target"))
-            },
+                Err(ProxyError::proxy(
+                    "Bad gateway (502) - proxy cannot reach target",
+                ))
+            }
             _ => {
                 tracing::warn!("Proxy returned error status: {}", status_code);
-                Err(ProxyError::proxy(format!("Proxy returned error status: {status_code}")))
-            },
+                Err(ProxyError::proxy(format!(
+                    "Proxy returned error status: {status_code}"
+                )))
+            }
         }
     }
 }
@@ -157,15 +169,22 @@ impl HttpProxyConnector {
 impl ProxyConnector for HttpProxyConnector {
     fn connect(&self, host: &str, port: u16) -> Result<TcpStream, ProxyError> {
         let start_time = Instant::now();
-        
+
         // Parse proxy URL
         let (proxy_host, proxy_port) = self.parse_proxy_url()?;
 
         // Sanitize proxy URL for logging (hide credentials)
         let sanitized_url = if self.username.is_some() {
-            format!("{}://***:***@{}:{}", 
-                if self.proxy_url.starts_with("https") { "https" } else { "http" },
-                proxy_host, proxy_port)
+            format!(
+                "{}://***:***@{}:{}",
+                if self.proxy_url.starts_with("https") {
+                    "https"
+                } else {
+                    "http"
+                },
+                proxy_host,
+                proxy_port
+            )
         } else {
             self.proxy_url.clone()
         };
@@ -188,20 +207,19 @@ impl ProxyConnector for HttpProxyConnector {
         tracing::debug!("Resolved proxy address: {}", proxy_addr);
 
         // Connect to proxy server with timeout
-        let mut stream = TcpStream::connect_timeout(&proxy_addr, self.timeout)
-            .map_err(|e| {
-                let elapsed = start_time.elapsed();
-                tracing::warn!(
-                    error = %e,
-                    elapsed_ms = elapsed.as_millis(),
-                    "Failed to connect to proxy server"
-                );
-                if elapsed >= self.timeout {
-                    ProxyError::timeout(format!("Proxy connection timeout: {e}"))
-                } else {
-                    ProxyError::network(format!("Proxy connection failed: {e}"))
-                }
-            })?;
+        let mut stream = TcpStream::connect_timeout(&proxy_addr, self.timeout).map_err(|e| {
+            let elapsed = start_time.elapsed();
+            tracing::warn!(
+                error = %e,
+                elapsed_ms = elapsed.as_millis(),
+                "Failed to connect to proxy server"
+            );
+            if elapsed >= self.timeout {
+                ProxyError::timeout(format!("Proxy connection timeout: {e}"))
+            } else {
+                ProxyError::network(format!("Proxy connection failed: {e}"))
+            }
+        })?;
 
         tracing::debug!(
             elapsed_ms = start_time.elapsed().as_millis(),
@@ -209,9 +227,11 @@ impl ProxyConnector for HttpProxyConnector {
         );
 
         // Set read/write timeouts
-        stream.set_read_timeout(Some(self.timeout))
+        stream
+            .set_read_timeout(Some(self.timeout))
             .map_err(|e| ProxyError::network(format!("Failed to set read timeout: {e}")))?;
-        stream.set_write_timeout(Some(self.timeout))
+        stream
+            .set_write_timeout(Some(self.timeout))
             .map_err(|e| ProxyError::network(format!("Failed to set write timeout: {e}")))?;
 
         // Send CONNECT request

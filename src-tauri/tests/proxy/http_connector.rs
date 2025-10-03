@@ -91,7 +91,7 @@ fn test_generate_auth_header_with_credentials() {
     assert!(auth.is_some());
     let auth_value = auth.unwrap();
     assert!(auth_value.starts_with("Basic "));
-    
+
     // Verify it's valid base64
     let base64_part = auth_value.strip_prefix("Basic ").unwrap();
     assert!(!base64_part.is_empty());
@@ -147,7 +147,7 @@ fn test_parse_invalid_proxy_url() {
 
     let result = connector.parse_proxy_url();
     assert!(result.is_err());
-    
+
     match result {
         Err(ProxyError::Config(_)) => (),
         _ => panic!("Expected Config error"),
@@ -156,16 +156,12 @@ fn test_parse_invalid_proxy_url() {
 
 #[test]
 fn test_parse_proxy_url_no_host() {
-    let connector = HttpProxyConnector::new(
-        "http://".to_string(),
-        None,
-        None,
-        Duration::from_secs(30),
-    );
+    let connector =
+        HttpProxyConnector::new("http://".to_string(), None, None, Duration::from_secs(30));
 
     let result = connector.parse_proxy_url();
     assert!(result.is_err());
-    
+
     match result {
         Err(ProxyError::Config(_)) => (),
         _ => panic!("Expected Config error"),
@@ -348,7 +344,7 @@ fn test_auth_header_credentials_order() {
     // Decode and verify format (username:password)
     let base64_part = auth.strip_prefix("Basic ").unwrap();
     assert!(!base64_part.is_empty());
-    
+
     // The encoded string should be "testuser:testpass"
     use base64::{engine::general_purpose::STANDARD, Engine};
     let expected = STANDARD.encode("testuser:testpass".as_bytes());

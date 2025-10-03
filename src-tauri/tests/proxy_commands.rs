@@ -1,14 +1,14 @@
 //! Tests for P5.6 proxy commands and events
 
 use fireworks_collaboration_lib::core::proxy::{
-    ProxyConfig, ProxyMode, SystemProxyDetector, ProxyManager, ProxyStateEvent,
+    ProxyConfig, ProxyManager, ProxyMode, ProxyStateEvent, SystemProxyDetector,
 };
 
 #[test]
 fn test_detect_system_proxy_returns_option() {
     // Should not panic regardless of platform
     let result = SystemProxyDetector::detect();
-    
+
     // Result should be either Some(config) or None
     match result {
         Some(config) => {
@@ -24,13 +24,13 @@ fn test_detect_system_proxy_returns_option() {
 #[test]
 fn test_proxy_state_event_basic_creation() {
     use fireworks_collaboration_lib::core::proxy::ProxyState;
-    
+
     let event = ProxyStateEvent::new(
         ProxyState::Disabled,
         ProxyState::Enabled,
         Some("Test transition".to_string()),
     );
-    
+
     assert_eq!(event.previous_state, ProxyState::Disabled);
     assert_eq!(event.current_state, ProxyState::Enabled);
     assert_eq!(event.reason, Some("Test transition".to_string()));
@@ -41,7 +41,7 @@ fn test_proxy_state_event_basic_creation() {
 #[test]
 fn test_proxy_state_event_extended_creation() {
     use fireworks_collaboration_lib::core::proxy::ProxyState;
-    
+
     let event = ProxyStateEvent::new_extended(
         ProxyState::Enabled,
         ProxyState::Fallback,
@@ -54,15 +54,21 @@ fn test_proxy_state_event_extended_creation() {
         Some("http://proxy.example.com".to_string()),
         true,
     );
-    
+
     assert_eq!(event.previous_state, ProxyState::Enabled);
     assert_eq!(event.current_state, ProxyState::Fallback);
     assert_eq!(event.proxy_mode, ProxyMode::Http);
-    assert_eq!(event.fallback_reason, Some("Connection timeout".to_string()));
+    assert_eq!(
+        event.fallback_reason,
+        Some("Connection timeout".to_string())
+    );
     assert_eq!(event.failure_count, Some(5));
     assert_eq!(event.health_check_success_rate, Some(0.6));
     assert_eq!(event.next_health_check_at, Some(1234567890));
-    assert_eq!(event.system_proxy_url, Some("http://proxy.example.com".to_string()));
+    assert_eq!(
+        event.system_proxy_url,
+        Some("http://proxy.example.com".to_string())
+    );
     assert!(event.custom_transport_disabled);
 }
 
@@ -84,12 +90,12 @@ fn test_proxy_manager_force_fallback() {
     let mut config = ProxyConfig::default();
     config.mode = ProxyMode::Http;
     config.url = "http://proxy.example.com:8080".to_string();
-    
+
     let mut manager = ProxyManager::new(config);
-    
+
     // Should start in Enabled state
     // (Note: actual state depends on implementation details)
-    
+
     // Force fallback should succeed
     let result = manager.force_fallback("Test fallback");
     assert!(result.is_ok(), "force_fallback should succeed");
@@ -100,12 +106,12 @@ fn test_proxy_manager_force_recovery() {
     let mut config = ProxyConfig::default();
     config.mode = ProxyMode::Http;
     config.url = "http://proxy.example.com:8080".to_string();
-    
+
     let mut manager = ProxyManager::new(config);
-    
+
     // Trigger fallback first
     let _ = manager.force_fallback("Setup");
-    
+
     // Force recovery should succeed
     let result = manager.force_recovery();
     assert!(result.is_ok(), "force_recovery should succeed");
@@ -114,7 +120,7 @@ fn test_proxy_manager_force_recovery() {
 #[test]
 fn test_proxy_state_event_serialization() {
     use fireworks_collaboration_lib::core::proxy::ProxyState;
-    
+
     let event = ProxyStateEvent::new_extended(
         ProxyState::Disabled,
         ProxyState::Enabled,
@@ -127,11 +133,11 @@ fn test_proxy_state_event_serialization() {
         None,
         false,
     );
-    
+
     // Should serialize to JSON without errors
     let json = serde_json::to_string(&event);
     assert!(json.is_ok(), "Event should serialize to JSON");
-    
+
     let json_str = json.unwrap();
     assert!(json_str.contains("previousState"));
     assert!(json_str.contains("currentState"));
@@ -143,7 +149,7 @@ fn test_proxy_state_event_serialization() {
 fn test_system_proxy_detection_env_fallback() {
     // Test environment variable detection (should not panic)
     let result = SystemProxyDetector::detect_from_env();
-    
+
     // Result depends on actual environment, just verify it doesn't crash
     match result {
         Some(config) => {
@@ -161,15 +167,18 @@ fn test_proxy_config_validation_with_debug_logging() {
     config.mode = ProxyMode::Http;
     config.url = "http://localhost:8080".to_string();
     config.debug_proxy_logging = true;
-    
+
     let result = config.validate();
-    assert!(result.is_ok(), "Valid config with debug logging should pass validation");
+    assert!(
+        result.is_ok(),
+        "Valid config with debug logging should pass validation"
+    );
 }
 
 #[test]
 fn test_proxy_state_event_all_fields_serialization() {
     use fireworks_collaboration_lib::core::proxy::ProxyState;
-    
+
     // Create event with all optional fields populated
     let event = ProxyStateEvent::new_extended(
         ProxyState::Enabled,
@@ -183,28 +192,28 @@ fn test_proxy_state_event_all_fields_serialization() {
         Some("socks5://proxy.local:1080".to_string()),
         true,
     );
-    
+
     // Serialize and verify all fields are present
     let json = serde_json::to_value(&event).expect("Should serialize");
-    
+
     assert!(json["proxyMode"].is_string());
     assert_eq!(json["proxyMode"], "socks5");
-    
+
     assert!(json["fallbackReason"].is_string());
     assert_eq!(json["fallbackReason"], "Previous connection timeout");
-    
+
     assert!(json["failureCount"].is_number());
     assert_eq!(json["failureCount"], 8);
-    
+
     assert!(json["healthCheckSuccessRate"].is_number());
     assert_eq!(json["healthCheckSuccessRate"], 0.45);
-    
+
     assert!(json["nextHealthCheckAt"].is_number());
     assert_eq!(json["nextHealthCheckAt"], 1609459200);
-    
+
     assert!(json["systemProxyUrl"].is_string());
     assert_eq!(json["systemProxyUrl"], "socks5://proxy.local:1080");
-    
+
     assert!(json["customTransportDisabled"].is_boolean());
     assert_eq!(json["customTransportDisabled"], true);
 }
@@ -212,7 +221,7 @@ fn test_proxy_state_event_all_fields_serialization() {
 #[test]
 fn test_proxy_state_event_deserialization() {
     use fireworks_collaboration_lib::core::proxy::ProxyState;
-    
+
     let json_str = r#"{
         "previousState": "disabled",
         "currentState": "enabled",
@@ -227,10 +236,10 @@ fn test_proxy_state_event_deserialization() {
         "systemProxyUrl": "http://detected.proxy:8080",
         "customTransportDisabled": true
     }"#;
-    
-    let event: ProxyStateEvent = serde_json::from_str(json_str)
-        .expect("Should deserialize valid JSON");
-    
+
+    let event: ProxyStateEvent =
+        serde_json::from_str(json_str).expect("Should deserialize valid JSON");
+
     assert_eq!(event.previous_state, ProxyState::Disabled);
     assert_eq!(event.current_state, ProxyState::Enabled);
     assert_eq!(event.proxy_state, ProxyState::Enabled);
@@ -239,38 +248,41 @@ fn test_proxy_state_event_deserialization() {
     assert_eq!(event.failure_count, Some(0));
     assert_eq!(event.health_check_success_rate, Some(1.0));
     assert_eq!(event.next_health_check_at, None);
-    assert_eq!(event.system_proxy_url, Some("http://detected.proxy:8080".to_string()));
+    assert_eq!(
+        event.system_proxy_url,
+        Some("http://detected.proxy:8080".to_string())
+    );
     assert!(event.custom_transport_disabled);
 }
 
 #[test]
 fn test_proxy_state_event_optional_fields_none() {
     use fireworks_collaboration_lib::core::proxy::ProxyState;
-    
+
     // Create event with minimal fields (all optionals = None)
     let event = ProxyStateEvent::new_extended(
         ProxyState::Disabled,
         ProxyState::Enabled,
         Some("Config changed".to_string()),
         ProxyMode::Off,
-        None,  // fallback_reason
-        None,  // failure_count
-        None,  // health_check_success_rate
-        None,  // next_health_check_at
-        None,  // system_proxy_url
+        None, // fallback_reason
+        None, // failure_count
+        None, // health_check_success_rate
+        None, // next_health_check_at
+        None, // system_proxy_url
         false,
     );
-    
+
     // Verify optional fields are None
     assert_eq!(event.fallback_reason, None);
     assert_eq!(event.failure_count, None);
     assert_eq!(event.health_check_success_rate, None);
     assert_eq!(event.next_health_check_at, None);
     assert_eq!(event.system_proxy_url, None);
-    
+
     // Serialize and check JSON
     let json = serde_json::to_value(&event).expect("Should serialize");
-    
+
     // Optional None fields should be null in JSON
     assert!(json["fallbackReason"].is_null());
     assert!(json["nextHealthCheckAt"].is_null());
@@ -280,25 +292,34 @@ fn test_proxy_state_event_optional_fields_none() {
 #[test]
 fn test_proxy_mode_all_variants_serialization() {
     use fireworks_collaboration_lib::core::proxy::ProxyState;
-    
+
     let modes = vec![
         (ProxyMode::Off, "off"),
         (ProxyMode::Http, "http"),
         (ProxyMode::Socks5, "socks5"),
         (ProxyMode::System, "system"),
     ];
-    
+
     for (mode, expected_str) in modes {
         let event = ProxyStateEvent::new_extended(
             ProxyState::Disabled,
             ProxyState::Enabled,
             None,
             mode,
-            None, None, None, None, None, false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
         );
-        
+
         let json = serde_json::to_value(&event).expect("Should serialize");
-        assert_eq!(json["proxyMode"], expected_str, "Mode {:?} should serialize as {}", mode, expected_str);
+        assert_eq!(
+            json["proxyMode"], expected_str,
+            "Mode {:?} should serialize as {}",
+            mode, expected_str
+        );
     }
 }
 
@@ -309,10 +330,13 @@ fn test_proxy_manager_force_fallback_when_disabled() {
     // Test fallback on disabled (mode=off) proxy
     let config = ProxyConfig::default(); // mode=Off by default
     let mut manager = ProxyManager::new(config);
-    
+
     let result = manager.force_fallback("Test fallback on disabled");
     // Should fail because proxy is disabled (mode=off)
-    assert!(result.is_err(), "force_fallback should fail when proxy mode is off");
+    assert!(
+        result.is_err(),
+        "force_fallback should fail when proxy mode is off"
+    );
 }
 
 #[test]
@@ -320,10 +344,13 @@ fn test_proxy_manager_force_recovery_when_disabled() {
     // Test recovery on disabled proxy
     let config = ProxyConfig::default(); // mode=Off
     let mut manager = ProxyManager::new(config);
-    
+
     let result = manager.force_recovery();
     // Should fail when proxy is disabled
-    assert!(result.is_err(), "force_recovery should fail when proxy mode is off");
+    assert!(
+        result.is_err(),
+        "force_recovery should fail when proxy mode is off"
+    );
 }
 
 #[test]
@@ -331,19 +358,21 @@ fn test_proxy_manager_force_fallback_multiple_times() {
     let mut config = ProxyConfig::default();
     config.mode = ProxyMode::Http;
     config.url = "http://proxy.test:8080".to_string();
-    
+
     let mut manager = ProxyManager::new(config);
-    
+
     // First fallback should succeed
     assert!(manager.force_fallback("First fallback").is_ok());
-    
+
     // Second fallback should fail (already in Fallback state)
-    assert!(manager.force_fallback("Second fallback").is_err(), 
-        "force_fallback should fail when already in Fallback state");
-    
+    assert!(
+        manager.force_fallback("Second fallback").is_err(),
+        "force_fallback should fail when already in Fallback state"
+    );
+
     // Try recovery to reset state
     let _ = manager.force_recovery();
-    
+
     // After recovery, fallback should work again
     assert!(manager.force_fallback("Third fallback").is_ok());
 }
@@ -353,12 +382,12 @@ fn test_proxy_manager_force_recovery_multiple_times() {
     let mut config = ProxyConfig::default();
     config.mode = ProxyMode::Http;
     config.url = "http://proxy.test:8080".to_string();
-    
+
     let mut manager = ProxyManager::new(config);
-    
+
     // Setup: force fallback first
     let _ = manager.force_fallback("Setup");
-    
+
     // Force recovery multiple times
     assert!(manager.force_recovery().is_ok());
     // Subsequent recoveries may succeed or fail depending on state
@@ -370,16 +399,16 @@ fn test_proxy_manager_alternating_force_operations() {
     let mut config = ProxyConfig::default();
     config.mode = ProxyMode::Socks5;
     config.url = "socks5://localhost:1080".to_string();
-    
+
     let mut manager = ProxyManager::new(config);
-    
+
     // Alternate between fallback and recovery
     assert!(manager.force_fallback("Test 1").is_ok());
     assert!(manager.force_recovery().is_ok());
     assert!(manager.force_fallback("Test 2").is_ok());
     assert!(manager.force_recovery().is_ok());
     assert!(manager.force_fallback("Test 3").is_ok());
-    
+
     // All operations should succeed
 }
 
@@ -388,10 +417,10 @@ fn test_proxy_config_with_invalid_url_and_force_fallback() {
     let mut config = ProxyConfig::default();
     config.mode = ProxyMode::Http;
     config.url = "invalid-url-format".to_string();
-    
+
     // Manager should be created even with invalid URL
     let mut manager = ProxyManager::new(config);
-    
+
     // force_fallback should not panic
     let result = manager.force_fallback("Invalid URL test");
     // Just verify no panic occurs
@@ -434,7 +463,7 @@ fn test_system_proxy_detection_url_format() {
         let url = &config.url;
         // URL should not be empty if proxy detected
         assert!(!url.is_empty(), "Detected proxy URL should not be empty");
-        
+
         // Should contain basic URL components
         if config.mode == ProxyMode::Http {
             assert!(
@@ -444,7 +473,9 @@ fn test_system_proxy_detection_url_format() {
             );
         } else if config.mode == ProxyMode::Socks5 {
             assert!(
-                url.starts_with("socks5://") || url.starts_with("socks://") || !url.starts_with("http"),
+                url.starts_with("socks5://")
+                    || url.starts_with("socks://")
+                    || !url.starts_with("http"),
                 "SOCKS5 proxy URL format should be valid, got: {}",
                 url
             );
@@ -456,7 +487,7 @@ fn test_system_proxy_detection_url_format() {
 fn test_system_proxy_env_variables() {
     // Test environment variable detection
     let result = SystemProxyDetector::detect_from_env();
-    
+
     // Result depends on environment, just verify no panic
     match result {
         Some(config) => {

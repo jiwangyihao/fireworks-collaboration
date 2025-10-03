@@ -223,8 +223,7 @@ fn load_or_init_file_creates_default() {
 #[test]
 fn save_file_persists_changes() {
     let guard = test_guard().lock().unwrap();
-    let temp_dir =
-        std::env::temp_dir().join(format!("fwc-ip-pool-save-{}", uuid::Uuid::new_v4()));
+    let temp_dir = std::env::temp_dir().join(format!("fwc-ip-pool-save-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&temp_dir).unwrap();
     let mut cfg = IpPoolFileConfig::default();
     cfg.preheat_domains.push(PreheatDomain::new("github.com"));
@@ -483,11 +482,7 @@ fn emit_ip_pool_refresh_publishes_event() {
             expires_at_epoch_ms: Some(now_ms + 300_000),
         },
         IpStat {
-            candidate: IpCandidate::new(
-                IpAddr::V4(Ipv4Addr::new(2, 2, 2, 2)),
-                443,
-                IpSource::Dns,
-            ),
+            candidate: IpCandidate::new(IpAddr::V4(Ipv4Addr::new(2, 2, 2, 2)), 443, IpSource::Dns),
             sources: vec![IpSource::Dns],
             latency_ms: Some(20),
             measured_at_epoch_ms: Some(now_ms),
@@ -615,8 +610,7 @@ fn collect_candidates_prefers_configured_sources() {
 #[test]
 fn probe_latency_times_out_reasonably() {
     let rt = test_runtime();
-    let result =
-        rt.block_on(async { probe_latency("203.0.113.1".parse().unwrap(), 9, 200).await });
+    let result = rt.block_on(async { probe_latency("203.0.113.1".parse().unwrap(), 9, 200).await });
     assert!(result.is_err());
 }
 
@@ -704,8 +698,8 @@ fn collect_candidates_merges_sources_from_history() {
     cfg.runtime.sources.dns = false;
     cfg.runtime.sources.user_static = false;
     cfg.runtime.sources.fallback = false;
-    let candidates = rt
-        .block_on(async { collect_candidates("github.com", 443, &cfg, history.clone()).await });
+    let candidates =
+        rt.block_on(async { collect_candidates("github.com", 443, &cfg, history.clone()).await });
     let merged = candidates
         .into_iter()
         .find(|candidate| candidate.candidate.address == ip)
@@ -737,9 +731,8 @@ fn collect_candidates_skips_expired_history_entries() {
         expires_at_epoch_ms: 2,
     };
     history.upsert(record).unwrap();
-    let candidates = rt.block_on(async {
-        collect_candidates("expired.test", 443, &cfg, history.clone()).await
-    });
+    let candidates =
+        rt.block_on(async { collect_candidates("expired.test", 443, &cfg, history.clone()).await });
     assert!(candidates.is_empty());
     assert!(history.get("expired.test", 443).is_none());
 }

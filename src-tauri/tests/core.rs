@@ -179,11 +179,11 @@ fn test_compute_retry_diff() {
 // tls/spki_tests.rs 的测试
 // ============================================================================
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use fireworks_collaboration_lib::core::tls::spki::{
     compute_fingerprint_bundle, compute_spki_sha256_b64, SpkiSource,
 };
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
 use rcgen::generate_simple_self_signed;
 use ring::digest::{digest, SHA256};
 use rustls::Certificate;

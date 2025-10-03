@@ -133,9 +133,9 @@ impl Socks5ProxyConnector {
             return Err(ProxyError::config("Proxy host cannot be empty".to_string()));
         }
 
-        let port = port_str.parse::<u16>().map_err(|e| {
-            ProxyError::config(format!("Invalid proxy port '{port_str}': {e}"))
-        })?;
+        let port = port_str
+            .parse::<u16>()
+            .map_err(|e| ProxyError::config(format!("Invalid proxy port '{port_str}': {e}")))?;
 
         if port == 0 {
             return Err(ProxyError::config("Proxy port cannot be 0".to_string()));
@@ -405,9 +405,7 @@ impl Socks5ProxyConnector {
                 0x08 => "Address type not supported",
                 _ => "Unknown SOCKS error",
             };
-            return Err(ProxyError::proxy(format!(
-                "{error_msg} (code 0x{rep:02x})"
-            )));
+            return Err(ProxyError::proxy(format!("{error_msg} (code 0x{rep:02x})")));
         }
 
         // 读取绑定地址（我们不需要使用它，但必须读取以清空缓冲区）
@@ -416,9 +414,9 @@ impl Socks5ProxyConnector {
             ATYP_IPV6 => 16,
             ATYP_DOMAIN => {
                 let mut len_byte = [0u8; 1];
-                stream
-                    .read_exact(&mut len_byte)
-                    .map_err(|e| ProxyError::network(format!("Failed to read domain length: {e}")))?;
+                stream.read_exact(&mut len_byte).map_err(|e| {
+                    ProxyError::network(format!("Failed to read domain length: {e}"))
+                })?;
                 len_byte[0] as usize
             }
             _ => {
@@ -456,7 +454,9 @@ impl ProxyConnector for Socks5ProxyConnector {
         let proxy_socket: SocketAddr = proxy_addr
             .to_socket_addrs()
             .map_err(|e| {
-                ProxyError::network(format!("Failed to resolve proxy address '{proxy_addr}': {e}"))
+                ProxyError::network(format!(
+                    "Failed to resolve proxy address '{proxy_addr}': {e}"
+                ))
             })?
             .next()
             .ok_or_else(|| {
@@ -465,7 +465,10 @@ impl ProxyConnector for Socks5ProxyConnector {
 
         let mut stream = TcpStream::connect_timeout(&proxy_socket, self.timeout).map_err(|e| {
             if e.kind() == std::io::ErrorKind::TimedOut {
-                ProxyError::timeout(format!("Proxy connection timed out after {:?}", self.timeout))
+                ProxyError::timeout(format!(
+                    "Proxy connection timed out after {:?}",
+                    self.timeout
+                ))
             } else {
                 ProxyError::network(format!("Failed to connect to proxy: {e}"))
             }

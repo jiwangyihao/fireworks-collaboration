@@ -29,10 +29,10 @@ pub use metrics::{
 #[cfg(not(feature = "tauri-app"))]
 pub mod testing {
     //! Aggregated transport testing helpers available to integration tests.
+    pub use super::runtime::testing::{auto_disable_guard, reset_auto_disable};
     pub use crate::core::git::http_transport::testing::{
         classify_and_count_fallback, inject_fake_failure, inject_real_failure,
         reset_fallback_counters, reset_injected_failures, snapshot_fallback_counters,
         TestSubtransport,
     };
-    pub use super::runtime::testing::{auto_disable_guard, reset_auto_disable};
 }

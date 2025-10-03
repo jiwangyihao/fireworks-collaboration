@@ -22,7 +22,7 @@ pub(crate) fn redact_auth_in_headers(
     if !mask {
         return headers;
     }
-    
+
     // Case-insensitive matching for Authorization header
     for (k, v) in headers.clone().iter() {
         if k.eq_ignore_ascii_case("authorization") {
@@ -30,7 +30,7 @@ pub(crate) fn redact_auth_in_headers(
             headers.insert(k.clone(), "REDACTED".into());
         }
     }
-    
+
     headers
 }
 
@@ -48,7 +48,7 @@ pub(crate) fn host_in_whitelist(host: &str, cfg: &AppConfig) -> bool {
 /// Returns a tuple of (category, message) for better error handling.
 pub(crate) fn classify_error_msg(e: &str) -> (&'static str, String) {
     let msg = e.to_string();
-    
+
     if msg.contains("SAN whitelist mismatch") {
         ("Verify", msg)
     } else if msg.contains("tls handshake") {
@@ -73,19 +73,19 @@ fn validate_url(url: &str, cfg: &AppConfig) -> Result<(hyper::Uri, String), Stri
     let parsed = url
         .parse::<hyper::Uri>()
         .map_err(|e| format!("Input: invalid URL - {}", e))?;
-    
+
     if parsed.scheme_str() != Some("https") {
         return Err("Input: only https is supported".into());
     }
-    
+
     let host = parsed
         .host()
         .ok_or_else(|| "Input: url host missing".to_string())?;
-    
+
     if !host_in_whitelist(host, cfg) {
         return Err("Verify: SAN whitelist mismatch (precheck)".into());
     }
-    
+
     Ok((parsed, host.to_string()))
 }
 
@@ -99,39 +99,35 @@ fn process_redirect(
     let location = headers
         .get("location")
         .ok_or_else(|| "Network: redirect without Location header".to_string())?;
-    
+
     // Parse and construct next URL (resolve relative paths)
     let base = current_url
         .parse::<url::Url>()
         .map_err(|e| format!("Internal: url parse - {}", e))?;
-    
+
     let next_url = base
         .join(location)
         .map_err(|e| format!("Input: bad redirect location - {}", e))?
         .to_string();
-    
+
     // Validate next host against whitelist
     let next_host = url::Url::parse(&next_url)
         .map_err(|e| format!("Internal: url parse - {}", e))?
         .host_str()
         .ok_or_else(|| "Input: redirect host missing".to_string())?
         .to_string();
-    
+
     if !host_in_whitelist(&next_host, cfg) {
         return Err("Verify: SAN whitelist mismatch (redirect)".into());
     }
-    
+
     Ok(next_url)
 }
 
 /// Update request for redirect based on status code.
-fn update_request_for_redirect(
-    input: &mut HttpRequestInput,
-    status: u16,
-    next_url: String,
-) {
+fn update_request_for_redirect(input: &mut HttpRequestInput, status: u16, next_url: String) {
     input.url = next_url;
-    
+
     match status {
         // 301, 302, 303: Change to GET, remove body
         301 | 302 | 303 => {
@@ -166,16 +162,14 @@ pub async fn http_fake_request(
         let g = cfg.lock().map_err(|e| e.to_string())?;
         g.clone()
     };
-    
+
     // Early validation of URL and host whitelist
     let mut current_url = input.url.clone();
     validate_url(&current_url, &cfg_val)?;
-    
+
     // Log request with redacted headers
-    let redacted = redact_auth_in_headers(
-        input.headers.clone(),
-        cfg_val.logging.auth_header_masked,
-    );
+    let redacted =
+        redact_auth_in_headers(input.headers.clone(), cfg_val.logging.auth_header_masked);
     tracing::info!(
         target = "http",
         method = %input.method,
@@ -183,21 +177,21 @@ pub async fn http_fake_request(
         headers = ?redacted,
         "HTTP request started"
     );
-    
+
     // Create HTTP client
     let client = HttpClient::new(cfg_val.clone());
     let follow = input.follow_redirects;
     let max_redirects = input.max_redirects;
     let mut redirects: Vec<RedirectInfo> = Vec::new();
     let mut attempt_input = input.clone();
-    
+
     // Handle redirects in a loop
     for i in 0..=max_redirects as u16 {
         match client.send(attempt_input.clone()).await {
             Ok(mut out) => {
                 let status = out.status;
                 let is_redirect = matches!(status, 301 | 302 | 303 | 307 | 308);
-                
+
                 // If not a redirect or not following redirects, return
                 if !is_redirect || !follow {
                     out.redirects = redirects;
@@ -209,18 +203,15 @@ pub async fn http_fake_request(
                     );
                     return Ok(out);
                 }
-                
+
                 // Check if we've reached the redirect limit
                 if i as u8 >= max_redirects {
-                    return Err(format!(
-                        "Network: too many redirects (>{})",
-                        max_redirects
-                    ));
+                    return Err(format!("Network: too many redirects (>{})", max_redirects));
                 }
-                
+
                 // Process redirect
                 let next_url = process_redirect(status, &out.headers, &current_url, &cfg_val)?;
-                
+
                 tracing::debug!(
                     target = "http",
                     status = status,
@@ -228,13 +219,13 @@ pub async fn http_fake_request(
                     to = %next_url,
                     "Following redirect"
                 );
-                
+
                 redirects.push(RedirectInfo {
                     status,
                     location: next_url.clone(),
                     count: (i as u8) + 1,
                 });
-                
+
                 // Update request for next iteration
                 update_request_for_redirect(&mut attempt_input, status, next_url.clone());
                 current_url = next_url;
@@ -251,6 +242,6 @@ pub async fn http_fake_request(
             }
         }
     }
-    
+
     Err("Network: redirect loop reached without resolution".into())
 }

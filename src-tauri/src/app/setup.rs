@@ -26,7 +26,7 @@ use super::types::{ConfigBaseDir, OAuthState, SharedConfig, SharedIpPool, TaskRe
 pub fn run() {
     // Initialize logging system
     logging::init_logging();
-    
+
     let mut builder = tauri::Builder::default()
         // Register Tauri plugins
         .plugin(tauri_plugin_http::init())
@@ -67,13 +67,13 @@ pub fn run() {
             super::commands::force_proxy_fallback,
             super::commands::force_proxy_recovery
         ]);
-    
+
     // Setup application state and configuration
     builder = builder.setup(|app| {
         setup_app_state(app)?;
         Ok(())
     });
-    
+
     // Run the application
     builder
         .run(tauri::generate_context!())
@@ -87,16 +87,16 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
         .path()
         .app_config_dir()
         .unwrap_or_else(|_| get_fallback_config_dir());
-    
+
     tracing::info!(
         target = "app",
         path = %base_dir.display(),
         "Using configuration directory"
     );
-    
+
     // Set global configuration base directory for dynamic loading
     cfg_loader::set_global_base_dir(&base_dir);
-    
+
     // Load or initialize configuration
     let cfg = cfg_loader::load_or_init_at(&base_dir).unwrap_or_else(|e| {
         tracing::warn!(
@@ -106,17 +106,20 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
         );
         AppConfig::default()
     });
-    
+
     // Manage configuration state
     app.manage(Arc::new(Mutex::new(cfg.clone())) as SharedConfig);
-    
+
     let base_dir_clone = base_dir.clone();
     app.manage::<ConfigBaseDir>(base_dir);
-    
+
     // Load and configure IP pool
     let effective = match ip_pool::load_effective_config_at(&cfg, &base_dir_clone) {
         Ok(cfg) => {
-            tracing::info!(target = "ip_pool", "IP pool configuration loaded successfully");
+            tracing::info!(
+                target = "ip_pool",
+                "IP pool configuration loaded successfully"
+            );
             cfg
         }
         Err(err) => {
@@ -131,16 +134,19 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
             )
         }
     };
-    
+
     // Update IP pool with effective configuration
     let pool_state = app.state::<SharedIpPool>();
     if let Ok(mut guard) = pool_state.inner().lock() {
         guard.update_config(effective);
         tracing::info!(target = "ip_pool", "IP pool initialized successfully");
     } else {
-        tracing::error!(target = "ip_pool", "Failed to acquire IP pool lock during setup");
+        tracing::error!(
+            target = "ip_pool",
+            "Failed to acquire IP pool lock during setup"
+        );
     }
-    
+
     Ok(())
 }
 
@@ -149,7 +155,7 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
 /// This is used when the standard app config directory cannot be determined.
 fn get_fallback_config_dir() -> PathBuf {
     let identifier = "top.jwyihao.fireworks-collaboration";
-    
+
     if let Some(mut dir) = dirs::config_dir() {
         dir.push(identifier);
         dir

@@ -56,7 +56,7 @@ impl ProxyState {
     /// Check if the state transition is valid
     pub fn can_transition_to(&self, next: ProxyState) -> bool {
         use ProxyState::*;
-        
+
         matches!(
             (self, next),
             // Enable: Disabled -> Enabled
@@ -73,7 +73,7 @@ impl ProxyState {
             (Recovering, Fallback)
         )
     }
-    
+
     /// Apply a state transition
     pub fn apply_transition(&mut self, transition: StateTransition) -> Result<()> {
         let next_state = match transition {
@@ -116,14 +116,11 @@ impl ProxyState {
                 ProxyState::Fallback
             }
         };
-        
+
         if !self.can_transition_to(next_state) {
-            anyhow::bail!(
-                "Invalid state transition from {} to {}",
-                self, next_state
-            );
+            anyhow::bail!("Invalid state transition from {} to {}", self, next_state);
         }
-        
+
         *self = next_state;
         Ok(())
     }
@@ -134,16 +131,16 @@ impl ProxyState {
 pub struct ProxyStateContext {
     /// Current state
     pub state: ProxyState,
-    
+
     /// Timestamp of last state change (Unix timestamp in seconds)
     pub last_transition_at: u64,
-    
+
     /// Reason for current state (for fallback/recovery)
     pub reason: Option<String>,
-    
+
     /// Number of consecutive failures (for fallback detection)
     pub consecutive_failures: u32,
-    
+
     /// Number of consecutive successes (for recovery)
     pub consecutive_successes: u32,
 }
@@ -165,7 +162,7 @@ impl ProxyStateContext {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Transition to a new state with reason
     pub fn transition(
         &mut self,
@@ -175,7 +172,7 @@ impl ProxyStateContext {
         self.state.apply_transition(transition)?;
         self.last_transition_at = current_timestamp();
         self.reason = reason;
-        
+
         // Reset counters on state change
         match self.state {
             ProxyState::Enabled => {
@@ -193,22 +190,22 @@ impl ProxyStateContext {
                 self.consecutive_successes = 0;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Record a failure
     pub fn record_failure(&mut self) {
         self.consecutive_failures += 1;
         self.consecutive_successes = 0;
     }
-    
+
     /// Record a success
     pub fn record_success(&mut self) {
         self.consecutive_successes += 1;
         self.consecutive_failures = 0;
     }
-    
+
     /// Get seconds since last transition
     pub fn seconds_since_transition(&self) -> u64 {
         current_timestamp().saturating_sub(self.last_transition_at)
