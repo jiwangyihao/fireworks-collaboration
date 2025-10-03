@@ -132,20 +132,23 @@ export async function startGitFetch(
 // - remote: 远程名（默认 origin）
 // - refspecs: 需要推送的 refspec 列表，例如 ["refs/heads/main:refs/heads/main"]；不传则使用默认
 // - auth: 可选凭证；仅 token 时可使用 { username: "x-access-token", password: token }
+// - useStoredCredential: 是否使用已存储的凭证（P6.4）
 export async function startGitPush(params: {
   dest: string;
   remote?: string;
   refspecs?: string[];
   username?: string;
   password?: string;
+  useStoredCredential?: boolean;
   strategyOverride?: StrategyOverride;
 }) {
-  const { dest, remote, refspecs, username, password, strategyOverride } = params;
+  const { dest, remote, refspecs, username, password, useStoredCredential, strategyOverride } = params;
   const args: Record<string, unknown> = { dest };
   if (remote) args.remote = remote;
   if (refspecs && refspecs.length > 0) args.refspecs = refspecs;
   if (username) args.username = username;
   if (password) args.password = password;
+  if (useStoredCredential !== undefined) args.use_stored_credential = useStoredCredential; // snake_case for Tauri invoke
   if (strategyOverride) args.strategy_override = strategyOverride; // snake_case for Tauri invoke
   return invoke<string>("git_push", args);
 }

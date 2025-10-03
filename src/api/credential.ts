@@ -124,6 +124,17 @@ export async function exportAuditLog(): Promise<string> {
 }
 
 /**
+ * Clean up expired credentials
+ *
+ * Removes all credentials that have passed their expiration time.
+ *
+ * @returns The number of credentials removed
+ */
+export async function cleanupExpiredCredentials(): Promise<number> {
+  return await invoke("cleanup_expired_credentials");
+}
+
+/**
  * Format timestamp to readable date string
  */
 export function formatTimestamp(timestamp?: number): string {
