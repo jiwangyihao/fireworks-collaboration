@@ -135,6 +135,43 @@ export async function cleanupExpiredCredentials(): Promise<number> {
 }
 
 /**
+ * Clean up expired audit logs
+ *
+ * Removes audit logs older than the specified retention period.
+ *
+ * @param retentionDays - Number of days to retain logs
+ * @returns The number of logs removed
+ */
+export async function cleanupAuditLogs(retentionDays: number): Promise<number> {
+  return await invoke("cleanup_audit_logs", { retentionDays });
+}
+
+/**
+ * Check if credential store is locked due to authentication failures
+ *
+ * @returns True if the store is locked, false otherwise
+ */
+export async function isCredentialLocked(): Promise<boolean> {
+  return await invoke("is_credential_locked");
+}
+
+/**
+ * Reset credential store access control (admin unlock)
+ */
+export async function resetCredentialLock(): Promise<void> {
+  await invoke("reset_credential_lock");
+}
+
+/**
+ * Get remaining authentication attempts before lockout
+ *
+ * @returns Number of remaining attempts
+ */
+export async function remainingAuthAttempts(): Promise<number> {
+  return await invoke("remaining_auth_attempts");
+}
+
+/**
  * Format timestamp to readable date string
  */
 export function formatTimestamp(timestamp?: number): string {

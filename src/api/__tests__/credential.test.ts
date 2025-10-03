@@ -15,6 +15,10 @@ import {
   setMasterPassword,
   unlockStore,
   exportAuditLog,
+  cleanupAuditLogs,
+  isCredentialLocked,
+  resetCredentialLock,
+  remainingAuthAttempts,
   formatTimestamp,
   isExpiringSoon,
 } from "../credential";
@@ -272,6 +276,89 @@ describe("api/credential", () => {
       const expiresIn8Days = now + 8 * 24 * 60 * 60 * 1000;
 
       expect(isExpiringSoon(expiresIn8Days)).toBe(false);
+    });
+  });
+
+  describe("cleanupAuditLogs", () => {
+    it("should call cleanup_audit_logs command with retention days", async () => {
+      const retentionDays = 30;
+      const removedCount = 15;
+      mockInvoke.mockResolvedValueOnce(removedCount);
+
+      const result = await cleanupAuditLogs(retentionDays);
+
+      expect(mockInvoke).toHaveBeenCalledWith("cleanup_audit_logs", { retentionDays });
+      expect(result).toBe(removedCount);
+    });
+
+    it("should handle zero removed logs", async () => {
+      mockInvoke.mockResolvedValueOnce(0);
+
+      const result = await cleanupAuditLogs(90);
+
+      expect(result).toBe(0);
+    });
+  });
+
+  describe("isCredentialLocked", () => {
+    it("should call is_credential_locked command", async () => {
+      mockInvoke.mockResolvedValueOnce(false);
+
+      const result = await isCredentialLocked();
+
+      expect(mockInvoke).toHaveBeenCalledWith("is_credential_locked");
+      expect(result).toBe(false);
+    });
+
+    it("should return true when locked", async () => {
+      mockInvoke.mockResolvedValueOnce(true);
+
+      const result = await isCredentialLocked();
+
+      expect(result).toBe(true);
+    });
+  });
+
+  describe("resetCredentialLock", () => {
+    it("should call reset_credential_lock command", async () => {
+      mockInvoke.mockResolvedValueOnce(undefined);
+
+      await resetCredentialLock();
+
+      expect(mockInvoke).toHaveBeenCalledWith("reset_credential_lock");
+    });
+
+    it("should handle errors gracefully", async () => {
+      mockInvoke.mockRejectedValueOnce(new Error("Permission denied"));
+
+      await expect(resetCredentialLock()).rejects.toThrow("Permission denied");
+    });
+  });
+
+  describe("remainingAuthAttempts", () => {
+    it("should call remaining_auth_attempts command", async () => {
+      mockInvoke.mockResolvedValueOnce(3);
+
+      const result = await remainingAuthAttempts();
+
+      expect(mockInvoke).toHaveBeenCalledWith("remaining_auth_attempts");
+      expect(result).toBe(3);
+    });
+
+    it("should return 0 when locked", async () => {
+      mockInvoke.mockResolvedValueOnce(0);
+
+      const result = await remainingAuthAttempts();
+
+      expect(result).toBe(0);
+    });
+
+    it("should return max attempts when no failures", async () => {
+      mockInvoke.mockResolvedValueOnce(5);
+
+      const result = await remainingAuthAttempts();
+
+      expect(result).toBe(5);
     });
   });
 });
