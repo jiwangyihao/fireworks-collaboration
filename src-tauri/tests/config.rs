@@ -646,3 +646,337 @@ fn test_config_roundtrip_preserves_p55_fields() {
     assert_eq!(restored.proxy.probe_timeout_seconds, 18);
     assert_eq!(restored.proxy.recovery_consecutive_threshold, 6);
 }
+
+// ============================================================================
+// Team Config Template aggregation tests (migrated from config_team_template.rs)
+// ============================================================================
+
+mod section_team_template {
+    use super::*;
+    use fireworks_collaboration_lib::core::config::team_template::{
+        apply_template_to_config, backup_config_file, export_template, load_template_from_path,
+        write_template_to_path, IpPoolTemplate, SectionStrategy, TeamConfigTemplate,
+        TemplateExportOptions, TemplateImportOptions, TemplateSectionKind,
+    };
+    use fireworks_collaboration_lib::core::credential::config::CredentialConfig;
+    use fireworks_collaboration_lib::core::ip_pool::{
+        config as ip_pool_cfg, IpPoolFileConfig, IpPoolRuntimeConfig,
+    };
+    use fireworks_collaboration_lib::core::proxy::config::{ProxyConfig, ProxyMode};
+    use uuid::Uuid;
+
+    fn with_temp_dir<T>(name: &str, f: impl FnOnce(&Path) -> T) -> T {
+        let base =
+            std::env::temp_dir().join(format!("fwc-team-template-{name}-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&base).expect("create temp dir");
+        let result = f(&base);
+        std::fs::remove_dir_all(&base).ok();
+        result
+    }
+
+    #[test]
+    fn test_export_team_template_sanitizes_sensitive_fields() {
+        with_temp_dir("export", |base| {
+            let mut cfg = AppConfig::default();
+            cfg.proxy.mode = ProxyMode::Http;
+            cfg.proxy.url = "http://proxy.example.com:8080".into();
+            cfg.proxy.password = Some("topsecret".into());
+            cfg.proxy.username = Some("builder".into());
+            cfg.credential.file_path = Some("/tmp/credential.enc".into());
+            cfg.ip_pool.enabled = true;
+            cfg.ip_pool.history_path = Some("/tmp/local-history.json".into());
+
+            save_at(&cfg, base).expect("save config");
+
+            let template = export_template(&cfg, base, &TemplateExportOptions::default())
+                .expect("export template");
+            let dest = base.join("team-config-template.json");
+            write_template_to_path(&template, &dest).expect("write template");
+
+            let raw = std::fs::read_to_string(&dest).expect("read template file");
+            assert!(!raw.contains("topsecret"), "password must be stripped");
+
+            let parsed = load_template_from_path(&dest).expect("load written template");
+            let ip_pool = parsed.sections.ip_pool.expect("ip pool section present");
+            assert!(
+                ip_pool.runtime.history_path.is_none(),
+                "history path should be sanitized"
+            );
+
+            let proxy = parsed.sections.proxy.expect("proxy section present");
+            assert!(proxy.password.is_none(), "password field should be None");
+            assert_eq!(proxy.username.as_deref(), Some("builder"));
+
+            let credential = parsed
+                .sections
+                .credential
+                .expect("credential section present");
+            assert!(
+                credential.file_path.is_none(),
+                "file path should be removed"
+            );
+
+            assert_eq!(
+                cfg.ip_pool.history_path.as_deref(),
+                Some("/tmp/local-history.json"),
+                "original config should remain unchanged"
+            );
+        });
+    }
+
+    #[test]
+    fn test_import_template_schema_mismatch_errors() {
+        let mut cfg = AppConfig::default();
+        let mut template = TeamConfigTemplate::new();
+        template.schema_version = "2.0.0".into();
+
+        let result = apply_template_to_config(
+            &mut cfg,
+            Some(IpPoolFileConfig::default()),
+            &template,
+            &TemplateImportOptions::default(),
+        );
+
+        assert!(result.is_err(), "schema mismatch should return error");
+        let err = result.err().unwrap().to_string();
+        assert!(
+            err.contains("schema"),
+            "error message should mention schema"
+        );
+    }
+
+    #[test]
+    fn test_import_keep_local_strategy_preserves_local_config() {
+        let mut cfg = AppConfig::default();
+        cfg.proxy.mode = ProxyMode::System;
+
+        let mut template = TeamConfigTemplate::new();
+        template.sections.proxy = Some({
+            let mut proxy = ProxyConfig::default();
+            proxy.mode = ProxyMode::Http;
+            proxy.url = "http://shared-proxy:8080".into();
+            proxy
+        });
+
+        let mut options = TemplateImportOptions::default();
+        options.strategies.proxy = SectionStrategy::KeepLocal;
+
+        let outcome = apply_template_to_config(
+            &mut cfg,
+            Some(IpPoolFileConfig::default()),
+            &template,
+            &options,
+        )
+        .expect("keep local strategy should succeed");
+
+        assert_eq!(cfg.proxy.mode, ProxyMode::System);
+        assert!(cfg.proxy.url.is_empty());
+
+        assert!(outcome
+            .report
+            .skipped
+            .iter()
+            .any(|entry| entry.section == TemplateSectionKind::Proxy
+                && entry.reason == "strategyKeepLocal"));
+    }
+
+    #[test]
+    fn test_import_respects_disabled_sections() {
+        let mut cfg = AppConfig::default();
+        assert!(!cfg.tls.skip_san_whitelist);
+
+        let mut template = TeamConfigTemplate::new();
+        let mut tls_cfg = cfg.tls.clone();
+        tls_cfg.skip_san_whitelist = true;
+        template.sections.tls = Some(tls_cfg);
+
+        let mut options = TemplateImportOptions::default();
+        options.include_tls = false;
+
+        let outcome = apply_template_to_config(
+            &mut cfg,
+            Some(IpPoolFileConfig::default()),
+            &template,
+            &options,
+        )
+        .expect("disabled sections should not fail import");
+
+        assert!(
+            !cfg.tls.skip_san_whitelist,
+            "TLS config should remain unchanged when section is disabled"
+        );
+
+        assert!(outcome
+            .report
+            .skipped
+            .iter()
+            .any(|entry| entry.section == TemplateSectionKind::Tls
+                && entry.reason == "sectionDisabled"));
+    }
+
+    #[test]
+    fn test_import_overwrite_sanitizes_ip_pool_history_path() {
+        let mut cfg = AppConfig::default();
+        cfg.ip_pool.history_path = Some("local-history.json".into());
+
+        let mut template = TeamConfigTemplate::new();
+        template.sections.ip_pool = Some(IpPoolTemplate {
+            runtime: {
+                let mut runtime = IpPoolRuntimeConfig::default();
+                runtime.enabled = true;
+                runtime.history_path = Some("/tmp/template-history.json".into());
+                runtime
+            },
+            file: None,
+        });
+
+        let outcome =
+            apply_template_to_config(&mut cfg, None, &template, &TemplateImportOptions::default())
+                .expect("overwrite strategy should succeed");
+
+        assert!(cfg.ip_pool.enabled, "runtime flag should be applied");
+        assert!(
+            cfg.ip_pool.history_path.is_none(),
+            "history path must be sanitized"
+        );
+        assert!(outcome
+            .report
+            .applied
+            .iter()
+            .any(|entry| entry.section == TemplateSectionKind::IpPoolRuntime));
+    }
+
+    #[test]
+    fn test_import_merge_preserves_local_history_path() {
+        let mut cfg = AppConfig::default();
+        cfg.ip_pool.history_path = Some("local-cache.json".into());
+        cfg.ip_pool.enabled = false;
+        cfg.ip_pool.max_parallel_probes = 2;
+
+        let mut template = TeamConfigTemplate::new();
+        template.sections.ip_pool = Some(IpPoolTemplate {
+            runtime: {
+                let mut runtime = IpPoolRuntimeConfig::default();
+                runtime.enabled = true;
+                runtime.max_parallel_probes = 8;
+                runtime.history_path = Some("/tmp/template-history.json".into());
+                runtime
+            },
+            file: None,
+        });
+
+        let mut options = TemplateImportOptions::default();
+        options.strategies.ip_pool = SectionStrategy::Merge;
+
+        let outcome = apply_template_to_config(&mut cfg, None, &template, &options)
+            .expect("merge strategy should succeed");
+
+        assert!(
+            cfg.ip_pool.enabled,
+            "merge should adopt template enable flag"
+        );
+        assert_eq!(cfg.ip_pool.max_parallel_probes, 8);
+        assert_eq!(
+            cfg.ip_pool.history_path.as_deref(),
+            Some("local-cache.json"),
+            "merge should keep local history path"
+        );
+        assert!(outcome
+            .report
+            .applied
+            .iter()
+            .any(|entry| entry.section == TemplateSectionKind::IpPoolRuntime
+                && entry.strategy == SectionStrategy::Merge));
+    }
+
+    #[test]
+    fn test_import_team_template_applies_sections_and_backup() {
+        with_temp_dir("import", |base| {
+            let mut original_cfg = AppConfig::default();
+            original_cfg.proxy.mode = ProxyMode::System;
+            original_cfg.proxy.url = "http://legacy:8080".into();
+            save_at(&original_cfg, base).expect("save original config");
+
+            ip_pool_cfg::save_file_at(&IpPoolFileConfig::default(), base)
+                .expect("create default ip pool file");
+
+            let mut template = TeamConfigTemplate::new();
+            template.sections.proxy = Some({
+                let mut proxy = ProxyConfig::default();
+                proxy.mode = ProxyMode::Http;
+                proxy.url = "http://team-proxy:9000".into();
+                proxy.username = Some("teammate".into());
+                proxy
+            });
+            template.sections.credential = Some({
+                let mut cred = CredentialConfig::default();
+                cred.require_confirmation = true;
+                cred
+            });
+            let mut tls_template = AppConfig::default().tls;
+            tls_template.skip_san_whitelist = true;
+            tls_template.san_whitelist.push("example.com".into());
+            template.sections.tls = Some(tls_template);
+            template.sections.ip_pool = Some(IpPoolTemplate {
+                runtime: {
+                    let mut runtime = IpPoolRuntimeConfig::default();
+                    runtime.enabled = true;
+                    runtime.max_parallel_probes = 6;
+                    runtime
+                },
+                file: Some({
+                    let mut file_cfg = IpPoolFileConfig::default();
+                    file_cfg.blacklist.push("10.0.0.0/8".into());
+                    file_cfg.whitelist.push("203.0.113.10".into());
+                    file_cfg
+                }),
+            });
+
+            let template_path = base.join("team-config-template.json");
+            write_template_to_path(&template, &template_path).expect("write template");
+            let loaded = load_template_from_path(&template_path).expect("load template");
+
+            let mut cfg_value = load_or_init_at(base).expect("load config for merge");
+            let ip_file = ip_pool_cfg::load_or_init_file_at(base).expect("load ip file");
+
+            let mut import_opts = TemplateImportOptions::default();
+            import_opts.strategies.ip_pool = SectionStrategy::Merge;
+            import_opts.strategies.ip_pool_file = SectionStrategy::Merge;
+
+            let outcome =
+                apply_template_to_config(&mut cfg_value, Some(ip_file), &loaded, &import_opts)
+                    .expect("apply template to config");
+
+            let backup = backup_config_file(base).expect("create backup");
+            if let Some(path) = &backup {
+                assert!(path.exists(), "backup path should exist");
+            }
+
+            save_at(&cfg_value, base).expect("persist merged config");
+            if let Some(updated) = outcome.updated_ip_pool_file.clone() {
+                ip_pool_cfg::save_file_at(&updated, base).expect("persist ip pool file");
+            }
+
+            assert_eq!(cfg_value.proxy.mode, ProxyMode::Http);
+            assert_eq!(cfg_value.proxy.url, "http://team-proxy:9000");
+            assert!(
+                cfg_value.proxy.password.is_none(),
+                "password should remain None"
+            );
+            assert!(cfg_value.credential.require_confirmation);
+            assert!(cfg_value.tls.skip_san_whitelist);
+            assert!(cfg_value.ip_pool.enabled);
+            assert_eq!(cfg_value.ip_pool.max_parallel_probes, 6);
+
+            let saved_ip = ip_pool_cfg::load_or_init_file_at(base).expect("reload ip file");
+            assert!(saved_ip.blacklist.contains(&"10.0.0.0/8".into()));
+            assert!(saved_ip.whitelist.contains(&"203.0.113.10".into()));
+
+            assert!(outcome
+                .report
+                .applied
+                .iter()
+                .any(|entry| entry.section == TemplateSectionKind::Proxy));
+        });
+    }
+}
