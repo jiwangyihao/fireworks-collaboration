@@ -142,13 +142,14 @@ pub fn run_clone_task(
         depth: None,
         filter: None,
         strategy_override: None,
+        recurse_submodules: false,
     });
 
     let handle = runtime.block_on({
         let registry = Arc::clone(registry);
         async move {
             registry.spawn_git_clone_task_with_opts(
-                None, id, token, origin_str, dest_str, None, None, None,
+                None, id, token, origin_str, dest_str, None, None, None, false,
             )
         }
     });

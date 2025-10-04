@@ -150,6 +150,7 @@ mod section_invalid_depth {
                     depth: None,
                     filter: None,
                     strategy_override: None,
+                    recurse_submodules: false,
                 });
                 let handle = reg.clone().spawn_git_clone_task_with_opts(
                     None,
@@ -160,6 +161,7 @@ mod section_invalid_depth {
                     Some(json!(raw)),
                     None,
                     None,
+                    false,
                 );
                 let failed = wait_state(&reg, id, TaskState::Failed, 2000);
                 assert!(failed, "[invalid-depth] expected fail-fast for {case}");

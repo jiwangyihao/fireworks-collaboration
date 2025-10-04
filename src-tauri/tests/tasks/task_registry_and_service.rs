@@ -481,6 +481,7 @@ mod section_service_progress {
             depth: None,
             filter: None,
             strategy_override: None,
+            recurse_submodules: false,
         });
         let handle = reg.clone().spawn_git_clone_task(
             None,
@@ -675,6 +676,7 @@ mod section_service_cancel_fast {
                 depth: None,
                 filter: None,
                 strategy_override: None,
+                recurse_submodules: false,
             });
             let handle = reg
                 .clone()
@@ -730,6 +732,7 @@ mod section_service_cancel_fast {
                 depth: None,
                 filter: None,
                 strategy_override: None,
+                recurse_submodules: false,
             });
             let handle = reg
                 .clone()
@@ -779,6 +782,7 @@ mod section_service_cancel_fast {
                 depth: None,
                 filter: None,
                 strategy_override: None,
+                recurse_submodules: false,
             });
             token.cancel();
             let handle = reg
@@ -816,6 +820,7 @@ mod section_service_cancel_fast {
                 depth: None,
                 filter: None,
                 strategy_override: None,
+                recurse_submodules: false,
             });
             let handle = reg
                 .clone()
@@ -852,6 +857,7 @@ mod section_service_cancel_fast {
                 depth: None,
                 filter: None,
                 strategy_override: None,
+                recurse_submodules: false,
             });
             let handle = reg
                 .clone()
