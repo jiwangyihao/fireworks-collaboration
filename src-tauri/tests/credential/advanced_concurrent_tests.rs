@@ -14,7 +14,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 fn get_test_file(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("fireworks_concurrent_test_{}.enc", name))
+    std::env::temp_dir().join(format!("fireworks_concurrent_test_{name}.enc"))
 }
 
 fn cleanup(path: &PathBuf) {
@@ -39,7 +39,7 @@ fn test_concurrent_add_same_credential() {
             let cred = Credential::new(
                 "github.com".to_string(),
                 "alice".to_string(),
-                format!("token_from_thread_{}", i),
+                format!("token_from_thread_{i}"),
             );
 
             // 尝试添加，只有一个应该成功
@@ -137,7 +137,7 @@ fn test_concurrent_add_and_remove() {
                 let cred = Credential::new(
                     host,
                     username,
-                    format!("token{}", i),
+                    format!("token{i}"),
                 );
                 let _ = store_clone.add(cred);
             } else {
@@ -165,9 +165,9 @@ fn test_concurrent_list_operations() {
     // 预先添加一些凭证
     for i in 0..50 {
         let cred = Credential::new(
-            format!("host{}.com", i),
-            format!("user{}", i),
-            format!("token{}", i),
+            format!("host{i}.com"),
+            format!("user{i}"),
+            format!("token{i}"),
         );
         store.add(cred).expect("应该添加凭证");
     }
@@ -224,9 +224,9 @@ fn test_concurrent_file_store_operations() {
             // 每个线程添加 5 个凭证
             for j in 0..5 {
                 let cred = Credential::new(
-                    format!("host{}_{}.com", i, j),
-                    format!("user{}_{}", i, j),
-                    format!("token_{}_{}", i, j),
+                    format!("host{i}_{j}.com"),
+                    format!("user{i}_{j}"),
+                    format!("token_{i}_{j}"),
                 );
                 
                 let result = store_clone.add(cred);
@@ -246,7 +246,7 @@ fn test_concurrent_file_store_operations() {
 
     // 验证文件未损坏且凭证可访问
     let list = store.list().expect("文件应该仍然有效");
-    assert!(list.len() > 0, "应该至少添加了一些凭证");
+    assert!(!list.is_empty(), "应该至少添加了一些凭证");
 
     cleanup(&test_file);
 }
@@ -267,8 +267,8 @@ fn test_concurrent_get_nonexistent() {
 
             for _ in 0..100 {
                 let result = store_clone.get(
-                    &format!("nonexistent{}.com", i),
-                    Some(&format!("user{}", i))
+                    &format!("nonexistent{i}.com"),
+                    Some(&format!("user{i}"))
                 );
 
                 assert!(result.is_ok(), "查询不存在的凭证应该返回 Ok(None)");
@@ -300,24 +300,24 @@ fn test_stress_many_threads_many_operations() {
                     0 => {
                         // 添加
                         let cred = Credential::new(
-                            format!("host{}_{}.com", i, j),
-                            format!("user{}_{}", i, j),
-                            format!("token_{}_{}", i, j),
+                            format!("host{i}_{j}.com"),
+                            format!("user{i}_{j}"),
+                            format!("token_{i}_{j}"),
                         );
                         let _ = store_clone.add(cred);
                     }
                     1 => {
                         // 查询
                         let _ = store_clone.get(
-                            &format!("host{}_{}.com", i, j),
-                            Some(&format!("user{}_{}", i, j))
+                            &format!("host{i}_{j}.com"),
+                            Some(&format!("user{i}_{j}"))
                         );
                     }
                     2 => {
                         // 更新 last_used
                         let _ = store_clone.update_last_used(
-                            &format!("host{}_{}.com", i, j),
-                            &format!("user{}_{}", i, j)
+                            &format!("host{i}_{j}.com"),
+                            &format!("user{i}_{j}")
                         );
                     }
                     3 => {

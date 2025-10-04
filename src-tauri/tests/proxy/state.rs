@@ -1,8 +1,8 @@
 //! Tests for proxy state management and state machine
 //!
 //! These tests verify:
-//! - ProxyState enum default, display, and transitions
-//! - ProxyStateContext lifecycle and counters
+//! - `ProxyState` enum default, display, and transitions
+//! - `ProxyStateContext` lifecycle and counters
 //! - State machine validation logic
 //! - Serialization/deserialization
 

@@ -18,18 +18,16 @@ fn test_weak_password_audit_logging() {
     let logger = AuditLogger::new(true);
     
     // 测试各种弱密码
-    let weak_passwords = vec![
-        "123456",
+    let weak_passwords = ["123456",
         "password",
         "12345678",
         "qwerty",
-        "abc123",
-    ];
+        "abc123"];
     
     for (i, weak_pwd) in weak_passwords.iter().enumerate() {
         logger.log_operation(
             OperationType::Add,
-            &format!("host{}.com", i),
+            &format!("host{i}.com"),
             "user",
             Some(weak_pwd),
             true,
@@ -51,16 +49,14 @@ fn test_weak_password_audit_logging() {
 fn test_strong_password_audit_logging() {
     let logger = AuditLogger::new(true);
     
-    let strong_passwords = vec![
-        "Tr0ub4dor&3!@#$%",
+    let strong_passwords = ["Tr0ub4dor&3!@#$%",
         "correct-horse-battery-staple-2024",
-        "MyP@ssw0rd!With#Numbers&Symbols",
-    ];
+        "MyP@ssw0rd!With#Numbers&Symbols"];
     
     for (i, strong_pwd) in strong_passwords.iter().enumerate() {
         logger.log_operation(
             OperationType::Add,
-            &format!("host{}.com", i),
+            &format!("host{i}.com"),
             "user",
             Some(strong_pwd),
             true,
@@ -404,7 +400,7 @@ fn test_multiple_encryption_decryption_cycles() {
         // 读取凭证
         let retrieved = store.get("github.com", Some("user"))
             .unwrap()
-            .expect(&format!("第 {} 次循环应该读取到凭证", i));
+            .unwrap_or_else(|| panic!("第 {i} 次循环应该读取到凭证"));
         
         assert_eq!(retrieved.host, "github.com");
         assert_eq!(retrieved.username, "user");
@@ -438,9 +434,9 @@ fn test_concurrent_encryption_safety() {
         let store_clone = Arc::clone(&store);
         let handle = thread::spawn(move || {
             let cred = Credential::new(
-                format!("host{}.com", i),
-                format!("user{}", i),
-                format!("password{}", i),
+                format!("host{i}.com"),
+                format!("user{i}"),
+                format!("password{i}"),
             );
             store_clone.add(cred).unwrap();
         });

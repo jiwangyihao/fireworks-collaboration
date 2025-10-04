@@ -43,7 +43,7 @@ pub trait ProxyConnector: Send + Sync {
     /// * `port` - Target port to connect to
     ///
     /// # Returns
-    /// A TCP stream connected through the proxy, or a ProxyError
+    /// A TCP stream connected through the proxy, or a `ProxyError`
     fn connect(&self, host: &str, port: u16) -> Result<TcpStream, ProxyError>;
 
     /// Get the proxy type name for logging

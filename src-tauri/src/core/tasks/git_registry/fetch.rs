@@ -167,7 +167,7 @@ impl TaskRegistry {
                         id,
                         "GitFetch",
                         categorize(&e),
-                        format!("{}", e),
+                        format!("{e}"),
                         None,
                     );
                     this.emit_error(app_ref, &err_evt);
@@ -181,7 +181,7 @@ impl TaskRegistry {
                     kind: "GitFetch".into(),
                     category: "Runtime".into(),
                     code: Some("fetch_failed".into()),
-                    message: format!("fatal: {}", e),
+                    message: format!("fatal: {e}"),
                     retried_times: None,
                 });
                 return;
@@ -203,7 +203,7 @@ impl TaskRegistry {
                             nested: opts
                                 .ignored_nested
                                 .iter()
-                                .map(|(s, k)| format!("{}.{k}", s))
+                                .map(|(s, k)| format!("{s}.{k}"))
                                 .collect(),
                         },
                     ));
@@ -313,7 +313,7 @@ impl TaskRegistry {
                         StructuredStrategyEvent::AdaptiveTlsRollout {
                             id: id.to_string(),
                             kind: "GitFetch".into(),
-                            percent_applied: percent as u8,
+                            percent_applied: percent,
                             sampled: rollout.sampled,
                         },
                     ));
@@ -364,12 +364,12 @@ impl TaskRegistry {
                     use crate::core::git::service::GitService;
                     let service = crate::core::git::DefaultGitService::new();
                     let app_for_cb = app.clone();
-                    let id_for_cb = id.clone();
+                    let id_for_cb = id;
                     service.fetch_blocking(
                         repo.as_str(),
                         &dest_path,
                         depth_applied,
-                        &*interrupt_flag,
+                        &interrupt_flag,
                         move |p| {
                             if let Some(app_ref) = &app_for_cb {
                                 let prog = TaskProgressEvent {
@@ -443,7 +443,7 @@ impl TaskRegistry {
                                 id,
                                 "GitFetch",
                                 cat,
-                                format!("{}", e),
+                                format!("{e}"),
                                 Some(attempt),
                             );
                             this.emit_error(app_ref, &err_evt);

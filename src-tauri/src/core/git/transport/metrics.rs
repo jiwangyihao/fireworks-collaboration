@@ -36,6 +36,12 @@ pub struct TimingRecorder {
     pub capture: TimingCapture,
 }
 
+impl Default for TimingRecorder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TimingRecorder {
     pub fn new() -> Self {
         Self {

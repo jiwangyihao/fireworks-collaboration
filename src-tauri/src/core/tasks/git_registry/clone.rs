@@ -176,7 +176,7 @@ impl TaskRegistry {
                             nested: opts
                                 .ignored_nested
                                 .iter()
-                                .map(|(s, k)| format!("{}.{k}", s))
+                                .map(|(s, k)| format!("{s}.{k}"))
                                 .collect(),
                         },
                     ));
@@ -311,7 +311,7 @@ impl TaskRegistry {
                         StructuredStrategyEvent::AdaptiveTlsRollout {
                             id: id.to_string(),
                             kind: "GitClone".into(),
-                            percent_applied: percent as u8,
+                            percent_applied: percent,
                             sampled: rollout.sampled,
                         },
                     ));
@@ -345,12 +345,12 @@ impl TaskRegistry {
                     use crate::core::git::service::GitService;
                     let service = crate::core::git::DefaultGitService::new();
                     let app_for_cb = app.clone();
-                    let id_for_cb = id.clone();
+                    let id_for_cb = id;
                     service.clone_blocking(
                         repo.as_str(),
                         &dest_path,
                         depth_applied,
-                        &*interrupt_flag,
+                        &interrupt_flag,
                         move |p| {
                             if let Some(app_ref) = &app_for_cb {
                                 let prog = TaskProgressEvent {
@@ -454,7 +454,7 @@ impl TaskRegistry {
                                     id,
                                     "GitClone",
                                     cat,
-                                    format!("{}", e),
+                                    format!("{e}"),
                                     Some(attempt),
                                 )
                             });

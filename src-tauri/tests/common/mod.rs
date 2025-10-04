@@ -4,9 +4,9 @@
 //! 设计目标：
 //! 1. 聚合高频测试构造/矩阵/DSL，避免在各主题测试文件中反复显式 `use crate::common::<module>`。
 //! 2. 提供 **稳定的最小 re-export 前置层 (prelude)**，后续新增辅助函数在原模块内演进，不破坏现有引用。
-//! 3. （已移除）init()/ensure_init() 兼容层，直接在需要处调用 `test_env::init_test_env()`。
+//! 3. （`已移除）init()/ensure_init()` 兼容层，直接在需要处调用 `test_env::init_test_env()`。
 //! 4. 保持向后兼容：原有 `pub mod <name>` 仍然导出，旧路径引用不受影响。
-//! 5. 与《TESTS_REFACTOR_HANDOFF.md》文档保持一致：仅在确有 ≥2 文件重复时上移抽象。
+//! 5. `与《TESTS_REFACTOR_HANDOFF.md》文档保持一致：仅在确有` ≥2 文件重复时上移抽象。
 //!
 //! 后续演进（参考技术债）：
 //! - 引入结构化事件枚举后，在 prelude 中追加 `StructuredEvent` / `EventTag` 枚举 re-export。
@@ -51,24 +51,27 @@ pub mod test_env; // 12.19: 简化 i18n fixture/translate for tests
 /// * 参数化测试名称 / slug
 /// * 去重校验（防止等价 case 重复）
 /// * 日志/调试输出聚合
+#[allow(dead_code)]
 pub trait CaseDescribe {
     fn describe(&self) -> String;
 }
 
 /// 验证一组实现 `CaseDescribe` 的 case 描述唯一性，并返回描述集合（便于后续使用）。
+#[allow(dead_code)]
 pub fn assert_unique_describe<T: CaseDescribe>(cases: &[T]) -> Vec<String> {
     use std::collections::HashSet;
     let mut set = HashSet::new();
     let mut out = Vec::with_capacity(cases.len());
     for c in cases {
         let d = c.describe();
-        assert!(set.insert(d.clone()), "duplicate describe(): {}", d);
+        assert!(set.insert(d.clone()), "duplicate describe(): {d}");
         out.push(d);
     }
     out
 }
 
 /// 将描述转为 slug：保留字母数字与 - _，其它字符替换为 '-'; 多个连续 '-' 去重。
+#[allow(dead_code)]
 pub fn describe_slug<T: CaseDescribe>(c: &T) -> String {
     let raw = c.describe();
     let mut out = String::with_capacity(raw.len());
@@ -78,11 +81,9 @@ pub fn describe_slug<T: CaseDescribe>(c: &T) -> String {
         if keep {
             out.push(ch);
             last_dash = ch == '-';
-        } else {
-            if !last_dash {
-                out.push('-');
-                last_dash = true;
-            }
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
         }
     }
     // 修剪首尾 '-'

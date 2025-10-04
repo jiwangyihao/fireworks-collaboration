@@ -155,7 +155,7 @@ impl TaskRegistry {
                                 id,
                                 "GitPush",
                                 categorize(&e),
-                                format!("{}", e),
+                                format!("{e}"),
                                 None,
                             );
                             this.emit_error(app_ref, &err_evt);
@@ -178,7 +178,7 @@ impl TaskRegistry {
                                     nested: parsed_res
                                         .ignored_nested
                                         .iter()
-                                        .map(|(s, k)| format!("{}.{k}", s))
+                                        .map(|(s, k)| format!("{s}.{k}"))
                                         .collect(),
                                 },
                             ));
@@ -210,7 +210,7 @@ impl TaskRegistry {
                                             kind: "GitPush".into(),
                                             category: "Protocol".into(),
                                             code: Some("strategy_override_conflict".into()),
-                                            message: format!("http conflict: {}", msg),
+                                            message: format!("http conflict: {msg}"),
                                             retried_times: None,
                                         };
                                         this.emit_error(app_ref, &evt);
@@ -244,7 +244,7 @@ impl TaskRegistry {
                                             kind: "GitPush".into(),
                                             category: "Protocol".into(),
                                             code: Some("strategy_override_conflict".into()),
-                                            message: format!("tls conflict: {}", msg),
+                                            message: format!("tls conflict: {msg}"),
                                             retried_times: None,
                                         };
                                         this.emit_error(app_ref, &evt);
@@ -329,7 +329,7 @@ impl TaskRegistry {
                     StructuredStrategyEvent::AdaptiveTlsRollout {
                         id: id.to_string(),
                         kind: "GitPush".into(),
-                        percent_applied: percent as u8,
+                        percent_applied: percent,
                         sampled: rollout.sampled,
                     },
                 ));
@@ -368,12 +368,11 @@ impl TaskRegistry {
                     use crate::core::git::service::GitService;
                     let service = crate::core::git::DefaultGitService::new();
                     let app_for_cb = app.clone();
-                    let id_for_cb = id.clone();
+                    let id_for_cb = id;
                     let upload_started_cb = std::sync::Arc::clone(&upload_started);
                     let creds_opt = match (username.as_deref(), password.as_deref()) {
                         (Some(u), Some(p)) if !u.is_empty() => Some((u, p)),
-                        (None, Some(p)) => Some(("x-access-token", p)),
-                        (Some(u), Some(p)) if u.is_empty() => Some(("x-access-token", p)),
+                        (_, Some(p)) => Some(("x-access-token", p)),
                         _ => None,
                     };
                     let refspecs_vec: Option<Vec<String>> = refspecs.clone();
@@ -384,8 +383,8 @@ impl TaskRegistry {
                         &dest_path,
                         remote.as_deref(),
                         refspecs_slices.as_deref(),
-                        creds_opt.map(|(u, p)| (u, p)),
-                        &*interrupt_flag,
+                        creds_opt,
+                        &interrupt_flag,
                         move |p| {
                             if p.phase == "Upload" {
                                 upload_started_cb.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -464,7 +463,7 @@ impl TaskRegistry {
                                 id,
                                 "GitPush",
                                 cat,
-                                format!("{}", e),
+                                format!("{e}"),
                                 Some(attempt),
                             );
                             this.emit_error(app_ref, &err_evt);

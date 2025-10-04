@@ -2,21 +2,21 @@
 //! 聚合测试：Git Push & Retry (Roadmap 12.9)
 //! ------------------------------------------------------------
 //! 来源文件：
-//!   - git_push.rs
-//!   - git_retry_override_event.rs
-//!   - git_retry_override_event_structured.rs
-//!   - git_retry_override_backoff.rs
+//!   - `git_push.rs`
+//!   - `git_retry_override_event.rs`
+//!   - `git_retry_override_event_structured.rs`
+//!   - `git_retry_override_backoff.rs`
 //! Cross-ref:
 //!   - `common/retry_matrix.rs` (Backoff/Policy 组合)
-//!   - `common/git_scenarios.rs` (run_push_with_retry 占位)
-//!   - `common/event_assert.rs` (expect_subsequence)
+//!   - `common/git_scenarios.rs` (`run_push_with_retry` 占位)
+//!   - `common/event_assert.rs` (`expect_subsequence`)
 //! Post-audit(v1): 初版采用模拟 push 冲突/成功逻辑；后续阶段将接入真实 Git push 结果与结构化事件 DSL，替换字符串匹配。
-//! Post-audit(v2): 本次审查：头部与 12.10/12.11 统一；确认事件子序列使用 expect_subsequence 仅锚定 attempt / result 关键字，避免未来 DSL 重构大面积改动；暂不去除字符串前缀 push: 保留语义提示。
+//! Post-audit(v2): 本次审查：头部与 12.10/12.11 统一；确认事件子序列使用 `expect_subsequence` 仅锚定 attempt / result 关键字，避免未来 DSL 重构大面积改动；暂不去除字符串前缀 push: 保留语义提示。
 //! 分区：
-//!   section_push_basic     -> 基础 push 成功/无变化占位
-//!   section_push_conflict  -> 冲突 / 耗尽 / Abort / ForceSuccessEarly
-//!   section_retry_policy   -> 不同 backoff 序列形状验证
-//!   section_retry_event    -> 事件锚点子序列验证
+//!   `section_push_basic`     -> 基础 push 成功/无变化占位
+//!   `section_push_conflict`  -> 冲突 / 耗尽 / Abort / `ForceSuccessEarly`
+//!   `section_retry_policy`   -> 不同 backoff 序列形状验证
+//!   `section_retry_event`    -> 事件锚点子序列验证
 
 use super::common::{
     event_assert::{

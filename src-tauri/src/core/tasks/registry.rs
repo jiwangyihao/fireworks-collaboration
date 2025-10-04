@@ -29,6 +29,12 @@ pub struct TaskRegistry {
         Mutex<Option<Arc<dyn crate::events::structured::EventBusAny>>>,
 }
 
+impl Default for TaskRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TaskRegistry {
     pub fn new() -> Self {
         Self {

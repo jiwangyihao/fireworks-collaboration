@@ -40,7 +40,7 @@ pub struct ProxyManager {
 }
 
 impl ProxyManager {
-    /// Create a new ProxyManager with the given configuration
+    /// Create a new `ProxyManager` with the given configuration
     pub fn new(config: ProxyConfig) -> Self {
         let state = if config.is_enabled() {
             let mut ctx = ProxyStateContext::new();
@@ -165,7 +165,7 @@ impl ProxyManager {
 
     /// Detect system proxy and return configuration if found
     ///
-    /// This is a convenience method that wraps SystemProxyDetector::detect()
+    /// This is a convenience method that wraps `SystemProxyDetector::detect()`
     pub fn detect_system_proxy() -> Option<ProxyConfig> {
         SystemProxyDetector::detect()
     }
@@ -195,9 +195,9 @@ impl ProxyManager {
     /// Get a proxy connector instance
     ///
     /// Returns the appropriate connector based on the current proxy mode:
-    /// - Off: PlaceholderConnector (direct connection)
-    /// - Http: HttpProxyConnector (P5.1)
-    /// - Socks5: PlaceholderConnector (P5.2 will implement Socks5ProxyConnector)
+    /// - Off: `PlaceholderConnector` (direct connection)
+    /// - Http: `HttpProxyConnector` (P5.1)
+    /// - Socks5: `PlaceholderConnector` (P5.2 will implement `Socks5ProxyConnector`)
     /// - System: Based on detected system proxy type
     pub fn get_connector(&self) -> Result<Box<dyn ProxyConnector>> {
         let config = self.config.read().unwrap();
@@ -254,7 +254,7 @@ impl ProxyManager {
 
     /// Record a proxy connection failure
     ///
-    /// P5.4: Integrated with FailureDetector for automatic fallback
+    /// P5.4: Integrated with `FailureDetector` for automatic fallback
     pub fn report_failure(&self, reason: &str) {
         // Update state counters
         {
@@ -312,7 +312,7 @@ impl ProxyManager {
     /// Trigger automatic fallback to direct connection
     ///
     /// Internal method called when failure rate exceeds threshold.
-    /// Emits ProxyFallbackEvent.
+    /// Emits `ProxyFallbackEvent`.
     fn trigger_automatic_fallback(&self, last_error: &str) {
         // Get failure stats
         let stats = self.failure_detector.get_stats();
@@ -399,7 +399,7 @@ impl ProxyManager {
     /// Perform a health check probe (P5.5)
     ///
     /// This should be called periodically (e.g., every 60 seconds) when in Fallback state.
-    /// Returns ProbeResult indicating success/failure/skipped.
+    /// Returns `ProbeResult` indicating success/failure/skipped.
     ///
     /// If recovery threshold is met, automatically transitions to Recovering → Enabled.
     pub fn health_check(&self) -> Result<ProbeResult> {
@@ -437,7 +437,7 @@ impl ProxyManager {
                 "www.github.com:443".to_string(),
             ),
             ProbeResult::Skipped { remaining_seconds } => ProxyHealthCheckEvent::failure(
-                format!("Cooldown not expired: {}s remaining", remaining_seconds),
+                format!("Cooldown not expired: {remaining_seconds}s remaining"),
                 self.sanitized_url(),
                 "www.github.com:443".to_string(),
             ),
@@ -471,7 +471,7 @@ impl ProxyManager {
     ///
     /// Internal method called when health check success threshold is met.
     /// Transitions state from Fallback → Recovering → Enabled.
-    /// Emits ProxyRecoveredEvent.
+    /// Emits `ProxyRecoveredEvent`.
     fn trigger_automatic_recovery(&self) -> Result<()> {
         let mut state = self.state.write().unwrap();
 
@@ -491,8 +491,7 @@ impl ProxyManager {
             state.transition(
                 StateTransition::StartRecovery,
                 Some(format!(
-                    "Health check succeeded: {} consecutive",
-                    consecutive_successes
+                    "Health check succeeded: {consecutive_successes} consecutive"
                 )),
             )?;
             tracing::debug!("State transitioned to Recovering");
@@ -502,8 +501,7 @@ impl ProxyManager {
         state.transition(
             StateTransition::CompleteRecovery,
             Some(format!(
-                "Automatic recovery: {} consecutive successes",
-                consecutive_successes
+                "Automatic recovery: {consecutive_successes} consecutive successes"
             )),
         )?;
 
@@ -575,14 +573,14 @@ impl ProxyManager {
 
     /// Force proxy fallback (P5.6 frontend command)
     ///
-    /// Alias for manual_fallback for frontend convenience
+    /// Alias for `manual_fallback` for frontend convenience
     pub fn force_fallback(&mut self, reason: &str) -> Result<()> {
         self.manual_fallback(reason)
     }
 
     /// Force proxy recovery (P5.6 frontend command)
     ///
-    /// Alias for manual_recover for frontend convenience
+    /// Alias for `manual_recover` for frontend convenience
     pub fn force_recovery(&mut self) -> Result<()> {
         self.manual_recover()
     }

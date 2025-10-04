@@ -1,8 +1,8 @@
-//! repo_factory: 高层测试仓库构造 / 结构描述 / 分支 & 历史工具。
+//! `repo_factory`: 高层测试仓库构造 / 结构描述 / 分支 & 历史工具。
 //! 改进版：
 //!  * 统一内部初始化与提交逻辑（去重）
-//!  * 提供 RepoBuilder 构建多分支 + 线性/追加提交
-//!  * 提供 RepoDescriptor 便于测试输出/快照 (branches, commits)
+//!  * 提供 `RepoBuilder` 构建多分支 + 线性/追加提交
+//!  * 提供 `RepoDescriptor` 便于测试输出/快照 (branches, commits)
 //!  * 保持向后兼容：原有 `repo_with_branches` / `repo_with_linear_commits` API 未删除
 //! 未来扩展：标签创建、复杂拓扑（分叉/合并）、基于对象计数的 shallow 验证支撑。
 
@@ -116,11 +116,9 @@ fn list_local_branches(path: &Path) -> Vec<String> {
     let branches = repo
         .branches(Some(git2::BranchType::Local))
         .expect("branches");
-    for b in branches {
-        if let Ok((branch, _ty)) = b {
-            if let Some(name) = branch.name().ok().flatten() {
-                out.push(name.to_string());
-            }
+    for b in branches.flatten() {
+        if let Some(name) = b.0.name().ok().flatten() {
+            out.push(name.to_string());
         }
     }
     out.sort();

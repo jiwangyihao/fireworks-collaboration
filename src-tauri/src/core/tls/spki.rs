@@ -26,7 +26,7 @@ pub enum SpkiError {
     Parse(String),
 }
 
-fn try_extract_spki_der<'a>(cert_der: &'a [u8]) -> Result<&'a [u8], SpkiError> {
+fn try_extract_spki_der(cert_der: &[u8]) -> Result<&[u8], SpkiError> {
     let (_, cert) =
         X509Certificate::from_der(cert_der).map_err(|e| SpkiError::Parse(e.to_string()))?;
     let spki = cert.tbs_certificate.subject_pki;

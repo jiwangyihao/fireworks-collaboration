@@ -38,7 +38,7 @@ mod helpers {
                     .args(args)
                     .status()
                     .expect("run git");
-                assert!(st.success(), "git {:?} in {:?} should succeed", args, dir);
+                assert!(st.success(), "git {args:?} in {dir:?} should succeed");
             };
             run_in(&src, &["init", "--quiet"]);
             run_in(&src, &["config", "user.email", "you@example.com"]);
@@ -84,7 +84,7 @@ mod helpers {
                     .clone()
                     .spawn_git_fetch_task(None, id, token, repo2, dest2, None);
                 wait_until_task_done(&registry_cloned, id).await;
-                let _ = handle; // 仅保持任务存活至终态，不强制 join
+                std::mem::drop(handle); // 仅保持任务存活至终态，不强制 join
                 registry_cloned
                     .snapshot(&id)
                     .map(|s| s.state)
@@ -160,18 +160,14 @@ mod section_shallow_and_ignore {
                     let st = run_fetch(Some(depth), false, false);
                     assert!(
                         matches!(st, FetchState::Ok | FetchState::Failed),
-                        "[shallow] depth={} unexpected state {:?}",
-                        depth,
-                        st
+                        "[shallow] depth={depth} unexpected state {st:?}"
                     );
                 }
                 ShallowCase::LocalIgnoreFetch { depth } => {
                     let st = run_fetch(Some(depth), false, false);
                     assert!(
                         matches!(st, FetchState::Ok | FetchState::Failed),
-                        "[ignore-fetch] depth={} unexpected state {:?}",
-                        depth,
-                        st
+                        "[ignore-fetch] depth={depth} unexpected state {st:?}"
                     );
                 }
                 _ => {}
@@ -219,9 +215,7 @@ mod section_invalid_depth {
                 let st = run_fetch(depth_opt, false, false);
                 assert!(
                     matches!(st, FetchState::Ok | FetchState::Failed),
-                    "[invalid-depth] raw={} unexpected state {:?}",
-                    raw,
-                    st
+                    "[invalid-depth] raw={raw} unexpected state {st:?}"
                 );
             }
         }

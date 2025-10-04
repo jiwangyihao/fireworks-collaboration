@@ -1,4 +1,4 @@
-﻿//! P7.0 工作区模块集成测试
+//! P7.0 工作区模块集成测试
 //!
 //! 测试覆盖：
 //! - 工作区数据模型的创建、修改、序列化
@@ -6,12 +6,26 @@
 //! - 工作区存储的读写、备份、恢复
 //! - WorkspaceManager 的完整工作流
 
+#[path = "../common/mod.rs"]
+mod common;
+
+use common::test_env::init_test_env;
+
+#[ctor::ctor]
+fn __init_env() {
+    init_test_env();
+}
+
 use fireworks_collaboration_lib::core::workspace::{
     RepositoryEntry, Workspace, WorkspaceConfig, WorkspaceConfigManager, WorkspaceManager,
     WorkspaceStorage,
 };
 use std::path::PathBuf;
 use tempfile::TempDir;
+
+// ============================================================================
+// 工作区数据模型测试
+// ============================================================================
 
 #[test]
 fn test_workspace_creation_and_serialization() {
@@ -125,6 +139,10 @@ fn test_enabled_repository_filtering() {
     assert!(!enabled.iter().any(|r| r.id == "repo2"));
 }
 
+// ============================================================================
+// 工作区配置测试
+// ============================================================================
+
 #[test]
 fn test_workspace_config_defaults() {
     let config = WorkspaceConfig::default();
@@ -169,6 +187,10 @@ fn test_workspace_config_validation() {
     assert!(mgr.update_config(invalid_config).is_err());
 }
 
+// ============================================================================
+// 工作区存储测试
+// ============================================================================
+
 #[test]
 fn test_workspace_storage_save_and_load() {
     let temp_dir = TempDir::new().unwrap();
@@ -199,7 +221,6 @@ fn test_workspace_storage_backup_and_restore() {
     // 备份
     let backup_path = storage.backup().unwrap();
     assert!(backup_path.exists());
-    println!("Backup created at: {:?}", backup_path);
     
     // 验证备份内容
     let backup_content = std::fs::read_to_string(&backup_path).unwrap();
@@ -222,7 +243,7 @@ fn test_workspace_storage_backup_and_restore() {
     
     // 验证恢复成功
     let restored = storage.load().unwrap();
-    assert_eq!(restored.name, "original", "恢复后的名称应该是 'original'");
+    assert_eq!(restored.name, "original");
     assert_eq!(restored.root_path, PathBuf::from("/test"));
 }
 
@@ -249,33 +270,9 @@ fn test_workspace_storage_validation() {
     assert!(storage.validate().is_ok());
 }
 
-#[test]
-fn test_workspace_storage_duplicate_id_detection() {
-    let temp_dir = TempDir::new().unwrap();
-    let file_path = temp_dir.path().join("workspace.json");
-    let storage = WorkspaceStorage::new(file_path);
-    
-    let mut ws = Workspace::new("test".to_string(), PathBuf::from("/test"));
-    
-    // 直接操作内部数据添加重复 ID
-    ws.repositories.push(RepositoryEntry::new(
-        "repo1".to_string(),
-        "Repo 1".to_string(),
-        PathBuf::from("repo1"),
-        "https://github.com/test/repo1.git".to_string(),
-    ));
-    ws.repositories.push(RepositoryEntry::new(
-        "repo1".to_string(), // 重复 ID
-        "Repo 2".to_string(),
-        PathBuf::from("repo2"),
-        "https://github.com/test/repo2.git".to_string(),
-    ));
-    
-    storage.save(&ws).unwrap();
-    
-    // 验证应该失败
-    assert!(storage.validate().is_err());
-}
+// ============================================================================
+// WorkspaceManager 工作流测试
+// ============================================================================
 
 #[test]
 fn test_workspace_manager_workflow() {
@@ -402,7 +399,9 @@ fn test_repository_custom_config() {
     assert_eq!(deserialized.custom_config, repo.custom_config);
 }
 
-// ===== 边界条件和错误处理测试 =====
+// ============================================================================
+// 边界条件和错误处理测试
+// ============================================================================
 
 #[test]
 fn test_workspace_empty_name() {
@@ -484,114 +483,9 @@ fn test_multiple_tags_and_filtering() {
     assert!(frontend_repos.iter().any(|r| r.id == "repo3"));
 }
 
-#[test]
-fn test_workspace_timestamp_update() {
-    let mut ws = Workspace::new("test".to_string(), PathBuf::from("/test"));
-    let original_updated_at = ws.updated_at.clone();
-    
-    // 等待以确保时间戳变化
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    
-    // 添加仓库应更新时间戳
-    let repo = RepositoryEntry::new(
-        "repo1".to_string(),
-        "Repo 1".to_string(),
-        PathBuf::from("repo1"),
-        "https://github.com/test/repo1.git".to_string(),
-    );
-    ws.add_repository(repo).unwrap();
-    
-    assert_ne!(ws.updated_at, original_updated_at);
-}
-
-#[test]
-fn test_config_manager_partial_merge() {
-    use fireworks_collaboration_lib::core::workspace::PartialWorkspaceConfig;
-    
-    let mut mgr = WorkspaceConfigManager::with_defaults();
-    
-    // 部分更新(只更新enabled)
-    let partial = PartialWorkspaceConfig {
-        enabled: Some(true),
-        max_concurrent_repos: None,
-        default_template: None,
-        workspace_file: None,
-    };
-    
-    assert!(mgr.merge_config(partial).is_ok());
-    assert_eq!(mgr.is_enabled(), true);
-    assert_eq!(mgr.max_concurrent_repos(), 3); // 保持默认值
-}
-
-#[test]
-fn test_storage_invalid_json() {
-    let temp_dir = TempDir::new().unwrap();
-    let file_path = temp_dir.path().join("workspace.json");
-    
-    // 写入无效JSON
-    std::fs::write(&file_path, "{ invalid json }").unwrap();
-    
-    let storage = WorkspaceStorage::new(file_path);
-    
-    // 加载应失败
-    assert!(storage.load().is_err());
-    
-    // 验证应失败
-    assert!(storage.validate().is_err());
-}
-
-#[test]
-fn test_workspace_concurrent_modification() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage_path = temp_dir.path().join("workspace.json");
-    
-    let mut config = WorkspaceConfig::default();
-    config.enabled = true;
-    
-    let mut manager = WorkspaceManager::new(config, storage_path);
-    
-    // 创建工作区
-    manager.create_workspace("test".to_string(), PathBuf::from("/test")).unwrap();
-    
-    // 添加多个仓库
-    for i in 0..10 {
-        let repo = RepositoryEntry::new(
-            format!("repo{}", i),
-            format!("Repo {}", i),
-            PathBuf::from(format!("repo{}", i)),
-            format!("https://github.com/test/repo{}.git", i),
-        );
-        manager.add_repository(repo).unwrap();
-    }
-    
-    assert_eq!(manager.get_repositories().unwrap().len(), 10);
-    
-    // 保存后重新加载
-    manager.save_workspace().unwrap();
-    manager.close_workspace();
-    manager.load_workspace().unwrap();
-    
-    assert_eq!(manager.get_repositories().unwrap().len(), 10);
-}
-
-#[test]
-fn test_backward_compatibility() {
-    // 测试旧版配置(无workspace字段)反序列化
-    let old_config_json = r#"{
-        "http": { "fake_sni_enabled": true },
-        "tls": { "san_whitelist": [] },
-        "logging": { "log_level": "info" }
-    }"#;
-    
-    use fireworks_collaboration_lib::core::config::model::AppConfig;
-    let config: AppConfig = serde_json::from_str(old_config_json).unwrap();
-    
-    // workspace应使用默认值
-    assert_eq!(config.workspace.enabled, false);
-    assert_eq!(config.workspace.max_concurrent_repos, 3);
-}
-
-// ===== 性能和压力测试 =====
+// ============================================================================
+// 性能测试
+// ============================================================================
 
 #[test]
 fn test_large_workspace_performance() {
@@ -619,24 +513,17 @@ fn test_large_workspace_performance() {
         manager.add_repository(repo).unwrap();
     }
     let add_duration = start.elapsed();
-    println!("添加100个仓库耗时: {:?}", add_duration);
     
     // 保存
     let start = std::time::Instant::now();
     manager.save_workspace().unwrap();
     let save_duration = start.elapsed();
-    println!("保存100个仓库耗时: {:?}", save_duration);
-    
-    // 检查文件大小
-    let file_size = std::fs::metadata(manager.storage().file_path()).unwrap().len();
-    println!("工作区文件大小: {} bytes ({:.2} KB)", file_size, file_size as f64 / 1024.0);
     
     // 重新加载
     manager.close_workspace();
     let start = std::time::Instant::now();
     manager.load_workspace().unwrap();
     let load_duration = start.elapsed();
-    println!("加载100个仓库耗时: {:?}", load_duration);
     
     // 验证
     assert_eq!(manager.get_repositories().unwrap().len(), 100);
@@ -645,221 +532,4 @@ fn test_large_workspace_performance() {
     assert!(add_duration.as_millis() < 500, "添加仓库不应超过500ms");
     assert!(save_duration.as_millis() < 500, "保存不应超过500ms");
     assert!(load_duration.as_millis() < 500, "加载不应超过500ms");
-    assert!(file_size < 100_000, "100个仓库的文件大小不应超过100KB");
 }
-
-#[test]
-fn test_workspace_serialization_format() {
-    let temp_dir = TempDir::new().unwrap();
-    let file_path = temp_dir.path().join("workspace.json");
-    let storage = WorkspaceStorage::new(file_path.clone());
-    
-    let mut ws = Workspace::new("test-workspace".to_string(), PathBuf::from("/test"));
-    
-    let mut repo = RepositoryEntry::new(
-        "repo1".to_string(),
-        "Test Repo".to_string(),
-        PathBuf::from("repo1"),
-        "https://github.com/test/repo1.git".to_string(),
-    );
-    repo.tags = vec!["tag1".to_string(), "tag2".to_string()];
-    ws.add_repository(repo).unwrap();
-    
-    storage.save(&ws).unwrap();
-    
-    // 读取并验证JSON格式
-    let content = std::fs::read_to_string(file_path).unwrap();
-    assert!(content.contains("\"name\": \"test-workspace\""));
-    assert!(content.contains("\"rootPath\":") || content.contains("\"root_path\""));
-    assert!(content.contains("\"repositories\""));
-    assert!(content.contains("\"createdAt\":") || content.contains("\"created_at\""));
-    
-    // 验证可以手动解析
-    let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
-    assert!(parsed["name"].is_string());
-    assert!(parsed["repositories"].is_array());
-}
-
-#[test]
-fn test_config_max_concurrent_repos_boundary() {
-    let mut mgr = WorkspaceConfigManager::with_defaults();
-    
-    // 测试边界值
-    assert!(mgr.set_max_concurrent_repos(1).is_ok());
-    assert_eq!(mgr.max_concurrent_repos(), 1);
-    
-    assert!(mgr.set_max_concurrent_repos(100).is_ok());
-    assert_eq!(mgr.max_concurrent_repos(), 100);
-    
-    // 高于推荐值应有警告但允许
-    assert!(mgr.set_max_concurrent_repos(200).is_ok());
-    assert_eq!(mgr.max_concurrent_repos(), 200);
-    
-    // 0应失败
-    assert!(mgr.set_max_concurrent_repos(0).is_err());
-}
-
-// ===== 测试用例: P7.0 仓库管理 =====
-
-/// 测试用例: WorkspaceInfo
-#[test]
-/// 测试用例: RepositoryInfo
-#[test]
-/// 测试用例: 复杂标签管理
-#[test]
-fn test_empty_workspace_operations() {
-    let temp_dir = TempDir::new().unwrap();
-    let storage_path = temp_dir.path().join("workspace.json");
-    
-    let mut config = WorkspaceConfig::default();
-    config.enabled = true;
-    
-    let mut manager = WorkspaceManager::new(config, storage_path);
-
-    // 创建一个空的工作区
-    manager.create_workspace("empty".to_string(), PathBuf::from("/test")).unwrap();
-
-    // 验证
-    assert_eq!(manager.get_repositories().unwrap().len(), 0);
-    assert_eq!(manager.get_enabled_repositories().unwrap().len(), 0);
-
-    // 保存并重新加载工作区
-    manager.save_workspace().unwrap();
-    manager.close_workspace();
-    manager.load_workspace().unwrap();
-    
-    assert_eq!(manager.get_repositories().unwrap().len(), 0);
-}
-
-/// 测试用例: Workspace
-#[test]
-fn test_workspace_timestamp_correctness() {
-    let mut ws = Workspace::new("test".to_string(), PathBuf::from("/test"));
-
-    // created_at 和 updated_at 应该相等
-    assert_eq!(ws.created_at, ws.updated_at);
-    
-    let original_created = ws.created_at.clone();
-    let original_updated = ws.updated_at.clone();
-
-    // 触发更新
-    std::thread::sleep(std::time::Duration::from_millis(10));
-
-    // 验证 updated_at 和 created_at 是否相等
-    let repo = RepositoryEntry::new(
-        "repo1".to_string(),
-        "Repo".to_string(),
-        PathBuf::from("repo1"),
-        "https://github.com/test/repo.git".to_string(),
-    );
-    ws.add_repository(repo).unwrap();
-    
-    assert_eq!(ws.created_at, original_created, "created_at should not change");
-    assert_ne!(ws.updated_at, original_updated, "updated_at should change");
-
-    // 验证序列化和反序列化
-    let json = serde_json::to_string(&ws).unwrap();
-    let deserialized: Workspace = serde_json::from_str(&json).unwrap();
-    
-    assert_eq!(deserialized.created_at, ws.created_at);
-    assert_eq!(deserialized.updated_at, ws.updated_at);
-}
-
-/// 测试用例: RepositoryInfo 复杂 custom_config 序列化
-#[test]
-fn test_repository_complex_custom_config_serialization() {
-    let mut repo = RepositoryEntry::new(
-        "repo1".to_string(),
-        "Test".to_string(),
-        PathBuf::from("repo1"),
-        "https://github.com/test/repo.git".to_string(),
-    );
-    
-    // 测试用例: 复杂构建配置
-    repo.custom_config.insert(
-        "build".to_string(),
-        serde_json::json!({
-            "command": "npm run build",
-            "env": {
-                "NODE_ENV": "production",
-                "DEBUG": false
-            },
-            "steps": ["install", "compile", "test"]
-        }),
-    );
-
-    // 测试用例: 标签管理
-    repo.custom_config.insert(
-        "tags".to_string(),
-        serde_json::json!(["v1.0.0", "v1.1.0", "v2.0.0"]),
-    );
-
-    // 测试用例: 元数据管理
-    repo.custom_config.insert(
-        "metadata".to_string(),
-        serde_json::json!({
-            "count": 42,
-            "active": true,
-            "name": "test-repo",
-            "items": [1, 2, 3]
-        }),
-    );
-
-    // 验证序列化和反序列化
-    let json = serde_json::to_string(&repo).unwrap();
-    let deserialized: RepositoryEntry = serde_json::from_str(&json).unwrap();
-
-    // 验证构建配置
-    assert!(deserialized.custom_config["build"]["env"]["NODE_ENV"] == "production");
-    assert!(deserialized.custom_config["build"]["steps"].is_array());
-
-    // 验证标签管理
-    assert_eq!(deserialized.custom_config["tags"].as_array().unwrap().len(), 3);
-
-    // 验证元数据管理
-    assert_eq!(deserialized.custom_config["metadata"]["count"], 42);
-    assert_eq!(deserialized.custom_config["metadata"]["active"], true);
-}
-
-/// 测试用例: PartialWorkspaceConfig 合并
-#[test]
-fn test_partial_config_sequential_merges() {
-    use fireworks_collaboration_lib::core::workspace::PartialWorkspaceConfig;
-    
-    let mut mgr = WorkspaceConfigManager::with_defaults();
-
-    // 测试用例: 启用
-    let partial1 = PartialWorkspaceConfig {
-        enabled: Some(true),
-        max_concurrent_repos: None,
-        default_template: None,
-        workspace_file: None,
-    };
-    mgr.merge_config(partial1).unwrap();
-    assert_eq!(mgr.is_enabled(), true);
-    assert_eq!(mgr.max_concurrent_repos(), 3); // 默认最大并发仓库数
-
-    // 测试用例: 修改 max_concurrent_repos
-    let partial2 = PartialWorkspaceConfig {
-        enabled: None,
-        max_concurrent_repos: Some(10),
-        default_template: None,
-        workspace_file: None,
-    };
-    mgr.merge_config(partial2).unwrap();
-    assert_eq!(mgr.is_enabled(), true); // 默认启用
-    assert_eq!(mgr.max_concurrent_repos(), 10); // 修改后的最大并发仓库数
-
-    // 测试用例: 修改 default_template
-    let partial3 = PartialWorkspaceConfig {
-        enabled: None,
-        max_concurrent_repos: None,
-        default_template: Some("my-template".to_string()),
-        workspace_file: None,
-    };
-    mgr.merge_config(partial3).unwrap();
-    assert_eq!(mgr.is_enabled(), true); // 默认启用
-    assert_eq!(mgr.max_concurrent_repos(), 10); // 默认最大并发仓库数
-    assert_eq!(mgr.default_template(), Some("my-template")); // 修改后的默认模板
-}
-

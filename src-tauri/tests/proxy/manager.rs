@@ -413,7 +413,7 @@ fn test_proxy_manager_multiple_config_updates() {
     for i in 0..5 {
         let config = ProxyConfig {
             mode: ProxyMode::Http,
-            url: format!("http://proxy{}.example.com:8080", i),
+            url: format!("http://proxy{i}.example.com:8080"),
             ..Default::default()
         };
 
@@ -503,7 +503,7 @@ fn test_proxy_manager_multithreaded_config_switching() {
     let mut handles = vec![];
     for i in 0..10 {
         let manager_clone = Arc::clone(&manager);
-        let url = format!("http://proxy{}.example.com:8080", i);
+        let url = format!("http://proxy{i}.example.com:8080");
         let handle = thread::spawn(move || {
             let config = ProxyConfig {
                 mode: ProxyMode::Http,
@@ -951,7 +951,7 @@ fn test_concurrent_fallback_requests() {
     for i in 0..10 {
         let manager_clone = Arc::clone(&manager);
         let handle = thread::spawn(move || {
-            let _ = manager_clone.manual_fallback(&format!("Concurrent {}", i));
+            let _ = manager_clone.manual_fallback(&format!("Concurrent {i}"));
         });
         handles.push(handle);
     }

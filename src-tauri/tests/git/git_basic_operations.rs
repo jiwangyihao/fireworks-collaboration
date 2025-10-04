@@ -1,7 +1,7 @@
 #![cfg(not(feature = "tauri-app"))]
 //! Git 基础操作综合测试
-//! 合并了 git_clone_core.rs, git_init_and_repo_structure.rs,
-//! git_clone_partial_filter.rs, git_fetch_partial_filter.rs
+//! 合并了 `git_clone_core.rs`, `git_init_and_repo_structure.rs`,
+//! `git_clone_partial_filter.rs`, `git_fetch_partial_filter.rs`
 
 // ============================================================================
 // git_clone_core.rs 的测试
@@ -153,7 +153,6 @@ mod clone_partial_filter {
         CloneParams {
             depth,
             filter: Some(format!("filter:{label}")),
-            ..Default::default()
         }
     }
 
@@ -292,7 +291,7 @@ mod fetch_partial_filter {
             let label_opt = build_label(&case);
             let params = FetchParams {
                 depth: case.depth,
-                filter: label_opt.map(|l| format!("filter:{}", l)),
+                filter: label_opt.map(|l| format!("filter:{l}")),
             };
             let events = run_fetch(&params).events;
             assert!(
@@ -300,12 +299,12 @@ mod fetch_partial_filter {
                 "[fetch_capability] events non-empty for {case}"
             );
             let f_label = label_opt.unwrap_or("");
-            let out = assess_partial_filter(&format!("filter:{}", f_label), case.depth, &events);
+            let out = assess_partial_filter(&format!("filter:{f_label}"), case.depth, &events);
             if matches!(out.support, SupportLevel::Unsupported) {
                 panic!("[fetch_capability] case {case} unexpectedly Unsupported");
             }
             if label_opt.is_some() {
-                warn_if_no_filter_marker("fetch_capability", &format!("filter:{}", f_label), &out);
+                warn_if_no_filter_marker("fetch_capability", &format!("filter:{f_label}"), &out);
             }
         }
     }
@@ -328,7 +327,7 @@ mod fetch_partial_filter {
             let label_opt = build_label(&case);
             let params = FetchParams {
                 depth: None,
-                filter: label_opt.map(|l| format!("filter:{}", l)),
+                filter: label_opt.map(|l| format!("filter:{l}")),
             };
             let events = run_fetch(&params).events;
             assert!(
@@ -336,8 +335,7 @@ mod fetch_partial_filter {
                 "[fetch_variants] events non-empty for {kind:?}"
             );
             let filter_expr = label_opt
-                .as_deref()
-                .map(|l| format!("filter:{}", l))
+                .map(|l| format!("filter:{l}"))
                 .unwrap_or_else(|| "".into());
             let out = assess_partial_filter(&filter_expr, None, &events);
             if matches!(
@@ -371,7 +369,7 @@ mod fetch_partial_filter {
             let label_opt = build_label(&case);
             let params = FetchParams {
                 depth: case.depth,
-                filter: label_opt.map(|l| format!("filter:{}", l)),
+                filter: label_opt.map(|l| format!("filter:{l}")),
             };
             let events = run_fetch(&params).events;
             assert!(
@@ -379,7 +377,7 @@ mod fetch_partial_filter {
                 "[fetch_depth] events non-empty for {kind:?}"
             );
             let label = label_opt.unwrap();
-            let out = assess_partial_filter(&format!("filter:{}", label), case.depth, &events);
+            let out = assess_partial_filter(&format!("filter:{label}"), case.depth, &events);
             if matches!(
                 out.support,
                 SupportLevel::Unsupported | SupportLevel::Invalid
@@ -389,7 +387,7 @@ mod fetch_partial_filter {
                     out.support
                 );
             }
-            warn_if_no_filter_marker("fetch_depth", &format!("filter:{}", label), &out);
+            warn_if_no_filter_marker("fetch_depth", &format!("filter:{label}"), &out);
             expect_optional_tags_subsequence(&events, &["fetch"]);
         }
     }
@@ -405,7 +403,7 @@ mod fetch_partial_filter {
         let label_opt = build_label(&case);
         let params = FetchParams {
             depth: None,
-            filter: label_opt.map(|l| format!("filter:{}", l)),
+            filter: label_opt.map(|l| format!("filter:{l}")),
         };
         let events = run_fetch(&params).events;
         assert!(!events.is_empty(), "[fetch_invalid] events non-empty");

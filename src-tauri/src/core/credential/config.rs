@@ -7,8 +7,10 @@ use serde::{Deserialize, Serialize};
 /// 凭证存储类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum StorageType {
     /// 系统钥匙串（macOS Keychain、Windows Credential Manager、Linux Secret Service）
+    #[default]
     System,
     /// 加密文件存储
     File,
@@ -16,11 +18,6 @@ pub enum StorageType {
     Memory,
 }
 
-impl Default for StorageType {
-    fn default() -> Self {
-        StorageType::System
-    }
-}
 
 /// 凭证管理配置
 #[derive(Debug, Clone, Serialize, Deserialize)]

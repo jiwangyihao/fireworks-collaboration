@@ -168,7 +168,7 @@ fn test_parse_proxy_url_port_overflow() {
 #[test]
 fn test_connector_with_very_long_url() {
     let long_host = "a".repeat(255);
-    let url = format!("socks5://{}:1080", long_host);
+    let url = format!("socks5://{long_host}:1080");
     let connector = Socks5ProxyConnector::new(url, None, None, Duration::from_secs(30));
     assert!(connector.is_ok());
 }
@@ -467,7 +467,7 @@ fn test_username_password_auth_length_limits() {
 fn test_connect_request_domain_length() {
     // 测试域名长度限制（SOCKS5 域名长度字段为 u8，最大 255）
     let long_domain = "a".repeat(250);
-    let url = format!("socks5://{}:1080", long_domain);
+    let url = format!("socks5://{long_domain}:1080");
 
     let connector = Socks5ProxyConnector::new(url, None, None, Duration::from_secs(30)).unwrap();
 

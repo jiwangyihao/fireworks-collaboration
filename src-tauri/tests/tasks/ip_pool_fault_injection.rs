@@ -53,8 +53,8 @@ fn base_effective_config() -> EffectiveIpPoolConfig {
 ///
 /// 验证：
 /// - 候选耗尽后回退到系统 DNS
-/// - 记录 IpPoolSelection 事件且 strategy=SystemDefault
-/// - report_outcome 记录失败次数
+/// - 记录 `IpPoolSelection` 事件且 strategy=SystemDefault
+/// - `report_outcome` 记录失败次数
 #[test]
 fn fault_ip_unavailable_falls_back_to_system() {
     let base_dir = create_empty_dir();
@@ -207,7 +207,7 @@ fn fault_config_hot_reload_disables_ip_pool() {
 ///
 /// 验证：
 /// - 连续失败达到阈值后触发熔断
-/// - 记录 IpPoolIpTripped 事件
+/// - 记录 `IpPoolIpTripped` 事件
 /// - 后续请求跳过熔断的 IP
 #[test]
 fn fault_circuit_breaker_trips_after_failures() {
@@ -252,7 +252,7 @@ fn fault_circuit_breaker_trips_after_failures() {
 ///
 /// 验证：
 /// - 黑名单中的 IP 不会被使用
-/// - 记录 IpPoolCidrFilter 事件
+/// - 记录 `IpPoolCidrFilter` 事件
 #[test]
 fn fault_blacklist_filters_candidates() {
     let base_dir = create_empty_dir();
@@ -371,7 +371,7 @@ fn fault_whitelist_allows_only_listed_ips() {
 
     // 如果白名单过滤成功，应该只有一个候选可用
     // 实际行为取决于实现，这里主要验证不会崩溃
-    println!("Selection: {:?}", selection);
+    println!("Selection: {selection:?}");
 
     stop_flag.store(true, Ordering::Relaxed);
 

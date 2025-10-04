@@ -17,7 +17,7 @@ pub struct HttpCfg {
     /// 在服务端返回 403 时，是否尝试切换到其他 SNI 候选并自动重试（仅限 info/refs GET 阶段）
     #[serde(default = "default_true")]
     pub sni_rotate_on_403: bool,
-    /// P3.1: 渐进放量百分比 (0..=100)。缺省 100 表示全量启用；0 表示禁用（等价 fake_sni_enabled=false）。
+    /// P3.1: 渐进放量百分比 (0..=100)。缺省 100 表示全量启用；0 表示禁用（等价 `fake_sni_enabled=false`）。
     #[serde(default = "default_rollout_percent")]
     pub fake_sni_rollout_percent: u8,
     /// P3.1: 附加允许进入自适应 TLS (Fake SNI) 采样的域名白名单（不自动加入 SAN 校验白名单，仅用于改写判定）。

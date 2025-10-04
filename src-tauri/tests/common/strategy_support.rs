@@ -1,5 +1,5 @@
-//! strategy_support: helper utilities for emitting strategy-related structured events during tests.
-//! Migrated from core.registry.git.test_support to keep production crate free of test-only helpers.
+//! `strategy_support`: helper utilities for emitting strategy-related structured events during tests.
+//! Migrated from `core.registry.git.test_support` to keep production crate free of test-only helpers.
 #![allow(dead_code)]
 
 use fireworks_collaboration_lib::core::config::model::AppConfig;
@@ -150,7 +150,7 @@ pub fn test_emit_clone_with_override(
                 kind: "GitClone".into(),
                 category: "Protocol".into(),
                 code: Some("strategy_override_conflict".into()),
-                message: format!("http conflict: {}", msg),
+                message: format!("http conflict: {msg}"),
                 retried_times: None,
             };
             emit_all(&AppHandle, EV_ERROR, &evt);
@@ -188,7 +188,7 @@ pub fn test_emit_clone_with_override(
                 kind: "GitClone".into(),
                 category: "Protocol".into(),
                 code: Some("strategy_override_conflict".into()),
-                message: format!("tls conflict: {}", msg),
+                message: format!("tls conflict: {msg}"),
                 retried_times: None,
             };
             emit_all(&AppHandle, EV_ERROR, &evt);

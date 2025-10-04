@@ -149,16 +149,6 @@ required-features = []
 # 独立测试文件（tests/ 根目录下的测试）
 
 [[test]]
-name = "http_adaptive_tls"
-path = "tests/http_adaptive_tls.rs"
-required-features = []
-
-[[test]]
-name = "tasks_helpers"
-path = "tests/tasks_helpers.rs"
-required-features = []
-
-[[test]]
 name = "core"
 path = "tests/core.rs"
 required-features = []
@@ -168,41 +158,13 @@ name = "config"
 path = "tests/config.rs"
 required-features = []
 
-[[test]]
-name = "http"
-path = "tests/http.rs"
-required-features = []
-
-[[test]]
-name = "ip_pool"
-path = "tests/ip_pool.rs"
-required-features = []
-
-[[test]]
-name = "proxy_commands"
-path = "tests/proxy_commands.rs"
-required-features = []
-
-[[test]]
-name = "proxy_recovery"
-path = "tests/proxy_recovery.rs"
-required-features = []
-
-[[test]]
-name = "proxy_transport_integration"
-path = "tests/proxy_transport_integration.rs"
-required-features = []
-
-[[test]]
-name = "system_proxy_detection_integration"
-path = "tests/system_proxy_detection_integration.rs"
-required-features = []
-
 # Benchmark配置
 [[bench]]
 name = "credential_benchmark"
 harness = false
+required-features = ["bench"]
 
 [[bench]]
 name = "event_throughput"
 harness = false
+required-features = ["bench"]

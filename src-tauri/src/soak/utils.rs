@@ -48,7 +48,7 @@ pub fn build_runtime() -> Result<Runtime> {
         .map_err(|e| anyhow!(e))
 }
 
-/// Convert SystemTime to Unix timestamp in seconds.
+/// Convert `SystemTime` to Unix timestamp in seconds.
 pub fn system_time_to_unix(t: SystemTime) -> u64 {
     t.duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| Duration::from_secs(0))
@@ -88,7 +88,7 @@ pub fn chrono_like_timestamp() -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| Duration::from_secs(0))
         .as_secs();
-    format!("{}", secs)
+    format!("{secs}")
 }
 
 /// Load baseline report from JSON file.

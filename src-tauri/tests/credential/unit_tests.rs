@@ -204,7 +204,7 @@ fn test_logger_clone() {
 
     let logger2 = logger1.clone();
     assert_eq!(logger2.event_count(), 1);
-    assert_eq!(logger2.is_audit_mode(), true);
+    assert!(logger2.is_audit_mode());
 }
 
 #[test]
@@ -219,7 +219,7 @@ fn test_concurrent_logging() {
             logger_clone.log_operation(
                 OperationType::Add,
                 "github.com",
-                &format!("user{}", i),
+                &format!("user{i}"),
                 None,
                 true,
                 None,
@@ -231,7 +231,7 @@ fn test_concurrent_logging() {
         logger.log_operation(
             OperationType::Get,
             "github.com",
-            &format!("user{}", i),
+            &format!("user{i}"),
             None,
             true,
             None,
@@ -300,7 +300,7 @@ fn test_display_format() {
         "secret_token_123456".to_string(),
     );
 
-    let display = format!("{}", cred);
+    let display = format!("{cred}");
     assert!(display.contains("github.com"));
     assert!(display.contains("testuser"));
     assert!(!display.contains("secret_token_123456"));
@@ -315,7 +315,7 @@ fn test_debug_format() {
         "secret_token_123456".to_string(),
     );
 
-    let debug = format!("{:?}", cred);
+    let debug = format!("{cred:?}");
     assert!(debug.contains("github.com"));
     assert!(debug.contains("testuser"));
     assert!(!debug.contains("secret_token_123456"));
@@ -740,8 +740,8 @@ fn test_memory_store_list() {
 
     for i in 0..5 {
         let cred = Credential::new(
-            format!("host{}.com", i),
-            format!("user{}", i),
+            format!("host{i}.com"),
+            format!("user{i}"),
             "password".to_string(),
         );
         store.add(cred).unwrap();
@@ -794,8 +794,8 @@ fn test_memory_store_concurrent_access() {
         let store_clone = Arc::clone(&store);
         let handle = thread::spawn(move || {
             let cred = Credential::new(
-                format!("host{}.com", i),
-                format!("user{}", i),
+                format!("host{i}.com"),
+                format!("user{i}"),
                 "password".to_string(),
             );
             store_clone.add(cred).unwrap();
@@ -855,7 +855,7 @@ mod windows_keychain_tests {
         let result = WindowsCredentialStore::new();
         match result {
             Ok(_) => println!("Windows Credential Manager available"),
-            Err(e) => println!("Windows Credential Manager unavailable: {}", e),
+            Err(e) => println!("Windows Credential Manager unavailable: {e}"),
         }
     }
 

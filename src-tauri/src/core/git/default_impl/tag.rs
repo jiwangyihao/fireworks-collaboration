@@ -13,7 +13,7 @@ use super::refname::validate_tag_name;
 /// Supports lightweight and annotated tags.
 /// Rules:
 /// - dest must be a git repo (.git present) else Protocol.
-/// - tag name validated via validate_tag_name.
+/// - tag name validated via `validate_tag_name`.
 /// - annotated=true requires non-empty trimmed message; lightweight ignores message.
 /// - repository must have a HEAD commit (no unborn HEAD) else Protocol.
 /// - existing tag:
@@ -22,7 +22,8 @@ use super::refname::validate_tag_name;
 ///         - lightweight: 更新 refs/tags/<name> 指向新的 HEAD 提交（不创建 tag 对象）
 ///         - annotated: 创建新的 tag 对象（新 OID），并更新引用指向新对象（旧对象可被 GC 回收）
 /// - cancellation checked early and right before mutation.
-/// Progress: single final progress event phase = "Tagged" or "AnnotatedTagged" (both for create / force overwrite).
+///
+/// Progress: single final progress event phase = "Tagged" or "`AnnotatedTagged`" (both for create / force overwrite).
 pub fn git_tag<F: FnMut(ProgressPayload)>(
     dest: &Path,
     name: &str,
@@ -69,7 +70,7 @@ pub fn git_tag<F: FnMut(ProgressPayload)>(
         return Err(GitError::new(ErrorCategory::Cancel, "user canceled"));
     }
 
-    let existing_ref = repo.find_reference(&format!("refs/tags/{}", tag_name)).ok();
+    let existing_ref = repo.find_reference(&format!("refs/tags/{tag_name}")).ok();
     if existing_ref.is_some() && !force {
         return Err(GitError::new(ErrorCategory::Protocol, "tag already exists"));
     }
@@ -103,7 +104,7 @@ pub fn git_tag<F: FnMut(ProgressPayload)>(
         // 统一尾部空行：裁剪末尾空白后，若原本非空且不以换行结尾，补一个换行；若已多余换行，压缩为恰好一个结尾换行
         let trimmed_end = msg.trim_end();
         if !trimmed_end.is_empty() {
-            msg = format!("{}\n", trimmed_end);
+            msg = format!("{trimmed_end}\n");
         }
         // 若是 force 且已有引用，尝试复用：比较现有 tag 对象内容（目标 commit、消息、tagger）一致则不创建新对象
         let mut reused = false;
@@ -132,11 +133,7 @@ pub fn git_tag<F: FnMut(ProgressPayload)>(
                 })?;
         }
         let phase = if existing_ref.is_some() && force {
-            if reused {
-                "AnnotatedRetagged"
-            } else {
-                "AnnotatedRetagged"
-            }
+            "AnnotatedRetagged"
         } else {
             "AnnotatedTagged"
         };
@@ -164,7 +161,7 @@ pub fn git_tag<F: FnMut(ProgressPayload)>(
                 })?;
         } else {
             repo.reference(
-                &format!("refs/tags/{}", tag_name),
+                &format!("refs/tags/{tag_name}"),
                 target_commit.id(),
                 force,
                 "create tag",

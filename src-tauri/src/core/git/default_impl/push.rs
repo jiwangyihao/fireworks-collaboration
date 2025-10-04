@@ -36,13 +36,13 @@ pub fn do_push<F: FnMut(ProgressPayload)>(
         Err(e) => {
             return Err(GitError::new(
                 helpers::map_git2_error(&e),
-                format!("open repo: {}", e),
+                format!("open repo: {e}"),
             ))
         }
     };
 
     let cfg = crate::core::config::loader::load_or_init()
-        .map_err(|e| GitError::new(ErrorCategory::Internal, format!("load config: {}", e)))?;
+        .map_err(|e| GitError::new(ErrorCategory::Internal, format!("load config: {e}")))?;
     if let Err(e) = ensure_registered(&cfg) {
         return Err(GitError::new(
             ErrorCategory::Internal,
@@ -114,7 +114,7 @@ pub fn do_push<F: FnMut(ProgressPayload)>(
                         Err(e) => {
                             return Err(GitError::new(
                                 helpers::map_git2_error(&e),
-                                format!("remote anonymous with rewritten url: {}", e),
+                                format!("remote anonymous with rewritten url: {e}"),
                             ))
                         }
                     }
@@ -128,7 +128,7 @@ pub fn do_push<F: FnMut(ProgressPayload)>(
         Err(e) => {
             return Err(GitError::new(
                 helpers::map_git2_error(&e),
-                format!("find remote '{}': {}", remote_name, e),
+                format!("find remote '{remote_name}': {e}"),
             ))
         }
     };
@@ -138,14 +138,14 @@ pub fn do_push<F: FnMut(ProgressPayload)>(
 
     // 设置线程局部 Authorization 头
     if let Some((user, pass)) = creds {
-        let token = format!("{}:{}", user, pass);
+        let token = format!("{user}:{pass}");
         let enc = BASE64.encode(token.as_bytes());
-        set_push_auth_header_value(Some(format!("Basic {}", enc)));
+        set_push_auth_header_value(Some(format!("Basic {enc}")));
     } else {
         set_push_auth_header_value(None);
     }
 
-    let specs: Vec<&str> = refspecs.map(|s| s.to_vec()).unwrap_or_else(|| Vec::new());
+    let specs: Vec<&str> = refspecs.map(|s| s.to_vec()).unwrap_or_default();
     let push_res = if specs.is_empty() {
         remote.push(&[] as &[&str], Some(&mut po))
     } else {

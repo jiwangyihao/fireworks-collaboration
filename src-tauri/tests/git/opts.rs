@@ -101,8 +101,7 @@ fn test_invalid_filters_variants() {
         let err = parse_depth_filter_opts(None, Some(f.into()), None).unwrap_err();
         assert!(
             err.to_string().contains("unsupported filter"),
-            "{} should be rejected",
-            f
+            "{f} should be rejected"
         );
     }
 }
@@ -229,8 +228,7 @@ fn test_strategy_override_mixed_multiple_errors_reports_first() {
     // Implementation detail may validate http first; accept either violation text.
     assert!(
         msg.contains("retry.max") || msg.contains("http.maxRedirects"),
-        "error message should contain one of the violations, got: {}",
-        msg
+        "error message should contain one of the violations, got: {msg}"
     );
 }
 

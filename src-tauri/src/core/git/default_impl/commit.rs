@@ -17,9 +17,10 @@ pub struct Author<'a> {
 /// Rules:
 /// - dest must be a git repo (dest/.git exists) -> else Protocol.
 /// - message trimmed non-empty else Protocol.
-/// - If no staged changes compared to HEAD and allow_empty==false -> Protocol (empty commit rejected).
+/// - If no staged changes compared to HEAD and `allow_empty==false` -> Protocol (empty commit rejected).
 /// - If HEAD absent (first commit) and index empty -> same empty check applies.
 /// - author defaults to repository signature (from config); if provided missing name or email -> Protocol.
+///
 /// Cancellation checked at key points (before heavy diff / before write).
 pub fn git_commit<F: FnMut(ProgressPayload)>(
     dest: &Path,

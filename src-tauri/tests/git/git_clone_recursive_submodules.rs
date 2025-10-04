@@ -1,7 +1,7 @@
 #![cfg(not(feature = "tauri-app"))]
 //! 递归克隆子模块集成测试
 //!
-//! 测试 P7.1 TaskKind::GitClone 的 recurse_submodules 参数
+//! 测试 P7.1 `TaskKind::GitClone` 的 `recurse_submodules` 参数
 
 use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
 use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
@@ -102,7 +102,7 @@ async fn test_clone_with_recurse_submodules_parameter() {
     assert_eq!(snapshot.state, TaskState::Completed);
 }
 
-/// 测试 TaskKind::GitClone 的序列化包含 recurse_submodules 字段
+/// 测试 `TaskKind::GitClone` 的序列化包含 `recurse_submodules` 字段
 #[test]
 fn test_git_clone_task_kind_serde_with_recurse_submodules() {
     // 测试序列化
@@ -116,9 +116,9 @@ fn test_git_clone_task_kind_serde_with_recurse_submodules() {
     };
     
     let json = serde_json::to_string(&task).unwrap();
-    eprintln!("Serialized JSON: {}", json);  // Debug output
+    eprintln!("Serialized JSON: {json}");  // Debug output
     assert!(json.contains("recurseSubmodules") || json.contains("recurse_submodules"), 
-        "JSON should contain recurseSubmodules field: {}", json);
+        "JSON should contain recurseSubmodules field: {json}");
     assert!(json.contains("true"));
     
     // 测试反序列化
@@ -130,7 +130,7 @@ fn test_git_clone_task_kind_serde_with_recurse_submodules() {
     }
 }
 
-/// 测试 TaskKind::GitClone 默认值向后兼容(缺少字段时默认为 false)
+/// 测试 `TaskKind::GitClone` 默认值向后兼容(缺少字段时默认为 false)
 #[test]
 fn test_git_clone_backward_compatible_default() {
     // 旧版 JSON 格式(不含 recurseSubmodules 字段)

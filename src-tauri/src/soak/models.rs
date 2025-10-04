@@ -13,7 +13,7 @@ pub struct SoakThresholds {
     pub min_ip_pool_refresh_success_rate: f64,
     /// Maximum allowed auto-disable triggers during the soak window.
     pub max_auto_disable_triggered: u64,
-    /// Minimum required GitClone total latency improvement (p50) versus基线（若提供）。
+    /// Minimum required `GitClone` total latency improvement (p50) versus基线（若提供）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_latency_improvement: Option<f64>,
 }
@@ -316,21 +316,19 @@ pub fn build_comparison_summary(
         regression_flags.push("success_rate.pass_regressed".to_string());
     }
     if success_rate_delta < -0.0001 {
-        regression_flags.push(format!("success_rate.decreased({:.4})", success_rate_delta));
+        regression_flags.push(format!("success_rate.decreased({success_rate_delta:.4})"));
     }
     if baseline.thresholds.fake_fallback_rate.pass && !current.thresholds.fake_fallback_rate.pass {
         regression_flags.push("fake_fallback_rate.pass_regressed".to_string());
     }
     if fake_fallback_rate_delta > 0.0001 {
         regression_flags.push(format!(
-            "fake_fallback_rate.increased({:.4})",
-            fake_fallback_rate_delta
+            "fake_fallback_rate.increased({fake_fallback_rate_delta:.4})"
         ));
     }
     if auto_disable_triggered_delta > 0 {
         regression_flags.push(format!(
-            "auto_disable.triggered_increase({})",
-            auto_disable_triggered_delta
+            "auto_disable.triggered_increase({auto_disable_triggered_delta})"
         ));
     }
 
@@ -356,7 +354,7 @@ pub fn build_comparison_summary(
         git_clone_total_p50_improvement,
     ) {
         if improvement + 1e-6 < expected {
-            regression_flags.push(format!("latency_improvement.decreased({:.4})", improvement));
+            regression_flags.push(format!("latency_improvement.decreased({improvement:.4})"));
         }
     }
 

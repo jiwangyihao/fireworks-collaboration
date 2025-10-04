@@ -1,10 +1,4 @@
-//! Integration tests for proxy recovery functionality (P5.5)
-//!
-//! These tests verify the complete fallback → recovery flow including:
-//! - Automatic fallback triggering
-//! - Cooldown period enforcement
-//! - Health check execution
-//! - Automatic recovery based on different strategies
+//! P5.5 Proxy Recovery Tests (integrated from `proxy_recovery.rs`)
 
 use fireworks_collaboration_lib::core::config::model::AppConfig;
 use fireworks_collaboration_lib::core::proxy::{ProxyConfig, ProxyManager, ProxyMode, ProxyState};
@@ -161,11 +155,7 @@ fn test_fallback_resets_recovery_state() {
     let second_cooldown = manager.remaining_cooldown_seconds();
 
     // Both cooldowns should be roughly equal (within a few seconds)
-    let diff = if first_cooldown > second_cooldown {
-        first_cooldown - second_cooldown
-    } else {
-        second_cooldown - first_cooldown
-    };
+    let diff = first_cooldown.abs_diff(second_cooldown);
 
     assert!(diff <= 5, "Cooldown should be reset on new fallback");
 }
@@ -271,10 +261,6 @@ fn test_app_config_integration() {
     let _ = manager.manual_recover();
     assert_eq!(manager.state(), ProxyState::Enabled);
 }
-
-// ============================================================================
-// P5.5 Configuration Enhancement Tests
-// ============================================================================
 
 #[test]
 fn test_custom_probe_url_configuration() {
@@ -463,13 +449,13 @@ fn test_probe_url_with_different_ports() {
         let mut config = ProxyConfig::default();
         config.mode = ProxyMode::Http;
         config.url = "http://proxy.example.com:8080".to_string();
-        config.probe_url = format!("example.com:{}", port);
+        config.probe_url = format!("example.com:{port}");
         config.recovery_cooldown_seconds = 0;
 
         let manager = ProxyManager::new(config);
 
         // Should work with any valid port
-        let _ = manager.manual_fallback(&format!("Test port {}", port));
+        let _ = manager.manual_fallback(&format!("Test port {port}"));
         assert_eq!(manager.state(), ProxyState::Fallback);
 
         let result = manager.health_check();

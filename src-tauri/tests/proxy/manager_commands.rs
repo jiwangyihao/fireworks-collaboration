@@ -1,7 +1,7 @@
-//! Tests for P5.6 proxy commands and events
+//! P5.6 Proxy Commands and Events Tests (integrated from `proxy_commands.rs`)
 
 use fireworks_collaboration_lib::core::proxy::{
-    ProxyConfig, ProxyManager, ProxyMode, ProxyStateEvent, SystemProxyDetector,
+    ProxyConfig, ProxyManager, ProxyMode, ProxyState, ProxyStateEvent, SystemProxyDetector,
 };
 
 #[test]
@@ -23,8 +23,6 @@ fn test_detect_system_proxy_returns_option() {
 
 #[test]
 fn test_proxy_state_event_basic_creation() {
-    use fireworks_collaboration_lib::core::proxy::ProxyState;
-
     let event = ProxyStateEvent::new(
         ProxyState::Disabled,
         ProxyState::Enabled,
@@ -40,8 +38,6 @@ fn test_proxy_state_event_basic_creation() {
 
 #[test]
 fn test_proxy_state_event_extended_creation() {
-    use fireworks_collaboration_lib::core::proxy::ProxyState;
-
     let event = ProxyStateEvent::new_extended(
         ProxyState::Enabled,
         ProxyState::Fallback,
@@ -119,8 +115,6 @@ fn test_proxy_manager_force_recovery() {
 
 #[test]
 fn test_proxy_state_event_serialization() {
-    use fireworks_collaboration_lib::core::proxy::ProxyState;
-
     let event = ProxyStateEvent::new_extended(
         ProxyState::Disabled,
         ProxyState::Enabled,
@@ -177,8 +171,6 @@ fn test_proxy_config_validation_with_debug_logging() {
 
 #[test]
 fn test_proxy_state_event_all_fields_serialization() {
-    use fireworks_collaboration_lib::core::proxy::ProxyState;
-
     // Create event with all optional fields populated
     let event = ProxyStateEvent::new_extended(
         ProxyState::Enabled,
@@ -220,8 +212,6 @@ fn test_proxy_state_event_all_fields_serialization() {
 
 #[test]
 fn test_proxy_state_event_deserialization() {
-    use fireworks_collaboration_lib::core::proxy::ProxyState;
-
     let json_str = r#"{
         "previousState": "disabled",
         "currentState": "enabled",
@@ -257,8 +247,6 @@ fn test_proxy_state_event_deserialization() {
 
 #[test]
 fn test_proxy_state_event_optional_fields_none() {
-    use fireworks_collaboration_lib::core::proxy::ProxyState;
-
     // Create event with minimal fields (all optionals = None)
     let event = ProxyStateEvent::new_extended(
         ProxyState::Disabled,
@@ -291,8 +279,6 @@ fn test_proxy_state_event_optional_fields_none() {
 
 #[test]
 fn test_proxy_mode_all_variants_serialization() {
-    use fireworks_collaboration_lib::core::proxy::ProxyState;
-
     let modes = vec![
         (ProxyMode::Off, "off"),
         (ProxyMode::Http, "http"),
@@ -317,8 +303,7 @@ fn test_proxy_mode_all_variants_serialization() {
         let json = serde_json::to_value(&event).expect("Should serialize");
         assert_eq!(
             json["proxyMode"], expected_str,
-            "Mode {:?} should serialize as {}",
-            mode, expected_str
+            "Mode {mode:?} should serialize as {expected_str}"
         );
     }
 }
@@ -468,16 +453,14 @@ fn test_system_proxy_detection_url_format() {
         if config.mode == ProxyMode::Http {
             assert!(
                 url.starts_with("http://") || url.starts_with("https://"),
-                "HTTP proxy URL should start with http:// or https://, got: {}",
-                url
+                "HTTP proxy URL should start with http:// or https://, got: {url}"
             );
         } else if config.mode == ProxyMode::Socks5 {
             assert!(
                 url.starts_with("socks5://")
                     || url.starts_with("socks://")
                     || !url.starts_with("http"),
-                "SOCKS5 proxy URL format should be valid, got: {}",
-                url
+                "SOCKS5 proxy URL format should be valid, got: {url}"
             );
         }
     }

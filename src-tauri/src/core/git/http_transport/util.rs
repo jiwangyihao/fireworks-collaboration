@@ -37,7 +37,7 @@ pub(super) fn parse_http_header_first_line_and_host(header: &[u8]) -> (String, S
 
 pub(super) fn log_body_preview(body: &[u8], host: &str, msg: &str) {
     let n = body.len();
-    let hex: String = body.iter().map(|b| format!("{:02x}", b)).collect();
+    let hex: String = body.iter().map(|b| format!("{b:02x}")).collect();
     let ascii = body
         .iter()
         .map(|&b| {

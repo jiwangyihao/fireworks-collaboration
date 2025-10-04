@@ -214,9 +214,10 @@ pub struct UserStaticIp {
     pub ports: Vec<u16>,
 }
 
-/// 组合后的生效配置，便于 IpPool 管理运行期与外部文件配置。
+/// 组合后的生效配置，便于 `IpPool` 管理运行期与外部文件配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub struct EffectiveIpPoolConfig {
     #[serde(default)]
     pub runtime: IpPoolRuntimeConfig,
@@ -224,14 +225,6 @@ pub struct EffectiveIpPoolConfig {
     pub file: IpPoolFileConfig,
 }
 
-impl Default for EffectiveIpPoolConfig {
-    fn default() -> Self {
-        Self {
-            runtime: IpPoolRuntimeConfig::default(),
-            file: IpPoolFileConfig::default(),
-        }
-    }
-}
 
 impl EffectiveIpPoolConfig {
     pub fn from_parts(runtime: IpPoolRuntimeConfig, file: IpPoolFileConfig) -> Self {

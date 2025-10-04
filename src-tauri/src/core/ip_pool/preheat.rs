@@ -572,10 +572,7 @@ pub(super) async fn measure_candidates(
     ttl_secs: u64,
 ) -> Vec<IpStat> {
     let max_parallel = runtime_cfg.max_parallel_probes.max(1);
-    let timeout = runtime_cfg
-        .probe_timeout_ms
-        .min(MAX_PROBE_TIMEOUT_MS)
-        .max(100);
+    let timeout = runtime_cfg.probe_timeout_ms.clamp(100, MAX_PROBE_TIMEOUT_MS);
     let semaphore = Arc::new(Semaphore::new(max_parallel));
     let mut handles = Vec::with_capacity(candidates.len());
 

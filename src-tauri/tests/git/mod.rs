@@ -4,6 +4,7 @@
 #[path = "../common/mod.rs"]
 pub(crate) mod common;
 
+mod adaptive_tls; // HTTP adaptive TLS tests (from http_adaptive_tls.rs)
 mod git_add_and_commit;
 mod git_basic_operations;
 mod git_branch_and_checkout;
@@ -16,4 +17,5 @@ mod git_push_and_retry;
 mod git_strategy_and_override;
 mod git_tag_and_remote;
 mod opts;
+mod submodule;
 mod transport;

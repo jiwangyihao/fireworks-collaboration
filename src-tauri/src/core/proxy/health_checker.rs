@@ -121,7 +121,7 @@ impl Default for HealthCheckConfig {
 }
 
 impl HealthCheckConfig {
-    /// Create from ProxyConfig
+    /// Create from `ProxyConfig`
     pub fn from_proxy_config(config: &ProxyConfig) -> Self {
         Self {
             interval_seconds: config.health_check_interval_seconds,
@@ -145,7 +145,7 @@ impl ProxyHealthChecker {
         }
     }
 
-    /// Create from ProxyConfig
+    /// Create from `ProxyConfig`
     pub fn from_proxy_config(proxy_config: &ProxyConfig) -> Self {
         Self::new(HealthCheckConfig::from_proxy_config(proxy_config))
     }
@@ -190,7 +190,7 @@ impl ProxyHealthChecker {
     /// Perform a health check probe
     ///
     /// This attempts to connect through the proxy to a known-good target.
-    /// Returns ProbeResult indicating success/failure/skipped.
+    /// Returns `ProbeResult` indicating success/failure/skipped.
     pub fn probe(&mut self, connector: &dyn ProxyConnector) -> ProbeResult {
         // Check cooldown
         if !self.is_cooldown_expired() {
@@ -210,7 +210,7 @@ impl ProxyHealthChecker {
             Err(e) => {
                 tracing::error!("Invalid probe target: {}", e);
                 return ProbeResult::Failure {
-                    error: format!("Invalid probe target: {}", e),
+                    error: format!("Invalid probe target: {e}"),
                 };
             }
         };
@@ -260,7 +260,7 @@ impl ProxyHealthChecker {
     ///
     /// Decision depends on recovery strategy:
     /// - "immediate": First success triggers recovery
-    /// - "consecutive": Need N consecutive successes (configurable via consecutive_threshold)
+    /// - "consecutive": Need N consecutive successes (configurable via `consecutive_threshold`)
     /// - "exponential-backoff": Future extension (P5.6+)
     pub fn should_recover(&self) -> bool {
         match self.config.strategy.as_str() {
@@ -326,7 +326,7 @@ impl ProxyHealthChecker {
 
             match port_str.parse::<u16>() {
                 Ok(port) => Ok((host, port)),
-                Err(_) => Err(format!("Invalid port in target: {}", port_str)),
+                Err(_) => Err(format!("Invalid port in target: {port_str}")),
             }
         } else {
             Err("Target must be in format 'host:port'".to_string())

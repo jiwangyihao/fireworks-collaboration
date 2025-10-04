@@ -213,7 +213,7 @@ impl IpHistoryStore {
         }
     }
 
-    /// Prune entries based on capacity limit (LRU-like based on measured_at).
+    /// Prune entries based on capacity limit (LRU-like based on `measured_at`).
     /// Returns the number of entries removed.
     pub fn enforce_capacity(&self, max_entries: usize) -> Result<usize> {
         let mut guard = self
@@ -241,7 +241,7 @@ impl IpHistoryStore {
     }
 
     /// Prune expired entries and enforce capacity limit.
-    /// Returns (expired_count, capacity_pruned_count).
+    /// Returns (`expired_count`, `capacity_pruned_count`).
     pub fn prune_and_enforce(
         &self,
         now_epoch_ms: i64,

@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn test_new_with_defaults() {
         let mgr = WorkspaceConfigManager::with_defaults();
-        assert_eq!(mgr.is_enabled(), false);
+        assert!(!mgr.is_enabled());
         assert_eq!(mgr.max_concurrent_repos(), 3);
         assert!(mgr.default_template().is_none());
         assert!(mgr.workspace_file().is_none());
@@ -163,12 +163,14 @@ mod tests {
     fn test_update_config() {
         let mut mgr = WorkspaceConfigManager::with_defaults();
         
-        let mut new_config = WorkspaceConfig::default();
-        new_config.enabled = true;
-        new_config.max_concurrent_repos = 5;
+        let new_config = WorkspaceConfig {
+            enabled: true,
+            max_concurrent_repos: 5,
+            ..Default::default()
+        };
 
         assert!(mgr.update_config(new_config).is_ok());
-        assert_eq!(mgr.is_enabled(), true);
+        assert!(mgr.is_enabled());
         assert_eq!(mgr.max_concurrent_repos(), 5);
     }
 
@@ -185,7 +187,7 @@ mod tests {
     fn test_set_enabled() {
         let mut mgr = WorkspaceConfigManager::with_defaults();
         mgr.set_enabled(true);
-        assert_eq!(mgr.is_enabled(), true);
+        assert!(mgr.is_enabled());
     }
 
     #[test]
@@ -220,7 +222,7 @@ mod tests {
         };
 
         assert!(mgr.merge_config(partial).is_ok());
-        assert_eq!(mgr.is_enabled(), true);
+        assert!(mgr.is_enabled());
         assert_eq!(mgr.max_concurrent_repos(), 7);
         assert_eq!(mgr.default_template(), Some("new-template"));
     }

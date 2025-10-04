@@ -36,7 +36,7 @@ pub(super) fn report_failure(
 ) {
     let category = categorize(error);
     registry.emit_error_if_app(app, || {
-        TaskErrorEvent::from_parts(*id, kind, category, format!("{}", error), attempt)
+        TaskErrorEvent::from_parts(*id, kind, category, format!("{error}"), attempt)
     });
     registry.mark_failed(app, id, fallback);
 }
@@ -108,9 +108,7 @@ impl TaskRegistry {
         filter_requested: Option<&str>,
         capability_supported: bool,
     ) -> Option<(String, bool)> {
-        if filter_requested.is_none() {
-            return None;
-        }
+        filter_requested?;
         if capability_supported {
             return None;
         }
@@ -149,8 +147,7 @@ impl TaskRegistry {
             }
             if !follow && max_r > 0 {
                 conflict = Some(format!(
-                    "followRedirects=false => force maxRedirects=0 (was {})",
-                    max_r
+                    "followRedirects=false => force maxRedirects=0 (was {max_r})"
                 ));
                 if max_r != 0 {
                     max_r = 0;

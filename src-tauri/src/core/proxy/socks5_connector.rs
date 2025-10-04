@@ -72,14 +72,14 @@ impl Socks5ProxyConnector {
     ///
     /// # 参数
     ///
-    /// * `proxy_url` - 代理服务器 URL (例如: "socks5://proxy.example.com:1080")
+    /// * `proxy_url` - 代理服务器 URL (例如: "<socks5://proxy.example.com:1080>")
     /// * `username` - 可选的认证用户名
     /// * `password` - 可选的认证密码
     /// * `timeout` - 连接超时时间
     ///
     /// # 返回
     ///
-    /// 成功时返回连接器实例，失败时返回 ProxyError
+    /// 成功时返回连接器实例，失败时返回 `ProxyError`
     pub fn new(
         proxy_url: String,
         username: Option<String>,
@@ -111,7 +111,7 @@ impl Socks5ProxyConnector {
     ///
     /// # 返回
     ///
-    /// 成功时返回 (host, port) 元组，失败时返回 ProxyError
+    /// 成功时返回 (host, port) 元组，失败时返回 `ProxyError`
     pub fn parse_proxy_url(url: &str) -> Result<(String, u16), ProxyError> {
         // 移除 scheme 前缀
         let url = url
@@ -163,7 +163,7 @@ impl Socks5ProxyConnector {
     ///
     /// # 返回
     ///
-    /// 成功时返回服务器选择的认证方法，失败时返回 ProxyError
+    /// 成功时返回服务器选择的认证方法，失败时返回 `ProxyError`
     fn negotiate_version(&self, stream: &mut TcpStream) -> Result<u8, ProxyError> {
         // 构造认证方法列表
         let mut methods = vec![AUTH_NO_AUTH];
@@ -233,7 +233,7 @@ impl Socks5ProxyConnector {
     ///
     /// # 返回
     ///
-    /// 成功时返回 Ok(())，失败时返回 ProxyError
+    /// 成功时返回 Ok(())，失败时返回 `ProxyError`
     fn authenticate_password(&self, stream: &mut TcpStream) -> Result<(), ProxyError> {
         let username = self.username.as_ref().ok_or_else(|| {
             ProxyError::config("Username required for password authentication".to_string())
@@ -308,7 +308,7 @@ impl Socks5ProxyConnector {
     ///
     /// # 返回
     ///
-    /// 成功时返回 Ok(())，失败时返回 ProxyError
+    /// 成功时返回 Ok(())，失败时返回 `ProxyError`
     fn send_connect_request(
         &self,
         stream: &mut TcpStream,
@@ -372,7 +372,7 @@ impl Socks5ProxyConnector {
     ///
     /// # 返回
     ///
-    /// 成功时返回 Ok(())，失败时返回 ProxyError
+    /// 成功时返回 Ok(())，失败时返回 `ProxyError`
     fn parse_connect_response(&self, stream: &mut TcpStream) -> Result<(), ProxyError> {
         // 读取响应头: VER | REP | RSV | ATYP
         let mut header = [0u8; 4];

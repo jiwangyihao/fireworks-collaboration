@@ -1,6 +1,6 @@
 //! Core 模块综合测试
-//! 合并了 core/app_tests.rs, core/logging_tests.rs, core/tasks/retry_tests.rs,
-//! core/tls/spki_tests.rs, core/tls/util_tests.rs
+//! 合并了 `core/app_tests.rs`, `core/logging_tests.rs`, `core/tasks/retry_tests.rs`,
+//! `core/tls/spki_tests.rs`, `core/tls/util_tests.rs`
 
 use fireworks_collaboration_lib::core::config::model::AppConfig;
 
@@ -139,7 +139,7 @@ fn test_backoff_with_jitter_range() {
     // attempt 0 base is 200, jitter ±50% => [100, 300]
     for _ in 0..20 {
         let d = backoff_delay_ms(&p, 0);
-        assert!(d >= 100 && d <= 300, "delay {} out of range", d);
+        assert!((100..=300).contains(&d), "delay {d} out of range");
     }
 }
 

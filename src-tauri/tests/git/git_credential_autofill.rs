@@ -2,12 +2,12 @@
 //! 
 //! 这些测试验证 P6.4 阶段实现的 Git URL 解析和凭证自动填充逻辑。
 //!
-//! 注意：parse_git_host 和 extract_git_host 在 git.rs 中标记为 pub(crate)，
+//! `注意：parse_git_host` 和 `extract_git_host` 在 git.rs 中标记为 pub(crate)，
 //! 但由于测试文件在不同的crate中，我们使用功能等价的本地实现进行测试。
 
 #[cfg(test)]
 mod unit_tests {
-    /// 测试 parse_git_host 函数 - HTTPS URL
+    /// 测试 `parse_git_host` 函数 - HTTPS URL
     #[test]
     fn test_parse_git_host_https() {
         // HTTPS 格式测试
@@ -19,11 +19,11 @@ mod unit_tests {
         
         for (url, expected_host) in test_cases {
             let result = parse_git_host(url);
-            assert_eq!(result.unwrap(), expected_host, "Failed to parse HTTPS URL: {}", url);
+            assert_eq!(result.unwrap(), expected_host, "Failed to parse HTTPS URL: {url}");
         }
     }
     
-    /// 测试 parse_git_host 函数 - SSH URL (git@ 格式)
+    /// 测试 `parse_git_host` 函数 - SSH URL (git@ 格式)
     #[test]
     fn test_parse_git_host_ssh_git_at() {
         let test_cases = vec![
@@ -33,11 +33,11 @@ mod unit_tests {
         
         for (url, expected_host) in test_cases {
             let result = parse_git_host(url);
-            assert_eq!(result.unwrap(), expected_host, "Failed to parse SSH git@ URL: {}", url);
+            assert_eq!(result.unwrap(), expected_host, "Failed to parse SSH git@ URL: {url}");
         }
     }
     
-    /// 测试 parse_git_host 函数 - SSH URL (ssh:// 格式)
+    /// 测试 `parse_git_host` 函数 - SSH URL (ssh:// 格式)
     #[test]
     fn test_parse_git_host_ssh_protocol() {
         let test_cases = vec![
@@ -47,7 +47,7 @@ mod unit_tests {
         
         for (url, expected_host) in test_cases {
             let result = parse_git_host(url);
-            assert_eq!(result.unwrap(), expected_host, "Failed to parse SSH protocol URL: {}", url);
+            assert_eq!(result.unwrap(), expected_host, "Failed to parse SSH protocol URL: {url}");
         }
     }
     
@@ -63,7 +63,7 @@ mod unit_tests {
         
         for url in invalid_urls {
             let result = parse_git_host(url);
-            assert!(result.is_err(), "Should reject unsupported URL: {}", url);
+            assert!(result.is_err(), "Should reject unsupported URL: {url}");
         }
     }
     
@@ -113,7 +113,7 @@ mod unit_tests {
             return Ok(host.to_string());
         }
         
-        Err(format!("Unsupported Git URL format: {}", url))
+        Err(format!("Unsupported Git URL format: {url}"))
     }
 }
 
@@ -249,14 +249,14 @@ mod integration_tests {
             .arg("remote.origin.url")
             .current_dir(repo_path)
             .output()
-            .map_err(|e| format!("Failed to run git config: {}", e))?;
+            .map_err(|e| format!("Failed to run git config: {e}"))?;
         
         if !output.status.success() {
             return Err("Failed to get remote URL".to_string());
         }
         
         let url = String::from_utf8(output.stdout)
-            .map_err(|e| format!("Invalid UTF-8 in remote URL: {}", e))?
+            .map_err(|e| format!("Invalid UTF-8 in remote URL: {e}"))?
             .trim()
             .to_string();
         
@@ -287,6 +287,6 @@ mod integration_tests {
             return Ok(host.to_string());
         }
         
-        Err(format!("Unsupported Git URL format: {}", url))
+        Err(format!("Unsupported Git URL format: {url}"))
     }
 }

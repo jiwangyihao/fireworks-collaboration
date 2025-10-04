@@ -5,7 +5,7 @@ use std::env;
 use std::sync::{Mutex, OnceLock};
 
 /// 判断是否应启用伪 SNI
-/// - cfg.http.fake_sni_enabled 为真 且 未强制 real 时，返回 true
+/// - `cfg.http.fake_sni_enabled` 为真 且 未强制 real 时，返回 true
 pub fn should_use_fake(cfg: &AppConfig, force_real: bool) -> bool {
     if force_real {
         return false;
@@ -31,7 +31,7 @@ pub fn match_domain(pattern: &str, host: &str) -> bool {
     false
 }
 
-/// 检测是否存在系统/环境代理（HTTP/HTTPS/ALL_PROXY），Windows 将在上层通过 get_system_proxy 注入，此处先检查常见环境变量。
+/// `检测是否存在系统/环境代理（HTTP/HTTPS/ALL_PROXY），Windows` 将在上层通过 `get_system_proxy` 注入，此处先检查常见环境变量。
 pub fn proxy_present() -> bool {
     let keys = [
         "HTTPS_PROXY",

@@ -157,7 +157,7 @@ impl Credential {
         } else {
             let prefix = &token[..4];
             let suffix = &token[token.len() - 4..];
-            format!("{}****{}", prefix, suffix)
+            format!("{prefix}****{suffix}")
         }
     }
 }

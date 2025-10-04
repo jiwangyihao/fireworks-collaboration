@@ -43,7 +43,7 @@
 //!
 //! - **Windows**: 使用 Credential Manager
 //! - **macOS**: 使用 Keychain
-//! - **Linux**: 使用 Secret Service (GNOME Keyring, KWallet 等)
+//! - **Linux**: 使用 Secret Service (GNOME Keyring, `KWallet` 等)
 //!
 //! # 回退行为
 //!

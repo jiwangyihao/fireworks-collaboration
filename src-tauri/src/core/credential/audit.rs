@@ -256,7 +256,7 @@ impl AuditLogger {
         // 确保日志目录存在
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
-                .map_err(|e| format!("创建日志目录失败: {}", e))?;
+                .map_err(|e| format!("创建日志目录失败: {e}"))?;
         }
 
         let mut logger = Self::new(audit_mode);
@@ -284,7 +284,7 @@ impl AuditLogger {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        format!("audit_salt_{}", now)
+        format!("audit_salt_{now}")
     }
 
     /// 计算凭证的 SHA-256 哈希摘要
@@ -297,7 +297,7 @@ impl AuditLogger {
         hasher.update(username.as_bytes());
         hasher.update(password.as_bytes());
         let result = hasher.finalize();
-        format!("{:x}", result)
+        format!("{result:x}")
     }
 
     /// 记录凭证操作
@@ -319,8 +319,8 @@ impl AuditLogger {
         success: bool,
         error: Option<String>,
     ) {
-        let credential_hash = if self.audit_mode && password.is_some() {
-            Some(self.compute_credential_hash(host, username, password.unwrap()))
+        let credential_hash = if self.audit_mode {
+            password.map(|pwd| self.compute_credential_hash(host, username, pwd))
         } else {
             None
         };
@@ -351,10 +351,10 @@ impl AuditLogger {
     /// 从文件加载审计日志
     fn load_from_file(&self, path: &Path) -> Result<(), String> {
         let content = fs::read_to_string(path)
-            .map_err(|e| format!("读取文件失败: {}", e))?;
+            .map_err(|e| format!("读取文件失败: {e}"))?;
 
         let loaded_events: Vec<AuditEvent> = serde_json::from_str(&content)
-            .map_err(|e| format!("解析JSON失败: {}", e))?;
+            .map_err(|e| format!("解析JSON失败: {e}"))?;
 
         if let Ok(mut events) = self.events.lock() {
             *events = loaded_events;
@@ -368,7 +368,7 @@ impl AuditLogger {
         // 读取现有事件
         let mut all_events = if path.exists() {
             let content = fs::read_to_string(path)
-                .map_err(|e| format!("读取文件失败: {}", e))?;
+                .map_err(|e| format!("读取文件失败: {e}"))?;
             serde_json::from_str::<Vec<AuditEvent>>(&content)
                 .unwrap_or_default()
         } else {
@@ -380,10 +380,10 @@ impl AuditLogger {
 
         // 写回文件
         let file = File::create(path)
-            .map_err(|e| format!("创建文件失败: {}", e))?;
+            .map_err(|e| format!("创建文件失败: {e}"))?;
         let writer = BufWriter::new(file);
         serde_json::to_writer_pretty(writer, &all_events)
-            .map_err(|e| format!("写入JSON失败: {}", e))?;
+            .map_err(|e| format!("写入JSON失败: {e}"))?;
 
         Ok(())
     }
@@ -424,10 +424,10 @@ impl AuditLogger {
     /// 保存事件到文件（覆盖写）
     fn save_to_file(&self, events: &[AuditEvent], path: &Path) -> Result<(), String> {
         let file = File::create(path)
-            .map_err(|e| format!("创建文件失败: {}", e))?;
+            .map_err(|e| format!("创建文件失败: {e}"))?;
         let writer = BufWriter::new(file);
         serde_json::to_writer_pretty(writer, events)
-            .map_err(|e| format!("写入JSON失败: {}", e))?;
+            .map_err(|e| format!("写入JSON失败: {e}"))?;
         Ok(())
     }
 
@@ -458,11 +458,7 @@ impl AuditLogger {
         self.access_control
             .lock()
             .map(|ac| {
-                if ac.failure_count < ac.max_failures {
-                    ac.max_failures - ac.failure_count
-                } else {
-                    0
-                }
+                ac.max_failures.saturating_sub(ac.failure_count)
             })
             .unwrap_or(0)
     }
@@ -485,7 +481,7 @@ impl AuditLogger {
     /// 导出审计日志为 JSON 格式
     pub fn export_to_json(&self) -> Result<String, String> {
         let events = self.get_events();
-        serde_json::to_string_pretty(&events).map_err(|e| format!("序列化失败: {}", e))
+        serde_json::to_string_pretty(&events).map_err(|e| format!("序列化失败: {e}"))
     }
 
     /// 获取事件数量

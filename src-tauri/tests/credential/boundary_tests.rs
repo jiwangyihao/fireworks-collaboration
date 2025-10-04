@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::fs;
 
 fn get_test_file(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("fireworks_boundary_test_{}.enc", name))
+    std::env::temp_dir().join(format!("fireworks_boundary_test_{name}.enc"))
 }
 
 fn cleanup(path: &PathBuf) {
@@ -113,7 +113,7 @@ fn test_unicode_in_all_fields() {
             password.to_string(),
         );
 
-        store.add(cred).expect(&format!("应该能添加 Unicode 凭证: {}", host));
+        store.add(cred).unwrap_or_else(|_| panic!("应该能添加 Unicode 凭证: {host}"));
 
         let retrieved = store.get(host, Some(username))
             .expect("应该能查询")
@@ -130,26 +130,24 @@ fn test_special_characters_in_credentials() {
     let store = MemoryCredentialStore::new();
 
     // 各种特殊字符组合
-    let special_chars = vec![
-        r#"<script>alert('xss')</script>"#,
+    let special_chars = [r#"<script>alert('xss')</script>"#,
         r#"'; DROP TABLE credentials; --"#,
         r#"../../../etc/passwd"#,
         r#"null\0byte"#,
         r#"line1\nline2\rline3"#,
         r#"tab\there"#,
-        "quote's and \"double\" quotes",
-    ];
+        "quote's and \"double\" quotes"];
 
     for (i, special) in special_chars.iter().enumerate() {
         let cred = Credential::new(
-            format!("host{}.com", i),
+            format!("host{i}.com"),
             special.to_string(),
             special.to_string(),
         );
 
-        store.add(cred).expect(&format!("应该能添加特殊字符凭证: {}", special));
+        store.add(cred).unwrap_or_else(|_| panic!("应该能添加特殊字符凭证: {special}"));
 
-        let retrieved = store.get(&format!("host{}.com", i), Some(special))
+        let retrieved = store.get(&format!("host{i}.com"), Some(special))
             .expect("应该能查询")
             .expect("凭证应该存在");
 
@@ -163,7 +161,7 @@ fn test_whitespace_only_credentials() {
     let store = MemoryCredentialStore::new();
 
     // 仅包含空白字符
-    let whitespace_cases = vec![
+    let whitespace_cases = [
         " ",           // 单个空格
         "  ",          // 多个空格
         "\t",          // 制表符
@@ -173,7 +171,7 @@ fn test_whitespace_only_credentials() {
 
     for (i, ws) in whitespace_cases.iter().enumerate() {
         let cred = Credential::new(
-            format!("host{}.com", i),
+            format!("host{i}.com"),
             ws.to_string(),
             ws.to_string(),
         );
@@ -182,7 +180,7 @@ fn test_whitespace_only_credentials() {
         
         // 无论是否允许，都应该行为一致
         if result.is_ok() {
-            let retrieved = store.get(&format!("host{}.com", i), Some(ws));
+            let retrieved = store.get(&format!("host{i}.com"), Some(ws));
             assert!(retrieved.is_ok());
         }
     }
@@ -258,8 +256,8 @@ fn test_encrypted_file_with_very_long_password() {
 fn test_null_bytes_in_password() {
     let store = MemoryCredentialStore::new();
 
-    // Rust 字符串可以包含 \0
-    let password_with_null = "pass\0word\0123";
+    // Rust 字符串可以包含 \0（使用十六进制转义避免误认为八进制）
+    let password_with_null = "pass\0word\x00123";
 
     let cred = Credential::new(
         "test.com".to_string(),
@@ -285,26 +283,26 @@ fn test_maximum_credentials_in_memory() {
 
     for i in 0..count {
         let cred = Credential::new(
-            format!("host{}.com", i),
-            format!("user{}", i),
-            format!("password{}", i),
+            format!("host{i}.com"),
+            format!("user{i}"),
+            format!("password{i}"),
         );
-        store.add(cred).expect(&format!("应该添加凭证 {}", i));
+        store.add(cred).unwrap_or_else(|_| panic!("应该添加凭证 {i}"));
     }
 
     let list = store.list().expect("应该列出所有凭证");
-    assert_eq!(list.len(), count, "应该有 {} 个凭证", count);
+    assert_eq!(list.len(), count, "应该有 {count} 个凭证");
 
     // 验证随机凭证仍然可访问
     let random_id = 500;
     let retrieved = store.get(
-        &format!("host{}.com", random_id),
-        Some(&format!("user{}", random_id))
+        &format!("host{random_id}.com"),
+        Some(&format!("user{random_id}"))
     )
     .expect("应该能查询")
     .expect("凭证应该存在");
 
-    assert_eq!(retrieved.password_or_token, format!("password{}", random_id));
+    assert_eq!(retrieved.password_or_token, format!("password{random_id}"));
 }
 
 #[test]
@@ -327,7 +325,7 @@ fn test_host_without_tld() {
             "pass".to_string(),
         );
 
-        store.add(cred).expect(&format!("应该能添加主机: {}", host));
+        store.add(cred).unwrap_or_else(|_| panic!("应该能添加主机: {host}"));
 
         let retrieved = store.get(host, Some("user"))
             .expect("应该能查询")
@@ -352,9 +350,9 @@ fn test_case_sensitive_credentials() {
         let cred = Credential::new(
             host.to_string(),
             username.to_string(),
-            format!("pass_{}_{}", host, username),
+            format!("pass_{host}_{username}"),
         );
-        store.add(cred).expect(&format!("应该添加: {}@{}", username, host));
+        store.add(cred).unwrap_or_else(|_| panic!("应该添加: {username}@{host}"));
     }
 
     // 验证所有凭证都独立存在（大小写敏感）
@@ -369,6 +367,6 @@ fn test_case_sensitive_credentials() {
 
         assert_eq!(retrieved.host, *host);
         assert_eq!(retrieved.username, *username);
-        assert_eq!(retrieved.password_or_token, format!("pass_{}_{}", host, username));
+        assert_eq!(retrieved.password_or_token, format!("pass_{host}_{username}"));
     }
 }

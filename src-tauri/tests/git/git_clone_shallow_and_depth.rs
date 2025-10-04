@@ -2,11 +2,11 @@
 //! 聚合测试：Git Clone Shallow & Depth
 //! -----------------------------------
 //! 精简后分区：
-//!   section_basic_shallow  -> 浅克隆 vs 全量克隆（参数化）
-//!   section_invalid_depth  -> 非法 depth 失败（矩阵循环）
-//!   section_deepen         -> 多步 deepen 序列单循环
-//!   section_local_ignore   -> 本地路径忽略 depth（clone/fetch）
-//! 已移除：file_url 占位（过时占位，等待真实支持后再引入专门测试）。
+//!   `section_basic_shallow`  -> 浅克隆 vs 全量克隆（参数化）
+//!   `section_invalid_depth`  -> 非法 depth 失败（矩阵循环）
+//!   `section_deepen`         -> 多步 deepen 序列单循环
+//!   `section_local_ignore`   -> 本地路径忽略 depth（clone/fetch）
+//! `已移除：file_url` 占位（过时占位，等待真实支持后再引入专门测试）。
 //! 抽象：helpers 模块统一构建线性仓库、执行 shallow/deepen、task 等待。
 //! 未来：
 //!   * 增加对象计数/差异断言（替换当前非严格 >= 检查）
@@ -23,7 +23,7 @@ mod helpers {
     use fireworks_collaboration_lib::core::git::{service::GitService, DefaultGitService};
     use fireworks_collaboration_lib::core::tasks::model::TaskState;
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::AtomicBool;
     use std::time::Duration;
 
@@ -35,7 +35,7 @@ mod helpers {
         b.build().path
     }
 
-    pub fn shallow_clone(origin: &PathBuf, depth: Option<u32>) -> PathBuf {
+    pub fn shallow_clone(origin: &Path, depth: Option<u32>) -> PathBuf {
         let dest = std::env::temp_dir().join(format!(
             "fwc-shallow-{}-{}",
             depth.map(|d| d.to_string()).unwrap_or("full".into()),
@@ -54,7 +54,7 @@ mod helpers {
         dest
     }
 
-    pub fn deepen_once(origin: &PathBuf, dest: &PathBuf, to: u32) {
+    pub fn deepen_once(origin: &Path, dest: &Path, to: u32) {
         let svc = DefaultGitService::new();
         let cancel = AtomicBool::new(false);
         svc.fetch_blocking(
@@ -67,10 +67,10 @@ mod helpers {
         .expect("deepen fetch");
     }
 
-    pub fn revs(dest: &PathBuf) -> u32 {
+    pub fn revs(dest: &Path) -> u32 {
         rev_count(dest)
     }
-    pub fn shallow_lines(dest: &PathBuf) -> Vec<String> {
+    pub fn shallow_lines(dest: &Path) -> Vec<String> {
         shallow_file_lines(dest)
     }
 
@@ -102,17 +102,13 @@ mod section_basic_shallow {
             let c = revs(&dest);
             if let Some(d) = depth {
                 assert!(
-                    c >= 1 && c <= 5,
-                    "[basic:{note}] depth={} commits bounds got {}",
-                    d,
-                    c
+                    (1..=5).contains(&c),
+                    "[basic:{note}] depth={d} commits bounds got {c}"
                 );
             } else {
                 assert!(
                     c >= min_commits,
-                    "[basic:{note}] expected >= {} got {}",
-                    min_commits,
-                    c
+                    "[basic:{note}] expected >= {min_commits} got {c}"
                 );
             }
         }

@@ -3,7 +3,7 @@
 //! 目的：集中列举 push/retry 相关参数组合，后续在 `git_push_and_retry.rs` 中直接引用。
 //! 范围：仅定义枚举与结构；不包含真实计时或 sleep 行为；测试中通过注入逻辑时间或 mock 计数器验证。
 //! 未来扩展：
-//!   * BackoffKind::Jitter 实现随机策略时，测试改为断言单调递增 + 上界。
+//!   * `BackoffKind::Jitter` 实现随机策略时，测试改为断言单调递增 + 上界。
 //!   * Policy 可扩展自定义策略（如指数退避上限 / 快速失败阈值）。
 //!   * 将 attempts>1 且策略=Constant 与 attempts=1 场景合并对比。
 
@@ -89,7 +89,7 @@ impl CaseDescribe for RetryCase {
 /// 返回一组代表性 retry 组合（避免组合爆炸）。
 /// 说明：
 ///   * attempts: 1 表示无重试；3 表示常见短重试；5 作为上界代表。
-///   * base_delay_ms: 按逻辑值区分（无需真实等待），事件可记录这些延迟值供断言。
+///   * `base_delay_ms`: 按逻辑值区分（无需真实等待），事件可记录这些延迟值供断言。
 ///   * backoff: 选取 Constant/Linear/Exponential；Jitter 未来添加并以属性断言。
 ///   * policy: 仅列举 None + Abort/ForceSuccessEarly 两种干扰策略代表。
 pub fn retry_cases() -> Vec<RetryCase> {
@@ -166,7 +166,7 @@ mod tests_internal {
             // 轻量趋势校验（允许 Equal 用于 Constant）。
             for w in seq.windows(2) {
                 if !matches!(c.backoff, BackoffKind::Constant) {
-                    assert!(w[1] >= w[0], "non-monotonic for {c} => {:?}", seq);
+                    assert!(w[1] >= w[0], "non-monotonic for {c} => {seq:?}");
                 }
             }
         }

@@ -1,5 +1,5 @@
-//! git_scenarios: 为 clone/fetch 等后续阶段提供高层封装入口（12.4 前置脚手架）。
-//! 当前仅放置最小 CloneParams / CloneOutcome 及 run_clone 占位，
+//! `git_scenarios`: 为 clone/fetch 等后续阶段提供高层封装入口（12.4 前置脚手架）。
+//! 当前仅放置最小 `CloneParams` / `CloneOutcome` 及 `run_clone` 占位，
 //! 后续 12.4 将在此完善远端 fixture / 事件采集 / 错误分类映射。
 
 use fireworks_collaboration_lib::core::git::service::ProgressPayload;
@@ -11,6 +11,7 @@ use crate::common::retry_matrix::{compute_backoff_sequence, PolicyOverride, Retr
 use fireworks_collaboration_lib::core::git::default_impl::clone as impl_clone;
 
 /// Git 操作类型（为 12.10 策略/override 与事件 DSL 预留）。
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GitOp {
     Clone,
@@ -37,7 +38,7 @@ pub enum PushResultKind {
     Exhausted,
 }
 
-/// Push Retry 规格（聚合测试层使用，封装底层 RetryCase + 是否模拟冲突）。
+/// Push Retry 规格（聚合测试层使用，封装底层 `RetryCase` + 是否模拟冲突）。
 #[derive(Debug, Clone, Copy)]
 pub struct PushRetrySpec {
     pub case: RetryCase,
@@ -83,17 +84,17 @@ fn build_clone_dest() -> PathBuf {
 
 /// 运行一次（模拟）push + retry：
 /// 规则：
-///  * simulate_conflict=true 时，除非策略强制提前成功/中止，否则所有尝试均视为冲突，直到耗尽 attempts -> Exhausted。
-///  * PolicyOverride::ForceSuccessEarly -> 第二次尝试直接成功（若 attempts>=2）。
-///  * PolicyOverride::AbortAfter(k) -> 第 k 次尝试开始前直接 Abort（attempts_used=k-1）。
-///  * backoff_seq = compute_backoff_sequence(case) 截取 attempts_used 长度。
+///  * `simulate_conflict=true` 时，除非策略强制提前成功/中止，否则所有尝试均视为冲突，直到耗尽 attempts -> Exhausted。
+///  * `PolicyOverride::ForceSuccessEarly` -> 第二次尝试直接成功（若 attempts>=2）。
+///  * `PolicyOverride::AbortAfter(k)` -> 第 k 次尝试开始前直接 Abort（attempts_used=k-1）。
+///  * `backoff_seq` = `compute_backoff_sequence(case)` 截取 `attempts_used` 长度。
 pub fn run_push_with_retry(spec: &PushRetrySpec) -> PushRetryOutcome {
     let mut events = vec!["push:op:Push".into()];
     let seq_full = compute_backoff_sequence(&spec.case);
     // AbortBefore: 直接中止
     if let PolicyOverride::AbortAfter(k) = spec.case.policy {
         if k > 0 {
-            events.push(format!("push:abort:before_attempt#{}", k));
+            events.push(format!("push:abort:before_attempt#{k}"));
             // 发出明确的终态 result 事件，便于 tag/终态断言
             events.push("push:result:abort".into());
             return PushRetryOutcome {
@@ -163,7 +164,7 @@ pub struct CloneOutcome {
 /// 占位：执行一次 clone。当前实现只模拟初始化（不真正远端交互），用于建立调用形状。
 /// 12.4 实际迁移时将：
 /// 1. 构造远端 fixture 仓库（或引用生成器）
-/// 2. 调用生产 git_clone 实现（尚未引入故暂留）
+/// 2. 调用生产 `git_clone` 实现（尚未引入故暂留）
 /// 3. 收集 ProgressPayload.phase 进事件向量
 /// 4. 返回错误分类给上层断言
 pub fn run_clone(params: &CloneParams) -> CloneOutcome {
@@ -226,7 +227,7 @@ pub fn assert_clone_events(label: &str, out: &CloneOutcome) {
 }
 
 // ---- Fetch (events-oriented placeholder) ----
-/// 基础 fetch 参数（保持与 CloneParams 形状相近，便于组合/迁移）。
+/// 基础 fetch 参数（保持与 `CloneParams` 形状相近，便于组合/迁移）。
 #[derive(Debug, Clone, Default)]
 #[allow(dead_code)]
 pub struct FetchParams {
@@ -250,7 +251,7 @@ pub fn run_fetch(params: &FetchParams) -> FetchOutcome {
     let mut events = Vec::new();
     events.push("fetch:Start".into());
     if let Some(depth) = params.depth {
-        events.push(format!("shallow:depth:{}", depth));
+        events.push(format!("shallow:depth:{depth}"));
     }
     if let Some(f) = &params.filter {
         if !f.is_empty() {
@@ -281,7 +282,7 @@ mod tests_scenarios_smoke {
             .find(|c| matches!(c.backoff, BackoffKind::Constant) && c.attempts >= 3)
             .expect("have constant attempts>=3 case");
         let _spec = PushRetrySpec {
-            case: case,
+            case,
             simulate_conflict: true,
         }; // underscore to silence unused var (kept for shape documentation)
         let out = run_push_with_retry(&PushRetrySpec {

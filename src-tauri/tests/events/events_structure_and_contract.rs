@@ -2,21 +2,21 @@
 //! 聚合测试：Events Structure & Contract (Roadmap 12.12)
 //! ----------------------------------------------------
 //! 迁移来源（legacy 将保留占位）：
-//!   - events_structured_basic.rs
-//!   - events_contract_snapshot.rs
-//!   - events_no_legacy_taskerror.rs
-//!   - events_task_lifecycle_structured.rs (仅结构契约/非生命周期特定片段，生命周期用例 12.13 单独聚合)
+//!   - `events_structured_basic.rs`
+//!   - `events_contract_snapshot.rs`
+//!   - `events_no_legacy_taskerror.rs`
+//!   - `events_task_lifecycle_structured.rs` (仅结构契约/非生命周期特定片段，生命周期用例 12.13 单独聚合)
 //! 分区结构：
-//!   section_schema_basic        -> 基础结构化事件发布 / snapshot / take_all
-//!   unified_basic_and_sequence  -> 基础结构化事件发布 + 最小序列锚点（Started -> RetryApplied -> Completed）
-//!   section_legacy_absence      -> 验证不再出现 legacy TaskEvent::Failed code（策略/partial 旧错误码）
-//!   section_contract_snapshot   -> JSON snapshot（精简抽样，避免冗长）
-//!   section_adaptive_tls_metrics-> 自适应 TLS 事件与指标观测
-//!   section_tls_fingerprint_log -> 证书指纹日志与结构化事件
-//!   section_tls_pin_enforcement -> Pin 校验事件与降级路径
+//!   `section_schema_basic`        -> 基础结构化事件发布 / snapshot / `take_all`
+//!   `unified_basic_and_sequence`  -> 基础结构化事件发布 + 最小序列锚点（Started -> `RetryApplied` -> Completed）
+//!   `section_legacy_absence`      -> 验证不再出现 legacy `TaskEvent::Failed` code（策略/partial 旧错误码）
+//!   `section_contract_snapshot`   -> JSON snapshot（精简抽样，避免冗长）
+//!   `section_adaptive_tls_metrics`-> 自适应 TLS 事件与指标观测
+//!   `section_tls_fingerprint_log` -> 证书指纹日志与结构化事件
+//!   `section_tls_pin_enforcement` -> Pin 校验事件与降级路径
 //! 设计说明：
 //!   * 保留最小代表性事件集合，替代原多文件重复验证。
-//!   * snapshot 采用行拼接字符串（与原 tests/events_contract_snapshot.rs 一致模式），但裁剪为核心样本，后续 schema 变更时需明确更新 expected。
+//!   * snapshot 采用行拼接字符串（与原 `tests/events_contract_snapshot.rs` 一致模式），但裁剪为核心样本，后续 schema 变更时需明确更新 expected。
 //!   * 不覆盖生命周期进度/取消分支（推迟到 12.13）。
 //! Cross-ref:
 //!   - 12.9 / 12.10 中策略与 retry 事件锚点
@@ -116,10 +116,8 @@ mod section_legacy_absence {
         let events = bus.snapshot();
         // legacy code 曾以 TaskEvent::Failed 的 code 形式出现，本组不应出现 Task::Failed 里的旧策略 code
         for e in &events {
-            if let Event::Task(TaskEvent::Failed { code, .. }) = e {
-                if let Some(c) = code {
-                    panic!("unexpected legacy style failed code present: {}", c);
-                }
+            if let Event::Task(TaskEvent::Failed { code: Some(c), .. }) = e {
+                panic!("unexpected legacy style failed code present: {c}");
             }
         }
     }
@@ -134,6 +132,7 @@ mod section_contract_snapshot {
     };
     #[test]
     fn contract_core_snapshot() {
+        #[allow(dead_code)]
         const SCHEMA_VERSION: u32 = 1; // schema 变更需显式 bump
         let samples = vec![
             Event::Task(TaskEvent::Started {
@@ -187,7 +186,7 @@ mod section_contract_snapshot {
         expect_optional_tags_subsequence(&lines_vec, &["Task", "Policy", "Transport", "Strategy"]);
         assert_unique_event_ids(&lines_vec);
         let _mapped = map_structured_events_to_type_tags(&samples);
-        assert!(SCHEMA_VERSION >= 1);
+        // SCHEMA_VERSION >= 1 是常量，已经在编译时检查
     }
 }
 

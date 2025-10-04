@@ -124,7 +124,7 @@ pub fn parse_strategy_override(
         let parsed: StrategyOverrideInput = serde_json::from_value(raw.clone()).map_err(|e| {
             GitError::new(
                 ErrorCategory::Protocol,
-                format!("invalid strategyOverride: {}", e),
+                format!("invalid strategyOverride: {e}"),
             )
         })?;
         let mut res = StrategyOverrideParseResult {
@@ -198,7 +198,7 @@ pub fn parse_strategy_override(
                 }
             }
             if let Some(base) = retry.base_ms {
-                if base < 10 || base > 60_000 {
+                if !(10..=60_000).contains(&base) {
                     return Err(GitError::new(
                         ErrorCategory::Protocol,
                         "retry.baseMs out of range (10..60000)",
@@ -263,7 +263,7 @@ pub fn parse_depth_filter_opts(
                 None => {
                     return Err(GitError::new(
                         ErrorCategory::Protocol,
-                        format!("unsupported filter: {}", f_str),
+                        format!("unsupported filter: {f_str}"),
                     ))
                 }
             }

@@ -204,7 +204,7 @@ impl SoakAggregator {
     }
 
     fn process_fallback_event(&mut self, kind: String, from: String, to: String, reason: String) {
-        let key = format!("{}:{}->{}:{}", kind, from, to, reason);
+        let key = format!("{kind}:{from}->{to}:{reason}");
         *self.fallback.counts.entry(key).or_default() += 1;
         if from == "Fake" && to == "Real" {
             self.fallback.fake_to_real += 1;

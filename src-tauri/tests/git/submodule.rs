@@ -2,6 +2,16 @@
 //!
 //! 测试子模块操作的端到端流程
 
+#[path = "../common/mod.rs"]
+mod common;
+
+use common::test_env::init_test_env;
+
+#[ctor::ctor]
+fn __init_env() {
+    init_test_env();
+}
+
 use fireworks_collaboration_lib::core::submodule::{SubmoduleConfig, SubmoduleManager};
 use git2::Repository;
 use tempfile::TempDir;

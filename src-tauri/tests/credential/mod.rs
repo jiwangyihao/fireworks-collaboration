@@ -172,12 +172,12 @@ fn test_credential_masked_display() {
     );
 
     // 测试 Display trait
-    let display = format!("{}", cred);
+    let display = format!("{cred}");
     assert!(!display.contains("ghp_1234567890abcdef"));
     assert!(display.contains("****"));
 
     // 测试 Debug trait
-    let debug = format!("{:?}", cred);
+    let debug = format!("{cred:?}");
     assert!(!debug.contains("ghp_1234567890abcdef"));
     assert!(debug.contains("****"));
 
@@ -228,21 +228,21 @@ fn test_concurrent_credential_operations() {
         let handle = thread::spawn(move || {
             // 添加凭证
             let cred = Credential::new(
-                format!("host{}.com", i),
-                format!("user{}", i),
-                format!("token{}", i),
+                format!("host{i}.com"),
+                format!("user{i}"),
+                format!("token{i}"),
             );
             store_clone.add(cred).unwrap();
 
             // 查询凭证
             let retrieved = store_clone
-                .get(&format!("host{}.com", i), Some(&format!("user{}", i)))
+                .get(&format!("host{i}.com"), Some(&format!("user{i}")))
                 .unwrap();
             assert!(retrieved.is_some());
 
             // 更新最后使用时间
             store_clone
-                .update_last_used(&format!("host{}.com", i), &format!("user{}", i))
+                .update_last_used(&format!("host{i}.com"), &format!("user{i}"))
                 .unwrap();
         });
         handles.push(handle);

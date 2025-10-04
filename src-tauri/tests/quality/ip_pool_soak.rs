@@ -188,8 +188,8 @@ fn soak_with_preheat_domains() {
         .copied()
         .unwrap_or(0);
 
-    println!("Cached selections: {}", cached_count);
-    println!("System DNS fallbacks: {}", system_count);
+    println!("Cached selections: {cached_count}");
+    println!("System DNS fallbacks: {system_count}");
 
     // 预期大部分请求使用缓存
     if view.ip_pool.selection_total > 0 {
@@ -264,8 +264,8 @@ fn soak_latency_improvement_comparison() {
 
         let improvement = (baseline_p50 - enabled_p50) / baseline_p50;
         println!("=== Latency Improvement Analysis ===");
-        println!("Baseline p50 total_ms: {:.0}", baseline_p50);
-        println!("Enabled p50 total_ms: {:.0}", enabled_p50);
+        println!("Baseline p50 total_ms: {baseline_p50:.0}");
+        println!("Enabled p50 total_ms: {enabled_p50:.0}");
         println!("Improvement: {:.2}%", improvement * 100.0);
 
         // 准入目标：≥15% 改善
@@ -340,7 +340,7 @@ fn soak_fallback_success_rate() {
         .get("SystemDefault")
         .copied()
         .unwrap_or(0);
-    println!("System DNS fallbacks: {}", system_count);
+    println!("System DNS fallbacks: {system_count}");
 
     assert!(system_count > 0, "无效域名应触发系统 DNS 回退");
 }

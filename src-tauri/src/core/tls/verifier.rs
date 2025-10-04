@@ -229,7 +229,7 @@ impl ServerCertVerifier for InsecureCertVerifier {
     }
 }
 
-/// 使用系统根证书构造 WhitelistCertVerifier 的便利函数
+/// 使用系统根证书构造 `WhitelistCertVerifier` 的便利函数
 pub fn make_whitelist_verifier(tls: &TlsCfg) -> Arc<dyn ServerCertVerifier> {
     let mut root_store = RootCertStore::empty();
     root_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
@@ -244,9 +244,9 @@ pub fn make_whitelist_verifier(tls: &TlsCfg) -> Arc<dyn ServerCertVerifier> {
 }
 
 /// 根据 TLS 配置构造合适的证书验证器：
-/// - insecure_skip_verify=true: 返回完全跳过验证的 InsecureCertVerifier
-/// - skip_san_whitelist=true: 返回仅做默认链与主机名验证的 WebPkiVerifier
-/// - 否则：返回默认链验证+SAN 白名单增强的 WhitelistCertVerifier
+/// - `insecure_skip_verify=true`: 返回完全跳过验证的 `InsecureCertVerifier`
+/// - `skip_san_whitelist=true`: 返回仅做默认链与主机名验证的 `WebPkiVerifier`
+/// - 否则：返回默认链验证+SAN 白名单增强的 `WhitelistCertVerifier`
 fn build_cert_verifier(tls: &TlsCfg, override_host: Option<String>) -> Arc<dyn ServerCertVerifier> {
     if tls.insecure_skip_verify {
         // 若用户仍希望保留白名单校验，则仅执行白名单匹配；否则完全跳过

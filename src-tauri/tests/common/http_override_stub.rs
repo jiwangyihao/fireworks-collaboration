@@ -1,5 +1,5 @@
-//! http_override_stub: 12.10 前置占位，提供 HTTP Override / Strategy Override 测试所需最小结构。
-//! 目标：统一描述 follow / max_events / idempotent 组合，生成事件向量用于早期断言。
+//! `http_override_stub`: 12.10 前置占位，提供 HTTP Override / Strategy Override 测试所需最小结构。
+//! 目标：统一描述 follow / `max_events` / idempotent 组合，生成事件向量用于早期断言。
 //! 后续替换：接入真实实现后改为调用生产接口，并返回结构化事件。
 
 use crate::common::git_scenarios::GitOp;
@@ -77,7 +77,7 @@ impl OverrideOutcome {
     }
 }
 
-/// 代表性矩阵：裁剪组合避免爆炸；保留差异来源：follow/idempotent/max_events/不同 op。
+/// `代表性矩阵：裁剪组合避免爆炸；保留差异来源：follow/idempotent/max_events/不同` op。
 pub fn http_override_cases() -> Vec<HttpOverrideCase> {
     use GitOp::{Clone, Fetch, Push};
     use IdempotentFlag::{No, Yes};
@@ -133,7 +133,7 @@ fn follow_hops(case: &HttpOverrideCase) -> usize {
         return 0;
     }
     match case.max_events {
-        MaxEventsCase::Some(n) => (n.min(3)).max(1) as usize,
+        MaxEventsCase::Some(n) => n.clamp(1, 3) as usize,
         MaxEventsCase::None => 2,
     }
 }
@@ -151,7 +151,7 @@ pub fn run_http_override(case: &HttpOverrideCase) -> OverrideOutcome {
         };
     }
     if let MaxEventsCase::Some(n) = case.max_events {
-        emit(&mut events, format!("{EV_PREFIX}:max={}", n));
+        emit(&mut events, format!("{EV_PREFIX}:max={n}"));
     }
     if matches!(case.idempotent, IdempotentFlag::Yes) {
         emit(&mut events, format!("{EV_PREFIX}:idempotent"));
@@ -159,8 +159,8 @@ pub fn run_http_override(case: &HttpOverrideCase) -> OverrideOutcome {
     let mut follow_chain = Vec::new();
     let hops = follow_hops(case);
     for i in 1..=hops {
-        let node = format!("fhop{}", i);
-        emit(&mut events, format!("http:follow:{}", node));
+        let node = format!("fhop{i}");
+        emit(&mut events, format!("http:follow:{node}"));
         follow_chain.push(node);
     }
     emit(&mut events, EV_APPLIED);

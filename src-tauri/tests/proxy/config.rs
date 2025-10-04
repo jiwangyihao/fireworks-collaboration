@@ -405,7 +405,7 @@ fn test_default_values_completeness() {
     assert_eq!(config.url, "");
     assert_eq!(config.username, None);
     assert_eq!(config.password, None);
-    assert_eq!(config.disable_custom_transport, false);
+    assert!(!config.disable_custom_transport);
     assert_eq!(config.timeout_seconds, default_timeout_seconds());
     assert_eq!(config.fallback_threshold, default_fallback_threshold());
     assert_eq!(

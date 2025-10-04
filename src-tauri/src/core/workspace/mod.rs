@@ -167,8 +167,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let storage_path = temp_dir.path().join("workspace.json");
         
-        let mut config = WorkspaceConfig::default();
-        config.enabled = true; // 启用工作区功能
+        let config = WorkspaceConfig {
+            enabled: true,
+            ..Default::default()
+        };
         
         let manager = WorkspaceManager::new(config, storage_path);
         (manager, temp_dir)

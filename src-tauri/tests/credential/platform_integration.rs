@@ -1,6 +1,6 @@
 //! 凭证存储平台集成测试
 //!
-//! 测试 CredentialStoreFactory 创建的实际存储实现，
+//! 测试 `CredentialStoreFactory` 创建的实际存储实现，
 //! 包括系统钥匙串、加密文件存储和自动回退机制。
 
 use fireworks_collaboration_lib::core::credential::{
@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime};
 
 /// 获取测试用的临时文件路径
 fn get_test_file_path(test_name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("fireworks_cred_test_{}.enc", test_name))
+    std::env::temp_dir().join(format!("fireworks_cred_test_{test_name}.enc"))
 }
 
 /// 清理测试文件
@@ -353,9 +353,9 @@ fn test_concurrent_file_store_operations() {
         let store_clone = Arc::clone(&store);
         let handle = thread::spawn(move || {
             let cred = Credential::new(
-                format!("host{}.com", i),
-                format!("user{}", i),
-                format!("token{}", i),
+                format!("host{i}.com"),
+                format!("user{i}"),
+                format!("token{i}"),
             );
 
             // 添加凭证
@@ -363,7 +363,7 @@ fn test_concurrent_file_store_operations() {
 
             // 读取凭证
             let retrieved = store_clone
-                .get(&format!("host{}.com", i), Some(&format!("user{}", i)))
+                .get(&format!("host{i}.com"), Some(&format!("user{i}")))
                 .unwrap();
             assert!(retrieved.is_some());
         });

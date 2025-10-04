@@ -21,7 +21,7 @@ fn test_credential_display_masking() {
         "super_secret_password_12345".to_string(),
     );
 
-    let display_output = format!("{}", cred);
+    let display_output = format!("{cred}");
     
     // 断言：显示输出不应包含完整密码
     assert!(!display_output.contains("super_secret_password_12345"));
@@ -43,7 +43,7 @@ fn test_credential_debug_masking() {
         "super_secret_password_12345".to_string(),
     );
 
-    let debug_output = format!("{:?}", cred);
+    let debug_output = format!("{cred:?}");
     
     // 断言：调试输出不应包含完整密码
     assert!(!debug_output.contains("super_secret_password_12345"));
@@ -331,12 +331,12 @@ fn test_credential_expiry_does_not_leak() {
     assert!(expired_cred.is_expired());
     
     // 即使过期，Display 输出也应该脱敏
-    let display = format!("{}", expired_cred);
+    let display = format!("{expired_cred}");
     assert!(!display.contains("expired_password_123"));
     assert!(display.contains("****"));
     
     // Debug 输出也应该脱敏
-    let debug = format!("{:?}", expired_cred);
+    let debug = format!("{expired_cred:?}");
     assert!(!debug.contains("expired_password_123"));
     assert!(debug.contains("****"));
 }
@@ -354,7 +354,7 @@ fn test_audit_logger_concurrent_safety() {
             logger_clone.log_operation(
                 OperationType::Add,
                 "github.com",
-                &format!("user{}", i),
+                &format!("user{i}"),
                 Some("password"),
                 true,
                 None,
@@ -366,7 +366,7 @@ fn test_audit_logger_concurrent_safety() {
         logger.log_operation(
             OperationType::Get,
             "github.com",
-            &format!("user{}", i),
+            &format!("user{i}"),
             Some("password"),
             true,
             None,
@@ -417,9 +417,9 @@ fn test_audit_logger_no_password_in_export() {
     for i in 0..10 {
         logger.log_operation(
             OperationType::Add,
-            &format!("host{}", i),
-            &format!("user{}", i),
-            Some(&format!("password{}", i)),
+            &format!("host{i}"),
+            &format!("user{i}"),
+            Some(&format!("password{i}")),
             true,
             None,
         );
@@ -429,7 +429,7 @@ fn test_audit_logger_no_password_in_export() {
     
     // 断言：导出的 JSON 不应包含任何明文密码
     for i in 0..10 {
-        assert!(!json.contains(&format!("password{}", i)));
+        assert!(!json.contains(&format!("password{i}")));
     }
     
     // 断言：应包含哈希字段

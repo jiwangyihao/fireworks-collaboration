@@ -50,17 +50,17 @@ pub enum ShallowCase {
 impl Display for ShallowCase {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            ShallowCase::Depth { depth } => write!(f, "Depth({})", depth),
-            ShallowCase::Invalid { raw, label } => write!(f, "Invalid({}, {})", raw, label),
-            ShallowCase::Deepen { from, to } => write!(f, "Deepen({}->{})", from, to),
+            ShallowCase::Depth { depth } => write!(f, "Depth({depth})"),
+            ShallowCase::Invalid { raw, label } => write!(f, "Invalid({raw}, {label})"),
+            ShallowCase::Deepen { from, to } => write!(f, "Deepen({from}->{to})"),
             ShallowCase::LocalIgnoreClone { depth } => {
-                write!(f, "LocalIgnoreClone(depth={})", depth)
+                write!(f, "LocalIgnoreClone(depth={depth})")
             }
             ShallowCase::LocalIgnoreFetch { depth } => {
-                write!(f, "LocalIgnoreFetch(depth={})", depth)
+                write!(f, "LocalIgnoreFetch(depth={depth})")
             }
             ShallowCase::FileUrlSequence { initial, second } => {
-                write!(f, "FileUrlSequence({}->{})", initial, second)
+                write!(f, "FileUrlSequence({initial}->{second})")
             }
         }
     }
@@ -96,13 +96,13 @@ impl ShallowCase {
     /// 稳定描述（可用于路径 slug / 测试名称）。
     pub fn describe(&self) -> String {
         match self {
-            ShallowCase::Depth { depth } => format!("depth-{}", depth),
-            ShallowCase::Invalid { label, .. } => format!("invalid-{}", label),
-            ShallowCase::Deepen { from, to } => format!("deepen-{}-{}", from, to),
-            ShallowCase::LocalIgnoreClone { depth } => format!("ignore-clone-{}", depth),
-            ShallowCase::LocalIgnoreFetch { depth } => format!("ignore-fetch-{}", depth),
+            ShallowCase::Depth { depth } => format!("depth-{depth}"),
+            ShallowCase::Invalid { label, .. } => format!("invalid-{label}"),
+            ShallowCase::Deepen { from, to } => format!("deepen-{from}-{to}"),
+            ShallowCase::LocalIgnoreClone { depth } => format!("ignore-clone-{depth}"),
+            ShallowCase::LocalIgnoreFetch { depth } => format!("ignore-fetch-{depth}"),
             ShallowCase::FileUrlSequence { initial, second } => {
-                format!("file-url-{}-{}", initial, second)
+                format!("file-url-{initial}-{second}")
             }
         }
     }
@@ -190,7 +190,7 @@ mod tests {
     fn deepen_from_to_invariant() {
         for c in deepen_cases() {
             if let ShallowCase::Deepen { from, to } = c {
-                assert!(from < to, "deepen from < to violated: {} >= {}", from, to);
+                assert!(from < to, "deepen from < to violated: {from} >= {to}");
             }
         }
     }
@@ -201,7 +201,7 @@ mod tests {
         for c in invalid_depth_cases() {
             if let ShallowCase::Invalid { raw, label } = c {
                 let prev = map.insert(label, raw);
-                assert!(prev.is_none(), "duplicate invalid label: {}", label);
+                assert!(prev.is_none(), "duplicate invalid label: {label}");
             }
         }
         assert_eq!(map.len(), 3);

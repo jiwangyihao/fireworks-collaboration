@@ -415,7 +415,7 @@ fn test_generate_auth_header_very_long_credentials() {
     assert!(auth_value.starts_with("Basic "));
     let base64_part = auth_value.strip_prefix("Basic ").unwrap();
     use base64::{engine::general_purpose::STANDARD, Engine};
-    let expected = STANDARD.encode(format!("{}:{}", long_user, long_pass).as_bytes());
+    let expected = STANDARD.encode(format!("{long_user}:{long_pass}").as_bytes());
     assert_eq!(base64_part, expected);
 }
 

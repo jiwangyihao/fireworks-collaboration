@@ -125,7 +125,7 @@ impl ProxyFailureDetector {
     }
 
     /// Create detector with default settings (5 min window, 20% threshold)
-    pub fn default() -> Self {
+    pub fn with_defaults() -> Self {
         Self::new(300, 0.2)
     }
 

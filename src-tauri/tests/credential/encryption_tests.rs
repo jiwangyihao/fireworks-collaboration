@@ -12,7 +12,7 @@ use std::fs;
 use std::path::PathBuf;
 
 fn get_test_file(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("fireworks_enc_test_{}.enc", name))
+    std::env::temp_dir().join(format!("fireworks_enc_test_{name}.enc"))
 }
 
 fn cleanup(path: &PathBuf) {

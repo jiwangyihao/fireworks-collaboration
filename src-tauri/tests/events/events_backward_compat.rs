@@ -2,8 +2,8 @@
 //! Event Backward Compatibility Tests (P4.4)
 //! -----------------------------------------
 //! 验证新增可选字段的向后兼容性：
-//! - ip_source, ip_latency_ms, ip_selection_stage 在 AdaptiveTlsTiming 中
-//! - ip_source, ip_latency_ms 在 AdaptiveTlsFallback 中
+//! - `ip_source`, `ip_latency_ms`, `ip_selection_stage` 在 `AdaptiveTlsTiming` 中
+//! - `ip_source`, `ip_latency_ms` 在 `AdaptiveTlsFallback` 中
 //! - 确保旧版本客户端能正常解析新事件（字段缺失时为 None）
 
 use super::common::test_env::init_test_env;

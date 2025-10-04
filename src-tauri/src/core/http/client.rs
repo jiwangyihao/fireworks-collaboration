@@ -20,7 +20,7 @@ use crate::core::tls::verifier::create_client_config;
 
 use super::types::{HttpRequestInput, HttpResponseOutput, TimingInfo};
 
-/// 内部简单 HTTP 客户端：使用手动连接 + hyper client::conn，便于自定义 SNI
+/// 内部简单 HTTP 客户端：使用手动连接 + hyper `client::conn，便于自定义` SNI
 pub struct HttpClient {
     cfg: AppConfig,
     tls: Arc<ClientConfig>,

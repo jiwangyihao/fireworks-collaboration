@@ -296,7 +296,7 @@ pub fn get_global_memory_bus() -> Option<MemoryEventBus> {
     GLOBAL_BUS.get().and_then(|b| {
         // 直接引用方式 downcast_ref
         let any_ref = b.as_ref() as &dyn Any;
-        any_ref.downcast_ref::<MemoryEventBus>().map(|m| m.clone())
+        any_ref.downcast_ref::<MemoryEventBus>().cloned()
     })
 }
 

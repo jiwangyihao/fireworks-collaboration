@@ -1,47 +1,47 @@
 #![cfg(not(feature = "tauri-app"))]
 //! 聚合测试：TaskRegistry & Git Service Progress / Cancel (Roadmap Phase 2 / v1.15)
 //! -----------------------------------------------------------------------------
-//! 计划目的：将零散 TaskRegistry 与 Git Service 相关生命周期 / 并发 / 取消 / 进度
+//! 计划目的：将零散 `TaskRegistry` 与 Git Service 相关生命周期 / 并发 / 取消 / 进度
 //! 测试集中到单一模块，降低根目录测试文件数量，统一轮询辅助与结构化分区。
 //!
 //! 迁移来源（root-level -> 本文件 sections，按附录 A.5 / A.6 顺序）：
-//!   * task_integration.rs
-//!   * task_registry_edge.rs
-//!   * task_registry_extra.rs
-//!   * task_registry_post_complete_cancel.rs
-//!   * git_tasks.rs
-//!   * git_tasks_local.rs
-//!   * git_impl_tests.rs (仅 progress / fast cancel / negotiating anchor 用例，本阶段不裁剪原文件)
+//!   * `task_integration.rs`
+//!   * `task_registry_edge.rs`
+//!   * `task_registry_extra.rs`
+//!   * `task_registry_post_complete_cancel.rs`
+//!   * `git_tasks.rs`
+//!   * `git_tasks_local.rs`
+//!   * `git_impl_tests.rs` (仅 progress / fast cancel / negotiating anchor 用例，本阶段不裁剪原文件)
 //!
 //! Section 划分（附录 B Phase 2 定义）与预期测试分布 (初始分类结果)：
-//!   section_registry_lifecycle      -> 2 tests (基本完成 & list 包含)
-//!   section_registry_cancel         -> 6 tests (正常取消 / 立即取消 / idempotent / 完成后取消语义 / 启动前取消 / registry 内 git clone token cancel)
-//!   section_registry_concurrency    -> 3 tests (多任务并行 / 高并行短任务 / 部分取消混合)
-//!   section_registry_edge           -> 3 tests (snapshot unknown / cancel unknown / list 克隆独立性)
-//!   section_service_progress        -> 5 tests (Negotiating anchor / 本地 clone progress 完整性 / fetch 更新远程引用 / registry 本地 clone / registry 本地 fetch)
-//!   section_service_cancel_fast     -> 9 tests (早期错误与快速取消合并：invalid url/scheme/path/flag cancel/ invalid repo / fast cancel fetch 等)
+//!   `section_registry_lifecycle`      -> 2 tests (基本完成 & list 包含)
+//!   `section_registry_cancel`         -> 6 tests (正常取消 / 立即取消 / idempotent / 完成后取消语义 / 启动前取消 / registry 内 git clone token cancel)
+//!   `section_registry_concurrency`    -> 3 tests (多任务并行 / 高并行短任务 / 部分取消混合)
+//!   `section_registry_edge`           -> 3 tests (snapshot unknown / cancel unknown / list 克隆独立性)
+//!   `section_service_progress`        -> 5 tests (Negotiating anchor / 本地 clone progress 完整性 / fetch 更新远程引用 / registry 本地 clone / registry 本地 fetch)
+//!   `section_service_cancel_fast`     -> 9 tests (早期错误与快速取消合并：invalid url/scheme/path/flag cancel/ invalid repo / fast cancel fetch 等)
 //!  合计预计迁移测试数: 28
 //!
 //! Metrics (Final after migration):
-//!   * Tests migrated: 28 / 28 (registry 12 + git_tasks 10 + impl progress/cancel 6)
+//!   * Tests migrated: 28 / 28 (registry 12 + `git_tasks` 10 + impl progress/cancel 6)
 //!   * File length: ~500 (< 600 目标范围内)
-//!   * Helpers unified: wait_predicate / wait_task_state / spawn_sleep_and_wait
-//!   * Root-level pruned: task_integration.rs, task_registry_edge.rs, task_registry_extra.rs, task_registry_post_complete_cancel.rs,
-//!       git_tasks.rs, git_tasks_local.rs 全部占位化
-//!   * git_impl_tests.rs 剪裁（本阶段仅搬运 progress/cancel 6 测试，估计剪裁覆盖 ~30% 行为语义；Phase 3 将继续）
+//!   * Helpers unified: `wait_predicate` / `wait_task_state` / `spawn_sleep_and_wait`
+//!   * Root-level pruned: `task_integration.rs`, `task_registry_edge.rs`, `task_registry_extra.rs`, `task_registry_post_complete_cancel.rs`,
+//!     `git_tasks.rs`, `git_tasks_local.rs` 全部占位化
+//!   * `git_impl_tests.rs` 剪裁（本阶段仅搬运 progress/cancel 6 测试，估计剪裁覆盖 ~30% 行为语义；Phase 3 将继续）
 //!
 //! 设计原则：
 //!   1. 保留原测试函数名（必要时前缀 section_ 避免冲突）便于 grep 追踪。
-//!   2. 统一轮询等待策略，减少 magic 常量分散，集中可调 TIMEOUT_MS 常量。
-//!   3. 将 Service 级别（直接 GitService 阻塞调用）与 Registry 级任务区分到不同 section，防止语义混淆。
+//!   2. 统一轮询等待策略，减少 magic 常量分散，集中可调 `TIMEOUT_MS` 常量。
+//!   3. 将 Service 级别（直接 `GitService` 阻塞调用）与 Registry 级任务区分到不同 section，防止语义混淆。
 //!   4. 早期 fail (invalid url/path) 与 fast cancel 合并因行为均 <2s 内结束，统一判定策略。
 //!   5. 暂不抽象 DSL；保持最小侵入迁移，后续 Phase 3 可评估事件断言或属性测试整合。
 //!
-//! 迁移状态标记：完成一个 section 后更新 Tests migrated 计数；最终更新文档 TESTS_REFACTOR_PLAN.md (v1.15)。
+//! 迁移状态标记：完成一个 section 后更新 Tests migrated 计数；最终更新文档 `TESTS_REFACTOR_PLAN.md` (v1.15)。
 //! 原文件在完成对应迁移后将被替换为占位 (assert!(true)) 以避免重复与后续冲突。
 //!
 //! Future TODO (post Phase 2):
-//!   * 将进度相关断言抽象为 helper (assert_progress_phases) 统一校验 Negotiating -> (Receiving)? -> Checkout -> Completed 序列允许缺失可选阶段。
+//!   * 将进度相关断言抽象为 helper (`assert_progress_phases`) 统一校验 Negotiating -> (Receiving)? -> Checkout -> Completed 序列允许缺失可选阶段。
 //!   * 对 fast fail 场景增加错误分类断言（区分 Protocol / Cancel / IO）。
 //!   * 评估将轮询超时/步长调优为指数退避降低 CI 抖动。
 
@@ -348,7 +348,7 @@ mod section_registry_edge {
 
 // ---------------- section_service_progress ----------------
 mod section_service_progress {
-    //! GitService 正常进度链路 / Negotiating / Completed
+    //! `GitService` 正常进度链路 / Negotiating / Completed
     use fireworks_collaboration_lib::core::git::service::GitService;
     use fireworks_collaboration_lib::core::git::DefaultGitService;
     use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
@@ -419,7 +419,7 @@ mod section_service_progress {
                 .args(args)
                 .status()
                 .unwrap();
-            assert!(st.success(), "git {:?} (src) should succeed", args);
+            assert!(st.success(), "git {args:?} (src) should succeed");
         };
         run_src(&["init", "--quiet"]);
         run_src(&["config", "user.email", "you@example.com"]);
@@ -520,7 +520,7 @@ mod section_service_progress {
                 .args(args)
                 .status()
                 .unwrap();
-            assert!(st.success(), "git {:?} (src) should succeed", args);
+            assert!(st.success(), "git {args:?} (src) should succeed");
         };
         run_src(&["add", "."]);
         run_src(&["commit", "-m", "more"]);

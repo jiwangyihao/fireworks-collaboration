@@ -128,7 +128,7 @@ pub fn git_add<F: FnMut(ProgressPayload)>(
         on_progress(ProgressPayload {
             task_id: uuid::Uuid::nil(),
             kind: "GitAdd".into(),
-            phase: format!("Staging {}", raw),
+            phase: format!("Staging {raw}"),
             percent: percent.min(100),
             objects: Some((i + 1) as u64),
             bytes: None,

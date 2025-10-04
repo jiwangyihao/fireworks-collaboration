@@ -34,7 +34,7 @@ impl SystemProxyDetector {
 
     /// Detect proxy from environment variables (Linux and fallback for other platforms)
     ///
-    /// Reuses the logic from tls::util::proxy_present() but also extracts the URL
+    /// Reuses the logic from `tls::util::proxy_present()` but also extracts the URL
     pub fn detect_from_env() -> Option<ProxyConfig> {
         let keys = [
             "HTTPS_PROXY",
@@ -189,7 +189,7 @@ impl SystemProxyDetector {
             ProxyMode::Http
         } else {
             // If no scheme, assume HTTP and add it
-            return Self::parse_proxy_url(&format!("http://{}", url));
+            return Self::parse_proxy_url(&format!("http://{url}"));
         };
 
         // Basic validation: ensure there's a host part after the scheme

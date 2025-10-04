@@ -2,8 +2,8 @@
 //! 聚合测试：Git Branch & Checkout
 //! --------------------------------
 //! 精简后 sections:
-//!   section_branch_create  -> 创建 / 无基提交 / invalid / force move / cancel
-//!   section_checkout_basic -> create / idempotent / 不存在/空仓/取消
+//!   `section_branch_create`  -> 创建 / 无基提交 / invalid / force move / cancel
+//!   `section_checkout_basic` -> create / idempotent / 不存在/空仓/取消
 //! 占位：delete / dirty / detached 预留最小注释，未来扩展。
 //! 优化点：
 //!   * 合并 invalid name & 扩展 invalid 列表。

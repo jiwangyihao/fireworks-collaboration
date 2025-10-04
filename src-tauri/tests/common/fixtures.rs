@@ -37,7 +37,7 @@ pub fn create_empty_dir() -> PathBuf {
     p
 }
 
-/// 通过调用生产实现的 git_init 创建一个空 git 仓库。
+/// 通过调用生产实现的 `git_init` 创建一个空 git 仓库。
 #[allow(dead_code)]
 pub fn create_empty_repo() -> TestRepo {
     let path = temp_dir();
@@ -87,7 +87,7 @@ pub fn stage_files(repo_path: &Path, files: &[(&str, &str)]) {
     index.write().unwrap();
 }
 
-/// 便捷：写入并提交一组文件（需要仓库已初始化）。返回提交是否成功 (Err 透传 GitError)。
+/// 便捷：写入并提交一组文件（需要仓库已初始化）。返回提交是否成功 (Err 透传 `GitError`)。
 /// 用途：branch/checkout 等测试快速追加提交，无需重复展开 add + commit 细节。
 #[allow(dead_code)]
 pub fn commit_files(

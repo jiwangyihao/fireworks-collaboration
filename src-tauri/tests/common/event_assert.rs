@@ -1,4 +1,4 @@
-//! event_assert: 事件断言工具（占位演进中）。
+//! `event_assert`: 事件断言工具（占位演进中）。
 //! 提供能力（当前阶段最小集合）：
 //!  - contains: 字符串事件子串存在性
 //!  - subsequence: 锚点子序列（字符串层）
@@ -112,7 +112,7 @@ where
     events.into_iter().filter_map(|e| f(e)).collect()
 }
 
-/// 标签子序列匹配（与 expect_subsequence 一致逻辑，但操作 EventTag）。
+/// 标签子序列匹配（与 `expect_subsequence` 一致逻辑，但操作 `EventTag`）。
 pub fn expect_tags_subsequence(tags: &[EventTag], anchors: &[&str]) {
     subsequence_core(tags, anchors, |t| t.as_str(), "tag")
 }
@@ -131,15 +131,12 @@ pub fn assert_terminal_exclusive(events: &[String], expected: &str, forbidden: &
     let has_expected = events.iter().any(|e| e.contains(expected));
     assert!(
         has_expected,
-        "[event-assert] expected terminal '{}' missing",
-        expected
+        "[event-assert] expected terminal '{expected}' missing"
     );
     for f in forbidden {
         assert!(
             !events.iter().any(|e| e.contains(f)),
-            "[event-assert] forbidden terminal '{}' found alongside '{}'",
-            f,
-            expected
+            "[event-assert] forbidden terminal '{f}' found alongside '{expected}'"
         );
     }
 }
@@ -175,7 +172,7 @@ where
                     .iter()
                     .skip(window_start)
                     .take(5)
-                    .map(|it| project(it))
+                    .map(&project)
                     .collect();
                 panic!(
                     "[event-assert] {kind} subsequence mismatch: missing anchor '{anchor}' at step {ai} after index {}. Context(before+after)={:?} anchors={:?}",
@@ -203,15 +200,13 @@ pub fn assert_applied_code(task_id: &str, code: &str) {
                 if id == task_id {
                     assert!(
                         applied_codes.iter().any(|c| c == code),
-                        "expected code '{}' in summary for {}",
-                        code,
-                        id
+                        "expected code '{code}' in summary for {id}"
                     );
                     return;
                 }
             }
         }
-        panic!("no summary event found for task_id={}", task_id);
+        panic!("no summary event found for task_id={task_id}");
     } else {
         panic!("no global memory bus installed");
     }
@@ -231,9 +226,7 @@ pub fn assert_no_applied_code(task_id: &str, code: &str) {
                 if id == task_id {
                     assert!(
                         !applied_codes.iter().any(|c| c == code),
-                        "unexpected code '{}' in summary for {}",
-                        code,
-                        id
+                        "unexpected code '{code}' in summary for {id}"
                     );
                     return;
                 }
@@ -259,15 +252,13 @@ pub fn assert_no_applied_codes(task_id: &str) {
                 if id == task_id {
                     assert!(
                         applied_codes.is_empty(),
-                        "expected no applied codes, but found {:?} for {}",
-                        applied_codes,
-                        id
+                        "expected no applied codes, but found {applied_codes:?} for {id}"
                     );
                     return;
                 }
             }
         }
-        panic!("no summary event found for task_id={}", task_id);
+        panic!("no summary event found for task_id={task_id}");
     } else {
         panic!("no global memory bus installed");
     }
@@ -290,8 +281,7 @@ pub fn assert_tls_applied(task_id: &str, expected: bool) {
         }
         assert_eq!(
             saw, expected,
-            "tls applied expectation mismatch for {}",
-            task_id
+            "tls applied expectation mismatch for {task_id}"
         );
     } else {
         panic!("no global memory bus installed");
@@ -315,8 +305,7 @@ pub fn assert_http_applied(task_id: &str, expected: bool) {
         }
         assert_eq!(
             saw, expected,
-            "http applied expectation mismatch for {}",
-            task_id
+            "http applied expectation mismatch for {task_id}"
         );
     } else {
         panic!("no global memory bus installed");
@@ -332,7 +321,7 @@ pub fn assert_no_conflict(task_id: &str) {
         for e in bus.snapshot() {
             if let Event::Strategy(StrategyEvent::Conflict { id, .. }) = e {
                 if id == task_id {
-                    panic!("unexpected conflict event for {}", task_id);
+                    panic!("unexpected conflict event for {task_id}");
                 }
             }
         }
@@ -360,9 +349,7 @@ pub fn assert_conflict_kind(task_id: &str, _domain: &str, expect_contains: Optio
             let m = msg.unwrap_or_else(|| "".into());
             assert!(
                 m.contains(expect),
-                "expected conflict message to contain '{}' but got '{}'",
-                expect,
-                m
+                "expected conflict message to contain '{expect}' but got '{m}'"
             );
         }
     } else {
@@ -454,12 +441,10 @@ pub mod structured_ext {
                     if let Some((variant_name, variant_v)) = obj.iter().next() {
                         // 取首个 variant
                         if let Some(id) = variant_v.get("id").and_then(|idv| idv.as_str()) {
-                            let key = format!("{}::{}::{}", ty, variant_name, id);
+                            let key = format!("{ty}::{variant_name}::{id}");
                             assert!(
                                 ids.insert(key.clone()),
-                                "duplicate event key detected: {} (line {})",
-                                key,
-                                idx
+                                "duplicate event key detected: {key} (line {idx})"
                             );
                         }
                     }

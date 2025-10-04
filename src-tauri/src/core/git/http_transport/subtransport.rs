@@ -548,7 +548,7 @@ impl CustomHttpsSubtransport {
         match final_result {
             Ok(stage_ok) => {
                 if let Some(certs) = stage_ok.stream.conn.peer_certificates() {
-                    if let Some((changed, _spki, _cert)) = record_certificate(host, &certs[..]) {
+                    if let Some((changed, _spki, _cert)) = record_certificate(host, certs) {
                         if changed {
                             tl_set_cert_fp_changed(true);
                         }

@@ -30,10 +30,10 @@ impl TaskRegistry {
             let dest_path = std::path::PathBuf::from(dest.clone());
             let res: Result<(), GitError> = {
                 let app_for_cb = app.clone();
-                let id_for_cb = id.clone();
+                let id_for_cb = id;
                 crate::core::git::default_impl::init::git_init(
                     &dest_path,
-                    &*interrupt_flag,
+                    &interrupt_flag,
                     move |_p| {
                         if let Some(app_ref) = &app_for_cb {
                             let prog = TaskProgressEvent {
@@ -95,11 +95,11 @@ impl TaskRegistry {
             let ref_slices: Vec<&str> = path_vec.iter().map(|s| s.as_str()).collect();
             let res: Result<(), GitError> = {
                 let app_for_cb = app.clone();
-                let id_for_cb = id.clone();
+                let id_for_cb = id;
                 crate::core::git::default_impl::add::git_add(
                     &dest_path,
                     &ref_slices,
-                    &*interrupt_flag,
+                    &interrupt_flag,
                     move |p| {
                         if let Some(app_ref) = &app_for_cb {
                             let prog = TaskProgressEvent {
@@ -162,7 +162,7 @@ impl TaskRegistry {
             let dest_path = std::path::PathBuf::from(dest.clone());
             let res: Result<(), GitError> = {
                 let app_for_cb = app.clone();
-                let id_for_cb = id.clone();
+                let id_for_cb = id;
                 let author_opt = match (author_name.as_deref(), author_email.as_deref()) {
                     (Some(n), Some(e)) => Some(crate::core::git::default_impl::commit::Author {
                         name: Some(n),
@@ -175,7 +175,7 @@ impl TaskRegistry {
                     &message,
                     author_opt,
                     allow_empty,
-                    &*interrupt_flag,
+                    &interrupt_flag,
                     move |p| {
                         if let Some(app_ref) = &app_for_cb {
                             let prog = TaskProgressEvent {
@@ -237,13 +237,13 @@ impl TaskRegistry {
             let dest_path = std::path::PathBuf::from(dest.clone());
             let res: Result<(), GitError> = {
                 let app_for_cb = app.clone();
-                let id_for_cb = id.clone();
+                let id_for_cb = id;
                 crate::core::git::default_impl::branch::git_branch(
                     &dest_path,
                     &name,
                     checkout,
                     force,
-                    &*interrupt_flag,
+                    &interrupt_flag,
                     move |p| {
                         if let Some(app_ref) = &app_for_cb {
                             let prog = TaskProgressEvent {
@@ -304,12 +304,12 @@ impl TaskRegistry {
             let dest_path = std::path::PathBuf::from(dest.clone());
             let res: Result<(), GitError> = {
                 let app_for_cb = app.clone();
-                let id_for_cb = id.clone();
+                let id_for_cb = id;
                 crate::core::git::default_impl::checkout::git_checkout(
                     &dest_path,
                     &reference,
                     create,
-                    &*interrupt_flag,
+                    &interrupt_flag,
                     move |p| {
                         if let Some(app_ref) = &app_for_cb {
                             let prog = TaskProgressEvent {
@@ -373,14 +373,14 @@ impl TaskRegistry {
             let msg_opt = message.clone();
             let res: Result<(), GitError> = {
                 let app_for_cb = app.clone();
-                let id_for_cb = id.clone();
+                let id_for_cb = id;
                 crate::core::git::default_impl::tag::git_tag(
                     &dest_path,
                     &name,
                     msg_opt.as_deref(),
                     annotated,
                     force,
-                    &*interrupt_flag,
+                    &interrupt_flag,
                     move |p| {
                         if let Some(app_ref) = &app_for_cb {
                             let prog = TaskProgressEvent {
@@ -441,12 +441,12 @@ impl TaskRegistry {
             let dest_path = std::path::PathBuf::from(dest.clone());
             let res: Result<(), GitError> = {
                 let app_for_cb = app.clone();
-                let id_for_cb = id.clone();
+                let id_for_cb = id;
                 crate::core::git::default_impl::remote::git_remote_set(
                     &dest_path,
                     &name,
                     &url,
-                    &*interrupt_flag,
+                    &interrupt_flag,
                     move |p| {
                         if let Some(app_ref) = &app_for_cb {
                             let prog = TaskProgressEvent {
@@ -507,12 +507,12 @@ impl TaskRegistry {
             let dest_path = std::path::PathBuf::from(dest.clone());
             let res: Result<(), GitError> = {
                 let app_for_cb = app.clone();
-                let id_for_cb = id.clone();
+                let id_for_cb = id;
                 crate::core::git::default_impl::remote::git_remote_add(
                     &dest_path,
                     &name,
                     &url,
-                    &*interrupt_flag,
+                    &interrupt_flag,
                     move |p| {
                         if let Some(app_ref) = &app_for_cb {
                             let prog = TaskProgressEvent {
@@ -572,11 +572,11 @@ impl TaskRegistry {
             let dest_path = std::path::PathBuf::from(dest.clone());
             let res: Result<(), GitError> = {
                 let app_for_cb = app.clone();
-                let id_for_cb = id.clone();
+                let id_for_cb = id;
                 crate::core::git::default_impl::remote::git_remote_remove(
                     &dest_path,
                     &name,
-                    &*interrupt_flag,
+                    &interrupt_flag,
                     move |p| {
                         if let Some(app_ref) = &app_for_cb {
                             let prog = TaskProgressEvent {

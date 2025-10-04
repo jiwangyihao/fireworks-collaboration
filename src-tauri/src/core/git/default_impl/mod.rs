@@ -26,6 +26,12 @@ pub mod tag; // P2.2a: depth/filter/strategyOverride parsing placeholder
 
 pub struct DefaultGitService;
 
+impl Default for DefaultGitService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DefaultGitService {
     pub fn new() -> Self {
         Self
@@ -52,7 +58,7 @@ impl GitService for DefaultGitService {
             if !p.exists() {
                 return Err(GitError::new(
                     ErrorCategory::Internal,
-                    format!("source path does not exist: {}", repo_trim),
+                    format!("source path does not exist: {repo_trim}"),
                 ));
             }
         }
@@ -87,7 +93,7 @@ impl GitService for DefaultGitService {
         helpers::emit_sni_status("GitClone", Some(repo), &mut on_progress);
         // 注册与改写
         let cfg = crate::core::config::loader::load_or_init()
-            .map_err(|e| GitError::new(ErrorCategory::Internal, format!("load config: {}", e)))?;
+            .map_err(|e| GitError::new(ErrorCategory::Internal, format!("load config: {e}")))?;
         if let Err(e) = ensure_registered(&cfg) {
             return Err(GitError::new(
                 ErrorCategory::Internal,
@@ -144,7 +150,7 @@ impl GitService for DefaultGitService {
         }
         // 注册与改写准备
         let cfg = crate::core::config::loader::load_or_init()
-            .map_err(|e| GitError::new(ErrorCategory::Internal, format!("load config: {}", e)))?;
+            .map_err(|e| GitError::new(ErrorCategory::Internal, format!("load config: {e}")))?;
         if let Err(e) = ensure_registered(&cfg) {
             return Err(GitError::new(
                 ErrorCategory::Internal,

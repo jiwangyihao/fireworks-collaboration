@@ -22,9 +22,9 @@ fn test_large_number_of_credentials() {
     // 添加 1000 个凭证
     for i in 0..1000 {
         let cred = Credential::new(
-            format!("host{}.com", i),
-            format!("user{}", i),
-            format!("password{}", i),
+            format!("host{i}.com"),
+            format!("user{i}"),
+            format!("password{i}"),
         );
         store.add(cred).unwrap();
     }
@@ -35,10 +35,10 @@ fn test_large_number_of_credentials() {
     
     // 随机查询一些凭证
     for i in (0..1000).step_by(100) {
-        let cred = store.get(&format!("host{}.com", i), Some(&format!("user{}", i)))
+        let cred = store.get(&format!("host{i}.com"), Some(&format!("user{i}")))
             .unwrap()
             .expect("凭证应该存在");
-        assert_eq!(cred.password_or_token, format!("password{}", i));
+        assert_eq!(cred.password_or_token, format!("password{i}"));
     }
 }
 
@@ -104,15 +104,15 @@ fn test_high_concurrency_operations() {
             // 每个线程执行多个操作
             for j in 0..10 {
                 let cred = Credential::new(
-                    format!("host{}-{}.com", i, j),
-                    format!("user{}", i),
-                    format!("password{}", j),
+                    format!("host{i}-{j}.com"),
+                    format!("user{i}"),
+                    format!("password{j}"),
                 );
                 store_clone.add(cred).unwrap();
                 
                 // 立即读取
                 let retrieved = store_clone
-                    .get(&format!("host{}-{}.com", i, j), Some(&format!("user{}", i)))
+                    .get(&format!("host{i}-{j}.com"), Some(&format!("user{i}")))
                     .unwrap();
                 assert!(retrieved.is_some());
             }
@@ -139,7 +139,7 @@ fn test_rapid_add_remove_cycles() {
         let cred = Credential::new(
             "github.com".to_string(),
             "user".to_string(),
-            format!("password{}", i),
+            format!("password{i}"),
         );
         
         store.add(cred).unwrap();
@@ -169,7 +169,7 @@ fn test_large_audit_log() {
             },
             &format!("host{}.com", i % 100),
             "user",
-            Some(&format!("password{}", i)),
+            Some(&format!("password{i}")),
             true,
             None,
         );
@@ -196,7 +196,7 @@ fn test_concurrent_audit_logging() {
             for j in 0..100 {
                 logger_clone.log_operation(
                     fireworks_collaboration_lib::core::credential::audit::OperationType::Add,
-                    &format!("host{}-{}.com", i, j),
+                    &format!("host{i}-{j}.com"),
                     "user",
                     Some("password"),
                     true,
@@ -232,9 +232,9 @@ fn test_encrypted_file_store_stress() {
     // 添加 100 个凭证（加密文件存储较慢）
     for i in 0..100 {
         let cred = Credential::new(
-            format!("host{}.com", i),
-            format!("user{}", i),
-            format!("password{}", i),
+            format!("host{i}.com"),
+            format!("user{i}"),
+            format!("password{i}"),
         );
         store.add(cred).unwrap();
     }
@@ -327,22 +327,20 @@ fn test_empty_string_edge_cases() {
 fn test_special_characters_in_password() {
     let store = MemoryCredentialStore::new();
     
-    let special_passwords = vec![
-        "!@#$%^&*()_+-=[]{}|;:',.<>?/~`",
+    let special_passwords = ["!@#$%^&*()_+-=[]{}|;:',.<>?/~`",
         "\n\r\t\\\"'",
         "    spaces    everywhere    ",
-        "emoji🔒🔑🛡️混合password",
-    ];
+        "emoji🔒🔑🛡️混合password"];
     
     for (i, pwd) in special_passwords.iter().enumerate() {
         let cred = Credential::new(
-            format!("host{}.com", i),
+            format!("host{i}.com"),
             "user".to_string(),
             pwd.to_string(),
         );
         store.add(cred).unwrap();
         
-        let retrieved = store.get(&format!("host{}.com", i), Some("user"))
+        let retrieved = store.get(&format!("host{i}.com"), Some("user"))
             .unwrap()
             .expect("应该找到凭证");
         assert_eq!(&retrieved.password_or_token, pwd);
@@ -370,16 +368,16 @@ fn test_concurrent_file_store_resource_management() {
         let handle = thread::spawn(move || {
             for j in 0..5 {
                 let cred = Credential::new(
-                    format!("host{}-{}.com", i, j),
-                    format!("user{}", i),
-                    format!("password{}", j),
+                    format!("host{i}-{j}.com"),
+                    format!("user{i}"),
+                    format!("password{j}"),
                 );
                 
                 // 添加
                 store_clone.add(cred).unwrap();
                 
                 // 读取
-                let _ = store_clone.get(&format!("host{}-{}.com", i, j), Some(&format!("user{}", i)));
+                let _ = store_clone.get(&format!("host{i}-{j}.com"), Some(&format!("user{i}")));
                 
                 // 短暂休眠以增加并发冲突概率
                 thread::sleep(Duration::from_millis(1));
@@ -411,6 +409,6 @@ fn test_rapid_master_password_changes() {
     
     // 快速重复设置主密码 100 次
     for i in 0..100 {
-        assert!(store.set_master_password(format!("password{}", i)).is_ok());
+        assert!(store.set_master_password(format!("password{i}")).is_ok());
     }
 }

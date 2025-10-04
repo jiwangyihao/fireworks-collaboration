@@ -1,8 +1,8 @@
-//! git_helpers: Git 错误分类与断言公共工具。
+//! `git_helpers`: Git 错误分类与断言公共工具。
 //! 提供能力：
-//!  * error_category / assert_err_category / expect_err_category  (原有：精确匹配)
-//!  * assert_err_in / expect_err_in (新增：多类别容忍集合)
-//!  * map_err_category  (Result -> Option<ErrorCategory>)
+//!  * `error_category` / `assert_err_category` / `expect_err_category`  (原有：精确匹配)
+//!  * `assert_err_in` / `expect_err_in` (新增：多类别容忍集合)
+//!  * `map_err_category`  (Result -> Option<ErrorCategory>)
 //! 用途：减少各聚合测试文件中匹配错误分类的重复代码；统一 panic 信息格式，便于快速定位。
 //! 设计：保持完全向后兼容——旧 API 不修改签名。
 
@@ -25,20 +25,19 @@ pub fn assert_err_category(label: &str, err: GitError, want: ErrorCategory) {
     let got = error_category(err);
     assert_eq!(
         got as u32, want as u32,
-        "[{label}] expect {:?} got {:?}",
-        want, got
+        "[{label}] expect {want:?} got {got:?}"
     );
 }
 
 /// 简化 Option<Result<..>> 场景：如果返回 Ok 则触发失败（期望出错）。
 pub fn expect_err_category<T>(label: &str, r: Result<T, GitError>, want: ErrorCategory) {
     match r {
-        Ok(_) => panic!("[{label}] expected error {:?} but got Ok", want),
+        Ok(_) => panic!("[{label}] expected error {want:?} but got Ok"),
         Err(e) => assert_err_category(label, e, want),
     }
 }
 
-/// 将 Result 转换为分类（Ok -> None, Err -> Some(category)）。非 Categorized 错误会 panic，保持与 error_category 一致策略。
+/// 将 Result 转换为分类（Ok -> None, Err -> Some(category)）。非 Categorized 错误会 panic，保持与 `error_category` 一致策略。
 pub fn map_err_category<T>(r: &Result<T, GitError>) -> Option<ErrorCategory> {
     match r {
         Ok(_) => None,
@@ -50,14 +49,14 @@ pub fn map_err_category<T>(r: &Result<T, GitError>) -> Option<ErrorCategory> {
 pub fn assert_err_in(label: &str, err: GitError, want: &[ErrorCategory]) {
     let got = error_category(err);
     if !want.iter().any(|c| *c as u32 == got as u32) {
-        panic!("[{label}] expect one of {:?} got {:?}", want, got);
+        panic!("[{label}] expect one of {want:?} got {got:?}");
     }
 }
 
 /// 组合 expect + 多类别；如果是 Ok 则 panic。
 pub fn expect_err_in<T>(label: &str, r: Result<T, GitError>, want: &[ErrorCategory]) {
     match r {
-        Ok(_) => panic!("[{label}] expected error in {:?} but got Ok", want),
+        Ok(_) => panic!("[{label}] expected error in {want:?} but got Ok"),
         Err(e) => assert_err_in(label, e, want),
     }
 }
@@ -68,12 +67,11 @@ pub fn expect_err_in<T>(label: &str, r: Result<T, GitError>, want: &[ErrorCatego
 pub fn assert_progress_monotonic(label: &str, percents: &[u32]) {
     assert!(
         percents.len() >= 2,
-        "[{label}] expect >=2 progress events, got {:?}",
-        percents
+        "[{label}] expect >=2 progress events, got {percents:?}"
     );
     for w in percents.windows(2) {
         if w[1] < w[0] {
-            panic!("[{label}] progress not monotonic: {:?}", percents);
+            panic!("[{label}] progress not monotonic: {percents:?}");
         }
     }
 }
@@ -85,7 +83,7 @@ mod tests_git_helpers {
     fn fake_err(cat: ErrorCategory) -> GitError {
         GitError::Categorized {
             category: cat,
-            message: format!("cat={:?}", cat),
+            message: format!("cat={cat:?}"),
         }
     }
 

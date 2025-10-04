@@ -212,7 +212,7 @@ fn test_concurrent_conflict_handling() {
             let cred = Credential::new(
                 "github.com".to_string(),
                 "user".to_string(),
-                format!("password{}", i),
+                format!("password{i}"),
             );
             
             // 所有操作都应该成功（通过 Mutex 同步）
@@ -374,7 +374,7 @@ fn test_multiple_wrong_password_attempts() {
     // 多次尝试错误密码
     for i in 0..10 {
         let store_temp = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-        store_temp.set_master_password(format!("wrong-password-{}", i)).unwrap();
+        store_temp.set_master_password(format!("wrong-password-{i}")).unwrap();
         let result = store_temp.get("github.com", Some("user"));
         assert!(result.is_err(), "错误密码应该失败");
     }

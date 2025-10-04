@@ -14,7 +14,7 @@ use std::thread;
 use std::time::Duration;
 
 fn get_test_file(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("fireworks_cache_test_{}.enc", name))
+    std::env::temp_dir().join(format!("fireworks_cache_test_{name}.enc"))
 }
 
 fn cleanup(path: &PathBuf) {
@@ -56,7 +56,7 @@ fn test_key_cache_reuse() {
     let second_duration = start.elapsed();
 
     // 第二次应该明显更快（缓存生效）
-    println!("首次操作: {:?}, 缓存操作: {:?}", first_duration, second_duration);
+    println!("首次操作: {first_duration:?}, 缓存操作: {second_duration:?}");
     
     // 第二次操作应该至少快 50%（考虑到系统抖动）
     // 注意：这个测试可能在快速机器上不稳定
@@ -105,7 +105,7 @@ fn test_key_cache_expiration() {
 
     // 由于缓存过期，应该重新派生密钥（较慢）
     // 注意：Argon2id 派生至少需要几百毫秒
-    println!("缓存过期后操作耗时: {:?}", duration);
+    println!("缓存过期后操作耗时: {duration:?}");
 
     // 验证数据仍然正确
     let list = store.list().expect("应该列出所有凭证");
@@ -138,11 +138,11 @@ fn test_concurrent_key_cache_access() {
         let store_clone = Arc::clone(&store);
         let handle = thread::spawn(move || {
             let cred = Credential::new(
-                format!("host{}.com", i),
-                format!("user{}", i),
-                format!("pass{}", i),
+                format!("host{i}.com"),
+                format!("user{i}"),
+                format!("pass{i}"),
             );
-            store_clone.add(cred).expect(&format!("线程 {} 应该成功", i));
+            store_clone.add(cred).unwrap_or_else(|_| panic!("线程 {i} 应该成功"));
         });
         handles.push(handle);
     }
@@ -200,7 +200,7 @@ fn test_cache_invalidation_on_password_change() {
             println!("密码更改后成功添加新凭证");
         }
         Err(e) => {
-            println!("密码更改后添加失败（符合预期）: {}", e);
+            println!("密码更改后添加失败（符合预期）: {e}");
         }
     }
 
@@ -286,7 +286,7 @@ fn test_cache_survives_store_clone() {
     store_clone.add(cred2).expect("应该使用缓存添加凭证");
     let duration = start.elapsed();
 
-    println!("克隆后操作耗时: {:?}", duration);
+    println!("克隆后操作耗时: {duration:?}");
     
     // 应该使用缓存（较快）
     // assert!(duration < Duration::from_millis(100), "应该使用缓存");
@@ -330,7 +330,7 @@ fn test_large_ttl_value() {
     store.add(cred2).expect("应该使用缓存");
     let duration = start.elapsed();
 
-    println!("大 TTL 缓存操作耗时: {:?}", duration);
+    println!("大 TTL 缓存操作耗时: {duration:?}");
 
     cleanup(&test_file);
 }

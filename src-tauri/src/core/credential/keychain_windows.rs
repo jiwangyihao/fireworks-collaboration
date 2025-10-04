@@ -44,8 +44,7 @@ impl WindowsCredentialStore {
                 // ERROR_NOT_FOUND (1168) is OK - means no credentials stored yet
                 if error_code != 1168 {
                     return Err(format!(
-                        "Windows Credential Manager unavailable, error code: {}",
-                        error_code
+                        "Windows Credential Manager unavailable, error code: {error_code}"
                     ));
                 }
             }
@@ -56,7 +55,7 @@ impl WindowsCredentialStore {
 
     /// Converts a host and username to a Windows credential target name.
     fn make_target_name(host: &str, username: &str) -> String {
-        format!("{}{}:{}", TARGET_PREFIX, host, username)
+        format!("{TARGET_PREFIX}{host}:{username}")
     }
 
     /// Converts a string to Windows wide string (UTF-16).
@@ -157,8 +156,7 @@ impl CredentialStore for WindowsCredentialStore {
             if result == 0 {
                 let error_code = winapi::um::errhandlingapi::GetLastError();
                 return Err(CredentialStoreError::AccessError(format!(
-                    "Failed to write credential to Windows Credential Manager, error code: {}",
-                    error_code
+                    "Failed to write credential to Windows Credential Manager, error code: {error_code}"
                 )));
             }
         }
@@ -177,8 +175,7 @@ impl CredentialStore for WindowsCredentialStore {
                 // ERROR_NOT_FOUND is OK - credential already deleted
                 if error_code != 1168 {
                     return Err(CredentialStoreError::AccessError(format!(
-                        "Failed to delete credential from Windows Credential Manager, error code: {}",
-                        error_code
+                        "Failed to delete credential from Windows Credential Manager, error code: {error_code}"
                     )));
                 }
             }
@@ -209,8 +206,7 @@ impl CredentialStore for WindowsCredentialStore {
                     return Ok(credentials);
                 }
                 return Err(CredentialStoreError::AccessError(format!(
-                    "Failed to enumerate credentials from Windows Credential Manager, error code: {}",
-                    error_code
+                    "Failed to enumerate credentials from Windows Credential Manager, error code: {error_code}"
                 )));
             }
 

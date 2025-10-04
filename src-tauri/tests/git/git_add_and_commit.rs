@@ -2,17 +2,17 @@
 //! 聚合测试：Git Add & Commit
 //! ------------------------------------------------------------
 //! 精简后结构说明：
-//!   section_add_basic    -> 成功 / 目录递归 / 去重 + 进度单调
-//!   section_add_edge     -> 参数非法 / 路径非法 / 取消
-//!   section_commit_basic -> 正常提交 / 空提交策略 / 自定义作者 / message 修整
-//!   section_commit_edge  -> 消息为空 / 取消 / 作者字段组合非法 / 空提交开关
-//!   section_task_wrapper -> 任务调度与取消
+//!   `section_add_basic`    -> 成功 / 目录递归 / 去重 + 进度单调
+//!   `section_add_edge`     -> 参数非法 / 路径非法 / 取消
+//!   `section_commit_basic` -> 正常提交 / 空提交策略 / 自定义作者 / message 修整
+//!   `section_commit_edge`  -> 消息为空 / 取消 / 作者字段组合非法 / 空提交开关
+//!   `section_task_wrapper` -> 任务调度与取消
 //! 优化要点：
-//!   * 重复 repo 初始化与 stage 逻辑 → 复用 fixtures (repo_with_staged / stage_files)。
+//!   * 重复 repo 初始化与 stage 逻辑 → 复用 fixtures (`repo_with_staged` / `stage_files`)。
 //!   * 进度单调断言 → 公共 helper `git_helpers::assert_progress_monotonic`。
 //!   * 错误断言全部使用分类枚举 (Protocol / Cancel)。
 //!   * 合并三个作者非法测试为单循环参数化。
-//!   * 移除冗余：add_duplicate_paths_dedupes / initial_empty_repo_allow_empty_toggle 及单独作者非法变体测试。
+//!   * `移除冗余：add_duplicate_paths_dedupes` / `initial_empty_repo_allow_empty_toggle` 及单独作者非法变体测试。
 //!   * 仅保留最小覆盖 + 代表性路径，减少维护成本。
 
 // ---------------- section_add_basic ----------------
@@ -137,8 +137,8 @@ mod section_commit_basic {
     use std::sync::atomic::AtomicBool;
 
     fn repo_with_single_file(name: &str, content: &str) -> std::path::PathBuf {
-        let dir = fixtures::repo_with_staged(&[(name, content)]);
-        dir
+        
+        fixtures::repo_with_staged(&[(name, content)])
     }
 
     #[test]

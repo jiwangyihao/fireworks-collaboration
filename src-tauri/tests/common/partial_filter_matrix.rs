@@ -4,14 +4,14 @@
 //! 版本轨迹：
 //!   - v1 (12.6): 仅 clone 使用，区分事件 / 代码 / 结构 及其与 depth 的交叉。
 //!   - v2 (Post-audit v3): 引入 `PartialFilterOp` 占位（当前只实现 Clone），
-//!     与独立的 `partial_filter_support` (SupportLevel) 模块解耦，方便 12.8 fetch 聚合。
+//!     与独立的 `partial_filter_support` (`SupportLevel`) 模块解耦，方便 12.8 fetch 聚合。
 //!
-//! Post-audit(v2): 使用 allow(dead_code) 抑制未使用枚举成员警告，等待 fetch 聚合。
-//! Post-audit(v3): 添加 `PartialFilterOp`、文档化后续扩展计划（invalid / no_filter / fetch 特有）。
+//! Post-audit(v2): 使用 `allow(dead_code)` 抑制未使用枚举成员警告，等待 fetch 聚合。
+//! Post-audit(v3): 添加 `PartialFilterOp`、文档化后续扩展计划（invalid / `no_filter` / fetch 特有）。
 //!
 //! 后续计划（12.8+）：
 //!   * 扩展 op=Fetch 维度；
-//!   * 增加 Invalid / NoFilter / SparseEdge 等用例；
+//!   * 增加 Invalid / `NoFilter` / `SparseEdge` 等用例；
 //!   * 与事件断言 DSL 融合（替换字符串 contains）。
 
 // 移除全局 dead_code 允许；若后续某些 fetch-only 枚举临时未被引用，可局部添加。
@@ -51,7 +51,7 @@ pub struct PartialFilterCase {
 }
 
 impl PartialFilterCase {
-    /// 便捷描述（用于参数化测试名称 / case.describe()）。
+    /// 便捷描述（用于参数化测试名称 / `case.describe()`）。
     pub fn describe(&self) -> String {
         format!("{:?}-{:?}-d{}", self.op, self.kind, self.depth.unwrap_or(0))
     }
@@ -152,8 +152,7 @@ mod tests_partial_filter_matrix {
             if c.kind.is_depth_related() {
                 assert!(
                     c.depth.is_some(),
-                    "depth-related kind must carry depth: {:?}",
-                    c
+                    "depth-related kind must carry depth: {c:?}"
                 );
             }
         }

@@ -160,10 +160,10 @@ pub fn run(opts: SoakOptions) -> Result<SoakReport> {
     // Run soak iterations
     for round in 0..iterations {
         prepare_commit(&producer_dir, round, &branch_name)
-            .with_context(|| format!("prepare commit for iteration {}", round))?;
+            .with_context(|| format!("prepare commit for iteration {round}"))?;
 
         let push_state = run_push_task(&registry, &runtime, &producer_dir, &mut aggregator, &bus)
-            .with_context(|| format!("execute push task at iteration {}", round))?;
+            .with_context(|| format!("execute push task at iteration {round}"))?;
         ensure!(
             matches!(push_state, TaskState::Completed),
             "push task failed at iteration {} with state {:?}",
@@ -172,7 +172,7 @@ pub fn run(opts: SoakOptions) -> Result<SoakReport> {
         );
 
         let fetch_state = run_fetch_task(&registry, &runtime, &consumer_dir, &mut aggregator, &bus)
-            .with_context(|| format!("execute fetch task at iteration {}", round))?;
+            .with_context(|| format!("execute fetch task at iteration {round}"))?;
         ensure!(
             matches!(fetch_state, TaskState::Completed),
             "fetch task failed at iteration {} with state {:?}",
@@ -180,7 +180,7 @@ pub fn run(opts: SoakOptions) -> Result<SoakReport> {
             fetch_state
         );
 
-        let clone_dest = clones_root.join(format!("round-{}", round));
+        let clone_dest = clones_root.join(format!("round-{round}"));
         if clone_dest.exists() {
             fs::remove_dir_all(&clone_dest)
                 .with_context(|| format!("clean clone dest: {}", clone_dest.display()))?;
@@ -193,7 +193,7 @@ pub fn run(opts: SoakOptions) -> Result<SoakReport> {
             &mut aggregator,
             &bus,
         )
-        .with_context(|| format!("execute clone task at iteration {}", round))?;
+        .with_context(|| format!("execute clone task at iteration {round}"))?;
         ensure!(
             matches!(clone_state, TaskState::Completed),
             "clone task failed at iteration {} with state {:?}",
@@ -314,7 +314,7 @@ fn setup_producer(origin: &Path, producer: &Path) -> Result<String> {
             .to_str()
             .ok_or_else(|| anyhow!("origin path contains invalid UTF-8"))?;
         repo.remote("origin", origin_str)
-            .with_context(|| format!("add origin remote at {}", origin_str))?;
+            .with_context(|| format!("add origin remote at {origin_str}"))?;
     }
 
     let head = repo.head().context("get HEAD after initial commit")?;
@@ -323,8 +323,8 @@ fn setup_producer(origin: &Path, producer: &Path) -> Result<String> {
         .map(|s| s.to_string())
         .unwrap_or_else(|| "master".to_string());
 
-    let branch_ref = format!("refs/heads/{}", shorthand);
-    let refspec_owned = format!("{}:{}", branch_ref, branch_ref);
+    let branch_ref = format!("refs/heads/{shorthand}");
+    let refspec_owned = format!("{branch_ref}:{branch_ref}");
     let refspecs: Vec<&str> = vec![refspec_owned.as_str()];
     let cancel_push = AtomicBool::new(false);
 

@@ -197,7 +197,7 @@ impl MemoryCredentialStore {
 
     /// 生成凭证的存储键
     fn make_key(host: &str, username: &str) -> String {
-        format!("{}@{}", username, host)
+        format!("{username}@{host}")
     }
 }
 
@@ -212,7 +212,7 @@ impl CredentialStore for MemoryCredentialStore {
         let credentials = self
             .credentials
             .read()
-            .map_err(|e| CredentialStoreError::AccessError(format!("读锁获取失败: {}", e)))?;
+            .map_err(|e| CredentialStoreError::AccessError(format!("读锁获取失败: {e}")))?;
 
         if let Some(username) = username {
             let key = Self::make_key(host, username);
@@ -238,7 +238,7 @@ impl CredentialStore for MemoryCredentialStore {
         let mut credentials = self
             .credentials
             .write()
-            .map_err(|e| CredentialStoreError::AccessError(format!("写锁获取失败: {}", e)))?;
+            .map_err(|e| CredentialStoreError::AccessError(format!("写锁获取失败: {e}")))?;
 
         let key = Self::make_key(&credential.host, &credential.username);
 
@@ -254,7 +254,7 @@ impl CredentialStore for MemoryCredentialStore {
         let mut credentials = self
             .credentials
             .write()
-            .map_err(|e| CredentialStoreError::AccessError(format!("写锁获取失败: {}", e)))?;
+            .map_err(|e| CredentialStoreError::AccessError(format!("写锁获取失败: {e}")))?;
 
         let key = Self::make_key(host, username);
 
@@ -269,7 +269,7 @@ impl CredentialStore for MemoryCredentialStore {
         let credentials = self
             .credentials
             .read()
-            .map_err(|e| CredentialStoreError::AccessError(format!("读锁获取失败: {}", e)))?;
+            .map_err(|e| CredentialStoreError::AccessError(format!("读锁获取失败: {e}")))?;
 
         let valid_credentials: Vec<Credential> = credentials
             .values()
@@ -284,7 +284,7 @@ impl CredentialStore for MemoryCredentialStore {
         let mut credentials = self
             .credentials
             .write()
-            .map_err(|e| CredentialStoreError::AccessError(format!("写锁获取失败: {}", e)))?;
+            .map_err(|e| CredentialStoreError::AccessError(format!("写锁获取失败: {e}")))?;
 
         let key = Self::make_key(host, username);
 

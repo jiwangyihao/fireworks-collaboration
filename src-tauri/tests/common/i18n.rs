@@ -1,4 +1,4 @@
-//! 测试侧简化 i18n 工具：提供最小 translate()/locale_keys() 能力
+//! 测试侧简化 i18n 工具：提供最小 `translate()/locale_keys()` 能力
 //! 仅用于单元测试，不绑定生产 i18n 资源，防止引入跨 crate 依赖。
 
 use std::collections::HashMap;

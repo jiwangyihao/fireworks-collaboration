@@ -286,7 +286,7 @@ impl IpPool {
         true
     }
 
-    /// 设置全局禁用，禁用 cooldown_ms 毫秒
+    /// 设置全局禁用，禁用 `cooldown_ms` 毫秒
     pub fn set_auto_disabled(&self, reason: &str, cooldown_ms: i64) {
         if cooldown_ms <= 0 {
             self.clear_auto_disabled();
@@ -340,7 +340,7 @@ impl IpPool {
         }
     }
 
-    /// 获取当前 auto_disabled_until
+    /// 获取当前 `auto_disabled_until`
     pub fn auto_disabled_until(&self) -> Option<i64> {
         let until = self.auto_disabled_until.load(Ordering::Relaxed);
         if until > 0 {

@@ -1,7 +1,7 @@
 //! Proxy 模块单元测试
 //! 
 //! 从源文件迁移的单元测试，包括：
-//! - health_checker.rs: 健康检查器测试
+//! - `health_checker.rs`: 健康检查器测试
 //! - manager.rs: 代理管理器恢复策略测试
 
 use fireworks_collaboration_lib::core::proxy::{

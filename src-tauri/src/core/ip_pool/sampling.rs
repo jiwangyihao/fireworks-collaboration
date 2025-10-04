@@ -65,7 +65,7 @@ pub(super) async fn ensure_sampled(
 
         if let Some(waiter) = waiter {
             let timeout_ms = pool.config.runtime.singleflight_timeout_ms.max(100);
-            if timeout(Duration::from_millis(timeout_ms as u64), waiter.notified())
+            if timeout(Duration::from_millis(timeout_ms), waiter.notified())
                 .await
                 .is_err()
             {

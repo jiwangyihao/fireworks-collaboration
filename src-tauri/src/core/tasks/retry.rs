@@ -18,7 +18,7 @@ pub struct RetryDiff {
     pub changed: Vec<&'static str>,
 }
 
-/// 计算新旧重试策略差异；返回 (diff, changed_flag)
+/// 计算新旧重试策略差异；返回 (diff, `changed_flag`)
 pub fn compute_retry_diff(old: &RetryPlan, new: &RetryPlan) -> (RetryDiff, bool) {
     let mut changed = Vec::new();
     if old.max != new.max {
@@ -91,7 +91,7 @@ pub fn categorize(err: &GitError) -> ErrorCategory {
     }
 }
 
-/// Exponential backoff with optional jitter. attempt_idx starts from 0 for the first retry.
+/// Exponential backoff with optional jitter. `attempt_idx` starts from 0 for the first retry.
 pub fn backoff_delay_ms(plan: &RetryPlan, attempt_idx: u32) -> u64 {
     let pow = plan.factor.powi(attempt_idx as i32);
     let base = (plan.base_ms as f64 * pow).round() as u64;

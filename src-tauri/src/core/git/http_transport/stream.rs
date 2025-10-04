@@ -167,7 +167,7 @@ impl SniffingStream {
                     };
                     // 仅在 receive-pack 的 info/refs 阶段尝试注入 Authorization
                     let auth_line = if matches!(self.op, HttpOp::InfoRefsReceive) {
-                        get_push_auth_header().map(|v| format!("Authorization: {}\r\n", v))
+                        get_push_auth_header().map(|v| format!("Authorization: {v}\r\n"))
                     } else {
                         None
                     };
@@ -244,7 +244,7 @@ impl SniffingStream {
         };
         let len = self.post_buf.len();
         let auth_line = if matches!(self.op, HttpOp::ReceivePack) {
-            get_push_auth_header().map(|v| format!("Authorization: {}\r\n", v))
+            get_push_auth_header().map(|v| format!("Authorization: {v}\r\n"))
         } else {
             None
         };
@@ -356,7 +356,7 @@ impl SniffingStream {
                     if matches!(self.op, HttpOp::InfoRefsReceive | HttpOp::ReceivePack) {
                         let realm = www_authenticate.as_deref().unwrap_or("");
                         let msg = if !realm.is_empty() {
-                            format!("HTTP 401 Unauthorized ({}). Authentication required for git-receive-pack; please provide credentials.", realm)
+                            format!("HTTP 401 Unauthorized ({realm}). Authentication required for git-receive-pack; please provide credentials.")
                         } else {
                             "HTTP 401 Unauthorized. Authentication required for git-receive-pack; please provide credentials.".to_string()
                         };
@@ -513,11 +513,10 @@ impl SniffingStream {
                 if self.inbuf.len() < 2 {
                     let _ = self.read_more()?;
                 }
-                if self.inbuf.len() >= 2 {
-                    if &self.inbuf[..2] == b"\r\n" {
+                if self.inbuf.len() >= 2
+                    && &self.inbuf[..2] == b"\r\n" {
                         self.inbuf.drain(..2);
                     }
-                }
                 self.reading_chunk_size = true;
                 continue;
             }
@@ -560,7 +559,7 @@ impl SniffingStream {
         Ok(())
     }
 
-    /// 尝试以不同的 SNI 重新建立 TLS 连接，优先随机选择不同于 current_sni 的伪 SNI 候选；若失败则返回错误。
+    /// 尝试以不同的 SNI 重新建立 TLS 连接，优先随机选择不同于 `current_sni` 的伪 SNI 候选；若失败则返回错误。
     fn reconnect_with_rotated_sni(
         _cfg: &AppConfig,
         host: &str,
@@ -634,7 +633,7 @@ impl SniffingStream {
         let mut stream = StreamOwned::new(conn, tcp);
         let _ = stream.flush();
         tracing::debug!(target="git.transport.http", host=%host, new_sni=%pick, used_fake=true, "reconnect with rotated SNI ok");
-        return Ok((stream, true, pick));
+        Ok((stream, true, pick))
     }
 }
 
@@ -732,11 +731,10 @@ impl Write for SniffingStream {
         }
     }
     fn flush(&mut self) -> std::io::Result<()> {
-        if matches!(self.op, HttpOp::UploadPack | HttpOp::ReceivePack) {
-            if !self.posted {
+        if matches!(self.op, HttpOp::UploadPack | HttpOp::ReceivePack)
+            && !self.posted {
                 self.send_post()?;
             }
-        }
         Ok(())
     }
 }

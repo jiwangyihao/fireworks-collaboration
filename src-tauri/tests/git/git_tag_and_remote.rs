@@ -2,29 +2,29 @@
 //! 聚合测试：Git Tag & Remote & Refname Validation (Roadmap Phase 1 / v1.14)
 //! -------------------------------------------------------------------------
 //! 迁移来源（root-level -> 本文件 sections）：
-//!   - git_tag_remote.rs
-//!   - git_tag_remote_extra.rs
-//!   - refname_validation.rs
+//!   - `git_tag_remote.rs`
+//!   - `git_tag_remote_extra.rs`
+//!   - `refname_validation.rs`
 //! Source Mapping 快速索引：
-//!   git_tag_remote.rs            -> section_tag_lightweight / section_remote_lifecycle / 部分 remote_validation
-//!   git_tag_remote_extra.rs      -> section_tag_annotated (force same msg / preserve blank lines / reject no .git) + remote_validation (phase/empty url) + tag 控制字符
-//!   refname_validation.rs        -> section_refname_rules
+//!   `git_tag_remote.rs`            -> `section_tag_lightweight` / `section_remote_lifecycle` / 部分 `remote_validation`
+//!   `git_tag_remote_extra.rs`      -> `section_tag_annotated` (force same msg / preserve blank lines / reject no .git) + `remote_validation` (phase/empty url) + tag 控制字符
+//!   `refname_validation.rs`        -> `section_refname_rules`
 //! Metrics (Phase 1 after aggregation):
 //!   * Tests total: ~ (lightweight 7 + annotated 8 + remote lifecycle 6 + remote validation 10 + refname 3) = 34
 //!   * File length (approx lines): < 430 (阈值 500 内)
-//!   * Helpers: prepare_repo_with_commit / cat / expect_protocol
+//!   * Helpers: `prepare_repo_with_commit` / cat / `expect_protocol`
 //! 质量保证：
 //!   * 所有原函数名保持（未重命名），grep 可直接追踪。
 //!   * 占位原文件保留 assert!(true) 进行历史保留，可在后续删除窗口统一移除。
 //! 分区结构（与附录 A.3 定义一致）：
-//!   section_tag_lightweight      -> 轻量标签创建 / 覆盖 / 取消 / 缺少 commit / 非法名称
-//!   section_tag_annotated        -> 注解标签 创建 / force 新对象 / 保持 OID / 消息规范化 (CRLF / 尾部空行) / 空白消息拒绝
-//!   section_remote_lifecycle     -> remote add/set/remove 基本流程 / duplicate / idempotent set / update URL
-//!   section_remote_validation    -> 非法 name / URL / 空白 / 空格 / 制表 / 换行 / cancel / empty url / invalid scheme
-//!   section_refname_rules        -> validate_ref_name + wrappers(branch/tag/remote) 正反集合
+//!   `section_tag_lightweight`      -> 轻量标签创建 / 覆盖 / 取消 / 缺少 commit / 非法名称
+//!   `section_tag_annotated`        -> 注解标签 创建 / force 新对象 / 保持 OID / 消息规范化 (CRLF / 尾部空行) / 空白消息拒绝
+//!   `section_remote_lifecycle`     -> remote add/set/remove 基本流程 / duplicate / idempotent set / update URL
+//!   `section_remote_validation`    -> 非法 name / URL / 空白 / 空格 / 制表 / 换行 / cancel / empty url / invalid scheme
+//!   `section_refname_rules`        -> `validate_ref_name` + wrappers(branch/tag/remote) 正反集合
 //! 设计原则：
 //!   * 不在本阶段抽象出统一 DSL；保持直接调用底层函数以减少迁移风险。
-//!   * 重复 helper (prepare_repo_with_commit / cat) 在多个 section 需要时复用顶层实现。
+//!   * 重复 helper (`prepare_repo_with_commit` / cat) 在多个 section 需要时复用顶层实现。
 //!   * 保留原测试函数名（若冲突加前缀），确保 git blame 可追溯迁移来源。
 //! 迁移后原文件将替换为占位（assert!(true)）。
 //! 后续 Phase 2+ 可根据使用频率再评估是否上移 helper 至 common/。

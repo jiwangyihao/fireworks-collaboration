@@ -2,54 +2,54 @@
 //! 聚合测试：Git Strategy & HTTP Override & Adaptive TLS (Roadmap 12.10)
 //! ---------------------------------------------------------------------
 //! 迁移来源（legacy 将保留占位）：
-//!   - git_strategy_override_combo.rs
-//!   - git_http_override_event.rs
-//!   - git_http_override_no_event.rs
-//!   - git_http_override_event_structured.rs
-//!   - git_http_override_idempotent.rs
-//!   - git_http_override_invalid_max_no_event.rs
-//!   - git_http_override_fetch_event_only_max.rs
-//!   - git_http_override_clone_only_follow.rs
-//!   - git_http_override_push_follow_change.rs
-//!   - git_adaptive_tls_rollout_event.rs
+//!   - `git_strategy_override_combo.rs`
+//!   - `git_http_override_event.rs`
+//!   - `git_http_override_no_event.rs`
+//!   - `git_http_override_event_structured.rs`
+//!   - `git_http_override_idempotent.rs`
+//!   - `git_http_override_invalid_max_no_event.rs`
+//!   - `git_http_override_fetch_event_only_max.rs`
+//!   - `git_http_override_clone_only_follow.rs`
+//!   - `git_http_override_push_follow_change.rs`
+//!   - `git_adaptive_tls_rollout_event.rs`
 //!   - (Phase3 新增待迁移来源)：
-//!       * git_strategy_override_structured.rs
-//!       * git_strategy_override_summary_fetch_push.rs
-//!       * strategy_override_push.rs
-//!       * strategy_override_summary.rs
-//!       * git_strategy_override_no_conflict.rs
-//!       * strategy_override_empty_unknown_integration.rs
-//!       * strategy_override_invalid_integration.rs
-//!       * git_strategy_override_tls_combo.rs
-//!       * git_strategy_override_tls_mixed.rs
-//!       * git_strategy_override_tls_summary.rs
-//!       * git_tls_override_event.rs
-//!       * git_tls_push_insecure_only.rs
+//!       * `git_strategy_override_structured.rs`
+//!       * `git_strategy_override_summary_fetch_push.rs`
+//!       * `strategy_override_push.rs`
+//!       * `strategy_override_summary.rs`
+//!       * `git_strategy_override_no_conflict.rs`
+//!       * `strategy_override_empty_unknown_integration.rs`
+//!       * `strategy_override_invalid_integration.rs`
+//!       * `git_strategy_override_tls_combo.rs`
+//!       * `git_strategy_override_tls_mixed.rs`
+//!       * `git_strategy_override_tls_summary.rs`
+//!       * `git_tls_override_event.rs`
+//!       * `git_tls_push_insecure_only.rs`
 //! 分区结构：
-//!   section_http_basic                -> HTTP override 基础 & 事件存在
-//!   section_http_limits               -> follow / max / idempotent 变体
-//!   section_http_events               -> 事件子序列锚点断言
-//!   section_strategy_summary_multiop  -> 多操作 Summary + 结构化多 applied codes
-//!   section_override_no_conflict      -> TLS only 修改 & changed vs unchanged & push insecure only
-//!   section_override_empty_unknown    -> 空对象 / unknown 字段宽容
-//!   section_override_invalid_inputs   -> 无效参数导致失败
-//!   section_tls_mixed_scenarios       -> TLS mixed (clone/fetch/push) 变体
-//!   section_summary_gating            -> gating 环境变量 on/off 对比
+//!   `section_http_basic`                -> HTTP override 基础 & 事件存在
+//!   `section_http_limits`               -> follow / max / idempotent 变体
+//!   `section_http_events`               -> 事件子序列锚点断言
+//!   `section_strategy_summary_multiop`  -> 多操作 Summary + 结构化多 applied codes
+//!   `section_override_no_conflict`      -> TLS only 修改 & changed vs unchanged & push insecure only
+//!   `section_override_empty_unknown`    -> 空对象 / unknown 字段宽容
+//!   `section_override_invalid_inputs`   -> 无效参数导致失败
+//!   `section_tls_mixed_scenarios`       -> TLS mixed (clone/fetch/push) 变体
+//!   `section_summary_gating`            -> gating 环境变量 on/off 对比
 //!
 //! 补充：传输层 fallback / timing 测试已迁移至 `git_preconditions_and_cancel.rs`；TLS 指纹日志与 Pin 校验相关用例集中到 `events/events_structure_and_contract.rs`。
 //! Cross-ref:
 //!   - `common/http_override_stub.rs`
-//!   - `common/git_scenarios.rs` (GitOp)
-//!   - `common/event_assert.rs` (expect_subsequence)
+//!   - `common/git_scenarios.rs` (`GitOp`)
+//!   - `common/event_assert.rs` (`expect_subsequence`)
 //! 设计原则：
 //!   * 先以字符串事件 + 子序列匹配保证结构，后续 12.12 引入结构化事件 DSL 再收紧。
-//!   * 策略 & HTTP override 共享 GitOp 概念，未来可提炼 Outcome 多态结构。
+//!   * 策略 & HTTP override 共享 `GitOp` 概念，未来可提炼 Outcome 多态结构。
 //! Post-audit(v1) 目标：所有来源文件逻辑被覆盖或留出明确 TODO 占位；不引入真实网络副作用。
-//! Post-audit(v2): 补充：统一策略枚举 StrategyPolicy 仍为占位；后续（事件 DSL 引入后）将把 strategy/http_override/adaptive_tls 事件合并为结构化枚举并移除字符串 contains 断言；max=0 invalid 用例已单独覆盖无需新增锚点。
+//! Post-audit(v2): 补充：统一策略枚举 `StrategyPolicy` 仍为占位；后续（事件 DSL 引入后）将把 `strategy/http_override/adaptive_tls` 事件合并为结构化枚举并移除字符串 contains 断言；max=0 invalid 用例已单独覆盖无需新增锚点。
 //! Metrics Phase3 (refactor v1.16 draft):
-//!   * 新增 sections: summary_multiop / override_no_conflict / override_empty_unknown / override_invalid_inputs / tls_mixed_scenarios / summary_gating (6)
+//!   * 新增 sections: `summary_multiop` / `override_no_conflict` / `override_empty_unknown` / `override_invalid_inputs` / `tls_mixed_scenarios` / `summary_gating` (6)
 //!   * 迁移来源 root-level 测试文件数: 12 (全部已占位保留 stub)
-//!   * 剪裁 git_impl_tests.rs: 移除 2 个基础重复测试 (local progress, fetch remote tracking)
+//!   * 剪裁 `git_impl_tests.rs`: 移除 2 个基础重复测试 (local progress, fetch remote tracking)
 //!   * 当前文件行数（approx）：~780 (<800 OK)
 //!   * TODO(Phase4): 若继续增长 >800, 考虑拆分 extended TLS/HTTP/retry 子模块。
 
@@ -101,7 +101,7 @@ mod section_http_limits {
                         "follow chain exceeds max for {c}"
                     );
                 } else {
-                    assert!(out.follow_chain.len() >= 1, "expected default follow hops");
+                    assert!(!out.follow_chain.is_empty(), "expected default follow hops");
                 }
             }
         }

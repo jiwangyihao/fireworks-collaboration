@@ -1,11 +1,11 @@
 //! pipeline: E2E 流水线 DSL 脚手架 (12.15 前置)
-//! 目标：为 e2e_public_git 聚合文件提供统一的步骤描述 & 执行函数，
-//! 先以占位/模拟形式存在，后续再接入真实 GitService / 事件收集。
+//! 目标：为 `e2e_public_git` 聚合文件提供统一的步骤描述 & 执行函数，
+//! 先以占位/模拟形式存在，后续再接入真实 `GitService` / 事件收集。
 //!
 //! 设计原则：
 //!  * 声明式：PipelineSpec 列出步骤序列；
 //!  * 幂等执行：每个步骤独立返回结构，允许后续缓存 clone 结果；
-//!  * 事件抽象：当前仅返回字符串锚点，未来接入结构化事件或真实 TaskEvent。
+//!  * 事件抽象：当前仅返回字符串锚点，未来接入结构化事件或真实 `TaskEvent`。
 //!  * 失败策略：占位阶段不模拟复杂错误，保留接口字段。
 //!
 //! 后续增强 (计划)：
@@ -156,7 +156,7 @@ impl PipelineOutcome {
 }
 
 // ---- 公共断言辅助（供 e2e / 其它聚合复用） ----
-/// 断言提交数量至少增长 min_delta。
+/// 断言提交数量至少增长 `min_delta`。
 #[allow(dead_code)]
 pub fn assert_commit_growth_at_least(out: &PipelineOutcome, min_delta: i32) {
     let delta = out
@@ -245,12 +245,12 @@ fn create_bare_remote_with_commits(n: usize) -> PathBuf {
     run(Command::new("git").arg("init").arg(&tmp));
     for i in 1..=n.max(1) {
         // 至少一个提交
-        let f = tmp.join(format!("f{}.txt", i));
-        std::fs::write(&f, format!("c{}\n", i)).unwrap();
+        let f = tmp.join(format!("f{i}.txt"));
+        std::fs::write(&f, format!("c{i}\n")).unwrap();
         run(Command::new("git").current_dir(&tmp).args(["add", "."]));
         run(Command::new("git")
             .current_dir(&tmp)
-            .args(["commit", "-m", &format!("c{}", i)]));
+            .args(["commit", "-m", &format!("c{i}")]));
     }
     // 裸仓库
     let bare = std::env::temp_dir().join(format!("fwc-remote-bare-{}", uuid::Uuid::new_v4()));
@@ -265,7 +265,7 @@ fn create_bare_remote_with_commits(n: usize) -> PathBuf {
 
 fn run(cmd: &mut Command) {
     let status = cmd.status().expect("run command");
-    assert!(status.success(), "command failed: {:?}", cmd);
+    assert!(status.success(), "command failed: {cmd:?}");
 }
 
 fn git_rev_count(repo: &PathBuf) -> u32 {

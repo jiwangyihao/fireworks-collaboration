@@ -13,7 +13,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 fn get_test_file(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("fireworks_corruption_test_{}.enc", name))
+    std::env::temp_dir().join(format!("fireworks_corruption_test_{name}.enc"))
 }
 
 fn cleanup(path: &PathBuf) {
@@ -40,10 +40,10 @@ fn test_corrupted_json_structure() {
     let result = store.list();
     
     // 应该优雅处理，不应该 panic
-    match result {
-        Ok(list) => assert_eq!(list.len(), 0, "损坏的文件应该返回空列表"),
-        Err(_) => {} // 返回错误也是合理的
+    if let Ok(list) = result {
+        assert_eq!(list.len(), 0, "损坏的文件应该返回空列表");
     }
+    // 返回错误也是合理的
 
     cleanup(&test_file);
 }
@@ -115,10 +115,10 @@ fn test_empty_file() {
 
     // 应该能处理空文件
     let result = store.list();
-    match result {
-        Ok(list) => assert_eq!(list.len(), 0, "空文件应该返回空列表"),
-        Err(_) => {} // 返回错误也可接受
+    if let Ok(list) = result {
+        assert_eq!(list.len(), 0, "空文件应该返回空列表");
     }
+    // 返回错误也可接受
 
     cleanup(&test_file);
 }
@@ -167,10 +167,7 @@ fn test_file_with_missing_required_fields() {
     let result = store.list();
     
     // 应该能处理缺少字段的 JSON
-    match result {
-        Ok(list) => assert_eq!(list.len(), 0),
-        Err(_) => {}
-    }
+    if let Ok(list) = result { assert_eq!(list.len(), 0) }
 
     cleanup(&test_file);
 }
@@ -256,11 +253,11 @@ fn test_very_large_file() {
     // 添加大量凭证
     for i in 0..100 {
         let cred = Credential::new(
-            format!("host{}.com", i),
-            format!("user{}", i),
-            format!("token_{}", i),
+            format!("host{i}.com"),
+            format!("user{i}"),
+            format!("token_{i}"),
         );
-        store.add(cred).expect(&format!("应该添加凭证 {}", i));
+        store.add(cred).unwrap_or_else(|_| panic!("应该添加凭证 {i}"));
     }
 
     // 验证能正确读取大文件
@@ -299,9 +296,9 @@ fn test_concurrent_file_corruption() {
         let handle = thread::spawn(move || {
             for j in 0..10 {
                 let cred = Credential::new(
-                    format!("host{}_{}.com", i, j),
-                    format!("user{}_{}", i, j),
-                    format!("token_{}_{}", i, j),
+                    format!("host{i}_{j}.com"),
+                    format!("user{i}_{j}"),
+                    format!("token_{i}_{j}"),
                 );
                 let _ = store_clone.add(cred);
             }
@@ -318,7 +315,7 @@ fn test_concurrent_file_corruption() {
     
     // 由于并发和文件锁，可能不是所有 50 个凭证都成功添加
     // 但应该至少有一些凭证
-    assert!(list.len() > 0, "应该至少添加了一些凭证");
+    assert!(!list.is_empty(), "应该至少添加了一些凭证");
 
     cleanup(&test_file);
 }

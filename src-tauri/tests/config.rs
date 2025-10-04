@@ -1,5 +1,5 @@
 //! Config 模块综合测试
-//! 合并了 config/loader_tests.rs 和 config/model_tests.rs
+//! 合并了 `config/loader_tests.rs` 和 `config/model_tests.rs`
 
 // ============================================================================
 // loader_tests.rs 的测试
@@ -54,7 +54,7 @@ fn test_save_and_reload_roundtrip_at_base() {
         save_at(&cfg, Path::new(".")).expect("save should succeed");
         // 再次读取
         let loaded = load_or_init_at(Path::new(".")).expect("load should succeed");
-        assert_eq!(loaded.http.fake_sni_enabled, false);
+        assert!(!loaded.http.fake_sni_enabled);
         assert_eq!(loaded.http.max_redirects, 3);
     });
 }
@@ -478,19 +478,19 @@ fn test_validation_error_messages_contain_field_names() {
     // Test each validation error contains field name
     cfg.probe_url = "invalid".to_string();
     let err1 = cfg.validate().unwrap_err();
-    let msg1 = format!("{}", err1);
+    let msg1 = format!("{err1}");
     assert!(msg1.contains("probeUrl") || msg1.contains("probe"));
 
     cfg.probe_url = "valid.com:443".to_string();
     cfg.probe_timeout_seconds = 0;
     let err2 = cfg.validate().unwrap_err();
-    let msg2 = format!("{}", err2);
+    let msg2 = format!("{err2}");
     assert!(msg2.contains("probeTimeoutSeconds") || msg2.contains("timeout"));
 
     cfg.probe_timeout_seconds = 10;
     cfg.recovery_consecutive_threshold = 0;
     let err3 = cfg.validate().unwrap_err();
-    let msg3 = format!("{}", err3);
+    let msg3 = format!("{err3}");
     assert!(msg3.contains("recoveryConsecutiveThreshold") || msg3.contains("threshold"));
 }
 

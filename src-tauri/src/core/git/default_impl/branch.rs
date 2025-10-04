@@ -92,7 +92,7 @@ pub fn git_branch<F: FnMut(ProgressPayload)>(
             }
             let mut co = git2::build::CheckoutBuilder::new();
             co.safe();
-            repo.set_head(&format!("refs/heads/{}", branch_name))
+            repo.set_head(&format!("refs/heads/{branch_name}"))
                 .map_err(|e| {
                     GitError::new(
                         ErrorCategory::Internal,
@@ -159,7 +159,7 @@ pub fn git_branch<F: FnMut(ProgressPayload)>(
         }
         let mut co = git2::build::CheckoutBuilder::new();
         co.safe();
-        repo.set_head(&format!("refs/heads/{}", branch_name))
+        repo.set_head(&format!("refs/heads/{branch_name}"))
             .map_err(|e| {
                 GitError::new(
                     ErrorCategory::Internal,

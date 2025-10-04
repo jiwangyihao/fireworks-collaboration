@@ -42,7 +42,7 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub mode: ProxyMode,
 
-    /// Proxy server URL (e.g., "http://proxy.example.com:8080" or "socks5://127.0.0.1:1080")
+    /// Proxy server URL (e.g., "<http://proxy.example.com:8080>" or "<socks5://127.0.0.1:1080>")
     /// Only used when mode is Http or Socks5
     #[serde(default)]
     pub url: String,
@@ -451,7 +451,7 @@ impl ProxyConfig {
             if let Some(scheme_end) = self.url.find("://") {
                 let scheme = &self.url[..=scheme_end + 2];
                 let host_part = &self.url[at_pos..];
-                return format!("{}***{}", scheme, host_part);
+                return format!("{scheme}***{host_part}");
             }
         }
 

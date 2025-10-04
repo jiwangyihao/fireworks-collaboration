@@ -1,17 +1,17 @@
-//! Partial filter 支撑：引入 SupportLevel 与统一判定逻辑 (pre-12.8)。
+//! Partial filter 支撑：引入 `SupportLevel` 与统一判定逻辑 (pre-12.8)。
 //! 目的：在 clone 阶段先建立枚举语义，fetch 阶段 (12.8) 可直接复用。
 //! 当前仍为占位实现：通过 filter label 字符串启发式推断。
 //!
 //! 规则暂定：
 //!   * 包含 "unsupported" => Unsupported
-//!   * 包含 "+depth" => DegradedPlaceholder (表示带 depth 的 filter 语义需后续细化)
+//!   * 包含 "+depth" => `DegradedPlaceholder` (表示带 depth 的 filter 语义需后续细化)
 //!   * 其它 => Supported
-//!   * has_filter_marker: events 中存在包含 "filter:" (case-insensitive) 的条目。
+//!   * `has_filter_marker`: events 中存在包含 "filter:" (case-insensitive) 的条目。
 //!
 //! 后续真实实现替换：
 //!   * 与底层 git 服务协商 capability，得到真实枚举。
 //!   * depth 交叉使用 shallow helper 验证对象数变化。
-//!   * DegradedPlaceholder 可能拆分为 Partial / Fallback 等更细粒度。
+//!   * `DegradedPlaceholder` 可能拆分为 Partial / Fallback 等更细粒度。
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SupportLevel {
@@ -137,7 +137,7 @@ pub fn assess_partial_filter(
     }
 }
 
-/// 语义别名：仅进行 label -> SupportLevel 分类（不关心事件 marker），便于快速断言规则。
+/// 语义别名：仅进行 label -> `SupportLevel` 分类（不关心事件 marker），便于快速断言规则。
 pub fn classify_filter_label(filter_label: &str, depth: Option<u32>) -> SupportLevel {
     let lower = filter_label.to_ascii_lowercase();
     let env_supported = std::env::var("FWC_PARTIAL_FILTER_SUPPORTED")

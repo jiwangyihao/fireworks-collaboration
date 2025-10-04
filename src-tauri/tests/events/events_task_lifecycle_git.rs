@@ -7,13 +7,13 @@
 //!   1. 去除重复 push 成功/失败 与通用成功/失败测试的重叠。
 //!   2. 使用单一参数矩阵覆盖：成功(多 Kind)、失败(限定 Kind)、取消(早期/中途) 两类差异。
 //!   3. 提取高频断言逻辑到 helper：`run_spec` + `assert_lifecycle_core`。
-//!   4. 仅保留 Tag DSL 断言（移除冗余的字符串 expect_subsequence 重复检查）。
+//!   4. 仅保留 Tag DSL 断言（移除冗余的字符串 `expect_subsequence` 重复检查）。
 //! 事件模式：
 //!   task:start:<Kind>
 //!   [progress:10%]* (仅非早期取消变体)
 //!   [cancel:requested:<phase>]* (取消变体)
 //!   task:end:<Outcome>  (completed | failed | cancelled)
-//!   [metric:duration_ms:.., metric:bytes:..]* (开启 metrics 时附加，位于终态之后)
+//!   [`metric:duration_ms`:.., metric:bytes:..]* (开启 metrics 时附加，位于终态之后)
 //! Tag DSL 期望序列：
 //!   - 成功 / 失败 => [task, task]
 //!   - 取消       => [task, cancel, task]
@@ -212,8 +212,7 @@ fn lifecycle_metrics_success() {
         .collect();
     assert!(
         metric_lines.len() >= 2,
-        "expected >=2 metric lines, got {:?}",
-        metric_lines
+        "expected >=2 metric lines, got {metric_lines:?}"
     );
     // 确认 metrics 出现在终态之后
     let end_pos = out

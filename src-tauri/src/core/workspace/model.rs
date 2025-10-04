@@ -134,7 +134,7 @@ impl Workspace {
             .repositories
             .iter()
             .position(|r| r.id == id)
-            .ok_or_else(|| format!("仓库 ID '{}' 不存在", id))?;
+            .ok_or_else(|| format!("仓库 ID '{id}' 不存在"))?;
         let repo = self.repositories.remove(index);
         self.update_timestamp();
         Ok(repo)
@@ -169,7 +169,7 @@ impl Workspace {
     pub fn update_repository(&mut self, id: &str, updater: impl FnOnce(&mut RepositoryEntry)) -> Result<(), String> {
         let repo = self
             .get_repository_mut(id)
-            .ok_or_else(|| format!("仓库 ID '{}' 不存在", id))?;
+            .ok_or_else(|| format!("仓库 ID '{id}' 不存在"))?;
         updater(repo);
         self.update_timestamp();
         Ok(())
@@ -220,7 +220,7 @@ mod tests {
         assert_eq!(ws.name, "test-workspace");
         assert_eq!(ws.root_path, PathBuf::from("/test"));
         assert!(ws.repositories.is_empty());
-        assert!(ws.created_at.len() > 0);
+        assert!(!ws.created_at.is_empty());
         assert_eq!(ws.created_at, ws.updated_at);
     }
 
@@ -319,7 +319,7 @@ mod tests {
     #[test]
     fn test_workspace_config_default() {
         let config = WorkspaceConfig::default();
-        assert_eq!(config.enabled, false);
+        assert!(!config.enabled);
         assert_eq!(config.max_concurrent_repos, 3);
         assert!(config.default_template.is_none());
         assert!(config.workspace_file.is_none());

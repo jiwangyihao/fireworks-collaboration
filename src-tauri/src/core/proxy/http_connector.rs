@@ -19,7 +19,7 @@ use url::Url;
 /// - Configurable connection timeout
 /// - Proper error classification
 pub struct HttpProxyConnector {
-    /// Proxy server URL (e.g., "http://proxy.example.com:8080")
+    /// Proxy server URL (e.g., "<http://proxy.example.com:8080>")
     pub proxy_url: String,
 
     /// Optional username for Basic authentication
@@ -42,7 +42,7 @@ impl HttpProxyConnector {
     /// * `timeout` - Connection timeout duration
     ///
     /// # Returns
-    /// A new HttpProxyConnector instance
+    /// A new `HttpProxyConnector` instance
     pub fn new(
         proxy_url: String,
         username: Option<String>,
@@ -76,9 +76,9 @@ impl HttpProxyConnector {
     pub fn generate_auth_header(&self) -> Option<String> {
         match (&self.username, &self.password) {
             (Some(user), Some(pass)) => {
-                let credentials = format!("{}:{}", user, pass);
+                let credentials = format!("{user}:{pass}");
                 let encoded = STANDARD.encode(credentials.as_bytes());
-                Some(format!("Basic {}", encoded))
+                Some(format!("Basic {encoded}"))
             }
             _ => None,
         }
@@ -93,14 +93,13 @@ impl HttpProxyConnector {
     ) -> Result<(), ProxyError> {
         // Build CONNECT request
         let mut request = format!(
-            "CONNECT {}:{} HTTP/1.1\r\n\
-             Host: {}:{}\r\n",
-            target_host, target_port, target_host, target_port
+            "CONNECT {target_host}:{target_port} HTTP/1.1\r\n\
+             Host: {target_host}:{target_port}\r\n"
         );
 
         // Add authentication header if credentials provided
         if let Some(auth) = self.generate_auth_header() {
-            request.push_str(&format!("Proxy-Authorization: {}\r\n", auth));
+            request.push_str(&format!("Proxy-Authorization: {auth}\r\n"));
             tracing::debug!("Added Basic authentication to CONNECT request");
         }
 
@@ -198,7 +197,7 @@ impl ProxyConnector for HttpProxyConnector {
         );
 
         // Resolve proxy address
-        let proxy_addr = format!("{}:{}", proxy_host, proxy_port)
+        let proxy_addr = format!("{proxy_host}:{proxy_port}")
             .to_socket_addrs()
             .map_err(|e| ProxyError::network(format!("Failed to resolve proxy address: {e}")))?
             .next()

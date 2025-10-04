@@ -1,6 +1,8 @@
-//! Tests for proxy failure detector
+//! Tests for proxy failure detector and system proxy detection
 
 use fireworks_collaboration_lib::core::proxy::detector::ProxyFailureDetector;
+use fireworks_collaboration_lib::core::proxy::{ProxyMode, SystemProxyDetector};
+use std::env;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -19,7 +21,7 @@ fn test_detector_creation() {
 
 #[test]
 fn test_detector_default() {
-    let detector = ProxyFailureDetector::default();
+    let detector = ProxyFailureDetector::with_defaults();
     let stats = detector.get_stats();
     assert_eq!(stats.window_seconds, 300);
     assert_eq!(stats.threshold, 0.2);
@@ -477,3 +479,170 @@ fn test_one_threshold_never_triggers() {
         assert!(detector.should_fallback());
     }
 }
+
+// ============================================================================
+// P5.7 跨平台系统代理检测集成测试
+// ============================================================================
+
+/// 测试从 `HTTP_PROXY` 环境变量检测代理
+#[test]
+fn test_detect_from_http_proxy_env() {
+    let original_http = env::var("HTTP_PROXY").ok();
+    let original_https = env::var("HTTPS_PROXY").ok();
+    let original_all = env::var("ALL_PROXY").ok();
+
+    env::remove_var("HTTPS_PROXY");
+    env::remove_var("ALL_PROXY");
+    env::set_var("HTTP_PROXY", "http://proxy.example.com:8080");
+
+    let result = SystemProxyDetector::detect_from_env();
+
+    // 恢复环境变量
+    match original_http {
+        Some(val) => env::set_var("HTTP_PROXY", val),
+        None => env::remove_var("HTTP_PROXY"),
+    }
+    match original_https {
+        Some(val) => env::set_var("HTTPS_PROXY", val),
+        None => env::remove_var("HTTPS_PROXY"),
+    }
+    match original_all {
+        Some(val) => env::set_var("ALL_PROXY", val),
+        None => env::remove_var("ALL_PROXY"),
+    }
+
+    assert!(result.is_some());
+    let config = result.unwrap();
+    assert_eq!(config.mode, ProxyMode::Http);
+    assert!(config.url.contains("proxy.example.com") || config.url.contains("8080"));
+}
+
+/// 测试 `HTTPS_PROXY` 优先级
+#[test]
+fn test_detect_https_proxy_precedence() {
+    let original_http = env::var("HTTP_PROXY").ok();
+    let original_https = env::var("HTTPS_PROXY").ok();
+    let original_all = env::var("ALL_PROXY").ok();
+
+    env::remove_var("ALL_PROXY");
+    env::set_var("HTTP_PROXY", "http://http-proxy.example.com:8080");
+    env::set_var("HTTPS_PROXY", "http://https-proxy.example.com:8443");
+
+    let result = SystemProxyDetector::detect_from_env();
+
+    match original_http {
+        Some(val) => env::set_var("HTTP_PROXY", val),
+        None => env::remove_var("HTTP_PROXY"),
+    }
+    match original_https {
+        Some(val) => env::set_var("HTTPS_PROXY", val),
+        None => env::remove_var("HTTPS_PROXY"),
+    }
+    match original_all {
+        Some(val) => env::set_var("ALL_PROXY", val),
+        None => env::remove_var("ALL_PROXY"),
+    }
+
+    assert!(result.is_some());
+    let config = result.unwrap();
+    assert!(config.url.contains("https-proxy.example.com") || config.url.contains("8443"));
+}
+
+/// 测试 SOCKS5 代理检测
+#[test]
+fn test_detect_socks5_proxy() {
+    let original = env::var("ALL_PROXY").ok();
+    let original_http = env::var("HTTP_PROXY").ok();
+    let original_https = env::var("HTTPS_PROXY").ok();
+
+    env::remove_var("HTTP_PROXY");
+    env::remove_var("HTTPS_PROXY");
+    env::set_var("ALL_PROXY", "socks5://socks-proxy.example.com:1080");
+
+    let result = SystemProxyDetector::detect_from_env();
+
+    match original {
+        Some(val) => env::set_var("ALL_PROXY", val),
+        None => env::remove_var("ALL_PROXY"),
+    }
+    match original_http {
+        Some(val) => env::set_var("HTTP_PROXY", val),
+        None => env::remove_var("HTTP_PROXY"),
+    }
+    match original_https {
+        Some(val) => env::set_var("HTTPS_PROXY", val),
+        None => env::remove_var("HTTPS_PROXY"),
+    }
+
+    assert!(result.is_some());
+    let config = result.unwrap();
+    assert_eq!(config.mode, ProxyMode::Socks5);
+    assert!(config.url.contains("socks-proxy.example.com"));
+}
+
+/// 测试无代理配置的情况
+#[test]
+fn test_detect_no_proxy() {
+    let original_vars: Vec<(&str, Option<String>)> = vec![
+        ("HTTP_PROXY", env::var("HTTP_PROXY").ok()),
+        ("HTTPS_PROXY", env::var("HTTPS_PROXY").ok()),
+        ("ALL_PROXY", env::var("ALL_PROXY").ok()),
+        ("http_proxy", env::var("http_proxy").ok()),
+        ("https_proxy", env::var("https_proxy").ok()),
+        ("all_proxy", env::var("all_proxy").ok()),
+    ];
+
+    for (key, _) in &original_vars {
+        env::remove_var(key);
+    }
+
+    let result = SystemProxyDetector::detect();
+
+    // 恢复环境变量
+    for (key, val) in original_vars {
+        if let Some(v) = val {
+            env::set_var(key, v);
+        }
+    }
+
+    // 在没有代理配置的纯净环境下，可能返回 None 或系统代理
+    let _ = result.is_some(); // 确认函数可以运行
+}
+
+/// 测试系统代理检测不会 panic
+#[test]
+fn test_system_proxy_detection_does_not_panic() {
+    let result = SystemProxyDetector::detect();
+    if let Some(config) = result {
+        assert!(!config.url.is_empty() || config.mode == ProxyMode::Off);
+    }
+}
+
+/// 测试系统代理检测性能
+#[test]
+fn test_proxy_detection_performance() {
+    use std::time::Instant;
+
+    let start = Instant::now();
+    let _result = SystemProxyDetector::detect();
+    let elapsed = start.elapsed();
+
+    assert!(elapsed.as_secs() < 5, "Proxy detection should complete within 5 seconds");
+}
+
+/// 测试多次检测的一致性
+#[test]
+fn test_proxy_detection_consistency() {
+    let result1 = SystemProxyDetector::detect();
+    let result2 = SystemProxyDetector::detect();
+
+    match (result1, result2) {
+        (Some(cfg1), Some(cfg2)) => {
+            assert_eq!(cfg1.mode, cfg2.mode);
+            assert_eq!(cfg1.url, cfg2.url);
+        }
+        (None, None) => {}
+        _ => panic!("Inconsistent proxy detection results"),
+    }
+}
+

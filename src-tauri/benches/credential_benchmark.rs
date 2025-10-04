@@ -15,9 +15,9 @@ fn benchmark_add_credential(c: &mut Criterion) {
             let store = MemoryCredentialStore::new();
             for i in 0..10 {
                 let cred = Credential::new(
-                    black_box(format!("github.com")),
-                    black_box(format!("user{}", i)),
-                    black_box(format!("token_{}", i)),
+                    black_box("github.com".to_string()),
+                    black_box(format!("user{i}")),
+                    black_box(format!("token_{i}")),
                 );
                 let _ = store.add(cred);
             }
@@ -31,8 +31,8 @@ fn benchmark_add_credential(c: &mut Criterion) {
             for i in 0..100 {
                 let cred = Credential::new(
                     black_box(format!("host{}.com", i % 10)),
-                    black_box(format!("user{}", i)),
-                    black_box(format!("token_{}", i)),
+                    black_box(format!("user{i}")),
+                    black_box(format!("token_{i}")),
                 );
                 let _ = store.add(cred);
             }
@@ -46,8 +46,8 @@ fn benchmark_add_credential(c: &mut Criterion) {
             for i in 0..1000 {
                 let cred = Credential::new(
                     black_box(format!("host{}.com", i % 100)),
-                    black_box(format!("user{}", i)),
-                    black_box(format!("token_{}", i)),
+                    black_box(format!("user{i}")),
+                    black_box(format!("token_{i}")),
                 );
                 let _ = store.add(cred);
             }
@@ -67,8 +67,8 @@ fn benchmark_get_credential(c: &mut Criterion) {
         for i in 0..*size {
             let cred = Credential::new(
                 format!("host{}.com", i % 10),
-                format!("user{}", i),
-                format!("token_{}", i),
+                format!("user{i}"),
+                format!("token_{i}"),
             );
             let _ = store.add(cred);
         }
@@ -93,8 +93,8 @@ fn benchmark_list_credentials(c: &mut Criterion) {
         for i in 0..*size {
             let cred = Credential::new(
                 format!("host{}.com", i % 10),
-                format!("user{}", i),
-                format!("token_{}", i),
+                format!("user{i}"),
+                format!("token_{i}"),
             );
             let _ = store.add(cred);
         }
@@ -123,8 +123,8 @@ fn benchmark_remove_credential(c: &mut Criterion) {
                     for i in 0..size {
                         let cred = Credential::new(
                             format!("host{}.com", i % 10),
-                            format!("user{}", i),
-                            format!("token_{}", i),
+                            format!("user{i}"),
+                            format!("token_{i}"),
                         );
                         let _ = store.add(cred);
                     }
@@ -212,8 +212,8 @@ fn benchmark_cleanup_expired(c: &mut Criterion) {
                         let expires_at = if i % 2 == 0 { past } else { future };
                         let cred = Credential::new_with_expiry(
                             format!("host{}.com", i % 10),
-                            format!("user{}", i),
-                            format!("token_{}", i),
+                            format!("user{i}"),
+                            format!("token_{i}"),
                             expires_at,
                         );
                         let _ = store.add(cred);

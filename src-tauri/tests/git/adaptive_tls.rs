@@ -1,8 +1,5 @@
 #![cfg(not(feature = "tauri-app"))]
 
-#[path = "common/mod.rs"]
-mod common;
-
 use crate::common::fixtures::create_empty_dir;
 use crate::common::test_env::init_test_env;
 
@@ -65,7 +62,7 @@ fn spawn_tls_server(ip: &str, port: u16) -> (Arc<AtomicBool>, thread::JoinHandle
     let config = Arc::new(server_config);
     let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = Arc::clone(&stop);
-    let socket = format!("{}:{}", ip, port);
+    let socket = format!("{ip}:{port}");
     let handle = thread::spawn(move || {
         let listener = TcpListener::bind(&socket).expect("bind tls server");
         listener.set_nonblocking(true).expect("set nonblocking");
@@ -96,7 +93,7 @@ fn spawn_tls_server(ip: &str, port: u16) -> (Arc<AtomicBool>, thread::JoinHandle
 fn spawn_fail_server(ip: &str, port: u16) -> (Arc<AtomicBool>, thread::JoinHandle<()>) {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = Arc::clone(&stop);
-    let socket = format!("{}:{}", ip, port);
+    let socket = format!("{ip}:{port}");
     let handle = thread::spawn(move || {
         let listener = TcpListener::bind(&socket).expect("bind fail server");
         listener.set_nonblocking(true).expect("set nonblocking");

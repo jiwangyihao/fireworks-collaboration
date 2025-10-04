@@ -1,6 +1,6 @@
 //! Factory 回退机制测试
 //!
-//! 测试 CredentialStoreFactory 的三层回退逻辑和错误处理。
+//! 测试 `CredentialStoreFactory` 的三层回退逻辑和错误处理。
 
 use fireworks_collaboration_lib::core::credential::{
     config::{CredentialConfig, StorageType},
@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 /// 获取测试用的临时文件路径
 fn get_test_file_path(test_name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("fireworks_factory_test_{}.enc", test_name))
+    std::env::temp_dir().join(format!("fireworks_factory_test_{test_name}.enc"))
 }
 
 /// 清理测试文件
@@ -184,14 +184,14 @@ fn test_factory_concurrent_creation() {
                 .with_storage(StorageType::Memory);
 
             let store = CredentialStoreFactory::create(&config)
-                .expect(&format!("线程 {} 应该创建存储", i));
+                .unwrap_or_else(|_| panic!("线程 {i} 应该创建存储"));
 
             let cred = Credential::new(
-                format!("host{}.com", i),
-                format!("user{}", i),
-                format!("pass{}", i),
+                format!("host{i}.com"),
+                format!("user{i}"),
+                format!("pass{i}"),
             );
-            store.add(cred).expect(&format!("线程 {} 应该添加凭证", i));
+            store.add(cred).unwrap_or_else(|_| panic!("线程 {i} 应该添加凭证"));
         });
         handles.push(handle);
     }

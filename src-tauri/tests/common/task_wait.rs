@@ -1,4 +1,4 @@
-//! task_wait: 任务等待辅助工具
+//! `task_wait`: 任务等待辅助工具
 //! 提供统一的异步等待方法，避免在各测试文件中重复实现轮询逻辑。
 
 use fireworks_collaboration_lib::core::tasks::model::TaskState;

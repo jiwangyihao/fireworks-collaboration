@@ -33,7 +33,7 @@ pub fn git_init<F: FnMut(ProgressPayload)>(
         }
     } else {
         std::fs::create_dir_all(dest)
-            .map_err(|e| GitError::new(ErrorCategory::Internal, format!("create dir: {}", e)))?;
+            .map_err(|e| GitError::new(ErrorCategory::Internal, format!("create dir: {e}")))?;
     }
 
     // Idempotent: if .git exists treat as success.

@@ -2,22 +2,22 @@
 //! 聚合测试：Git Preconditions & Cancellation & Timeout (Roadmap 12.11)
 //! --------------------------------------------------------------------
 //! 迁移来源（legacy 将保留占位）：
-//!   - git_preconditions_and_cancel.rs (root old file: clone_cancel_quick_returns_cancel / fetch_missing_git_dir_fails_fast / fetch_cancel_quick_returns_cancel)
+//!   - `git_preconditions_and_cancel.rs` (root old file: `clone_cancel_quick_returns_cancel` / `fetch_missing_git_dir_fails_fast` / `fetch_cancel_quick_returns_cancel`)
 //! 分区结构：
-//!   section_preconditions       -> 前置条件失败（路径不存在 / 缺少 .git 等）
-//!   section_cancellation        -> 立即/中途取消的任务行为模拟
-//!   section_timeout             -> 超时路径（占位模拟，不依赖真实 sleep）
-//!   section_transport_fallback  -> 传输层 Fallback 决策状态机（Fake -> Real -> Default）
-//!   section_transport_timing    -> TimingRecorder 计时捕获与 finish 幂等性
+//!   `section_preconditions`       -> 前置条件失败（路径不存在 / 缺少 .git 等）
+//!   `section_cancellation`        -> 立即/中途取消的任务行为模拟
+//!   `section_timeout`             -> 超时路径（占位模拟，不依赖真实 sleep）
+//!   `section_transport_fallback`  -> 传输层 Fallback 决策状态机（Fake -> Real -> Default）
+//!   `section_transport_timing`    -> `TimingRecorder` 计时捕获与 finish 幂等性
 //! Cross-ref:
-//!   - common/event_assert.rs (expect_subsequence)
+//!   - `common/event_assert.rs` (`expect_subsequence`)
 //!   - 后续真实接入：TaskRegistry + cancellation flag + mock timer
 //! 设计说明：
 //!   * 当前实现为“轻量占位” —— 使用枚举驱动生成字符串事件序列，再断言子序列；
-//!   * 不直接触发真实 GitService 调用（真实调用已由 legacy 覆盖，现迁为占位）；
+//!   * 不直接触发真实 `GitService` 调用（真实调用已由 legacy 覆盖，现迁为占位）；
 //!   * 后续 12.12 引入事件 DSL 后可替换字符串事件为结构化枚举。
 //! Post-audit(v1): legacy 已替换为占位文件；此文件为唯一逻辑聚合入口。
-//! Post-audit(v2): 补充说明：后续将把 OutcomeKind 融入统一 TaskStatus/FailureCategory；timeout/cancel 将接入 mock clock + cancellation token；当前字符串事件保持最小锚点前缀以便 12.12 DSL 迁移。
+//! Post-audit(v2): 补充说明：后续将把 `OutcomeKind` 融入统一 TaskStatus/FailureCategory；timeout/cancel 将接入 mock clock + cancellation token；当前字符串事件保持最小锚点前缀以便 12.12 DSL 迁移。
 
 use super::common::event_assert::{
     assert_terminal_exclusive, expect_optional_tags_subsequence, expect_subsequence,
@@ -74,8 +74,8 @@ struct SimOutcome {
 // ---------------- Simulation helpers (pure, deterministic) ----------------
 fn simulate_precondition(op: GitOp, kind: PreconditionKind) -> SimOutcome {
     let mut ev = vec![format!("pre:check:start:{:?}:{:?}", op, kind)];
-    ev.push(format!("pre:check:failed:{:?}", kind));
-    ev.push(format!("task:end:{:?}:precondition_failed", op));
+    ev.push(format!("pre:check:failed:{kind:?}"));
+    ev.push(format!("task:end:{op:?}:precondition_failed"));
     SimOutcome {
         kind: OutcomeKind::FailedPrecondition,
         events: ev,
@@ -142,9 +142,7 @@ mod section_preconditions {
             assert_eq!(
                 out.kind,
                 OutcomeKind::FailedPrecondition,
-                "preconditions: {:?} {:?}",
-                op,
-                kind
+                "preconditions: {op:?} {kind:?}"
             );
             expect_subsequence(
                 &out.events,
@@ -199,9 +197,7 @@ mod section_cancellation {
             assert_eq!(
                 out.kind,
                 OutcomeKind::Canceled,
-                "cancel: {:?} {:?}",
-                op,
-                phase
+                "cancel: {op:?} {phase:?}"
             );
             // 组合锚点
             let mut anchors: Vec<String> = vec![format!("task:start:{:?}", op)];
@@ -268,8 +264,8 @@ mod section_timeout {
         init_test_env();
         for s in [TimeoutScenario::CloneSlow, TimeoutScenario::FetchSlow] {
             let out = simulate_timeout(s);
-            assert_eq!(out.kind, OutcomeKind::TimedOut, "timeout: {:?}", s);
-            let start = format!("task:start:{:?}", s);
+            assert_eq!(out.kind, OutcomeKind::TimedOut, "timeout: {s:?}");
+            let start = format!("task:start:{s:?}");
             expect_subsequence(
                 &out.events,
                 &[start.as_str(), "timeout:trigger", "task:end:timeout"],

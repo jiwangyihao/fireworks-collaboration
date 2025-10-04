@@ -63,7 +63,7 @@ fn test_cleanup_expired_logs() {
         logger.log_operation(
             OperationType::Add,
             "github.com",
-            &format!("user{}", i),
+            &format!("user{i}"),
             Some("password"),
             true,
             None,
@@ -186,7 +186,7 @@ fn test_concurrent_audit_logging_with_file() {
             logger_clone1.log_operation(
                 OperationType::Add,
                 "github.com",
-                &format!("thread1_user{}", i),
+                &format!("thread1_user{i}"),
                 Some("password"),
                 true,
                 None,
@@ -200,7 +200,7 @@ fn test_concurrent_audit_logging_with_file() {
             logger_clone2.log_operation(
                 OperationType::Add,
                 "github.com",
-                &format!("thread2_user{}", i),
+                &format!("thread2_user{i}"),
                 Some("password"),
                 true,
                 None,

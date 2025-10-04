@@ -90,7 +90,7 @@ fn append_json_line(line: &str) {
         let cfg = config();
         rotate_if_needed(&p, cfg.tls.cert_fp_max_bytes);
         if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&p) {
-            let _ = writeln!(f, "{}", line);
+            let _ = writeln!(f, "{line}");
         }
     }
 }

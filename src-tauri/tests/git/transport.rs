@@ -1,7 +1,7 @@
 //! Git Transport 模块综合测试
-//! 合并了 git/transport/fallback_tests.rs, git/transport/metrics_tests.rs,
-//! git/transport/register_tests.rs, git/transport/rewrite_tests.rs,
-//! git/transport/runtime_tests.rs, git/transport/fingerprint_tests.rs
+//! 合并了 `git/transport/fallback_tests.rs`, `git/transport/metrics_tests.rs`,
+//! `git/transport/register_tests.rs`, `git/transport/rewrite_tests.rs`,
+//! `git/transport/runtime_tests.rs`, `git/transport/fingerprint_tests.rs`
 
 // ============================================================================
 // fallback_tests.rs 的测试
@@ -533,4 +533,483 @@ fn test_log_path_disabled_when_cfg_off() {
     let mut cfg = reloaded;
     cfg.tls.cert_fp_log_enabled = true;
     let _ = loader::save(&cfg);
+}
+
+// ============================================================================
+// P5.3 Proxy-Transport Integration Tests (from proxy_transport_integration.rs)
+// ============================================================================
+
+#[test]
+fn test_transport_skipped_when_http_proxy_enabled() {
+    use fireworks_collaboration_lib::core::config::model::AppConfig;
+    use fireworks_collaboration_lib::core::git::transport::ensure_registered;
+    use fireworks_collaboration_lib::core::proxy::{ProxyConfig, ProxyMode};
+
+    let mut cfg = AppConfig::default();
+    cfg.proxy = ProxyConfig {
+        mode: ProxyMode::Http,
+        url: "http://proxy.example.com:8080".to_string(),
+        ..Default::default()
+    };
+
+    // Should succeed without registering custom transport
+    let result = ensure_registered(&cfg);
+    assert!(
+        result.is_ok(),
+        "ensure_registered should succeed when proxy enabled"
+    );
+}
+
+#[test]
+fn test_transport_skipped_when_socks5_proxy_enabled() {
+    use fireworks_collaboration_lib::core::config::model::AppConfig;
+    use fireworks_collaboration_lib::core::git::transport::ensure_registered;
+    use fireworks_collaboration_lib::core::proxy::{ProxyConfig, ProxyMode};
+
+    let mut cfg = AppConfig::default();
+    cfg.proxy = ProxyConfig {
+        mode: ProxyMode::Socks5,
+        url: "socks5://proxy.example.com:1080".to_string(),
+        ..Default::default()
+    };
+
+    // Should succeed without registering custom transport
+    let result = ensure_registered(&cfg);
+    assert!(
+        result.is_ok(),
+        "ensure_registered should succeed when proxy enabled"
+    );
+}
+
+#[test]
+fn test_transport_registered_when_proxy_off() {
+    use fireworks_collaboration_lib::core::config::model::AppConfig;
+    use fireworks_collaboration_lib::core::git::transport::ensure_registered;
+
+    let cfg = AppConfig::default();
+
+    // Should register custom transport
+    let result = ensure_registered(&cfg);
+    assert!(
+        result.is_ok(),
+        "ensure_registered should succeed when proxy off"
+    );
+}
+
+#[test]
+fn test_transport_skipped_when_disable_custom_transport_set() {
+    use fireworks_collaboration_lib::core::config::model::AppConfig;
+    use fireworks_collaboration_lib::core::git::transport::ensure_registered;
+
+    let mut cfg = AppConfig::default();
+    cfg.proxy.disable_custom_transport = true;
+
+    // Should skip even if proxy is off
+    let result = ensure_registered(&cfg);
+    assert!(
+        result.is_ok(),
+        "ensure_registered should succeed with disable_custom_transport"
+    );
+}
+
+#[test]
+fn test_proxy_forces_disable_custom_transport() {
+    use fireworks_collaboration_lib::core::proxy::{ProxyConfig, ProxyManager, ProxyMode};
+
+    // HTTP proxy
+    let cfg_http = ProxyConfig {
+        mode: ProxyMode::Http,
+        url: "http://proxy:8080".to_string(),
+        disable_custom_transport: false, // Explicitly set to false
+        ..Default::default()
+    };
+    let manager_http = ProxyManager::new(cfg_http);
+    assert!(
+        manager_http.should_disable_custom_transport(),
+        "HTTP proxy should force disable custom transport"
+    );
+
+    // SOCKS5 proxy
+    let cfg_socks5 = ProxyConfig {
+        mode: ProxyMode::Socks5,
+        url: "socks5://proxy:1080".to_string(),
+        disable_custom_transport: false, // Explicitly set to false
+        ..Default::default()
+    };
+    let manager_socks5 = ProxyManager::new(cfg_socks5);
+    assert!(
+        manager_socks5.should_disable_custom_transport(),
+        "SOCKS5 proxy should force disable custom transport"
+    );
+
+    // Proxy off
+    let cfg_off = ProxyConfig {
+        mode: ProxyMode::Off,
+        disable_custom_transport: false,
+        ..Default::default()
+    };
+    let manager_off = ProxyManager::new(cfg_off);
+    assert!(
+        !manager_off.should_disable_custom_transport(),
+        "Proxy off should not disable custom transport"
+    );
+}
+
+#[test]
+fn test_proxy_mode_transitions() {
+    use fireworks_collaboration_lib::core::proxy::{ProxyConfig, ProxyManager, ProxyMode};
+
+    // Start with proxy off
+    let cfg_off = ProxyConfig {
+        mode: ProxyMode::Off,
+        ..Default::default()
+    };
+    let manager = ProxyManager::new(cfg_off);
+    assert!(!manager.should_disable_custom_transport());
+
+    // Enable HTTP proxy
+    let cfg_http = ProxyConfig {
+        mode: ProxyMode::Http,
+        url: "http://proxy:8080".to_string(),
+        ..Default::default()
+    };
+    let manager_http = ProxyManager::new(cfg_http);
+    assert!(manager_http.should_disable_custom_transport());
+
+    // Switch to SOCKS5
+    let cfg_socks5 = ProxyConfig {
+        mode: ProxyMode::Socks5,
+        url: "socks5://proxy:1080".to_string(),
+        ..Default::default()
+    };
+    let manager_socks5 = ProxyManager::new(cfg_socks5);
+    assert!(manager_socks5.should_disable_custom_transport());
+
+    // Disable proxy
+    let cfg_off_again = ProxyConfig {
+        mode: ProxyMode::Off,
+        ..Default::default()
+    };
+    let manager_off = ProxyManager::new(cfg_off_again);
+    assert!(!manager_off.should_disable_custom_transport());
+}
+
+#[test]
+fn test_explicit_disable_custom_transport() {
+    use fireworks_collaboration_lib::core::proxy::{ProxyConfig, ProxyManager, ProxyMode};
+
+    // Explicit disable with proxy off
+    let cfg = ProxyConfig {
+        mode: ProxyMode::Off,
+        disable_custom_transport: true,
+        ..Default::default()
+    };
+    let manager = ProxyManager::new(cfg);
+    assert!(
+        manager.should_disable_custom_transport(),
+        "Explicit disable_custom_transport should work even when proxy off"
+    );
+}
+
+#[test]
+fn test_transport_skipped_when_system_proxy_enabled() {
+    use fireworks_collaboration_lib::core::config::model::AppConfig;
+    use fireworks_collaboration_lib::core::git::transport::ensure_registered;
+    use fireworks_collaboration_lib::core::proxy::{ProxyConfig, ProxyMode};
+
+    let mut cfg = AppConfig::default();
+    cfg.proxy = ProxyConfig {
+        mode: ProxyMode::System,
+        ..Default::default()
+    };
+
+    // System proxy should also skip custom transport
+    let result = ensure_registered(&cfg);
+    assert!(
+        result.is_ok(),
+        "ensure_registered should succeed with System proxy"
+    );
+}
+
+#[test]
+fn test_system_proxy_forces_disable_custom_transport() {
+    use fireworks_collaboration_lib::core::proxy::{ProxyConfig, ProxyManager, ProxyMode};
+
+    let cfg_system = ProxyConfig {
+        mode: ProxyMode::System,
+        disable_custom_transport: false,
+        ..Default::default()
+    };
+    let manager_system = ProxyManager::new(cfg_system);
+    assert!(
+        manager_system.should_disable_custom_transport(),
+        "System proxy should force disable custom transport"
+    );
+}
+
+#[test]
+fn test_metrics_data_flow_with_proxy() {
+    use fireworks_collaboration_lib::core::git::transport::metrics::{
+        tl_reset, tl_set_proxy_usage, tl_snapshot,
+    };
+
+    // Reset to clean state
+    tl_reset();
+
+    // Simulate proxy usage recording
+    tl_set_proxy_usage(true, Some("http".to_string()), Some(50), true);
+
+    // Capture snapshot
+    let snapshot = tl_snapshot();
+
+    // Verify all proxy fields are captured
+    assert_eq!(snapshot.used_proxy, Some(true), "used_proxy should be true");
+    assert_eq!(
+        snapshot.proxy_type,
+        Some("http".to_string()),
+        "proxy_type should be 'http'"
+    );
+    assert_eq!(
+        snapshot.proxy_latency_ms,
+        Some(50),
+        "proxy_latency_ms should be 50"
+    );
+    assert_eq!(
+        snapshot.custom_transport_disabled,
+        Some(true),
+        "custom_transport_disabled should be true"
+    );
+
+    // Reset and verify clean state
+    tl_reset();
+    let snapshot_after_reset = tl_snapshot();
+    assert_eq!(
+        snapshot_after_reset.used_proxy, None,
+        "used_proxy should be None after reset"
+    );
+    assert_eq!(
+        snapshot_after_reset.proxy_type, None,
+        "proxy_type should be None after reset"
+    );
+    assert_eq!(
+        snapshot_after_reset.proxy_latency_ms, None,
+        "proxy_latency_ms should be None after reset"
+    );
+    assert_eq!(
+        snapshot_after_reset.custom_transport_disabled, None,
+        "custom_transport_disabled should be None after reset"
+    );
+}
+
+#[test]
+fn test_metrics_data_flow_without_proxy() {
+    use fireworks_collaboration_lib::core::git::transport::metrics::{
+        tl_reset, tl_set_proxy_usage, tl_snapshot,
+    };
+
+    // Reset to clean state
+    tl_reset();
+
+    // Simulate no proxy usage
+    tl_set_proxy_usage(false, None, None, false);
+
+    // Capture snapshot
+    let snapshot = tl_snapshot();
+
+    // Verify proxy fields reflect no usage
+    assert_eq!(
+        snapshot.used_proxy,
+        Some(false),
+        "used_proxy should be false"
+    );
+    assert_eq!(snapshot.proxy_type, None, "proxy_type should be None");
+    assert_eq!(
+        snapshot.proxy_latency_ms, None,
+        "proxy_latency_ms should be None"
+    );
+    assert_eq!(
+        snapshot.custom_transport_disabled,
+        Some(false),
+        "custom_transport_disabled should be false"
+    );
+}
+
+#[test]
+fn test_empty_proxy_url_behavior() {
+    use fireworks_collaboration_lib::core::config::model::AppConfig;
+    use fireworks_collaboration_lib::core::git::transport::ensure_registered;
+    use fireworks_collaboration_lib::core::proxy::{ProxyConfig, ProxyManager, ProxyMode};
+
+    let mut cfg = AppConfig::default();
+    cfg.proxy = ProxyConfig {
+        mode: ProxyMode::Http,
+        url: "".to_string(),
+        ..Default::default()
+    };
+
+    // Empty URL with HTTP mode means proxy NOT enabled
+    let result = ensure_registered(&cfg);
+    assert!(
+        result.is_ok(),
+        "ensure_registered should handle empty proxy URL gracefully"
+    );
+
+    // ProxyManager should report as not enabled
+    let manager = ProxyManager::new(cfg.proxy.clone());
+    assert!(
+        !manager.is_enabled(),
+        "Empty URL should mean proxy is not enabled"
+    );
+}
+
+#[test]
+fn test_concurrent_registration_safety() {
+    use fireworks_collaboration_lib::core::config::model::AppConfig;
+    use fireworks_collaboration_lib::core::git::transport::ensure_registered;
+    use std::sync::Arc;
+    use std::thread;
+
+    let cfg = Arc::new(AppConfig::default());
+
+    // Spawn multiple threads trying to register simultaneously
+    let handles: Vec<_> = (0..10)
+        .map(|_| {
+            let cfg_clone = Arc::clone(&cfg);
+            thread::spawn(move || ensure_registered(&cfg_clone))
+        })
+        .collect();
+
+    // All should succeed
+    for handle in handles {
+        let result = handle.join().unwrap();
+        assert!(result.is_ok(), "Concurrent registration should be safe");
+    }
+}
+
+// ============================================================================
+// HTTP Module Tests (from http.rs)
+// ============================================================================
+
+#[tokio::test]
+async fn test_reject_non_https() {
+    use fireworks_collaboration_lib::core::config::model::AppConfig;
+    use fireworks_collaboration_lib::core::http::client::HttpClient;
+    use fireworks_collaboration_lib::core::http::types::HttpRequestInput;
+    use std::collections::HashMap;
+
+    let client = HttpClient::new(AppConfig::default());
+    let input = HttpRequestInput {
+        url: "http://example.com/".into(),
+        method: "GET".into(),
+        headers: HashMap::new(),
+        body_base64: None,
+        timeout_ms: 100,
+        force_real_sni: false,
+        follow_redirects: false,
+        max_redirects: 0,
+    };
+    let err = client.send(input).await.expect_err("should fail");
+    let msg = format!("{err}");
+    assert!(msg.contains("only https"));
+}
+
+#[tokio::test]
+async fn test_invalid_base64_early() {
+    use fireworks_collaboration_lib::core::config::model::AppConfig;
+    use fireworks_collaboration_lib::core::http::client::HttpClient;
+    use fireworks_collaboration_lib::core::http::types::HttpRequestInput;
+    use std::collections::HashMap;
+
+    let client = HttpClient::new(AppConfig::default());
+    let input = HttpRequestInput {
+        url: "https://example.com/".into(),
+        method: "POST".into(),
+        headers: HashMap::new(),
+        body_base64: Some("***not-base64***".into()),
+        timeout_ms: 100,
+        force_real_sni: false,
+        follow_redirects: false,
+        max_redirects: 0,
+    };
+    let err = client.send(input).await.expect_err("should fail");
+    let msg = format!("{err}");
+    assert!(msg.contains("decode bodyBase64"));
+}
+
+#[test]
+fn test_compute_sni_host_fake_and_real() {
+    use fireworks_collaboration_lib::core::config::model::AppConfig;
+    use fireworks_collaboration_lib::core::http::client::HttpClient;
+
+    let mut cfg = AppConfig::default();
+    cfg.http.fake_sni_enabled = true;
+    cfg.http.fake_sni_hosts = vec!["baidu.com".into()];
+    let client = HttpClient::new(cfg.clone());
+    let (sni, used_fake) = client.compute_sni_host(false, "github.com");
+    assert_eq!(sni, "baidu.com");
+    assert!(used_fake);
+    let (sni2, used_fake2) = client.compute_sni_host(true, "github.com");
+    assert_eq!(sni2, "github.com");
+    assert!(!used_fake2);
+}
+
+#[test]
+fn test_upsert_host_header_overrides() {
+    use fireworks_collaboration_lib::core::config::model::AppConfig;
+    use fireworks_collaboration_lib::core::http::client::HttpClient;
+    use hyper::header::{HeaderMap, HOST};
+
+    let client = HttpClient::new(AppConfig::default());
+    let mut h = HeaderMap::new();
+    client.upsert_host_header(&mut h, "example.com");
+    assert_eq!(h.get(HOST).unwrap(), "example.com");
+    // override
+    client.upsert_host_header(&mut h, "another.test");
+    assert_eq!(h.get(HOST).unwrap(), "another.test");
+}
+
+#[test]
+fn test_should_warn_large_body_boundary() {
+    use fireworks_collaboration_lib::core::config::model::AppConfig;
+    use fireworks_collaboration_lib::core::http::client::HttpClient;
+
+    let mut cfg = AppConfig::default();
+    cfg.http.large_body_warn_bytes = 10;
+    let client = HttpClient::new(cfg);
+    assert!(!client.should_warn_large_body(10)); // equal -> no warn
+    assert!(client.should_warn_large_body(11)); // greater -> warn
+}
+
+#[test]
+fn test_roundtrip_serde() {
+    use fireworks_collaboration_lib::core::http::types::{
+        HttpResponseOutput, RedirectInfo, TimingInfo,
+    };
+    use std::collections::HashMap;
+
+    let out = HttpResponseOutput {
+        ok: true,
+        status: 200,
+        headers: HashMap::from([("content-type".into(), "text/plain".into())]),
+        body_base64: "SGVsbG8=".into(),
+        used_fake_sni: false,
+        ip: Some("1.2.3.4".into()),
+        timing: TimingInfo {
+            connect_ms: 1,
+            tls_ms: 2,
+            first_byte_ms: 3,
+            total_ms: 4,
+        },
+        redirects: vec![RedirectInfo {
+            status: 301,
+            location: "https://example.com".into(),
+            count: 1,
+        }],
+        body_size: 5,
+    };
+    let s = serde_json::to_string(&out).unwrap();
+    let back: HttpResponseOutput = serde_json::from_str(&s).unwrap();
+    assert_eq!(back.status, 200);
+    assert_eq!(back.timing.total_ms, 4);
+    assert_eq!(back.redirects.len(), 1);
 }

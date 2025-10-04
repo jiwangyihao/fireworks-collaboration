@@ -116,7 +116,7 @@ pub fn do_fetch<F: FnMut(ProgressPayload)>(
         Err(e) => {
             return Err(GitError::new(
                 helpers::map_git2_error(&e),
-                format!("open repo: {}", e),
+                format!("open repo: {e}"),
             ))
         }
     };
@@ -161,10 +161,7 @@ pub fn do_fetch<F: FnMut(ProgressPayload)>(
             Err(_) => match repo.remotes() {
                 Ok(names) => {
                     if let Some(name) = names.iter().flatten().next() {
-                        match repo.find_remote(name) {
-                            Ok(r) => Some(r),
-                            Err(_) => None,
-                        }
+                        repo.find_remote(name).ok()
                     } else {
                         None
                     }
@@ -181,7 +178,7 @@ pub fn do_fetch<F: FnMut(ProgressPayload)>(
                         Err(e) => {
                             return Err(GitError::new(
                                 helpers::map_git2_error(&e),
-                                format!("remote anonymous with rewritten url: {}", e),
+                                format!("remote anonymous with rewritten url: {e}"),
                             ))
                         }
                     }
@@ -208,7 +205,7 @@ pub fn do_fetch<F: FnMut(ProgressPayload)>(
                             Err(e) => {
                                 return Err(GitError::new(
                                     helpers::map_git2_error(&e),
-                                    format!("remote anonymous with rewritten url: {}", e),
+                                    format!("remote anonymous with rewritten url: {e}"),
                                 ))
                             }
                         }
@@ -227,7 +224,7 @@ pub fn do_fetch<F: FnMut(ProgressPayload)>(
                     Err(e) => {
                         return Err(GitError::new(
                             helpers::map_git2_error(&e),
-                            format!("remote lookup: {}", e),
+                            format!("remote lookup: {e}"),
                         ))
                     }
                 }

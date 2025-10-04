@@ -1,9 +1,6 @@
 #![cfg(not(feature = "tauri-app"))]
 //! Tasks 模块综合测试
-//! 合并了 tasks/ip_pool_preheat_events.rs 和 tasks/registry/git/helpers_tests.rs
-
-#[path = "common/mod.rs"]
-mod common;
+//! 合并了 `tasks/ip_pool_preheat_events.rs` 和 `tasks/registry/git/helpers_tests.rs`
 
 use crate::common::test_env::init_test_env;
 
@@ -210,14 +207,13 @@ mod section_registry_git_helpers {
         let over = StrategyHttpOverride {
             follow_redirects: Some(!global.http.follow_redirects),
             max_redirects: Some(3),
-            ..Default::default()
         };
         let (f, m, changed, conflict) =
             TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, Some(&over));
         if !global.http.follow_redirects {
-            assert_eq!(f, true);
+            assert!(f);
         }
-        if f == false {
+        if !f {
             assert_eq!(m, 0);
             assert!(conflict.is_some());
         } else {
@@ -233,7 +229,6 @@ mod section_registry_git_helpers {
         let over = StrategyHttpOverride {
             follow_redirects: None,
             max_redirects: Some(99),
-            ..Default::default()
         };
         let (_f, m, changed, _conflict) =
             TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, Some(&over));

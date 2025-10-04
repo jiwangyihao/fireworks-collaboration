@@ -2,32 +2,32 @@
 //! 聚合测试：Error Mapping & i18n (Roadmap 12.14)
 //! ------------------------------------------------------------
 //! Phase4 Metrics (属性测试集中 v1.17)：
-//!   * Added sections (props): strategy_props / retry_props / partial_filter_props / tls_props
-//!   * Migrated property source files: 5 (prop_strategy_http_override.rs, prop_retry_override.rs, prop_strategy_summary_codes.rs, prop_partial_filter_capability.rs, prop_tls_override.rs)
+//!   * Added sections (props): `strategy_props` / `retry_props` / `partial_filter_props` / `tls_props`
+//!   * Migrated property source files: 5 (`prop_strategy_http_override.rs`, `prop_retry_override.rs`, `prop_strategy_summary_codes.rs`, `prop_partial_filter_capability.rs`, `prop_tls_override.rs`)
 //!   * Seeds retained: prop_tls_override.proptest-regressions
 //!   * Total proptest groups: 5 (http override, summary codes, retry override, partial filter fallback, tls override normalization)
 //!   * Root-level prop_* files replaced with placeholders (assert!(true)) preserving git blame
 //!   * Consolidation rationale: reduce search surface & ensure future override semantic changes require touching a single file
-//!   * Next follow-up (optional): extract shared AppConfig mutation patterns into a helper to cut duplication (~30 lines)
+//!   * Next follow-up (optional): extract shared `AppConfig` mutation patterns into a helper to cut duplication (~30 lines)
 //! 来源文件：
-//!   - error_i18n_map.rs (错误分类 + 中文消息 Network 分类验证)
+//!   - `error_i18n_map.rs` (错误分类 + 中文消息 Network 分类验证)
 //! 设计说明：
 //!   * 当前仅有一个 legacy 用例：中文“无法 连接 ... 超时”消息映射到 Network。
 //!   * 本聚合文件预留分区结构，后续接入多 locale key / fallback / 组合错误场景。
 //! 分区：
-//!   section_error_mapping        -> 错误分类（map_git2_error -> ErrorCategory + AppErrorKind 桥接）
-//!   section_i18n_locale_basic    -> 多语言关键 key 存在性（首版占位已实现）
-//!   section_i18n_fallback        -> locale 回退策略（首版占位实现：不存在 locale -> fallback en）
-//!   section_integration_edge     -> 复合错误互斥（占位）
+//!   `section_error_mapping`        -> `错误分类（map_git2_error` -> `ErrorCategory` + `AppErrorKind` 桥接）
+//!   `section_i18n_locale_basic`    -> 多语言关键 key 存在性（首版占位已实现）
+//!   `section_i18n_fallback`        -> locale 回退策略（首版占位实现：不存在 locale -> fallback en）
+//!   `section_integration_edge`     -> 复合错误互斥（占位）
 //! 未来扩展计划 (Post-audit):
-//!   - 引入 AppErrorKind 枚举统一抽象 (Protocol/Network/Cancel/Timeout/...)
-//!   - 提供 helper: assert_error_category(label, err, AppErrorKind)
+//!   - 引入 `AppErrorKind` 枚举统一抽象 (Protocol/Network/Cancel/Timeout/...)
+//!   - 提供 helper: `assert_error_category(label`, err, `AppErrorKind`)
 //!   - 构建 locale fixture & key 列表，断言所有关键 keys 在 zh/en 下存在
 //!   - Fallback 测试：设置不存在 locale -> 回退 en
 //!   - 组合：模拟 Cancel + Timeout 互斥，验证只出现一个类别
 //! Cross-ref:
-//!   - git_* 聚合文件中已经使用 ErrorCategory 进行分类断言
-//!   - events_* 聚合文件中的失败/取消终态映射将在 12.15 之后结合 AppErrorKind 统一
+//!   - git_* 聚合文件中已经使用 `ErrorCategory` 进行分类断言
+//!   - events_* 聚合文件中的失败/取消终态映射将在 12.15 之后结合 `AppErrorKind` 统一
 
 use super::common::test_env::init_test_env;
 
@@ -49,8 +49,7 @@ mod section_error_mapping {
         let cat = map_git2_error(&err);
         assert!(
             matches!(cat, ErrorCategory::Network),
-            "expected Network got {:?}",
-            cat
+            "expected Network got {cat:?}"
         );
     }
 
@@ -148,9 +147,7 @@ mod section_i18n_locale_basic {
                 let t = translate(k, lang).unwrap_or_default();
                 assert!(
                     !t.is_empty(),
-                    "missing translation for key={} lang={}",
-                    k,
-                    lang
+                    "missing translation for key={k} lang={lang}"
                 );
             }
         }
@@ -208,12 +205,11 @@ mod section_strategy_props {
             global.http.follow_redirects = !follow;
             let over = fireworks_collaboration_lib::core::git::default_impl::opts::StrategyHttpOverride {
                 follow_redirects: Some(follow),
-                max_redirects: Some(raw_max as u32),
-                ..Default::default()
+                max_redirects: Some(raw_max),
             };
             let (_f, m, _changed, conflict) = TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, Some(&over));
             prop_assert!(m <= 20, "clamped max should be <=20, got {m}");
-            if follow == false && m > 0 { prop_assert!(conflict.is_some(), "expected conflict message when follow=false and m>0"); }
+            if !follow && m > 0 { prop_assert!(conflict.is_some(), "expected conflict message when follow=false and m>0"); }
             if conflict.is_some() { prop_assert_eq!(m, 0, "conflict must normalize max to 0"); }
         }
     }
@@ -235,7 +231,7 @@ mod section_strategy_props {
             global.retry.max = retry_max + 5;
             global.retry.base_ms = retry_base + 10;
             global.retry.factor = (retry_factor as f64) + 0.5;
-            let http_over = fireworks_collaboration_lib::core::git::default_impl::opts::StrategyHttpOverride { follow_redirects: Some(http_follow), max_redirects: Some(http_max as u32), ..Default::default() };
+            let http_over = fireworks_collaboration_lib::core::git::default_impl::opts::StrategyHttpOverride { follow_redirects: Some(http_follow), max_redirects: Some(http_max as u32) };
             let tls_over = fireworks_collaboration_lib::core::git::default_impl::opts::StrategyTlsOverride { insecure_skip_verify: Some(tls_insecure), skip_san_whitelist: Some(tls_skip) };
             let retry_over = fireworks_collaboration_lib::core::git::default_impl::opts::StrategyRetryOverride { max: Some(retry_max), base_ms: Some(retry_base as u32), factor: Some(retry_factor as f32), jitter: Some(false) };
             let (f,m,http_changed,_http_conflict) = TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, Some(&http_over));

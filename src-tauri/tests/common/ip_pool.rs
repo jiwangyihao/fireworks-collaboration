@@ -23,7 +23,7 @@ pub fn enabled_config() -> EffectiveIpPoolConfig {
     cfg
 }
 
-/// 构造仅启用 UserStatic 源的配置，并注入指定 host/ip/port。
+/// 构造仅启用 `UserStatic` 源的配置，并注入指定 host/ip/port。
 pub fn user_static_only_config(host: &str, address: IpAddr, port: u16) -> EffectiveIpPoolConfig {
     let mut cfg = enabled_config();
     cfg.runtime.sources = IpPoolSourceToggle {
