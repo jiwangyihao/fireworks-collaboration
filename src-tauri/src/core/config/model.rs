@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::credential::config::CredentialConfig;
 use crate::core::ip_pool::IpPoolRuntimeConfig;
 use crate::core::proxy::ProxyConfig;
+use crate::core::workspace::WorkspaceConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,6 +95,9 @@ pub struct AppConfig {
     /// P6.0: 凭证存储与安全管理配置，默认使用系统钥匙串。
     #[serde(default)]
     pub credential: CredentialConfig,
+    /// P7.0: 工作区与多仓库管理配置，默认禁用。
+    #[serde(default)]
+    pub workspace: WorkspaceConfig,
 }
 
 fn default_true() -> bool {
@@ -191,6 +195,7 @@ impl Default for AppConfig {
             ip_pool: IpPoolRuntimeConfig::default(),
             proxy: ProxyConfig::default(),
             credential: CredentialConfig::default(),
+            workspace: WorkspaceConfig::default(),
         }
     }
 }

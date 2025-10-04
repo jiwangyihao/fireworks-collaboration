@@ -13,3 +13,4 @@ pub mod ip_pool;
 pub mod proxy;
 pub mod tasks;
 pub mod tls;
+pub mod workspace;
