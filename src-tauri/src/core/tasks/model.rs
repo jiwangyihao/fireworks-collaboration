@@ -23,6 +23,9 @@ pub enum TaskKind {
         depth: Option<u32>,
         filter: Option<String>,
         strategy_override: Option<serde_json::Value>,
+        /// P7.1: 是否递归克隆子模块
+        #[serde(default)]
+        recurse_submodules: bool,
     },
     GitFetch {
         repo: String,
