@@ -563,5 +563,52 @@
   "//": "  - Environment: HTTP_PROXY, HTTPS_PROXY",
   "//": "  - Precedence: HTTPS_PROXY > HTTP_PROXY",
   "//": "",
-  "//": "========================================================="
+  "//": "=========================================================",
+
+  "//": "",
+  "//": "=========================================================",
+  "//": "  Submodule Management (P7.1)",
+  "//": "=========================================================",
+  "//": "  Control Git submodule behavior including automatic",
+  "//": "  recursion, depth limits, and parallel processing",
+  "//": "=========================================================",
+  "submodule": {
+    "//": "",
+    "//": "autoRecurse: Automatically handle nested submodules",
+    "//": "  Default: true",
+    "//": "  Note: When false, only process first-level submodules",
+    "autoRecurse": true,
+
+    "//": "",
+    "//": "maxDepth: Maximum recursion depth for nested submodules",
+    "//": "  Range: 1-10",
+    "//": "  Default: 5",
+    "//": "  Note: Prevents infinite recursion in circular dependencies",
+    "maxDepth": 5,
+
+    "//": "",
+    "//": "autoInitOnClone: Automatically initialize submodules after clone",
+    "//": "  Default: true",
+    "//": "  Note: Equivalent to 'git clone --recurse-submodules'",
+    "autoInitOnClone": true,
+
+    "//": "",
+    "//": "recursiveUpdate: Recursively update nested submodules",
+    "//": "  Default: true",
+    "//": "  Note: Updates all levels of submodules",
+    "recursiveUpdate": true,
+
+    "//": "",
+    "//": "parallel: Process submodules in parallel",
+    "//": "  Default: false",
+    "//": "  Note: Experimental feature, may cause race conditions",
+    "parallel": false,
+
+    "//": "",
+    "//": "maxParallel: Maximum concurrent submodule operations",
+    "//": "  Range: 1-20",
+    "//": "  Default: 3",
+    "//": "  Note: Only applies when parallel=true",
+    "maxParallel": 3
+  }
 }
