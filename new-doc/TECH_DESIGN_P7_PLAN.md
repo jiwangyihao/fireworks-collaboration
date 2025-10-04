@@ -291,28 +291,27 @@ pub struct SubmoduleConfig {
 	- 子任务错误淹没其他信息 → 父任务事件包含失败摘要，详细错误在子任务事件中。
 
 ### P7.3 团队配置同步与模板管理
-- **目标**：支持团队配置模板的导出和导入，便于团队成员快速应用统一的 IP 池、代理、凭证策略，减少重复配置工作。
+- **目标**：建立可审计、可回滚的团队配置模板机制，帮助团队成员一键共享 IP 池、代理、TLS 与凭证策略，同时保证敏感信息不外泄。
 - **范围**：
-	- 实现配置导出接口：将当前 `config.json` 中的 IP 池、代理、TLS 等配置导出为 `team-config-template.json`；
-	- 实现配置导入接口：读取模板文件并合并到当前配置，支持字段级别的覆盖策略；
-	- 支持配置版本管理：模板包含版本号和兼容性标记，导入时检查版本；
-	- 设计冲突解决策略：用户可选择"覆盖本地"、"保留本地"、"合并"；
-	- 实现敏感信息过滤：导出时自动排除密码、密钥等敏感字段，仅保留策略配置；
-	- 支持模板部分导入：用户可选择仅导入 IP 池配置或仅导入代理配置。
+   - 输出配置快照：将当前 `config.json` + IP 池文件序列化为 `team-config-template.json`，写入模板元数据（版本、作者、时间戳）。
+   - 导入与合并：支持按节选择导入、对每节应用覆盖 / 合并 / 保留策略，并在应用前执行 schema 校验与敏感字段清理。
+   - 安全保护：导出阶段统一去除密码、历史路径等敏感字段，导入阶段在落盘前自动创建备份并生成操作报告。
+   - 可观测性：在导入/导出流程中输出结构化日志、导入报告（应用/跳过列表、警告、备份位置），并刷新 IP 池运行态。
+   - 体验增强：允许仅导入某一节（如只同步代理），默认路径自动推断，可选自定义模板位置。
 - **交付物**：
-	- 配置导出/导入命令与单元测试（版本检查、冲突解决、敏感信息过滤）；
-	- `team-config-template.json` 结构定义和示例文件；
-	- 配置导入/导出的结构化日志和事件。
-- **依赖**：依赖 P4/P5/P6 的配置结构；配置加载机制需支持部分更新。
+   - `core/config/team_template.rs` 导出/导入模块（含策略、合并函数、报表结构）。
+   - Tauri 命令 `export_team_config_template` 与 `import_team_config_template` 及参数模型。
+   - `team-config-template.json.example` 示例文件、配置文档补充、自动化测试覆盖（敏感字段过滤、策略行为、版本校验、备份生成）。
+- **依赖**：依赖 P4~P6 的配置结构与 IP 池文件落盘逻辑；需要批量操作阶段提供的工作区基础设施以触发配置刷新。
 - **验收**：
-	- 导出的模板文件不包含密码等敏感信息；
-	- 导入模板后，IP 池、代理配置自动应用，任务使用新配置；
-	- 版本不兼容时提示用户升级或手动调整；
-	- 冲突解决策略按用户选择执行，日志记录覆盖的字段。
+   - 模板导出默认剥离密码、凭证文件路径、IP 池历史路径等敏感信息。
+   - 导入流程在 schema 主版本不一致时拒绝执行并返回明确错误。
+   - 导入成功后生成含应用/跳过记录的报告，且 `config.json` / IP 池文件均已落盘并刷新运行态。
+   - 导入过程中如启用备份，则生成可回滚的备份文件并返回绝对路径。
 - **风险与缓解**：
-	- 模板版本不兼容 → 提供迁移工具或向后兼容处理；
-	- 导入导致配置损坏 → 自动备份当前配置，支持一键回滚；
-	- 敏感信息泄漏 → 导出前多重检查，单元测试覆盖所有敏感字段。
+   - 模板向后兼容性不足 → 模板携带 `schemaVersion`，主版本不符时阻止导入并提示升级。
+   - 导入失败导致配置受损 → 先备份再写入，失败路径回滚到备份文件；报告中附带警告。
+   - 敏感字段遗漏过滤 → 导出/导入均经过集中去敏化函数，并以单元测试覆盖高风险字段（密码、Token、历史路径）。
 
 ### P7.4 跨仓库状态监控与视图
 - **目标**：为工作区提供统一的状态查询接口和视图，展示所有仓库的分支、远程 URL、未提交变更等信息，帮助用户快速了解整体状态。
@@ -1162,7 +1161,89 @@ git submodule status  # 应显示已初始化的子模块
 6. **前端 UX 支撑**: 结合父任务进度事件，实现批量操作看板；对失败仓库提供快捷重试按钮和日志链接。
 
 ### P7.3 团队配置同步与模板管理 实现说明
-（待实现后补充）
+
+**实现时间**: 2025-10-05  
+**实现者**: Fireworks Collaboration Team & GitHub Copilot Assistant  
+**状态**: ✅ 已完成导出/导入闭环，测试与文档齐备
+
+#### 3.1 关键代码路径与文件列表
+
+**核心模块** (`src-tauri/src/core/config/team_template.rs`, 830+ 行):
+- `TeamConfigTemplate` / `TemplateMetadata` / `TemplateSections`: 模板骨架，默认携带 `schemaVersion=1.0.0` 与可选元数据。
+- `TemplateExportOptions` / `TemplateImportOptions` / `ImportStrategyConfig`: 控制导出节选择、导入策略（覆盖、保留本地、合并）。
+- `SectionStrategy`、`TemplateImportReport`、`AppliedSection`、`SkippedSection`: 产出导入报告，记录每节的应用/跳过原因与策略。
+- 核心函数：
+   - `export_template`: 快照当前配置并调用去敏化函数（`sanitized_proxy`、`sanitized_credential`、`sanitized_ip_pool_runtime`）。
+   - `write_template_to_path` / `load_template_from_path`: 负责模板落盘与读取。
+   - `apply_template_to_config`: 验证 schema 主版本、按节执行策略、生成报告、返回 `TemplateImportOutcome`（含 IP 池文件更新结果）。
+   - `backup_config_file`: 在导入路径写入时间戳备份，生成 `team-config-backup-YYYYMMDDHHMMSS.json`。
+   - `merge_*` 系列函数：提供 IP 池运行态/IP 池文件/代理/TLS 的字段级合并逻辑，忽略默认值并保留敏感字段为空。
+
+**命令层** (`src-tauri/src/app/commands/config.rs`):
+- `export_team_config_template`: 读取当前配置与 IP 池文件，应用导出选项后写入模板文件（默认路径 `config/team-config-template.json`）。
+- `import_team_config_template`: 加载模板、应用策略、自动备份、保存配置与 IP 池文件、刷新运行态，并返回 `TemplateImportReport`。
+
+**示例与文档**:
+- `team-config-template.json.example`: 完整展示 metadata、IP 池、代理、TLS、凭证节的推荐写法（敏感字段已置空或匿名）。
+- `config.example.json`: 扩展 `teamTemplate` 相关配置说明，提示如何在工作区中引用模板。
+
+**测试覆盖** (`src-tauri/tests/config.rs` → `section_team_template` 模块，7 个测试):
+- `test_export_team_template_sanitizes_sensitive_fields`: 验证导出模板不会泄露代理密码、凭证文件路径、IP 池历史路径。
+- `test_import_template_schema_mismatch_errors`: 校验主版本不符时立即返回错误。
+- `test_import_keep_local_strategy_preserves_local_config`: 断言 `KeepLocal` 策略保持本地代理设置不变。
+- `test_import_respects_disabled_sections`: 当 `include_tls=false` 时跳过 TLS 节并写入报告。
+- `test_import_overwrite_sanitizes_ip_pool_history_path`: 覆盖策略同时确保 runtime/historyPath 被清空。
+- `test_import_merge_preserves_local_history_path`: Merge 策略保留本地 IP 池历史路径，仅合并其余字段。
+- `test_import_team_template_applies_sections_and_backup`: 端到端验证导入→备份→配置/文件落盘→IP 池刷新流程。
+
+#### 3.2 实际交付与设计差异
+
+**提升与扩展**:
+1. **报告可追溯性**：除了应用节与策略，还补充了 `skipped` 原因（`strategyKeepLocal`、`sectionDisabled`、`noChanges`）及可选警告列表，便于前端展示与审计。
+2. **自动备份整合**：导入流程自动调用 `backup_config_file`，并把备份路径写回报告；设计阶段仅要求“支持回滚”，现已默认执行。
+3. **IP 池文件协同**：`TemplateImportOutcome` 可返回更新后的 IP 池文件，由命令层负责写回磁盘并刷新运行态，它涵盖 Merge 与 Overwrite 的差异化逻辑。
+4. **去敏化函数集中管理**：将代理密码、凭证文件路径、IP 池历史路径的清理固化在 `sanitized_*` 函数，避免调用方遗漏，设计阶段仅描述“敏感信息过滤”。
+5. **合并策略细化**：为 IP 池文件、代理、TLS 分别实现 merge 函数，忽略默认值且去重列表字段，比原计划“字段级覆盖”更易调优。
+
+**与设计保持一致的部分**:
+- 模板含 `schemaVersion`，导入时仅允许主版本一致。
+- 支持增量导入（`include_*` 开关）与三种策略（Overwrite / KeepLocal / Merge）。
+- 导出 / 导入均输出结构化日志，前端可在 `config` target 下查看操作详情。
+
+**暂未覆盖/后续计划**:
+- 未实现模板版本迁移工具（当前仅主版本校验）。
+- 冲突解决 UI / 事件流水仍待 P7.5 前端阶段接入。
+- 模板 metadata 目前只支持静态 `generatedBy`、`generatedAt` 信息，后续可扩展为自定义标签或校验签名。
+
+#### 3.3 验收/测试情况与残留风险
+
+**验证结果**:
+- ✅ `cargo test --test config`：包含团队模板 7 个测试与既有配置测试，全部通过。
+- ✅ `cargo test`（后端全量）：核心逻辑稳定，唯一非相关失败来自既有 proxy 并发测试的已知易错项（与 P7.3 无关）。
+- ✅ 手动导出/导入回归：在本地环境执行 Tauri 命令验证默认路径、备份文件生成、IP 池刷新日志。
+
+**残留风险**:
+| 风险 | 等级 | 描述 | 缓解 |
+|------|------|------|------|
+| 模板与运行版本偏差 | 中 | 当前仅校验 `schemaVersion` 主版本，无法自动迁移旧模板 | P7.6 之前补充迁移脚本或在文档中提供转换指南 |
+| Merge 语义复杂度 | 低 | `merge_ip_pool_runtime` / `merge_tls_config` 仅覆盖与默认值不同的字段 | 在文档中强调“模板优先”，并通过测试覆盖关键交叉字段 |
+| IP 池历史路径处理 | 低 | Merge 策略会保留本地 `historyPath`，模板提供的路径被丢弃 | 行为符合安全要求（禁止分发本地路径），文档已注明 |
+| 备份清理策略 | 低 | 连续导入可能产生多个备份文件 | 建议运维在文档中加入过期备份清理脚本 |
+
+#### 3.4 运维手册或配置样例的落地状态
+
+- `team-config-template.json.example`：展示元数据、各配置节字段、敏感字段置空的最佳实践，可直接作为团队样板。
+- `config.example.json`：新增 `teamTemplate` 配置段，说明默认导出/导入路径与常见策略组合。
+- 运维手册更新：在 `P7_IMPLEMENTATION_HANDOFF.md` 补充“导出模板”“导入模板并回滚”操作流程、备份位置说明、常见错误排查（schema 不兼容、读取失败、IP 池文件不存在等）。
+- 日志与监控：导入/导出流程均采用 `tracing`，分别使用 `config` 与 `team_template` 目标，便于集中检索；报告可附带到问题单。
+
+#### 3.5 后续阶段建议
+
+1. **模板版本治理**：引入 semver 迁移器，允许从旧版本模板自动映射到最新结构，并在报告中提示迁移结果。
+2. **前端交互**：在 P7.5 实现模板导出/导入向导，展示导入报告细节、允许逐节确认。
+3. **签名与校验**：可选地为模板增加签名/校验和字段，保障模板来源可信，便于企业分发。
+4. **增量备份策略**：提供配置项控制备份保留数量或目录，避免长期堆积。
+5. **事件通知**：与工作区事件总线集成，让前端/运维在模板导入/导出完成时收到实时通知。
 
 ### P7.4 跨仓库状态监控与视图 实现说明
 （待实现后补充）
