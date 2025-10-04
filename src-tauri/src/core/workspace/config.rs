@@ -33,8 +33,10 @@ impl WorkspaceConfigManager {
     /// 更新配置
     pub fn update_config(&mut self, config: WorkspaceConfig) -> Result<()> {
         self.validate_config(&config)?;
-        info!("更新工作区配置: enabled={}, max_concurrent={}", 
-              config.enabled, config.max_concurrent_repos);
+        info!(
+            "更新工作区配置: enabled={}, max_concurrent={}",
+            config.enabled, config.max_concurrent_repos
+        );
         self.config = config;
         Ok(())
     }
@@ -46,8 +48,10 @@ impl WorkspaceConfigManager {
         }
 
         if config.max_concurrent_repos > 100 {
-            warn!("max_concurrent_repos 设置较高 ({}), 可能导致资源耗尽", 
-                  config.max_concurrent_repos);
+            warn!(
+                "max_concurrent_repos 设置较高 ({}), 可能导致资源耗尽",
+                config.max_concurrent_repos
+            );
         }
 
         if let Some(ref workspace_file) = config.workspace_file {

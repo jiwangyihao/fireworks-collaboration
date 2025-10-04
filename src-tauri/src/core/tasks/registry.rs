@@ -1,4 +1,4 @@
-﻿use std::{
+use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
     time::SystemTime,
@@ -390,4 +390,3 @@ impl TaskRegistry {
 }
 
 pub type SharedTaskRegistry = Arc<TaskRegistry>;
-

@@ -184,8 +184,7 @@ mod section_registry_cancel {
         let reg = Arc::new(TaskRegistry::new());
         let (id, token) = reg.create(TaskKind::Sleep { ms: 200 });
         reg.clone().spawn_sleep_task(None, id, token.clone(), 200);
-        let _ = super::task_wait::wait_task_state(&reg, &id, TaskState::Running, 1_000, 25)
-            .await; // 宽松等待
+        let _ = super::task_wait::wait_task_state(&reg, &id, TaskState::Running, 1_000, 25).await; // 宽松等待
         assert!(reg.cancel(&id));
         assert!(reg.cancel(&id));
     }
@@ -333,9 +332,7 @@ mod section_registry_edge {
         reg.clone().spawn_sleep_task(None, id, token, 50);
         let list_before = reg.list();
         assert_eq!(list_before.len(), 1);
-        let _ =
-            super::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 1_000, 25)
-                .await;
+        let _ = super::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 1_000, 25).await;
         let list_after = reg.list();
         assert_eq!(list_after.len(), 1);
         let new_state = &list_after[0].state;
@@ -491,8 +488,7 @@ mod section_service_progress {
             dest.clone(),
         );
         let completed =
-            super::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 10_000, 25)
-                .await;
+            super::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 10_000, 25).await;
         assert!(completed, "local clone task should complete");
         let _ = handle.await;
     }
@@ -541,8 +537,7 @@ mod section_service_progress {
             None,
         );
         let completed =
-            super::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 10_000, 25)
-                .await;
+            super::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 10_000, 25).await;
         assert!(completed, "local fetch task should complete");
         let _ = handle.await;
     }
@@ -738,22 +733,15 @@ mod section_service_cancel_fast {
                 .clone()
                 .spawn_git_clone_task(None, id, token, repo, dest);
             let running =
-                super::task_wait::wait_task_state(&reg, &id, TaskState::Running, 1_000, 25)
-                    .await;
+                super::task_wait::wait_task_state(&reg, &id, TaskState::Running, 1_000, 25).await;
             assert!(running, "should enter running");
             let failed_quick =
-                super::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25)
-                    .await;
+                super::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25).await;
             let _ = reg.cancel(&id);
             if !failed_quick {
-                let canceled = super::task_wait::wait_task_state(
-                    &reg,
-                    &id,
-                    TaskState::Canceled,
-                    4_000,
-                    25,
-                )
-                .await;
+                let canceled =
+                    super::task_wait::wait_task_state(&reg, &id, TaskState::Canceled, 4_000, 25)
+                        .await;
                 assert!(
                     canceled,
                     "invalid repo should fail or be canceled within timeout"
@@ -788,14 +776,8 @@ mod section_service_cancel_fast {
             let handle = reg
                 .clone()
                 .spawn_git_clone_task(None, id, token, repo, dest);
-            let canceled = super::task_wait::wait_task_state(
-                &reg,
-                &id,
-                TaskState::Canceled,
-                1_000,
-                25,
-            )
-            .await;
+            let canceled =
+                super::task_wait::wait_task_state(&reg, &id, TaskState::Canceled, 1_000, 25).await;
             assert!(canceled, "should be canceled immediately");
             let _ = timeout(Duration::from_secs(2), async {
                 let _ = handle.await;
@@ -826,12 +808,10 @@ mod section_service_cancel_fast {
                 .clone()
                 .spawn_git_clone_task(None, id, token, repo, dest);
             let running =
-                super::task_wait::wait_task_state(&reg, &id, TaskState::Running, 800, 25)
-                    .await;
+                super::task_wait::wait_task_state(&reg, &id, TaskState::Running, 800, 25).await;
             assert!(running, "should enter running");
             let failed =
-                super::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25)
-                    .await;
+                super::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25).await;
             assert!(failed, "invalid url should fail quickly");
             let _ = reg.cancel(&id);
             let _ = timeout(Duration::from_secs(2), async {
@@ -863,12 +843,10 @@ mod section_service_cancel_fast {
                 .clone()
                 .spawn_git_clone_task(None, id, token, repo, dest);
             let running =
-                super::task_wait::wait_task_state(&reg, &id, TaskState::Running, 800, 25)
-                    .await;
+                super::task_wait::wait_task_state(&reg, &id, TaskState::Running, 800, 25).await;
             assert!(running, "should enter running");
             let failed =
-                super::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25)
-                    .await;
+                super::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 2_000, 25).await;
             assert!(failed, "invalid scheme (ftp) should fail quickly");
             let _ = reg.cancel(&id);
             let _ = timeout(Duration::from_secs(2), async {

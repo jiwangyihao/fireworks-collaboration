@@ -18,8 +18,8 @@ fn test_audit_log_persistence() {
     let log_path = temp_dir.path().join("audit.json");
 
     // Create logger with persistent storage
-    let logger = AuditLogger::with_log_file(true, &log_path)
-        .expect("Failed to create logger with file");
+    let logger =
+        AuditLogger::with_log_file(true, &log_path).expect("Failed to create logger with file");
 
     // Log some operations
     logger.log_operation(
@@ -31,14 +31,7 @@ fn test_audit_log_persistence() {
         None,
     );
 
-    logger.log_operation(
-        OperationType::Get,
-        "github.com",
-        "user1",
-        None,
-        true,
-        None,
-    );
+    logger.log_operation(OperationType::Get, "github.com", "user1", None, true, None);
 
     // Check that file exists and contains events
     assert!(log_path.exists(), "Audit log file should exist");
@@ -48,8 +41,8 @@ fn test_audit_log_persistence() {
     assert!(content.contains("user1"), "Log should contain username");
 
     // Create new logger from same file
-    let logger2 = AuditLogger::with_log_file(true, &log_path)
-        .expect("Failed to load logger from file");
+    let logger2 =
+        AuditLogger::with_log_file(true, &log_path).expect("Failed to load logger from file");
 
     assert_eq!(logger2.event_count(), 2, "Should load 2 events from file");
 }
@@ -76,8 +69,15 @@ fn test_cleanup_expired_logs() {
     let removed = logger
         .cleanup_expired_logs(0)
         .expect("Cleanup should succeed");
-    assert_eq!(removed, 10, "Should remove all logs when retention is 0 days");
-    assert_eq!(logger.event_count(), 0, "Should have 0 events after cleanup");
+    assert_eq!(
+        removed, 10,
+        "Should remove all logs when retention is 0 days"
+    );
+    assert_eq!(
+        logger.event_count(),
+        0,
+        "Should have 0 events after cleanup"
+    );
 }
 
 #[test]
@@ -91,7 +91,11 @@ fn test_access_control_lockout() {
     // Record failures
     for i in 0..4 {
         logger.record_auth_failure();
-        assert!(!logger.is_locked(), "Should not be locked after {} failures", i + 1);
+        assert!(
+            !logger.is_locked(),
+            "Should not be locked after {} failures",
+            i + 1
+        );
     }
 
     // 5th failure should trigger lockout
@@ -113,7 +117,11 @@ fn test_access_control_reset() {
     // Reset access control
     logger.reset_access_control();
     assert!(!logger.is_locked(), "Should not be locked after reset");
-    assert_eq!(logger.remaining_attempts(), 5, "Should have 5 attempts after reset");
+    assert_eq!(
+        logger.remaining_attempts(),
+        5,
+        "Should have 5 attempts after reset"
+    );
 }
 
 #[test]
@@ -122,8 +130,7 @@ fn test_audit_mode_hash_persistence() {
     let log_path = temp_dir.path().join("audit.json");
 
     // Create logger with audit mode enabled
-    let logger = AuditLogger::with_log_file(true, &log_path)
-        .expect("Failed to create logger");
+    let logger = AuditLogger::with_log_file(true, &log_path).expect("Failed to create logger");
 
     logger.log_operation(
         OperationType::Add,
@@ -138,9 +145,15 @@ fn test_audit_mode_hash_persistence() {
     let content = fs::read_to_string(&log_path).expect("Failed to read file");
 
     // Should contain credential hash in audit mode
-    assert!(content.contains("credentialHash"), "Should contain hash field");
+    assert!(
+        content.contains("credentialHash"),
+        "Should contain hash field"
+    );
     // Should not contain plain password
-    assert!(!content.contains("password123"), "Should not contain plain password");
+    assert!(
+        !content.contains("password123"),
+        "Should not contain plain password"
+    );
 }
 
 #[test]
@@ -149,8 +162,7 @@ fn test_standard_mode_no_hash_persistence() {
     let log_path = temp_dir.path().join("audit.json");
 
     // Create logger with audit mode disabled
-    let logger = AuditLogger::with_log_file(false, &log_path)
-        .expect("Failed to create logger");
+    let logger = AuditLogger::with_log_file(false, &log_path).expect("Failed to create logger");
 
     logger.log_operation(
         OperationType::Add,
@@ -165,9 +177,15 @@ fn test_standard_mode_no_hash_persistence() {
     let content = fs::read_to_string(&log_path).expect("Failed to read file");
 
     // Should NOT contain credential hash in standard mode
-    assert!(!content.contains("credentialHash"), "Should not contain hash in standard mode");
+    assert!(
+        !content.contains("credentialHash"),
+        "Should not contain hash in standard mode"
+    );
     // Should not contain plain password
-    assert!(!content.contains("password123"), "Should not contain plain password");
+    assert!(
+        !content.contains("password123"),
+        "Should not contain plain password"
+    );
 }
 
 #[test]
@@ -175,8 +193,7 @@ fn test_concurrent_audit_logging_with_file() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let log_path = temp_dir.path().join("audit.json");
 
-    let logger = AuditLogger::with_log_file(true, &log_path)
-        .expect("Failed to create logger");
+    let logger = AuditLogger::with_log_file(true, &log_path).expect("Failed to create logger");
 
     let logger_clone1 = logger.clone();
     let logger_clone2 = logger.clone();
@@ -213,7 +230,11 @@ fn test_concurrent_audit_logging_with_file() {
     handle2.join().expect("Thread 2 failed");
 
     // Should have exactly 10 events
-    assert_eq!(logger.event_count(), 10, "Should have 10 events from 2 threads");
+    assert_eq!(
+        logger.event_count(),
+        10,
+        "Should have 10 events from 2 threads"
+    );
 }
 
 #[test]
@@ -226,11 +247,18 @@ fn test_audit_log_file_corruption_recovery() {
 
     // Should handle corruption gracefully
     let logger = AuditLogger::with_log_file(true, &log_path);
-    assert!(logger.is_ok(), "Should create logger even if file is corrupt");
+    assert!(
+        logger.is_ok(),
+        "Should create logger even if file is corrupt"
+    );
 
     let logger = logger.unwrap();
     // Should start with empty log after corruption
-    assert_eq!(logger.event_count(), 0, "Should start with 0 events after corruption");
+    assert_eq!(
+        logger.event_count(),
+        0,
+        "Should start with 0 events after corruption"
+    );
 
     // Should be able to log new events
     logger.log_operation(

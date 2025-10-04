@@ -100,7 +100,9 @@ impl WorkspaceManager {
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("没有加载的工作区"))?;
 
-        workspace.add_repository(repo).map_err(|e| anyhow::anyhow!(e))?;
+        workspace
+            .add_repository(repo)
+            .map_err(|e| anyhow::anyhow!(e))?;
         Ok(())
     }
 
@@ -111,7 +113,9 @@ impl WorkspaceManager {
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("没有加载的工作区"))?;
 
-        workspace.remove_repository(id).map_err(|e| anyhow::anyhow!(e))
+        workspace
+            .remove_repository(id)
+            .map_err(|e| anyhow::anyhow!(e))
     }
 
     /// 获取仓库

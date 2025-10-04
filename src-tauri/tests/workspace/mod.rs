@@ -21,7 +21,8 @@ use fireworks_collaboration_lib::core::tasks::{
     model::{TaskKind, TaskState, WorkspaceBatchOperation},
     registry::TaskRegistry,
     workspace_batch::{
-        CloneOptions, FetchOptions, PushOptions, WorkspaceBatchChildOperation, WorkspaceBatchChildSpec,
+        CloneOptions, FetchOptions, PushOptions, WorkspaceBatchChildOperation,
+        WorkspaceBatchChildSpec,
     },
 };
 use fireworks_collaboration_lib::core::workspace::{
@@ -41,13 +42,13 @@ use tempfile::TempDir;
 #[test]
 fn test_workspace_creation_and_serialization() {
     let ws = Workspace::new("test-workspace".to_string(), PathBuf::from("/test"));
-    
+
     assert_eq!(ws.name, "test-workspace");
     assert_eq!(ws.root_path, PathBuf::from("/test"));
     assert!(ws.repositories.is_empty());
     assert!(ws.created_at.len() > 0);
     assert!(ws.updated_at.len() > 0);
-    
+
     // 测试序列化
     let json = serde_json::to_string(&ws).unwrap();
     let deserialized: Workspace = serde_json::from_str(&json).unwrap();
@@ -57,7 +58,7 @@ fn test_workspace_creation_and_serialization() {
 #[test]
 fn test_repository_management() {
     let mut ws = Workspace::new("test".to_string(), PathBuf::from("/test"));
-    
+
     // 添加仓库
     let repo1 = RepositoryEntry::new(
         "repo1".to_string(),
@@ -65,22 +66,22 @@ fn test_repository_management() {
         PathBuf::from("repo1"),
         "https://github.com/test/repo1.git".to_string(),
     );
-    
+
     assert!(ws.add_repository(repo1.clone()).is_ok());
     assert_eq!(ws.repositories.len(), 1);
-    
+
     // 重复添加应失败
     assert!(ws.add_repository(repo1).is_err());
-    
+
     // 获取仓库
     assert!(ws.get_repository("repo1").is_some());
     assert!(ws.get_repository("nonexistent").is_none());
-    
+
     // 移除仓库
     let removed = ws.remove_repository("repo1").unwrap();
     assert_eq!(removed.id, "repo1");
     assert_eq!(ws.repositories.len(), 0);
-    
+
     // 移除不存在的仓库应失败
     assert!(ws.remove_repository("repo1").is_err());
 }
@@ -93,18 +94,18 @@ fn test_repository_tags() {
         PathBuf::from("repo1"),
         "https://github.com/test/repo1.git".to_string(),
     );
-    
+
     // 添加标签
     repo.add_tag("frontend".to_string());
     repo.add_tag("critical".to_string());
     assert_eq!(repo.tags.len(), 2);
     assert!(repo.has_tag("frontend"));
     assert!(repo.has_tag("critical"));
-    
+
     // 重复添加不应增加
     repo.add_tag("frontend".to_string());
     assert_eq!(repo.tags.len(), 2);
-    
+
     // 移除标签
     repo.remove_tag("frontend");
     assert_eq!(repo.tags.len(), 1);
@@ -114,7 +115,7 @@ fn test_repository_tags() {
 #[test]
 fn test_enabled_repository_filtering() {
     let mut ws = Workspace::new("test".to_string(), PathBuf::from("/test"));
-    
+
     let mut repo1 = RepositoryEntry::new(
         "repo1".to_string(),
         "Repo 1".to_string(),
@@ -122,7 +123,7 @@ fn test_enabled_repository_filtering() {
         "https://github.com/test/repo1.git".to_string(),
     );
     repo1.enabled = true;
-    
+
     let mut repo2 = RepositoryEntry::new(
         "repo2".to_string(),
         "Repo 2".to_string(),
@@ -130,7 +131,7 @@ fn test_enabled_repository_filtering() {
         "https://github.com/test/repo2.git".to_string(),
     );
     repo2.enabled = false;
-    
+
     let mut repo3 = RepositoryEntry::new(
         "repo3".to_string(),
         "Repo 3".to_string(),
@@ -138,11 +139,11 @@ fn test_enabled_repository_filtering() {
         "https://github.com/test/repo3.git".to_string(),
     );
     repo3.enabled = true;
-    
+
     ws.add_repository(repo1).unwrap();
     ws.add_repository(repo2).unwrap();
     ws.add_repository(repo3).unwrap();
-    
+
     let enabled = ws.get_enabled_repositories();
     assert_eq!(enabled.len(), 2);
     assert!(enabled.iter().any(|r| r.id == "repo1"));
@@ -166,21 +167,21 @@ fn test_workspace_config_defaults() {
 #[test]
 fn test_workspace_config_manager() {
     let mut mgr = WorkspaceConfigManager::with_defaults();
-    
+
     assert_eq!(mgr.is_enabled(), false);
     assert_eq!(mgr.max_concurrent_repos(), 3);
-    
+
     // 启用工作区
     mgr.set_enabled(true);
     assert_eq!(mgr.is_enabled(), true);
-    
+
     // 设置并发数
     assert!(mgr.set_max_concurrent_repos(10).is_ok());
     assert_eq!(mgr.max_concurrent_repos(), 10);
-    
+
     // 设置为 0 应失败
     assert!(mgr.set_max_concurrent_repos(0).is_err());
-    
+
     // 设置模板
     mgr.set_default_template(Some("my-template".to_string()));
     assert_eq!(mgr.default_template(), Some("my-template"));
@@ -189,11 +190,11 @@ fn test_workspace_config_manager() {
 #[test]
 fn test_workspace_config_validation() {
     let mut mgr = WorkspaceConfigManager::with_defaults();
-    
+
     // 无效配置：max_concurrent_repos = 0
     let mut invalid_config = WorkspaceConfig::default();
     invalid_config.max_concurrent_repos = 0;
-    
+
     // 直接验证配置
     assert!(mgr.update_config(invalid_config).is_err());
 }
@@ -207,13 +208,13 @@ fn test_workspace_storage_save_and_load() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("workspace.json");
     let storage = WorkspaceStorage::new(file_path);
-    
+
     let ws = Workspace::new("test-workspace".to_string(), PathBuf::from("/test"));
-    
+
     // 保存
     storage.save(&ws).unwrap();
     assert!(storage.exists());
-    
+
     // 加载
     let loaded = storage.load().unwrap();
     assert_eq!(loaded.name, "test-workspace");
@@ -225,33 +226,33 @@ fn test_workspace_storage_backup_and_restore() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("workspace.json");
     let storage = WorkspaceStorage::new(file_path.clone());
-    
+
     let ws = Workspace::new("original".to_string(), PathBuf::from("/test"));
     storage.save(&ws).unwrap();
-    
+
     // 备份
     let backup_path = storage.backup().unwrap();
     assert!(backup_path.exists());
-    
+
     // 验证备份内容
     let backup_content = std::fs::read_to_string(&backup_path).unwrap();
     let backup_ws: Workspace = serde_json::from_str(&backup_content).unwrap();
     assert_eq!(backup_ws.name, "original");
-    
+
     // 等待1秒以确保时间戳不同
     std::thread::sleep(std::time::Duration::from_secs(1));
-    
+
     // 修改
     let mut modified = ws.clone();
     modified.name = "modified".to_string();
     storage.save(&modified).unwrap();
-    
+
     let loaded = storage.load().unwrap();
     assert_eq!(loaded.name, "modified");
-    
+
     // 从备份恢复
     storage.restore_from_backup(&backup_path).unwrap();
-    
+
     // 验证恢复成功
     let restored = storage.load().unwrap();
     assert_eq!(restored.name, "original");
@@ -263,9 +264,9 @@ fn test_workspace_storage_validation() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("workspace.json");
     let storage = WorkspaceStorage::new(file_path);
-    
+
     let mut ws = Workspace::new("test".to_string(), PathBuf::from("/test"));
-    
+
     // 添加一些仓库
     let repo1 = RepositoryEntry::new(
         "repo1".to_string(),
@@ -274,9 +275,9 @@ fn test_workspace_storage_validation() {
         "https://github.com/test/repo1.git".to_string(),
     );
     ws.add_repository(repo1).unwrap();
-    
+
     storage.save(&ws).unwrap();
-    
+
     // 验证应该通过
     assert!(storage.validate().is_ok());
 }
@@ -289,20 +290,20 @@ fn test_workspace_storage_validation() {
 fn test_workspace_manager_workflow() {
     let temp_dir = TempDir::new().unwrap();
     let storage_path = temp_dir.path().join("workspace.json");
-    
+
     let mut config = WorkspaceConfig::default();
     config.enabled = true;
-    
+
     let mut manager = WorkspaceManager::new(config, storage_path);
-    
+
     // 创建工作区
     manager
         .create_workspace("my-workspace".to_string(), PathBuf::from("/projects"))
         .unwrap();
-    
+
     assert!(manager.is_workspace_loaded());
     assert_eq!(manager.current_workspace().unwrap().name, "my-workspace");
-    
+
     // 添加仓库
     let repo = RepositoryEntry::new(
         "repo1".to_string(),
@@ -311,14 +312,14 @@ fn test_workspace_manager_workflow() {
         "https://github.com/test/repo1.git".to_string(),
     );
     manager.add_repository(repo).unwrap();
-    
+
     // 保存
     manager.save_workspace().unwrap();
-    
+
     // 关闭并重新加载
     manager.close_workspace();
     assert!(!manager.is_workspace_loaded());
-    
+
     manager.load_workspace().unwrap();
     assert!(manager.is_workspace_loaded());
     assert_eq!(manager.get_repositories().unwrap().len(), 1);
@@ -328,14 +329,14 @@ fn test_workspace_manager_workflow() {
 fn test_workspace_manager_disabled() {
     let temp_dir = TempDir::new().unwrap();
     let storage_path = temp_dir.path().join("workspace.json");
-    
+
     let config = WorkspaceConfig::default(); // 默认禁用
     let mut manager = WorkspaceManager::new(config, storage_path);
-    
+
     // 尝试创建工作区应该失败
     let result = manager.create_workspace("test".to_string(), PathBuf::from("/test"));
     assert!(result.is_err());
-    
+
     // 尝试加载工作区应该失败
     let result = manager.load_workspace();
     assert!(result.is_err());
@@ -344,7 +345,7 @@ fn test_workspace_manager_disabled() {
 #[test]
 fn test_workspace_update_repository() {
     let mut ws = Workspace::new("test".to_string(), PathBuf::from("/test"));
-    
+
     let repo = RepositoryEntry::new(
         "repo1".to_string(),
         "Original Name".to_string(),
@@ -352,17 +353,18 @@ fn test_workspace_update_repository() {
         "https://github.com/test/repo1.git".to_string(),
     );
     ws.add_repository(repo).unwrap();
-    
+
     // 更新仓库
     ws.update_repository("repo1", |r| {
         r.name = "Updated Name".to_string();
         r.add_tag("updated".to_string());
-    }).unwrap();
-    
+    })
+    .unwrap();
+
     let updated = ws.get_repository("repo1").unwrap();
     assert_eq!(updated.name, "Updated Name");
     assert!(updated.has_tag("updated"));
-    
+
     // 更新不存在的仓库应失败
     let result = ws.update_repository("nonexistent", |_| {});
     assert!(result.is_err());
@@ -371,13 +373,15 @@ fn test_workspace_update_repository() {
 #[test]
 fn test_workspace_metadata() {
     let mut ws = Workspace::new("test".to_string(), PathBuf::from("/test"));
-    
-    ws.metadata.insert("team".to_string(), "platform".to_string());
-    ws.metadata.insert("project".to_string(), "main".to_string());
-    
+
+    ws.metadata
+        .insert("team".to_string(), "platform".to_string());
+    ws.metadata
+        .insert("project".to_string(), "main".to_string());
+
     assert_eq!(ws.metadata.get("team"), Some(&"platform".to_string()));
     assert_eq!(ws.metadata.get("project"), Some(&"main".to_string()));
-    
+
     // 测试序列化包含元数据
     let json = serde_json::to_string(&ws).unwrap();
     let deserialized: Workspace = serde_json::from_str(&json).unwrap();
@@ -392,18 +396,16 @@ fn test_repository_custom_config() {
         PathBuf::from("repo1"),
         "https://github.com/test/repo1.git".to_string(),
     );
-    
+
     repo.custom_config.insert(
         "buildCommand".to_string(),
         serde_json::json!("npm run build"),
     );
-    repo.custom_config.insert(
-        "testCommand".to_string(),
-        serde_json::json!("npm test"),
-    );
-    
+    repo.custom_config
+        .insert("testCommand".to_string(), serde_json::json!("npm test"));
+
     assert_eq!(repo.custom_config.len(), 2);
-    
+
     // 测试序列化
     let json = serde_json::to_string(&repo).unwrap();
     let deserialized: RepositoryEntry = serde_json::from_str(&json).unwrap();
@@ -424,7 +426,7 @@ fn test_workspace_empty_name() {
 #[test]
 fn test_repository_special_characters_in_id() {
     let mut ws = Workspace::new("test".to_string(), PathBuf::from("/test"));
-    
+
     // 测试特殊字符ID(允许但不推荐)
     let repo = RepositoryEntry::new(
         "repo-with-dashes_and_underscores.123".to_string(),
@@ -432,7 +434,7 @@ fn test_repository_special_characters_in_id() {
         PathBuf::from("repo"),
         "https://github.com/test/repo.git".to_string(),
     );
-    
+
     assert!(ws.add_repository(repo).is_ok());
 }
 
@@ -447,7 +449,7 @@ fn test_workspace_very_long_path() {
 #[test]
 fn test_multiple_tags_and_filtering() {
     let mut ws = Workspace::new("test".to_string(), PathBuf::from("/test"));
-    
+
     // 创建带多个标签的仓库
     let mut repo1 = RepositoryEntry::new(
         "repo1".to_string(),
@@ -455,9 +457,13 @@ fn test_multiple_tags_and_filtering() {
         PathBuf::from("repo1"),
         "https://github.com/test/repo1.git".to_string(),
     );
-    repo1.tags = vec!["frontend".to_string(), "react".to_string(), "critical".to_string()];
+    repo1.tags = vec![
+        "frontend".to_string(),
+        "react".to_string(),
+        "critical".to_string(),
+    ];
     repo1.enabled = true;
-    
+
     let mut repo2 = RepositoryEntry::new(
         "repo2".to_string(),
         "Repo 2".to_string(),
@@ -466,7 +472,7 @@ fn test_multiple_tags_and_filtering() {
     );
     repo2.tags = vec!["backend".to_string(), "nodejs".to_string()];
     repo2.enabled = true;
-    
+
     let mut repo3 = RepositoryEntry::new(
         "repo3".to_string(),
         "Repo 3".to_string(),
@@ -475,17 +481,18 @@ fn test_multiple_tags_and_filtering() {
     );
     repo3.tags = vec!["frontend".to_string(), "vue".to_string()];
     repo3.enabled = false; // 禁用
-    
+
     ws.add_repository(repo1).unwrap();
     ws.add_repository(repo2).unwrap();
     ws.add_repository(repo3).unwrap();
-    
+
     // 测试启用仓库过滤
     let enabled = ws.get_enabled_repositories();
     assert_eq!(enabled.len(), 2);
-    
+
     // 测试标签包含
-    let frontend_repos: Vec<_> = ws.repositories
+    let frontend_repos: Vec<_> = ws
+        .repositories
         .iter()
         .filter(|r| r.has_tag("frontend"))
         .collect();
@@ -502,16 +509,18 @@ fn test_multiple_tags_and_filtering() {
 fn test_large_workspace_performance() {
     let temp_dir = TempDir::new().unwrap();
     let storage_path = temp_dir.path().join("workspace.json");
-    
+
     let mut config = WorkspaceConfig::default();
     config.enabled = true;
     config.max_concurrent_repos = 10;
-    
+
     let mut manager = WorkspaceManager::new(config, storage_path);
-    
+
     // 创建工作区
-    manager.create_workspace("large-workspace".to_string(), PathBuf::from("/test")).unwrap();
-    
+    manager
+        .create_workspace("large-workspace".to_string(), PathBuf::from("/test"))
+        .unwrap();
+
     // 添加100个仓库
     let start = std::time::Instant::now();
     for i in 0..100 {
@@ -524,21 +533,21 @@ fn test_large_workspace_performance() {
         manager.add_repository(repo).unwrap();
     }
     let add_duration = start.elapsed();
-    
+
     // 保存
     let start = std::time::Instant::now();
     manager.save_workspace().unwrap();
     let save_duration = start.elapsed();
-    
+
     // 重新加载
     manager.close_workspace();
     let start = std::time::Instant::now();
     manager.load_workspace().unwrap();
     let load_duration = start.elapsed();
-    
+
     // 验证
     assert_eq!(manager.get_repositories().unwrap().len(), 100);
-    
+
     // 性能断言(宽松的阈值)
     assert!(add_duration.as_millis() < 500, "添加仓库不应超过500ms");
     assert!(save_duration.as_millis() < 500, "保存不应超过500ms");
@@ -874,9 +883,7 @@ async fn test_workspace_batch_fetch_failure_summary_truncation() {
 
     let mut specs = Vec::new();
     for idx in 0..4 {
-        let dest = workspace_root
-            .path()
-            .join(format!("missing-{}", idx));
+        let dest = workspace_root.path().join(format!("missing-{}", idx));
         fs::create_dir_all(&dest).unwrap();
         specs.push(WorkspaceBatchChildSpec {
             repo_id: format!("missing-{idx}"),

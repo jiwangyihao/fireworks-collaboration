@@ -3,9 +3,7 @@
 //! 测试 AES-256-GCM、HMAC-SHA256、Argon2id 等加密组件的正确性。
 
 use fireworks_collaboration_lib::core::credential::{
-    config::CredentialConfig,
-    file_store::EncryptedFileStore,
-    model::Credential,
+    config::CredentialConfig, file_store::EncryptedFileStore, model::Credential,
     storage::CredentialStore,
 };
 use std::fs;
@@ -31,19 +29,14 @@ fn test_encryption_uses_random_iv() {
 
     // 创建两个独立的加密文件，使用相同密码和数据
     for file in [&file1, &file2] {
-        let config = CredentialConfig::new()
-            .with_file_path(file.to_string_lossy().to_string());
+        let config = CredentialConfig::new().with_file_path(file.to_string_lossy().to_string());
 
-        let store = EncryptedFileStore::new(&config)
-            .expect("应该创建文件存储");
-        store.set_master_password(password.to_string())
+        let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
+        store
+            .set_master_password(password.to_string())
             .expect("应该设置主密码");
 
-        let cred = Credential::new(
-            data.0.to_string(),
-            data.1.to_string(),
-            data.2.to_string(),
-        );
+        let cred = Credential::new(data.0.to_string(), data.1.to_string(), data.2.to_string());
         store.add(cred).expect("应该添加凭证");
     }
 
@@ -66,11 +59,11 @@ fn test_encryption_produces_valid_json_structure() {
     let test_file = get_test_file("json_structure");
     cleanup(&test_file);
 
-    let config = CredentialConfig::new()
-        .with_file_path(test_file.to_string_lossy().to_string());
+    let config = CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
     let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-    store.set_master_password("test_password".to_string())
+    store
+        .set_master_password("test_password".to_string())
         .expect("应该设置主密码");
 
     let cred = Credential::new(
@@ -81,17 +74,19 @@ fn test_encryption_produces_valid_json_structure() {
     store.add(cred).expect("应该添加凭证");
 
     // 读取文件内容
-    let file_content = fs::read_to_string(&test_file)
-        .expect("应该读取文件");
+    let file_content = fs::read_to_string(&test_file).expect("应该读取文件");
 
     // 验证是有效的 JSON
-    let json: serde_json::Value = serde_json::from_str(&file_content)
-        .expect("文件应该包含有效的 JSON");
+    let json: serde_json::Value =
+        serde_json::from_str(&file_content).expect("文件应该包含有效的 JSON");
 
     // 验证 JSON 结构包含必要字段
     assert!(json.get("version").is_some(), "应该有 version 字段");
     assert!(json.get("salt").is_some(), "应该有 salt 字段");
-    assert!(json.get("ciphertext").is_some(), "应该有 ciphertext 字段（加密数据）");
+    assert!(
+        json.get("ciphertext").is_some(),
+        "应该有 ciphertext 字段（加密数据）"
+    );
     assert!(json.get("nonce").is_some(), "应该有 nonce 字段");
     assert!(json.get("hmac").is_some(), "应该有 hmac 字段");
 
@@ -111,11 +106,12 @@ fn test_hmac_verification_detects_tampering() {
 
     // 创建并添加凭证
     {
-        let config = CredentialConfig::new()
-            .with_file_path(test_file.to_string_lossy().to_string());
+        let config =
+            CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
         let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-        store.set_master_password(password.to_string())
+        store
+            .set_master_password(password.to_string())
             .expect("应该设置主密码");
 
         let cred = Credential::new(
@@ -127,9 +123,8 @@ fn test_hmac_verification_detects_tampering() {
     }
 
     // 篡改文件内容
-    let mut file_content = fs::read_to_string(&test_file)
-        .expect("应该读取文件");
-    
+    let mut file_content = fs::read_to_string(&test_file).expect("应该读取文件");
+
     // 修改 JSON 中的密文（破坏 HMAC）
     if let Some(pos) = file_content.find("\"ciphertext\"") {
         // 修改密文的一部分
@@ -137,22 +132,22 @@ fn test_hmac_verification_detects_tampering() {
         if pos + 20 < chars.len() {
             chars[pos + 20] = 'X';
             file_content = chars.into_iter().collect();
-            fs::write(&test_file, file_content)
-                .expect("应该写入篡改的文件");
+            fs::write(&test_file, file_content).expect("应该写入篡改的文件");
         }
     }
 
     // 尝试读取被篡改的文件
     {
-        let config = CredentialConfig::new()
-            .with_file_path(test_file.to_string_lossy().to_string());
+        let config =
+            CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
         let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-        store.set_master_password(password.to_string())
+        store
+            .set_master_password(password.to_string())
             .expect("应该设置主密码");
 
         let result = store.get("github.com", Some("alice"));
-        
+
         // 应该检测到篡改并失败
         assert!(
             result.is_err() || result.unwrap().is_none(),
@@ -173,11 +168,12 @@ fn test_different_passwords_cannot_decrypt() {
 
     // 使用正确密码创建并加密
     {
-        let config = CredentialConfig::new()
-            .with_file_path(test_file.to_string_lossy().to_string());
+        let config =
+            CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
         let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-        store.set_master_password(correct_password.to_string())
+        store
+            .set_master_password(correct_password.to_string())
             .expect("应该设置主密码");
 
         let cred = Credential::new(
@@ -190,15 +186,16 @@ fn test_different_passwords_cannot_decrypt() {
 
     // 使用错误密码尝试解密
     {
-        let config = CredentialConfig::new()
-            .with_file_path(test_file.to_string_lossy().to_string());
+        let config =
+            CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
         let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-        store.set_master_password(wrong_password.to_string())
+        store
+            .set_master_password(wrong_password.to_string())
             .expect("应该设置主密码");
 
         let result = store.get("test.com", Some("user"));
-        
+
         // 应该无法解密或找不到凭证
         assert!(
             result.is_err() || result.unwrap().is_none(),
@@ -214,11 +211,11 @@ fn test_encryption_handles_empty_credentials_list() {
     let test_file = get_test_file("empty_list");
     cleanup(&test_file);
 
-    let config = CredentialConfig::new()
-        .with_file_path(test_file.to_string_lossy().to_string());
+    let config = CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
     let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-    store.set_master_password("password".to_string())
+    store
+        .set_master_password("password".to_string())
         .expect("应该设置主密码");
 
     // 列出空凭证列表
@@ -242,11 +239,12 @@ fn test_encryption_survives_file_reopen() {
 
     // 第一次：创建并添加数据
     {
-        let config = CredentialConfig::new()
-            .with_file_path(test_file.to_string_lossy().to_string());
+        let config =
+            CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
         let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-        store.set_master_password(password.to_string())
+        store
+            .set_master_password(password.to_string())
             .expect("应该设置主密码");
 
         let cred = Credential::new(
@@ -259,14 +257,16 @@ fn test_encryption_survives_file_reopen() {
 
     // 第二次：重新打开并验证数据
     {
-        let config = CredentialConfig::new()
-            .with_file_path(test_file.to_string_lossy().to_string());
+        let config =
+            CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
         let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-        store.set_master_password(password.to_string())
+        store
+            .set_master_password(password.to_string())
             .expect("应该设置主密码");
 
-        let retrieved = store.get(test_data.0, Some(test_data.1))
+        let retrieved = store
+            .get(test_data.0, Some(test_data.1))
             .expect("应该能读取凭证")
             .expect("凭证应该存在");
 
@@ -283,14 +283,14 @@ fn test_encryption_with_special_characters() {
     let test_file = get_test_file("special_chars");
     cleanup(&test_file);
 
-    let config = CredentialConfig::new()
-        .with_file_path(test_file.to_string_lossy().to_string());
+    let config = CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
     let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-    
+
     // 密码包含特殊字符
     let password = r#"P@ssw0rd!<>{}[]"'\|;:,./?"#;
-    store.set_master_password(password.to_string())
+    store
+        .set_master_password(password.to_string())
         .expect("应该接受包含特殊字符的密码");
 
     // 凭证数据包含特殊字符
@@ -303,7 +303,8 @@ fn test_encryption_with_special_characters() {
     store.add(cred.clone()).expect("应该添加包含特殊字符的凭证");
 
     // 验证能正确读取
-    let retrieved = store.get("test.com", Some("user@example.com"))
+    let retrieved = store
+        .get("test.com", Some("user@example.com"))
         .expect("应该能读取")
         .expect("凭证应该存在");
 
@@ -322,11 +323,11 @@ fn test_encryption_salt_is_unique() {
     let password = "same_password";
 
     for file in [&file1, &file2] {
-        let config = CredentialConfig::new()
-            .with_file_path(file.to_string_lossy().to_string());
+        let config = CredentialConfig::new().with_file_path(file.to_string_lossy().to_string());
 
         let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-        store.set_master_password(password.to_string())
+        store
+            .set_master_password(password.to_string())
             .expect("应该设置主密码");
 
         let cred = Credential::new(

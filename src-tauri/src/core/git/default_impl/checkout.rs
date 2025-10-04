@@ -58,13 +58,12 @@ pub fn git_checkout<F: FnMut(ProgressPayload)>(
         if should_interrupt.load(Ordering::Relaxed) {
             return Err(GitError::new(ErrorCategory::Cancel, "user canceled"));
         }
-        repo.set_head(&format!("refs/heads/{name}"))
-            .map_err(|e| {
-                GitError::new(
-                    ErrorCategory::Internal,
-                    format!("set head: {}", e.message()),
-                )
-            })?;
+        repo.set_head(&format!("refs/heads/{name}")).map_err(|e| {
+            GitError::new(
+                ErrorCategory::Internal,
+                format!("set head: {}", e.message()),
+            )
+        })?;
         if should_interrupt.load(Ordering::Relaxed) {
             return Err(GitError::new(ErrorCategory::Cancel, "user canceled"));
         }
@@ -117,13 +116,12 @@ pub fn git_checkout<F: FnMut(ProgressPayload)>(
     if should_interrupt.load(Ordering::Relaxed) {
         return Err(GitError::new(ErrorCategory::Cancel, "user canceled"));
     }
-    repo.set_head(&format!("refs/heads/{name}"))
-        .map_err(|e| {
-            GitError::new(
-                ErrorCategory::Internal,
-                format!("set head: {}", e.message()),
-            )
-        })?;
+    repo.set_head(&format!("refs/heads/{name}")).map_err(|e| {
+        GitError::new(
+            ErrorCategory::Internal,
+            format!("set head: {}", e.message()),
+        )
+    })?;
     if should_interrupt.load(Ordering::Relaxed) {
         return Err(GitError::new(ErrorCategory::Cancel, "user canceled"));
     }

@@ -1,5 +1,5 @@
 //! Tasks 模块单元测试
-//! 
+//!
 //! 从 registry.rs 迁移的异步任务测试
 
 use fireworks_collaboration_lib::core::tasks::{

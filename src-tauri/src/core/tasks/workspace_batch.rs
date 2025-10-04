@@ -365,13 +365,19 @@ impl TaskRegistry {
                             }
                             #[cfg(test)]
                             WorkspaceBatchChildOperation::Sleep(ms) => {
-                                let (child_id, token) = registry_inner.create(TaskKind::Sleep { ms });
+                                let (child_id, token) =
+                                    registry_inner.create(TaskKind::Sleep { ms });
                                 {
                                     let mut guard = progress_clone.lock().unwrap();
                                     guard.register_child(child_id);
                                 }
                                 registry_inner.link_parent_child(parent_id_clone, child_id);
-                                let handle = registry_inner.spawn_sleep_task(None, child_id, token.clone(), ms);
+                                let handle = registry_inner.spawn_sleep_task(
+                                    None,
+                                    child_id,
+                                    token.clone(),
+                                    ms,
+                                );
                                 (child_id, token, handle)
                             }
                         }
@@ -405,11 +411,18 @@ impl TaskRegistry {
                             repo_name: spec_clone.repo_name.clone(),
                             message: join_err.to_string(),
                         });
-                        emit_parent_progress(&app_clone, parent_id_clone, &operation_clone, &snapshot, None);
+                        emit_parent_progress(
+                            &app_clone,
+                            parent_id_clone,
+                            &operation_clone,
+                            &snapshot,
+                            None,
+                        );
                         return;
                     }
 
-                    let final_state = wait_for_terminal_state(Arc::clone(&registry_clone), child_id).await;
+                    let final_state =
+                        wait_for_terminal_state(Arc::clone(&registry_clone), child_id).await;
                     let success = matches!(final_state, TaskState::Completed);
                     let snapshot = {
                         let mut guard = progress_clone.lock().unwrap();

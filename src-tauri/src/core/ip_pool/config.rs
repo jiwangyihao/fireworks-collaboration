@@ -225,7 +225,6 @@ pub struct EffectiveIpPoolConfig {
     pub file: IpPoolFileConfig,
 }
 
-
 impl EffectiveIpPoolConfig {
     pub fn from_parts(runtime: IpPoolRuntimeConfig, file: IpPoolFileConfig) -> Self {
         Self { runtime, file }

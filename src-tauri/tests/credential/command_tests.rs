@@ -181,8 +181,8 @@ mod p6_5_command_tests {
         let temp_dir = tempdir().expect("Failed to create temp dir");
         let log_file = temp_dir.path().join("audit.log");
 
-        let logger = AuditLogger::with_log_file(true, log_file)
-            .expect("Failed to create audit logger");
+        let logger =
+            AuditLogger::with_log_file(true, log_file).expect("Failed to create audit logger");
 
         // Add some logs
         logger.log_operation(
@@ -266,8 +266,8 @@ mod p6_5_command_tests {
         assert!(log_file.exists());
 
         // Create new logger and verify logs persisted
-        let logger2 = AuditLogger::with_log_file(true, log_file)
-            .expect("Failed to create audit logger");
+        let logger2 =
+            AuditLogger::with_log_file(true, log_file).expect("Failed to create audit logger");
 
         let json = logger2.export_to_json().expect("Failed to export logs");
         assert!(json.contains("example.com"));

@@ -1156,7 +1156,9 @@ mod section_ip_pool_core_manager {
 
 // ---------------- section_ip_pool_cache ----------------
 mod section_ip_pool_cache {
-    use fireworks_collaboration_lib::core::ip_pool::cache::{IpCacheKey, IpCacheSlot, IpScoreCache};
+    use fireworks_collaboration_lib::core::ip_pool::cache::{
+        IpCacheKey, IpCacheSlot, IpScoreCache,
+    };
     use fireworks_collaboration_lib::core::ip_pool::{IpCandidate, IpSource, IpStat};
     use std::net::{IpAddr, Ipv4Addr};
 
@@ -1216,11 +1218,11 @@ mod section_ip_pool_cache {
 // ---------------- section_ip_pool_config ----------------
 mod section_ip_pool_config {
     use fireworks_collaboration_lib::core::ip_pool::config::{
-        default_cache_prune_interval_secs, default_cooldown_seconds, default_failure_rate_threshold,
-        default_failure_threshold, default_failure_window_seconds, default_max_cache_entries,
-        default_max_parallel_probes, default_min_samples_in_window, default_probe_timeout_ms,
-        default_score_ttl_seconds, default_singleflight_timeout_ms, EffectiveIpPoolConfig,
-        IpPoolFileConfig, IpPoolRuntimeConfig, PreheatDomain, UserStaticIp,
+        default_cache_prune_interval_secs, default_cooldown_seconds,
+        default_failure_rate_threshold, default_failure_threshold, default_failure_window_seconds,
+        default_max_cache_entries, default_max_parallel_probes, default_min_samples_in_window,
+        default_probe_timeout_ms, default_score_ttl_seconds, default_singleflight_timeout_ms,
+        EffectiveIpPoolConfig, IpPoolFileConfig, IpPoolRuntimeConfig, PreheatDomain, UserStaticIp,
     };
     use fireworks_collaboration_lib::core::ip_pool::config::{
         join_ip_config_path, load_or_init_file_at, save_file_at,
@@ -1317,7 +1319,8 @@ mod section_ip_pool_config {
     #[test]
     fn save_file_persists_changes() {
         let guard = test_guard().lock().unwrap();
-        let temp_dir = std::env::temp_dir().join(format!("fwc-ip-pool-save-{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("fwc-ip-pool-save-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&temp_dir).unwrap();
         let mut cfg = IpPoolFileConfig::default();
         cfg.preheat_domains.push(PreheatDomain::new("github.com"));
@@ -1578,7 +1581,11 @@ mod section_ip_pool_events {
                 expires_at_epoch_ms: Some(now_ms + 300_000),
             },
             IpStat {
-                candidate: IpCandidate::new(IpAddr::V4(Ipv4Addr::new(2, 2, 2, 2)), 443, IpSource::Dns),
+                candidate: IpCandidate::new(
+                    IpAddr::V4(Ipv4Addr::new(2, 2, 2, 2)),
+                    443,
+                    IpSource::Dns,
+                ),
                 sources: vec![IpSource::Dns],
                 latency_ms: Some(20),
                 measured_at_epoch_ms: Some(now_ms),
@@ -1712,7 +1719,8 @@ mod section_preheat {
     #[test]
     fn probe_latency_times_out_reasonably() {
         let rt = test_runtime();
-        let result = rt.block_on(async { probe_latency("203.0.113.1".parse().unwrap(), 9, 200).await });
+        let result =
+            rt.block_on(async { probe_latency("203.0.113.1".parse().unwrap(), 9, 200).await });
         assert!(result.is_err());
     }
 
@@ -1800,8 +1808,8 @@ mod section_preheat {
         cfg.runtime.sources.dns = false;
         cfg.runtime.sources.user_static = false;
         cfg.runtime.sources.fallback = false;
-        let candidates =
-            rt.block_on(async { collect_candidates("github.com", 443, &cfg, history.clone()).await });
+        let candidates = rt
+            .block_on(async { collect_candidates("github.com", 443, &cfg, history.clone()).await });
         let merged = candidates
             .into_iter()
             .find(|candidate| candidate.candidate.address == ip)
@@ -1833,8 +1841,9 @@ mod section_preheat {
             expires_at_epoch_ms: 2,
         };
         history.upsert(record).unwrap();
-        let candidates =
-            rt.block_on(async { collect_candidates("expired.test", 443, &cfg, history.clone()).await });
+        let candidates = rt.block_on(async {
+            collect_candidates("expired.test", 443, &cfg, history.clone()).await
+        });
         assert!(candidates.is_empty());
         assert!(history.get("expired.test", 443).is_none());
     }

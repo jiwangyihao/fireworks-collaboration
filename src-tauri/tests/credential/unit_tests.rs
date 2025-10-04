@@ -128,14 +128,7 @@ fn test_log_operation_with_error() {
 #[test]
 fn test_clear_events() {
     let logger = AuditLogger::new(false);
-    logger.log_operation(
-        OperationType::Add,
-        "github.com",
-        "user",
-        None,
-        true,
-        None,
-    );
+    logger.log_operation(OperationType::Add, "github.com", "user", None, true, None);
 
     assert_eq!(logger.event_count(), 1);
     logger.clear();
@@ -245,14 +238,7 @@ fn test_concurrent_logging() {
 #[test]
 fn test_no_password_no_hash() {
     let logger = AuditLogger::new(true);
-    logger.log_operation(
-        OperationType::List,
-        "github.com",
-        "user",
-        None,
-        true,
-        None,
-    );
+    logger.log_operation(OperationType::List, "github.com", "user", None, true, None);
 
     let events = logger.get_events();
     assert_eq!(events.len(), 1);
@@ -632,7 +618,10 @@ fn test_config_serialization_roundtrip() {
 
     assert_eq!(original.storage, deserialized.storage);
     assert_eq!(original.file_path, deserialized.file_path);
-    assert_eq!(original.default_ttl_seconds, deserialized.default_ttl_seconds);
+    assert_eq!(
+        original.default_ttl_seconds,
+        deserialized.default_ttl_seconds
+    );
     assert_eq!(original.debug_logging, deserialized.debug_logging);
     assert_eq!(original.audit_mode, deserialized.audit_mode);
 }
@@ -670,7 +659,10 @@ fn test_factory_file_storage_fallback() {
     };
 
     let store = CredentialStoreFactory::create(&config);
-    assert!(store.is_ok(), "Should fallback to memory when file storage fails");
+    assert!(
+        store.is_ok(),
+        "Should fallback to memory when file storage fails"
+    );
 }
 
 #[test]
@@ -681,7 +673,10 @@ fn test_factory_system_storage_fallback() {
     };
 
     let store = CredentialStoreFactory::create(&config);
-    assert!(store.is_ok(), "Should fallback when system keychain unavailable");
+    assert!(
+        store.is_ok(),
+        "Should fallback when system keychain unavailable"
+    );
 }
 
 #[test]
@@ -844,9 +839,7 @@ fn test_memory_store_expired_credentials_filtered() {
 #[cfg(windows)]
 mod windows_keychain_tests {
     use fireworks_collaboration_lib::core::credential::{
-        keychain_windows::WindowsCredentialStore,
-        model::Credential,
-        storage::CredentialStore,
+        keychain_windows::WindowsCredentialStore, model::Credential, storage::CredentialStore,
     };
 
     #[test]
@@ -877,11 +870,7 @@ mod windows_keychain_tests {
         let _ = store.remove(host, username);
 
         // Add credential
-        let cred = Credential::new(
-            host.to_string(),
-            username.to_string(),
-            password.to_string(),
-        );
+        let cred = Credential::new(host.to_string(), username.to_string(), password.to_string());
         assert!(store.add(cred).is_ok());
 
         // Get credential
@@ -961,9 +950,7 @@ mod windows_keychain_tests {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod unix_keychain_tests {
     use fireworks_collaboration_lib::core::credential::{
-        keychain_unix::UnixCredentialStore,
-        model::Credential,
-        storage::CredentialStore,
+        keychain_unix::UnixCredentialStore, model::Credential, storage::CredentialStore,
     };
 
     #[test]
@@ -993,11 +980,7 @@ mod unix_keychain_tests {
         let _ = store.remove(host, username);
 
         // Add credential
-        let cred = Credential::new(
-            host.to_string(),
-            username.to_string(),
-            password.to_string(),
-        );
+        let cred = Credential::new(host.to_string(), username.to_string(), password.to_string());
         assert!(store.add(cred).is_ok());
 
         // Get credential

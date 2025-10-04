@@ -391,9 +391,9 @@ impl TaskRegistry {
                     Ok(()) => {
                         // 如果需要递归子模块,在克隆完成后初始化和更新子模块
                         if recurse_submodules {
-                            use crate::core::submodule::operations::SubmoduleManager;
                             use crate::core::submodule::model::SubmoduleConfig;
-                            
+                            use crate::core::submodule::operations::SubmoduleManager;
+
                             // 发送子模块初始化进度事件 (70-85%)
                             if let Some(app_ref) = &app {
                                 let prog = TaskProgressEvent {
@@ -415,7 +415,11 @@ impl TaskRegistry {
                             // 初始化子模块
                             let mgr = SubmoduleManager::new(SubmoduleConfig::default());
                             if let Err(e) = mgr.init_all(&dest) {
-                                tracing::warn!(target = "git", "Failed to initialize submodules: {}", e);
+                                tracing::warn!(
+                                    target = "git",
+                                    "Failed to initialize submodules: {}",
+                                    e
+                                );
                             }
 
                             // 发送子模块更新进度事件 (85-99%)
@@ -438,7 +442,11 @@ impl TaskRegistry {
 
                             // 更新子模块(递归,depth=0表示从根层级开始)
                             if let Err(e) = mgr.update_all(&dest, 0) {
-                                tracing::warn!(target = "git", "Failed to update submodules: {}", e);
+                                tracing::warn!(
+                                    target = "git",
+                                    "Failed to update submodules: {}",
+                                    e
+                                );
                             }
                         }
 
@@ -529,6 +537,8 @@ impl TaskRegistry {
         repo: String,
         dest: String,
     ) -> JoinHandle<()> {
-        self.spawn_git_clone_task_with_opts(app, id, token, repo, dest, None, None, None, false, None)
+        self.spawn_git_clone_task_with_opts(
+            app, id, token, repo, dest, None, None, None, false, None,
+        )
     }
 }

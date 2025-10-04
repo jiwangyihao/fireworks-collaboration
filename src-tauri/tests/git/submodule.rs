@@ -20,13 +20,13 @@ use tempfile::TempDir;
 fn test_submodule_manager_list_empty() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path();
-    
+
     // 创建一个空仓库
     Repository::init(repo_path).unwrap();
-    
+
     let config = SubmoduleConfig::default();
     let manager = SubmoduleManager::new(config);
-    
+
     let submodules = manager.list_submodules(repo_path).unwrap();
     assert_eq!(submodules.len(), 0);
 }
@@ -35,13 +35,13 @@ fn test_submodule_manager_list_empty() {
 fn test_submodule_manager_has_submodules_false() {
     let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path();
-    
+
     // 创建一个空仓库
     Repository::init(repo_path).unwrap();
-    
+
     let config = SubmoduleConfig::default();
     let manager = SubmoduleManager::new(config);
-    
+
     let has_subs = manager.has_submodules(repo_path).unwrap();
     assert!(!has_subs);
 }
@@ -49,7 +49,7 @@ fn test_submodule_manager_has_submodules_false() {
 #[test]
 fn test_submodule_config_defaults() {
     let config = SubmoduleConfig::default();
-    
+
     assert!(config.auto_recurse);
     assert_eq!(config.max_depth, 5);
     assert!(config.auto_init_on_clone);
@@ -64,7 +64,7 @@ fn test_submodule_manager_with_custom_config() {
     config.max_depth = 3;
     config.parallel = true;
     config.max_parallel = 5;
-    
+
     let manager = SubmoduleManager::new(config.clone());
     assert_eq!(manager.config(), &config);
 }
@@ -73,7 +73,7 @@ fn test_submodule_manager_with_custom_config() {
 fn test_init_nonexistent_repository() {
     let config = SubmoduleConfig::default();
     let manager = SubmoduleManager::new(config);
-    
+
     let result = manager.init_all("/nonexistent/path");
     assert!(result.is_err());
 }
@@ -82,7 +82,7 @@ fn test_init_nonexistent_repository() {
 fn test_update_nonexistent_repository() {
     let config = SubmoduleConfig::default();
     let manager = SubmoduleManager::new(config);
-    
+
     let result = manager.update_all("/nonexistent/path", 0);
     assert!(result.is_err());
 }
@@ -91,7 +91,7 @@ fn test_update_nonexistent_repository() {
 fn test_sync_nonexistent_repository() {
     let config = SubmoduleConfig::default();
     let manager = SubmoduleManager::new(config);
-    
+
     let result = manager.sync_all("/nonexistent/path");
     assert!(result.is_err());
 }
@@ -100,13 +100,13 @@ fn test_sync_nonexistent_repository() {
 fn test_max_depth_enforcement() {
     let mut config = SubmoduleConfig::default();
     config.max_depth = 2;
-    
+
     let manager = SubmoduleManager::new(config);
-    
+
     let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path();
     Repository::init(repo_path).unwrap();
-    
+
     // 尝试在深度 2 进行更新应该失败
     let result = manager.update_all(repo_path, 2);
     assert!(result.is_err());
@@ -116,7 +116,7 @@ fn test_max_depth_enforcement() {
 fn test_submodule_manager_list_handles_empty_repo() {
     let temp_dir = TempDir::new().unwrap();
     let repo = Repository::init(temp_dir.path()).unwrap();
-    
+
     // 创建一个初始提交
     let sig = repo.signature().unwrap();
     let tree_id = {
@@ -126,10 +126,10 @@ fn test_submodule_manager_list_handles_empty_repo() {
     let tree = repo.find_tree(tree_id).unwrap();
     repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
         .unwrap();
-    
+
     let config = SubmoduleConfig::default();
     let manager = SubmoduleManager::new(config);
-    
+
     let submodules = manager.list_submodules(temp_dir.path()).unwrap();
     assert_eq!(submodules.len(), 0);
 }

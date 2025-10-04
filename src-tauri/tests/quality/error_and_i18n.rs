@@ -145,10 +145,7 @@ mod section_i18n_locale_basic {
         for k in &keys {
             for lang in &langs {
                 let t = translate(k, lang).unwrap_or_default();
-                assert!(
-                    !t.is_empty(),
-                    "missing translation for key={k} lang={lang}"
-                );
+                assert!(!t.is_empty(), "missing translation for key={k} lang={lang}");
             }
         }
         // key 去重校验

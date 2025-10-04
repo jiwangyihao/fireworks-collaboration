@@ -6,7 +6,6 @@ pub mod model;
 pub mod operations;
 
 pub use model::{
-    SubmoduleConfig, SubmoduleErrorEvent, SubmoduleInfo, SubmoduleOperation,
-    SubmoduleProgressEvent,
+    SubmoduleConfig, SubmoduleErrorEvent, SubmoduleInfo, SubmoduleOperation, SubmoduleProgressEvent,
 };
 pub use operations::{SubmoduleError, SubmoduleManager, SubmoduleResult};

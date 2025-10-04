@@ -124,15 +124,24 @@ impl CredentialStoreFactory {
         match config.storage {
             StorageType::System => Self::try_system_keychain(config)
                 .or_else(|e| {
-                    tracing::warn!("System keychain unavailable: {}, falling back to encrypted file", e);
+                    tracing::warn!(
+                        "System keychain unavailable: {}, falling back to encrypted file",
+                        e
+                    );
                     Self::try_encrypted_file(config)
                 })
                 .or_else(|e| {
-                    tracing::warn!("Encrypted file storage unavailable: {}, falling back to memory", e);
+                    tracing::warn!(
+                        "Encrypted file storage unavailable: {}, falling back to memory",
+                        e
+                    );
                     Self::create_memory_store(config)
                 }),
             StorageType::File => Self::try_encrypted_file(config).or_else(|e| {
-                tracing::warn!("Encrypted file storage unavailable: {}, falling back to memory", e);
+                tracing::warn!(
+                    "Encrypted file storage unavailable: {}, falling back to memory",
+                    e
+                );
                 Self::create_memory_store(config)
             }),
             StorageType::Memory => Self::create_memory_store(config),
@@ -141,35 +150,26 @@ impl CredentialStoreFactory {
 
     /// Attempts to create a system keychain store.
     #[cfg(target_os = "windows")]
-    fn try_system_keychain(
-        _config: &CredentialConfig,
-    ) -> Result<Arc<dyn CredentialStore>, String> {
+    fn try_system_keychain(_config: &CredentialConfig) -> Result<Arc<dyn CredentialStore>, String> {
         use super::keychain_windows::WindowsCredentialStore;
         WindowsCredentialStore::new().map(|store| Arc::new(store) as Arc<dyn CredentialStore>)
     }
 
     /// Attempts to create a system keychain store (macOS/Linux).
     #[cfg(not(target_os = "windows"))]
-    fn try_system_keychain(
-        _config: &CredentialConfig,
-    ) -> Result<Arc<dyn CredentialStore>, String> {
+    fn try_system_keychain(_config: &CredentialConfig) -> Result<Arc<dyn CredentialStore>, String> {
         use super::keychain_unix::UnixCredentialStore;
         UnixCredentialStore::new().map(|store| Arc::new(store) as Arc<dyn CredentialStore>)
     }
 
     /// Attempts to create an encrypted file store.
-    fn try_encrypted_file(
-        config: &CredentialConfig,
-    ) -> Result<Arc<dyn CredentialStore>, String> {
+    fn try_encrypted_file(config: &CredentialConfig) -> Result<Arc<dyn CredentialStore>, String> {
         use super::file_store::EncryptedFileStore;
-        EncryptedFileStore::new(config)
-            .map(|store| Arc::new(store) as Arc<dyn CredentialStore>)
+        EncryptedFileStore::new(config).map(|store| Arc::new(store) as Arc<dyn CredentialStore>)
     }
 
     /// Creates a memory store (always succeeds).
-    fn create_memory_store(
-        _config: &CredentialConfig,
-    ) -> Result<Arc<dyn CredentialStore>, String> {
+    fn create_memory_store(_config: &CredentialConfig) -> Result<Arc<dyn CredentialStore>, String> {
         use super::storage::MemoryCredentialStore;
         Ok(Arc::new(MemoryCredentialStore::new()) as Arc<dyn CredentialStore>)
     }

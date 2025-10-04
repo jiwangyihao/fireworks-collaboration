@@ -107,7 +107,6 @@ use super::{
     model::Credential,
     storage::{CredentialStore, CredentialStoreError, CredentialStoreResult},
 };
-use base64::{engine::general_purpose, Engine as _};
 use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
     Aes256Gcm, Nonce,
@@ -116,6 +115,7 @@ use argon2::{
     password_hash::{PasswordHasher, SaltString},
     Argon2,
 };
+use base64::{engine::general_purpose, Engine as _};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -179,10 +179,10 @@ struct CachedKey {
 #[derive(Serialize, Deserialize)]
 struct EncryptedCredentialFile {
     version: u32,
-    salt: String,           // Base64-encoded salt for Argon2
-    nonce: String,          // Base64-encoded nonce for AES-GCM
-    ciphertext: String,     // Base64-encoded encrypted credentials JSON
-    hmac: String,           // Base64-encoded HMAC of ciphertext
+    salt: String,       // Base64-encoded salt for Argon2
+    nonce: String,      // Base64-encoded nonce for AES-GCM
+    ciphertext: String, // Base64-encoded encrypted credentials JSON
+    hmac: String,       // Base64-encoded HMAC of ciphertext
 }
 
 /// Internal credential structure for serialization (includes password).
@@ -296,9 +296,8 @@ impl EncryptedFileStore {
 
         // Create parent directory if needed
         if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                format!("Failed to create credential file directory: {e}")
-            })?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create credential file directory: {e}"))?;
         }
 
         let key_cache_ttl = Duration::from_secs(config.key_cache_ttl_seconds);
@@ -357,11 +356,11 @@ impl EncryptedFileStore {
     pub fn set_master_password(&self, password: String) -> Result<(), String> {
         let mut mp = self.master_password.lock().unwrap();
         *mp = Some(MasterPassword::new(password));
-        
+
         // Clear key cache to force re-derivation
         let mut cache = self.key_cache.lock().unwrap();
         *cache = None;
-        
+
         Ok(())
     }
 
@@ -413,12 +412,12 @@ impl EncryptedFileStore {
 
         // Derive new key
         let key = self.derive_key(salt)?;
-        
+
         // Cache it
         let key_bytes = key.as_slice();
         let mut cached_key_bytes = [0u8; 32];
         cached_key_bytes.copy_from_slice(key_bytes);
-        
+
         *cache = Some(CachedKey {
             key: EncryptionKey::new(cached_key_bytes),
             expires_at: SystemTime::now() + self.key_cache_ttl,
@@ -434,14 +433,14 @@ impl EncryptedFileStore {
         salt: &SaltString,
     ) -> Result<EncryptedCredentialFile, String> {
         let key = self.get_or_derive_key(salt)?;
-        
+
         // Serialize credentials to JSON
         let plaintext = serde_json::to_string(container)
             .map_err(|e| format!("Failed to serialize credentials: {e}"))?;
 
         // Generate random nonce
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-        
+
         // Create cipher
         let cipher = Aes256Gcm::new_from_slice(key.as_slice())
             .map_err(|e| format!("Failed to create cipher: {e}"))?;
@@ -473,10 +472,9 @@ impl EncryptedFileStore {
         let salt_bytes = general_purpose::STANDARD
             .decode(&file.salt)
             .map_err(|e| format!("Failed to decode salt: {e}"))?;
-        let salt_str = String::from_utf8(salt_bytes)
-            .map_err(|e| format!("Invalid salt encoding: {e}"))?;
-        let salt = SaltString::from_b64(&salt_str)
-            .map_err(|e| format!("Invalid salt: {e}"))?;
+        let salt_str =
+            String::from_utf8(salt_bytes).map_err(|e| format!("Invalid salt encoding: {e}"))?;
+        let salt = SaltString::from_b64(&salt_str).map_err(|e| format!("Invalid salt: {e}"))?;
 
         let key = self.get_or_derive_key(&salt)?;
 
@@ -492,8 +490,9 @@ impl EncryptedFileStore {
         let mut mac = <HmacSha256 as KeyInit>::new_from_slice(key.as_slice())
             .map_err(|e| format!("Failed to create HMAC: {e}"))?;
         mac.update(&ciphertext);
-        mac.verify_slice(&hmac_expected)
-            .map_err(|_| "HMAC verification failed - file may be corrupted or tampered".to_string())?;
+        mac.verify_slice(&hmac_expected).map_err(|_| {
+            "HMAC verification failed - file may be corrupted or tampered".to_string()
+        })?;
 
         // Decode nonce
         let nonce_bytes = general_purpose::STANDARD
@@ -552,7 +551,7 @@ impl EncryptedFileStore {
     fn save_credentials(&self, container: &CredentialsContainer) -> Result<(), String> {
         // Generate new salt for each save
         let salt = SaltString::generate(&mut OsRng);
-        
+
         let encrypted_file = self.encrypt(container, &salt)?;
 
         let file_content = serde_json::to_string_pretty(&encrypted_file)
@@ -586,15 +585,19 @@ impl EncryptedFileStore {
 impl CredentialStore for EncryptedFileStore {
     fn get(&self, host: &str, username: Option<&str>) -> CredentialStoreResult<Option<Credential>> {
         let _lock = self.file_lock.lock().unwrap();
-        
-        let username = username.ok_or_else(|| CredentialStoreError::Other("Username required for file store".to_string()))?;
-        
-        let container = self.load_credentials()
+
+        let username = username.ok_or_else(|| {
+            CredentialStoreError::Other("Username required for file store".to_string())
+        })?;
+
+        let container = self
+            .load_credentials()
             .map_err(CredentialStoreError::AccessError)?;
         let key = Self::make_key(host, username);
-        
-        let credential: Option<Credential> = container.credentials.get(&key).cloned().map(|sc| sc.into());
-        
+
+        let credential: Option<Credential> =
+            container.credentials.get(&key).cloned().map(|sc| sc.into());
+
         // 过滤过期凭证
         match credential {
             Some(cred) if !cred.is_expired() => Ok(Some(cred)),
@@ -604,36 +607,41 @@ impl CredentialStore for EncryptedFileStore {
 
     fn add(&self, credential: Credential) -> CredentialStoreResult<()> {
         let _lock = self.file_lock.lock().unwrap();
-        
-        let mut container = self.load_credentials()
+
+        let mut container = self
+            .load_credentials()
             .map_err(CredentialStoreError::AccessError)?;
         let key = Self::make_key(&credential.host, &credential.username);
-        
-        container.credentials.insert(key, SerializableCredential::from(&credential));
-        
+
+        container
+            .credentials
+            .insert(key, SerializableCredential::from(&credential));
+
         self.save_credentials(&container)
             .map_err(CredentialStoreError::AccessError)
     }
 
     fn remove(&self, host: &str, username: &str) -> CredentialStoreResult<()> {
         let _lock = self.file_lock.lock().unwrap();
-        
-        let mut container = self.load_credentials()
+
+        let mut container = self
+            .load_credentials()
             .map_err(CredentialStoreError::AccessError)?;
         let key = Self::make_key(host, username);
-        
+
         container.credentials.remove(&key);
-        
+
         self.save_credentials(&container)
             .map_err(CredentialStoreError::AccessError)
     }
 
     fn list(&self) -> CredentialStoreResult<Vec<Credential>> {
         let _lock = self.file_lock.lock().unwrap();
-        
-        let container = self.load_credentials()
+
+        let container = self
+            .load_credentials()
             .map_err(CredentialStoreError::AccessError)?;
-        
+
         // 过滤过期凭证
         let credentials: Vec<Credential> = container
             .credentials
@@ -642,23 +650,24 @@ impl CredentialStore for EncryptedFileStore {
             .map(|sc| sc.into())
             .filter(|cred: &Credential| !cred.is_expired())
             .collect();
-        
+
         Ok(credentials)
     }
 
     fn update_last_used(&self, host: &str, username: &str) -> CredentialStoreResult<()> {
         let _lock = self.file_lock.lock().unwrap();
-        
-        let mut container = self.load_credentials()
+
+        let mut container = self
+            .load_credentials()
             .map_err(CredentialStoreError::AccessError)?;
         let key = Self::make_key(host, username);
-        
+
         if let Some(cred) = container.credentials.get_mut(&key) {
             cred.last_used_at = Some(SystemTime::now());
             self.save_credentials(&container)
                 .map_err(CredentialStoreError::AccessError)?;
         }
-        
+
         Ok(())
     }
 }

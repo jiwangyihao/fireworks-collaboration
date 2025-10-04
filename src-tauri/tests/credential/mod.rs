@@ -2,20 +2,20 @@
 //!
 //! 测试凭证管理的完整生命周期和模块间协作。
 
-mod platform_integration;
-mod factory_fallback_tests;
-mod encryption_tests;
-mod file_corruption_tests;
-mod boundary_tests;
-mod key_cache_tests;
 mod advanced_concurrent_tests;
+mod audit_advanced_tests;
+mod boundary_tests;
+mod command_tests;
+mod encryption_tests;
+mod error_recovery_tests;
+mod factory_fallback_tests;
+mod file_corruption_tests;
+mod key_cache_tests;
+mod platform_integration;
 mod security_audit_tests;
 mod security_enhancement_tests;
 mod stress_tests;
-mod error_recovery_tests;
-mod unit_tests;
-mod command_tests;
-mod audit_advanced_tests; // P6.5 新增
+mod unit_tests; // P6.5 新增
 
 use fireworks_collaboration_lib::core::credential::{
     config::{CredentialConfig, StorageType},

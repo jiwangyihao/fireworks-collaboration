@@ -43,8 +43,11 @@ impl WorkspaceStorage {
         let workspace: Workspace = serde_json::from_str(&content)
             .with_context(|| format!("解析工作区配置失败: {:?}", self.file_path))?;
 
-        info!("成功加载工作区 '{}', 包含 {} 个仓库", 
-              workspace.name, workspace.repositories.len());
+        info!(
+            "成功加载工作区 '{}', 包含 {} 个仓库",
+            workspace.name,
+            workspace.repositories.len()
+        );
         debug!("工作区根路径: {:?}", workspace.root_path);
 
         Ok(workspace)
@@ -54,23 +57,24 @@ impl WorkspaceStorage {
     pub fn save(&self, workspace: &Workspace) -> Result<()> {
         // 确保目录存在
         if let Some(parent) = self.file_path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("创建目录失败: {parent:?}"))?;
+            fs::create_dir_all(parent).with_context(|| format!("创建目录失败: {parent:?}"))?;
         }
 
         // 序列化为 JSON（带格式化）
-        let json = serde_json::to_string_pretty(workspace)
-            .with_context(|| "序列化工作区配置失败")?;
+        let json =
+            serde_json::to_string_pretty(workspace).with_context(|| "序列化工作区配置失败")?;
 
         // 先写入临时文件，成功后再重命名（原子操作）
         let temp_path = self.file_path.with_extension("json.tmp");
-        fs::write(&temp_path, &json)
-            .with_context(|| format!("写入临时文件失败: {temp_path:?}"))?;
+        fs::write(&temp_path, &json).with_context(|| format!("写入临时文件失败: {temp_path:?}"))?;
 
         fs::rename(&temp_path, &self.file_path)
             .with_context(|| format!("重命名文件失败: {:?} -> {:?}", temp_path, self.file_path))?;
 
-        info!("成功保存工作区 '{}' 到 {:?}", workspace.name, self.file_path);
+        info!(
+            "成功保存工作区 '{}' 到 {:?}",
+            workspace.name, self.file_path
+        );
         Ok(())
     }
 
@@ -100,7 +104,9 @@ impl WorkspaceStorage {
         }
 
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-        let backup_path = self.file_path.with_extension(format!("json.backup.{timestamp}"));
+        let backup_path = self
+            .file_path
+            .with_extension(format!("json.backup.{timestamp}"));
 
         fs::copy(&self.file_path, &backup_path)
             .with_context(|| format!("备份工作区配置失败: {backup_path:?}"))?;

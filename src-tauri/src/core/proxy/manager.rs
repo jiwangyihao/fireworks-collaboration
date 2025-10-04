@@ -1,4 +1,4 @@
-﻿//! Proxy manager for coordinating proxy configuration, state, and connectors
+//! Proxy manager for coordinating proxy configuration, state, and connectors
 //!
 //! This module provides the `ProxyManager` which serves as the central coordinator
 //! for all proxy-related functionality. It will be used by the transport layer in P5.3.
@@ -625,4 +625,3 @@ impl Default for ProxyManager {
         Self::new(ProxyConfig::default())
     }
 }
-

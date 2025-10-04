@@ -194,11 +194,7 @@ mod section_cancellation {
         ];
         for (op, phase, has_midway) in cases {
             let out = simulate_cancellation(op, phase);
-            assert_eq!(
-                out.kind,
-                OutcomeKind::Canceled,
-                "cancel: {op:?} {phase:?}"
-            );
+            assert_eq!(out.kind, OutcomeKind::Canceled, "cancel: {op:?} {phase:?}");
             // 组合锚点
             let mut anchors: Vec<String> = vec![format!("task:start:{:?}", op)];
             if has_midway {

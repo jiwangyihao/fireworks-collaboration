@@ -18,7 +18,6 @@ pub enum StorageType {
     Memory,
 }
 
-
 /// 凭证管理配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

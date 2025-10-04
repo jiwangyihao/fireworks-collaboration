@@ -48,7 +48,8 @@ fn test_concurrent_add_same_credential() {
         handles.push(handle);
     }
 
-    let results: Vec<_> = handles.into_iter()
+    let results: Vec<_> = handles
+        .into_iter()
         .map(|h| h.join().expect("线程应该完成"))
         .collect();
 
@@ -107,7 +108,8 @@ fn test_concurrent_read_write_same_credential() {
     }
 
     // 验证凭证仍然存在且未损坏
-    let retrieved = store.get("test.com", Some("user"))
+    let retrieved = store
+        .get("test.com", Some("user"))
         .expect("应该能查询")
         .expect("凭证应该存在");
 
@@ -134,11 +136,7 @@ fn test_concurrent_add_and_remove() {
 
             if i < 10 {
                 // 添加线程
-                let cred = Credential::new(
-                    host,
-                    username,
-                    format!("token{i}"),
-                );
+                let cred = Credential::new(host, username, format!("token{i}"));
                 let _ = store_clone.add(cred);
             } else {
                 // 删除线程（尝试删除对应的凭证）
@@ -201,13 +199,11 @@ fn test_concurrent_file_store_operations() {
     let test_file = get_test_file("concurrent_file_ops");
     cleanup(&test_file);
 
-    let config = CredentialConfig::new()
-        .with_file_path(test_file.to_string_lossy().to_string());
+    let config = CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
-    let store = Arc::new(
-        EncryptedFileStore::new(&config).expect("应该创建文件存储")
-    );
-    store.set_master_password("concurrent_test".to_string())
+    let store = Arc::new(EncryptedFileStore::new(&config).expect("应该创建文件存储"));
+    store
+        .set_master_password("concurrent_test".to_string())
         .expect("应该设置主密码");
 
     let barrier = Arc::new(Barrier::new(10));
@@ -228,7 +224,7 @@ fn test_concurrent_file_store_operations() {
                     format!("user{i}_{j}"),
                     format!("token_{i}_{j}"),
                 );
-                
+
                 let result = store_clone.add(cred);
                 // 由于文件锁，可能有些操作会失败
                 if result.is_err() {
@@ -266,10 +262,8 @@ fn test_concurrent_get_nonexistent() {
             barrier_clone.wait();
 
             for _ in 0..100 {
-                let result = store_clone.get(
-                    &format!("nonexistent{i}.com"),
-                    Some(&format!("user{i}"))
-                );
+                let result =
+                    store_clone.get(&format!("nonexistent{i}.com"), Some(&format!("user{i}")));
 
                 assert!(result.is_ok(), "查询不存在的凭证应该返回 Ok(None)");
                 assert!(result.unwrap().is_none(), "应该返回 None");
@@ -308,23 +302,19 @@ fn test_stress_many_threads_many_operations() {
                     }
                     1 => {
                         // 查询
-                        let _ = store_clone.get(
-                            &format!("host{i}_{j}.com"),
-                            Some(&format!("user{i}_{j}"))
-                        );
+                        let _ = store_clone
+                            .get(&format!("host{i}_{j}.com"), Some(&format!("user{i}_{j}")));
                     }
                     2 => {
                         // 更新 last_used
-                        let _ = store_clone.update_last_used(
-                            &format!("host{i}_{j}.com"),
-                            &format!("user{i}_{j}")
-                        );
+                        let _ = store_clone
+                            .update_last_used(&format!("host{i}_{j}.com"), &format!("user{i}_{j}"));
                     }
                     3 => {
                         // 列表
                         let _ = store_clone.list();
                     }
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 }
             }
         });
@@ -367,7 +357,8 @@ fn test_concurrent_remove_same_credential() {
         handles.push(handle);
     }
 
-    let results: Vec<_> = handles.into_iter()
+    let results: Vec<_> = handles
+        .into_iter()
         .map(|h| h.join().expect("线程应该完成"))
         .collect();
 
@@ -377,7 +368,6 @@ fn test_concurrent_remove_same_credential() {
     assert_eq!(success_count, 1, "应该只有一个线程成功删除");
 
     // 验证凭证确实被删除
-    let retrieved = store.get("test.com", Some("user"))
-        .expect("应该能查询");
+    let retrieved = store.get("test.com", Some("user")).expect("应该能查询");
     assert!(retrieved.is_none(), "凭证应该已被删除");
 }

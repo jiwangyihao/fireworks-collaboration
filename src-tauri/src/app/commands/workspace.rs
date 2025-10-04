@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use tracing::{error, info, warn};
 
+use super::super::types::{SharedConfig, TaskRegistryState};
 use crate::core::tasks::{
     model::WorkspaceBatchOperation,
     workspace_batch::{
@@ -19,7 +20,6 @@ use crate::core::workspace::{
     model::{RepositoryEntry, Workspace, WorkspaceConfig},
     storage::WorkspaceStorage,
 };
-use super::super::types::{SharedConfig, TaskRegistryState};
 
 use std::collections::HashMap;
 use std::fs;
@@ -160,10 +160,7 @@ pub async fn create_workspace(
 ) -> Result<WorkspaceInfo, String> {
     info!("Creating workspace: {}", request.name);
 
-    let mut ws = Workspace::new(
-        request.name.clone(),
-        PathBuf::from(&request.root_path),
-    );
+    let mut ws = Workspace::new(request.name.clone(), PathBuf::from(&request.root_path));
 
     if let Some(metadata) = request.metadata {
         ws.metadata = metadata;
@@ -232,12 +229,10 @@ pub async fn save_workspace(
     let workspace_path = PathBuf::from(&path);
     let storage = WorkspaceStorage::new(workspace_path.clone());
 
-    storage
-        .save(workspace)
-        .map_err(|e| {
-            error!("Failed to save workspace to {}: {}", path, e);
-            format!("Failed to save workspace: {}", e)
-        })?;
+    storage.save(workspace).map_err(|e| {
+        error!("Failed to save workspace to {}: {}", path, e);
+        format!("Failed to save workspace: {}", e)
+    })?;
 
     info!("Workspace saved successfully to {}", path);
     Ok(())
@@ -263,9 +258,7 @@ pub async fn get_workspace(
 
 /// Close current workspace.
 #[tauri::command]
-pub async fn close_workspace(
-    manager: State<'_, SharedWorkspaceManager>,
-) -> Result<(), String> {
+pub async fn close_workspace(manager: State<'_, SharedWorkspaceManager>) -> Result<(), String> {
     info!("Closing workspace");
 
     let mut manager_guard = manager.lock().map_err(|e| {
@@ -439,11 +432,7 @@ pub async fn workspace_batch_clone(
     };
 
     let include_disabled = request.include_disabled.unwrap_or(false);
-    let repos = select_workspace_repos(
-        &workspace,
-        request.repo_ids.as_deref(),
-        include_disabled,
-    )?;
+    let repos = select_workspace_repos(&workspace, request.repo_ids.as_deref(), include_disabled)?;
     if repos.is_empty() {
         return Err("No repositories selected for batch operation".into());
     }
@@ -468,9 +457,7 @@ pub async fn workspace_batch_clone(
             depth_value: request.depth.clone(),
             filter: request.filter.clone(),
             strategy_override: request.strategy_override.clone(),
-            recurse_submodules: request
-                .recurse_submodules
-                .unwrap_or(repo.has_submodules),
+            recurse_submodules: request.recurse_submodules.unwrap_or(repo.has_submodules),
         };
 
         specs.push(WorkspaceBatchChildSpec {
@@ -523,11 +510,7 @@ pub async fn workspace_batch_fetch(
     };
 
     let include_disabled = request.include_disabled.unwrap_or(false);
-    let repos = select_workspace_repos(
-        &workspace,
-        request.repo_ids.as_deref(),
-        include_disabled,
-    )?;
+    let repos = select_workspace_repos(&workspace, request.repo_ids.as_deref(), include_disabled)?;
     if repos.is_empty() {
         return Err("No repositories selected for batch operation".into());
     }
@@ -607,11 +590,7 @@ pub async fn workspace_batch_push(
     };
 
     let include_disabled = request.include_disabled.unwrap_or(false);
-    let repos = select_workspace_repos(
-        &workspace,
-        request.repo_ids.as_deref(),
-        include_disabled,
-    )?;
+    let repos = select_workspace_repos(&workspace, request.repo_ids.as_deref(), include_disabled)?;
     if repos.is_empty() {
         return Err("No repositories selected for batch operation".into());
     }
@@ -696,14 +675,12 @@ fn select_workspace_repos(
         }
         Ok(out)
     } else {
-        Ok(
-            workspace
-                .repositories
-                .iter()
-                .filter(|repo| include_disabled || repo.enabled)
-                .cloned()
-                .collect(),
-        )
+        Ok(workspace
+            .repositories
+            .iter()
+            .filter(|repo| include_disabled || repo.enabled)
+            .cloned()
+            .collect())
     }
 }
 
@@ -741,17 +718,17 @@ fn resolve_concurrency(
 
 fn ensure_clone_destination(path: &Path) -> Result<(), String> {
     if path.exists() {
-        return Err(format!(
-            "Destination '{}' already exists",
-            path.display()
-        ));
+        return Err(format!("Destination '{}' already exists", path.display()));
     }
     ensure_parent_dir(path)
 }
 
 fn ensure_existing_repo(path: &Path) -> Result<(), String> {
     if !path.exists() {
-        return Err(format!("Repository path '{}' does not exist", path.display()));
+        return Err(format!(
+            "Repository path '{}' does not exist",
+            path.display()
+        ));
     }
     if !path.join(".git").exists() {
         return Err(format!(
@@ -858,9 +835,7 @@ pub async fn get_workspace_config() -> Result<WorkspaceConfig, String> {
 
 /// Validate workspace file.
 #[tauri::command]
-pub async fn validate_workspace_file(
-    path: String,
-) -> Result<bool, String> {
+pub async fn validate_workspace_file(path: String) -> Result<bool, String> {
     info!("Validating workspace file: {}", path);
 
     let workspace_path = PathBuf::from(&path);
@@ -880,9 +855,7 @@ pub async fn validate_workspace_file(
 
 /// Create backup of workspace file.
 #[tauri::command]
-pub async fn backup_workspace(
-    path: String,
-) -> Result<String, String> {
+pub async fn backup_workspace(path: String) -> Result<String, String> {
     info!("Creating backup of workspace file: {}", path);
 
     let workspace_path = PathBuf::from(&path);
@@ -900,10 +873,7 @@ pub async fn backup_workspace(
 
 /// Restore workspace from backup.
 #[tauri::command]
-pub async fn restore_workspace(
-    backup_path: String,
-    workspace_path: String,
-) -> Result<(), String> {
+pub async fn restore_workspace(backup_path: String, workspace_path: String) -> Result<(), String> {
     info!("Restoring workspace from backup: {}", backup_path);
 
     let backup = PathBuf::from(&backup_path);

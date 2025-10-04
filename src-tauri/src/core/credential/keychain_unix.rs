@@ -1,4 +1,4 @@
-﻿//! Unix (macOS/Linux) keychain integration.
+//! Unix (macOS/Linux) keychain integration.
 //!
 //! This module provides credential storage using platform-specific keychains:
 //! - macOS: Keychain via security-framework
@@ -27,7 +27,7 @@ impl UnixCredentialStore {
         // Check if security framework is available
         // by attempting to access the keychain
         use security_framework::os::macos::keychain::SecKeychain;
-        
+
         match SecKeychain::default() {
             Ok(_) => Ok(UnixCredentialStore {
                 _phantom: std::marker::PhantomData,
@@ -40,7 +40,7 @@ impl UnixCredentialStore {
     #[cfg(target_os = "linux")]
     pub fn new() -> Result<Self, String> {
         use secret_service::SecretService;
-        
+
         match SecretService::connect(secret_service::EncryptionType::Dh) {
             Ok(connection) => Ok(UnixCredentialStore { connection }),
             Err(e) => Err(format!("Linux Secret Service unavailable: {}", e)),
@@ -75,7 +75,9 @@ impl CredentialStore for UnixCredentialStore {
         use security_framework::os::macos::keychain::SecKeychain;
         use security_framework::os::macos::passwords::find_generic_password;
 
-        let username = username.ok_or_else(|| CredentialStoreError::Other("Username required for macOS keychain".to_string()))?;
+        let username = username.ok_or_else(|| {
+            CredentialStoreError::Other("Username required for macOS keychain".to_string())
+        })?;
         let account = Self::make_account(host, username);
 
         match find_generic_password(None, SERVICE_NAME, &account) {
@@ -100,10 +102,12 @@ impl CredentialStore for UnixCredentialStore {
     }
 
     fn add(&self, credential: &Credential) -> Result<(), String> {
-        use security_framework::os::macos::passwords::{set_generic_password, delete_generic_password};
+        use security_framework::os::macos::passwords::{
+            delete_generic_password, set_generic_password,
+        };
 
         let account = Self::make_account(&credential.host, &credential.username);
-        
+
         // Delete existing credential if any (update)
         let _ = delete_generic_password(None, SERVICE_NAME, &account);
 
@@ -121,7 +125,7 @@ impl CredentialStore for UnixCredentialStore {
         use security_framework::os::macos::passwords::delete_generic_password;
 
         let account = Self::make_account(host, username);
-        
+
         match delete_generic_password(None, SERVICE_NAME, &account) {
             Ok(_) => Ok(()),
             Err(e) => {
@@ -148,8 +152,9 @@ impl CredentialStore for UnixCredentialStore {
 impl CredentialStore for UnixCredentialStore {
     fn get(&self, host: &str, username: Option<&str>) -> Result<Option<Credential>, String> {
         use secret_service::Collection;
-        
-        let username = username.ok_or_else(|| "Username required for Linux Secret Service".to_string())?;
+
+        let username =
+            username.ok_or_else(|| "Username required for Linux Secret Service".to_string())?;
         let account = Self::make_account(host, username);
 
         let collection = Collection::default(&self.connection)
@@ -167,7 +172,7 @@ impl CredentialStore for UnixCredentialStore {
         let secret = item
             .get_secret()
             .map_err(|e| format!("Failed to get secret: {}", e))?;
-        
+
         let password = String::from_utf8_lossy(&secret).to_string();
 
         Ok(Some(Credential::new(
@@ -180,7 +185,7 @@ impl CredentialStore for UnixCredentialStore {
 
     fn add(&self, credential: &Credential) -> Result<(), String> {
         use secret_service::Collection;
-        
+
         let account = Self::make_account(&credential.host, &credential.username);
         let collection = Collection::default(&self.connection)
             .map_err(|e| format!("Failed to access default collection: {}", e))?;
@@ -191,7 +196,10 @@ impl CredentialStore for UnixCredentialStore {
         // Create new item
         collection
             .create_item(
-                &format!("Git credential for {}@{}", credential.username, credential.host),
+                &format!(
+                    "Git credential for {}@{}",
+                    credential.username, credential.host
+                ),
                 vec![("service", SERVICE_NAME), ("account", &account)],
                 credential.password_or_token.as_bytes(),
                 true, // replace existing
@@ -204,7 +212,7 @@ impl CredentialStore for UnixCredentialStore {
 
     fn remove(&self, host: &str, username: &str) -> Result<(), String> {
         use secret_service::Collection;
-        
+
         let account = Self::make_account(host, username);
         let collection = Collection::default(&self.connection)
             .map_err(|e| format!("Failed to access default collection: {}", e))?;
@@ -223,7 +231,7 @@ impl CredentialStore for UnixCredentialStore {
 
     fn list(&self) -> Result<Vec<Credential>, String> {
         use secret_service::Collection;
-        
+
         let collection = Collection::default(&self.connection)
             .map_err(|e| format!("Failed to access default collection: {}", e))?;
 
@@ -246,15 +254,10 @@ impl CredentialStore for UnixCredentialStore {
                             let secret = item
                                 .get_secret()
                                 .map_err(|e| format!("Failed to get secret: {}", e))?;
-                            
+
                             let password = String::from_utf8_lossy(&secret).to_string();
-                            
-                            credentials.push(Credential::new(
-                                host,
-                                username,
-                                password,
-                                None,
-                            ));
+
+                            credentials.push(Credential::new(host, username, password, None));
                         }
                     }
                 }
@@ -283,4 +286,3 @@ impl CredentialStore for UnixCredentialStore {
         Err("Unix keychain not supported on this platform".to_string())
     }
 }
-

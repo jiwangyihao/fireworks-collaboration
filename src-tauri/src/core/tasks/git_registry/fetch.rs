@@ -518,6 +518,8 @@ impl TaskRegistry {
         dest: String,
         preset: Option<String>,
     ) -> JoinHandle<()> {
-        self.spawn_git_fetch_task_with_opts(app, id, token, repo, dest, preset, None, None, None, None)
+        self.spawn_git_fetch_task_with_opts(
+            app, id, token, repo, dest, preset, None, None, None, None,
+        )
     }
 }

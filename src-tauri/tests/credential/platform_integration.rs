@@ -36,7 +36,7 @@ fn create_file_store_with_password(
 
     let store = EncryptedFileStore::new(&config)?;
     store.set_master_password(password.to_string())?;
-    
+
     Ok(Arc::new(store) as Arc<dyn CredentialStore>)
 }
 
@@ -185,10 +185,7 @@ fn test_file_store_encryption_randomness() {
     let content2 = fs::read(&test_file2).unwrap();
 
     // 即使密码和数据相同，加密后的内容应该不同（因为随机 IV 和盐）
-    assert_ne!(
-        content1, content2,
-        "加密应该使用随机 IV，导致密文不同"
-    );
+    assert_ne!(content1, content2, "加密应该使用随机 IV，导致密文不同");
 
     cleanup_test_file(&test_file1);
     cleanup_test_file(&test_file2);
@@ -234,9 +231,9 @@ fn test_multiple_credentials_in_file_store() {
 #[cfg(target_os = "windows")]
 #[test]
 fn test_factory_creates_system_store_windows() {
-    use winapi::um::wincred::CredDeleteW;
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
+    use winapi::um::wincred::CredDeleteW;
 
     let config = CredentialConfig::new().with_storage(StorageType::System);
 
@@ -257,7 +254,10 @@ fn test_factory_creates_system_store_windows() {
     );
 
     // 添加凭证
-    assert!(store.add(cred).is_ok(), "应该能添加凭证到 Windows 凭据管理器");
+    assert!(
+        store.add(cred).is_ok(),
+        "应该能添加凭证到 Windows 凭据管理器"
+    );
 
     // 读取凭证
     let retrieved = store.get(test_host, Some(test_username)).unwrap();
@@ -273,10 +273,7 @@ fn test_factory_creates_system_store_windows() {
 
     // 再次尝试直接删除（防止泄漏）
     unsafe {
-        let target_name: Vec<u16> = OsStr::new(test_host)
-            .encode_wide()
-            .chain(Some(0))
-            .collect();
+        let target_name: Vec<u16> = OsStr::new(test_host).encode_wide().chain(Some(0)).collect();
         CredDeleteW(target_name.as_ptr(), 1, 0);
     }
 }

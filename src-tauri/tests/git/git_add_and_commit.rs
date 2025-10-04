@@ -137,7 +137,6 @@ mod section_commit_basic {
     use std::sync::atomic::AtomicBool;
 
     fn repo_with_single_file(name: &str, content: &str) -> std::path::PathBuf {
-        
         fixtures::repo_with_staged(&[(name, content)])
     }
 

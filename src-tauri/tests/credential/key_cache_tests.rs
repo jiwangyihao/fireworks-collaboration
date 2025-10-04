@@ -3,9 +3,7 @@
 //! 测试加密文件存储的密钥缓存机制和过期处理。
 
 use fireworks_collaboration_lib::core::credential::{
-    config::CredentialConfig,
-    file_store::EncryptedFileStore,
-    model::Credential,
+    config::CredentialConfig, file_store::EncryptedFileStore, model::Credential,
     storage::CredentialStore,
 };
 use std::fs;
@@ -30,9 +28,9 @@ fn test_key_cache_reuse() {
         .with_file_path(test_file.to_string_lossy().to_string())
         .with_ttl(Some(300)); // 5分钟 TTL
 
-    let store = EncryptedFileStore::new(&config)
-        .expect("应该创建文件存储");
-    store.set_master_password("cache_test_password".to_string())
+    let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
+    store
+        .set_master_password("cache_test_password".to_string())
         .expect("应该设置主密码");
 
     // 第一次添加凭证会触发密钥派生
@@ -57,10 +55,10 @@ fn test_key_cache_reuse() {
 
     // 第二次应该明显更快（缓存生效）
     println!("首次操作: {first_duration:?}, 缓存操作: {second_duration:?}");
-    
+
     // 第二次操作应该至少快 50%（考虑到系统抖动）
     // 注意：这个测试可能在快速机器上不稳定
-    // assert!(second_duration < first_duration / 2, 
+    // assert!(second_duration < first_duration / 2,
     //     "缓存的密钥应该显著加快操作速度");
 
     cleanup(&test_file);
@@ -76,9 +74,9 @@ fn test_key_cache_expiration() {
         .with_file_path(test_file.to_string_lossy().to_string())
         .with_ttl(Some(2));
 
-    let store = EncryptedFileStore::new(&config)
-        .expect("应该创建文件存储");
-    store.set_master_password("expiry_test_password".to_string())
+    let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
+    store
+        .set_master_password("expiry_test_password".to_string())
         .expect("应该设置主密码");
 
     // 添加第一个凭证（触发密钥派生和缓存）
@@ -98,7 +96,7 @@ fn test_key_cache_expiration() {
         "user2".to_string(),
         "pass2".to_string(),
     );
-    
+
     let start = std::time::Instant::now();
     store.add(cred2).expect("应该添加第二个凭证");
     let duration = start.elapsed();
@@ -125,10 +123,9 @@ fn test_concurrent_key_cache_access() {
         .with_file_path(test_file.to_string_lossy().to_string())
         .with_ttl(Some(300));
 
-    let store = Arc::new(
-        EncryptedFileStore::new(&config).expect("应该创建文件存储")
-    );
-    store.set_master_password("concurrent_test".to_string())
+    let store = Arc::new(EncryptedFileStore::new(&config).expect("应该创建文件存储"));
+    store
+        .set_master_password("concurrent_test".to_string())
         .expect("应该设置主密码");
 
     let mut handles = vec![];
@@ -142,7 +139,9 @@ fn test_concurrent_key_cache_access() {
                 format!("user{i}"),
                 format!("pass{i}"),
             );
-            store_clone.add(cred).unwrap_or_else(|_| panic!("线程 {i} 应该成功"));
+            store_clone
+                .add(cred)
+                .unwrap_or_else(|_| panic!("线程 {i} 应该成功"));
         });
         handles.push(handle);
     }
@@ -163,14 +162,13 @@ fn test_cache_invalidation_on_password_change() {
     let test_file = get_test_file("password_change");
     cleanup(&test_file);
 
-    let config = CredentialConfig::new()
-        .with_file_path(test_file.to_string_lossy().to_string());
+    let config = CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
-    let store = EncryptedFileStore::new(&config)
-        .expect("应该创建文件存储");
+    let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
 
     // 设置初始密码
-    store.set_master_password("password1".to_string())
+    store
+        .set_master_password("password1".to_string())
         .expect("应该设置密码1");
 
     let cred = Credential::new(
@@ -181,7 +179,8 @@ fn test_cache_invalidation_on_password_change() {
     store.add(cred).expect("应该添加凭证");
 
     // 更改主密码（应该使缓存失效）
-    store.set_master_password("password2".to_string())
+    store
+        .set_master_password("password2".to_string())
         .expect("应该设置密码2");
 
     // 使用新密码添加凭证
@@ -192,7 +191,7 @@ fn test_cache_invalidation_on_password_change() {
     );
 
     let result = store.add(cred2);
-    
+
     // 密码更改后，行为取决于实现
     // 可能成功（使用新密码重新加密）或失败（需要重新初始化）
     match result {
@@ -218,10 +217,11 @@ fn test_zero_ttl_disables_cache() {
         .with_ttl(Some(1)); // 最小 TTL
 
     let result = EncryptedFileStore::new(&config);
-    
+
     // 应该能创建存储（最小 TTL = 1秒）
     if let Ok(store) = result {
-        store.set_master_password("password".to_string())
+        store
+            .set_master_password("password".to_string())
             .expect("应该设置密码");
 
         let cred = Credential::new(
@@ -259,10 +259,9 @@ fn test_cache_survives_store_clone() {
         .with_file_path(test_file.to_string_lossy().to_string())
         .with_ttl(Some(300));
 
-    let store = Arc::new(
-        EncryptedFileStore::new(&config).expect("应该创建文件存储")
-    );
-    store.set_master_password("clone_test".to_string())
+    let store = Arc::new(EncryptedFileStore::new(&config).expect("应该创建文件存储"));
+    store
+        .set_master_password("clone_test".to_string())
         .expect("应该设置主密码");
 
     // 触发密钥派生
@@ -287,7 +286,7 @@ fn test_cache_survives_store_clone() {
     let duration = start.elapsed();
 
     println!("克隆后操作耗时: {duration:?}");
-    
+
     // 应该使用缓存（较快）
     // assert!(duration < Duration::from_millis(100), "应该使用缓存");
 
@@ -304,9 +303,9 @@ fn test_large_ttl_value() {
         .with_file_path(test_file.to_string_lossy().to_string())
         .with_ttl(Some(86400)); // 24 小时
 
-    let store = EncryptedFileStore::new(&config)
-        .expect("应该创建文件存储");
-    store.set_master_password("password".to_string())
+    let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
+    store
+        .set_master_password("password".to_string())
         .expect("应该设置主密码");
 
     let cred = Credential::new(

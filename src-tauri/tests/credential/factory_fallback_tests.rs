@@ -58,7 +58,7 @@ fn test_factory_file_without_master_password_fallback() {
         .with_file_path(test_file.to_string_lossy().to_string());
 
     let store = CredentialStoreFactory::create(&config);
-    
+
     // 应该成功创建（可能是文件存储或回退到内存）
     assert!(store.is_ok(), "应该创建存储（文件或回退到内存）");
 
@@ -100,7 +100,7 @@ fn test_factory_system_storage_on_supported_platforms() {
     let config = CredentialConfig::new().with_storage(StorageType::System);
 
     let result = CredentialStoreFactory::create(&config);
-    
+
     // 在所有平台上都应该成功（Windows/macOS/Linux 系统存储或回退）
     assert!(result.is_ok(), "系统存储应该可用或成功回退");
 
@@ -111,15 +111,15 @@ fn test_factory_system_storage_on_supported_platforms() {
             "testuser".to_string(),
             "testpass".to_string(),
         );
-        
+
         // 尝试基本操作
         let add_result = store.add(cred.clone());
-        
+
         if add_result.is_ok() {
             // 如果添加成功，清理凭证
             let _ = store.remove(&cred.host, &cred.username);
         }
-        
+
         // 无论是否成功添加，都认为测试通过（可能是系统限制）
     }
 }
@@ -129,10 +129,8 @@ fn test_factory_creates_independent_stores() {
     let config1 = CredentialConfig::new().with_storage(StorageType::Memory);
     let config2 = CredentialConfig::new().with_storage(StorageType::Memory);
 
-    let store1 = CredentialStoreFactory::create(&config1)
-        .expect("应该创建第一个存储");
-    let store2 = CredentialStoreFactory::create(&config2)
-        .expect("应该创建第二个存储");
+    let store1 = CredentialStoreFactory::create(&config1).expect("应该创建第一个存储");
+    let store2 = CredentialStoreFactory::create(&config2).expect("应该创建第二个存储");
 
     // 向第一个存储添加凭证
     let cred1 = Credential::new(
@@ -180,8 +178,7 @@ fn test_factory_concurrent_creation() {
     // 并发创建多个存储
     for i in 0..5 {
         let handle = thread::spawn(move || {
-            let config = CredentialConfig::new()
-                .with_storage(StorageType::Memory);
+            let config = CredentialConfig::new().with_storage(StorageType::Memory);
 
             let store = CredentialStoreFactory::create(&config)
                 .unwrap_or_else(|_| panic!("线程 {i} 应该创建存储"));
@@ -191,7 +188,9 @@ fn test_factory_concurrent_creation() {
                 format!("user{i}"),
                 format!("pass{i}"),
             );
-            store.add(cred).unwrap_or_else(|_| panic!("线程 {i} 应该添加凭证"));
+            store
+                .add(cred)
+                .unwrap_or_else(|_| panic!("线程 {i} 应该添加凭证"));
         });
         handles.push(handle);
     }

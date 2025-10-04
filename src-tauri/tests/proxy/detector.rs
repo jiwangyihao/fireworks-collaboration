@@ -627,7 +627,10 @@ fn test_proxy_detection_performance() {
     let _result = SystemProxyDetector::detect();
     let elapsed = start.elapsed();
 
-    assert!(elapsed.as_secs() < 5, "Proxy detection should complete within 5 seconds");
+    assert!(
+        elapsed.as_secs() < 5,
+        "Proxy detection should complete within 5 seconds"
+    );
 }
 
 /// 测试多次检测的一致性
@@ -645,4 +648,3 @@ fn test_proxy_detection_consistency() {
         _ => panic!("Inconsistent proxy detection results"),
     }
 }
-

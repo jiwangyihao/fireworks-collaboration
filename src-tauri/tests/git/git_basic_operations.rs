@@ -434,4 +434,3 @@ mod fetch_partial_filter {
         warn_if_no_filter_marker("fetch_fallback", "filter:unsupported-case", &out);
     }
 }
-

@@ -110,9 +110,9 @@ pub async fn add_credential(
         .ok_or("Credential store not initialized")?
         .clone();
 
-    let expires_at = request.expires_in_days.map(|days| {
-        SystemTime::now() + Duration::from_secs(days * 86400)
-    });
+    let expires_at = request
+        .expires_in_days
+        .map(|days| SystemTime::now() + Duration::from_secs(days * 86400));
 
     let credential = if let Some(expiry) = expires_at {
         Credential::new_with_expiry(
@@ -225,9 +225,9 @@ pub async fn update_credential(
         .ok_or("Credential store not initialized")?
         .clone();
 
-    let expires_at = request.expires_in_days.map(|days| {
-        SystemTime::now() + Duration::from_secs(days * 86400)
-    });
+    let expires_at = request
+        .expires_in_days
+        .map(|days| SystemTime::now() + Duration::from_secs(days * 86400));
 
     // Update by removing the old credential and adding the new one
     store
@@ -437,7 +437,7 @@ pub async fn unlock_store(
         let logger = audit
             .lock()
             .map_err(|e| format!("Failed to lock audit logger: {}", e))?;
-        
+
         if logger.is_locked() {
             let msg = "Credential store is locked due to too many failed attempts. Please try again later.";
             tracing::warn!(target = "credential", msg);
@@ -453,7 +453,7 @@ pub async fn unlock_store(
         let mut logger = audit
             .lock()
             .map_err(|e| format!("Failed to lock audit logger: {}", e))?;
-        
+
         if result.is_ok() {
             logger.log_operation(
                 crate::core::credential::audit::OperationType::Unlock,
@@ -616,9 +616,7 @@ pub async fn cleanup_audit_logs(
 ///
 /// Returns true if the store is locked, false otherwise.
 #[tauri::command]
-pub async fn is_credential_locked(
-    audit: State<'_, SharedAuditLogger>,
-) -> Result<bool, String> {
+pub async fn is_credential_locked(audit: State<'_, SharedAuditLogger>) -> Result<bool, String> {
     let logger = audit
         .lock()
         .map_err(|e| format!("Failed to lock audit logger: {}", e))?;
@@ -636,15 +634,16 @@ pub async fn is_credential_locked(
 ///
 /// Returns Ok(()) on success.
 #[tauri::command]
-pub async fn reset_credential_lock(
-    audit: State<'_, SharedAuditLogger>,
-) -> Result<(), String> {
+pub async fn reset_credential_lock(audit: State<'_, SharedAuditLogger>) -> Result<(), String> {
     let logger = audit
         .lock()
         .map_err(|e| format!("Failed to lock audit logger: {}", e))?;
 
     logger.reset_access_control();
-    tracing::info!(target = "credential", "Credential store access control reset by admin");
+    tracing::info!(
+        target = "credential",
+        "Credential store access control reset by admin"
+    );
     Ok(())
 }
 
@@ -658,9 +657,7 @@ pub async fn reset_credential_lock(
 ///
 /// Returns the number of remaining attempts.
 #[tauri::command]
-pub async fn remaining_auth_attempts(
-    audit: State<'_, SharedAuditLogger>,
-) -> Result<u32, String> {
+pub async fn remaining_auth_attempts(audit: State<'_, SharedAuditLogger>) -> Result<u32, String> {
     let logger = audit
         .lock()
         .map_err(|e| format!("Failed to lock audit logger: {}", e))?;

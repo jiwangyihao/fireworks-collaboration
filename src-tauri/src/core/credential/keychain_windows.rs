@@ -1,4 +1,4 @@
-﻿//! Windows Credential Manager integration.
+//! Windows Credential Manager integration.
 //!
 //! This module provides credential storage using Windows Credential Manager API.
 
@@ -34,7 +34,7 @@ impl WindowsCredentialStore {
                 &mut count,
                 &mut credentials,
             );
-            
+
             if !credentials.is_null() {
                 CredFree(credentials as *mut _);
             }
@@ -78,19 +78,16 @@ impl WindowsCredentialStore {
 
 impl CredentialStore for WindowsCredentialStore {
     fn get(&self, host: &str, username: Option<&str>) -> CredentialStoreResult<Option<Credential>> {
-        let username = username.ok_or_else(|| CredentialStoreError::Other("Username required for Windows keychain".to_string()))?;
-        
+        let username = username.ok_or_else(|| {
+            CredentialStoreError::Other("Username required for Windows keychain".to_string())
+        })?;
+
         let target_name = Self::make_target_name(host, username);
         let target_wide = Self::to_wide_string(&target_name);
 
         unsafe {
             let mut credential: PCREDENTIALW = ptr::null_mut();
-            let result = CredReadW(
-                target_wide.as_ptr(),
-                CRED_TYPE_GENERIC,
-                0,
-                &mut credential,
-            );
+            let result = CredReadW(target_wide.as_ptr(), CRED_TYPE_GENERIC, 0, &mut credential);
 
             if result == 0 {
                 // Credential not found
@@ -99,7 +96,7 @@ impl CredentialStore for WindowsCredentialStore {
 
             if credential.is_null() {
                 return Err(CredentialStoreError::AccessError(
-                    "Failed to read credential from Windows Credential Manager".to_string()
+                    "Failed to read credential from Windows Credential Manager".to_string(),
                 ));
             }
 
@@ -110,11 +107,7 @@ impl CredentialStore for WindowsCredentialStore {
             );
             let password = String::from_utf8_lossy(password_blob).to_string();
 
-            let credential_obj = Credential::new(
-                host.to_string(),
-                username.to_string(),
-                password,
-            );
+            let credential_obj = Credential::new(host.to_string(), username.to_string(), password);
 
             CredFree(credential as *mut _);
 
@@ -126,7 +119,7 @@ impl CredentialStore for WindowsCredentialStore {
         let target_name = Self::make_target_name(&credential.host, &credential.username);
         let target_wide = Self::to_wide_string(&target_name);
         let username_wide = Self::to_wide_string(&credential.username);
-        
+
         let password_bytes = credential.password_or_token.as_bytes();
         if password_bytes.len() > CRED_MAX_CREDENTIAL_BLOB_SIZE as usize {
             return Err(CredentialStoreError::Other(format!(
@@ -190,7 +183,7 @@ impl CredentialStore for WindowsCredentialStore {
         unsafe {
             let mut count: u32 = 0;
             let mut cred_array: *mut PCREDENTIALW = ptr::null_mut();
-            
+
             // Enumerate all credentials (filter is not working reliably)
             let result = CredEnumerateW(
                 ptr::null(),
@@ -198,7 +191,7 @@ impl CredentialStore for WindowsCredentialStore {
                 &mut count,
                 &mut cred_array,
             );
-            
+
             if result == 0 {
                 let error_code = winapi::um::errhandlingapi::GetLastError();
                 // ERROR_NOT_FOUND means no credentials - return empty list
@@ -215,19 +208,19 @@ impl CredentialStore for WindowsCredentialStore {
                     let cred = *cred_array.offset(i);
                     if !cred.is_null() {
                         let cred_ref = &*cred;
-                        
+
                         // Only include generic credentials
                         if cred_ref.Type != CRED_TYPE_GENERIC {
                             continue;
                         }
-                        
+
                         let mut target_name = Self::from_wide_ptr(cred_ref.TargetName);
-                        
+
                         // Windows may add prefix like "LegacyGeneric:target="
                         if let Some(stripped) = target_name.strip_prefix("LegacyGeneric:target=") {
                             target_name = stripped.to_string();
                         }
-                        
+
                         // Parse host and username from target name (filter manually)
                         if let Some(suffix) = target_name.strip_prefix(TARGET_PREFIX) {
                             if let Some((host, username)) = suffix.split_once(':') {
@@ -260,4 +253,3 @@ impl CredentialStore for WindowsCredentialStore {
         Ok(())
     }
 }
-

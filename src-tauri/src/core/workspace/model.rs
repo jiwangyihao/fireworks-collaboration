@@ -166,7 +166,11 @@ impl Workspace {
     }
 
     /// 更新仓库
-    pub fn update_repository(&mut self, id: &str, updater: impl FnOnce(&mut RepositoryEntry)) -> Result<(), String> {
+    pub fn update_repository(
+        &mut self,
+        id: &str,
+        updater: impl FnOnce(&mut RepositoryEntry),
+    ) -> Result<(), String> {
         let repo = self
             .get_repository_mut(id)
             .ok_or_else(|| format!("仓库 ID '{id}' 不存在"))?;

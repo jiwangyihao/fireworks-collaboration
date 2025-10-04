@@ -1,14 +1,14 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use fireworks_collaboration_lib::core::credential::storage::MemoryCredentialStore;
 use fireworks_collaboration_lib::core::credential::{
     Credential, CredentialConfig, CredentialStore,
 };
-use fireworks_collaboration_lib::core::credential::storage::MemoryCredentialStore;
 use std::time::SystemTime;
 
 /// Benchmark: 添加凭证到内存存储
 fn benchmark_add_credential(c: &mut Criterion) {
     let mut group = c.benchmark_group("add_credential");
-    
+
     // 小数据集（10个凭证）
     group.bench_function(BenchmarkId::new("memory", 10), |b| {
         b.iter(|| {
@@ -23,7 +23,7 @@ fn benchmark_add_credential(c: &mut Criterion) {
             }
         })
     });
-    
+
     // 中等数据集（100个凭证）
     group.bench_function(BenchmarkId::new("memory", 100), |b| {
         b.iter(|| {
@@ -38,7 +38,7 @@ fn benchmark_add_credential(c: &mut Criterion) {
             }
         })
     });
-    
+
     // 大数据集（1000个凭证）
     group.bench_function(BenchmarkId::new("memory", 1000), |b| {
         b.iter(|| {
@@ -53,14 +53,14 @@ fn benchmark_add_credential(c: &mut Criterion) {
             }
         })
     });
-    
+
     group.finish();
 }
 
 /// Benchmark: 获取凭证从内存存储
 fn benchmark_get_credential(c: &mut Criterion) {
     let mut group = c.benchmark_group("get_credential");
-    
+
     // 准备不同大小的数据集
     for size in [10, 100, 1000].iter() {
         let store = MemoryCredentialStore::new();
@@ -72,21 +72,21 @@ fn benchmark_get_credential(c: &mut Criterion) {
             );
             let _ = store.add(cred);
         }
-        
+
         group.bench_with_input(BenchmarkId::new("memory", size), size, |b, _| {
             b.iter(|| {
                 let _ = store.get(black_box("host5.com"), black_box(Some("user5")));
             })
         });
     }
-    
+
     group.finish();
 }
 
 /// Benchmark: 列举所有凭证
 fn benchmark_list_credentials(c: &mut Criterion) {
     let mut group = c.benchmark_group("list_credentials");
-    
+
     // 准备不同大小的数据集
     for size in [10, 100, 1000].iter() {
         let store = MemoryCredentialStore::new();
@@ -98,21 +98,21 @@ fn benchmark_list_credentials(c: &mut Criterion) {
             );
             let _ = store.add(cred);
         }
-        
+
         group.bench_with_input(BenchmarkId::new("memory", size), size, |b, _| {
             b.iter(|| {
                 let _ = store.list();
             })
         });
     }
-    
+
     group.finish();
 }
 
 /// Benchmark: 删除凭证
 fn benchmark_remove_credential(c: &mut Criterion) {
     let mut group = c.benchmark_group("remove_credential");
-    
+
     // 准备不同大小的数据集
     for size in [10, 100, 1000].iter() {
         group.bench_with_input(BenchmarkId::new("memory", size), size, |b, &size| {
@@ -138,14 +138,14 @@ fn benchmark_remove_credential(c: &mut Criterion) {
             )
         });
     }
-    
+
     group.finish();
 }
 
 /// Benchmark: 凭证过期检测
 fn benchmark_credential_expiry(c: &mut Criterion) {
     let mut group = c.benchmark_group("credential_expiry");
-    
+
     // 创建已过期凭证
     let now = SystemTime::now();
     let one_day_ago = now
@@ -154,7 +154,7 @@ fn benchmark_credential_expiry(c: &mut Criterion) {
     let one_day_later = now
         .checked_add(std::time::Duration::from_secs(86400))
         .unwrap();
-    
+
     group.bench_function("is_expired_past", |b| {
         let cred = Credential::new_with_expiry(
             "github.com".to_string(),
@@ -166,7 +166,7 @@ fn benchmark_credential_expiry(c: &mut Criterion) {
             black_box(cred.is_expired());
         })
     });
-    
+
     group.bench_function("is_expired_future", |b| {
         let cred = Credential::new_with_expiry(
             "github.com".to_string(),
@@ -178,7 +178,7 @@ fn benchmark_credential_expiry(c: &mut Criterion) {
             black_box(cred.is_expired());
         })
     });
-    
+
     group.bench_function("is_expired_none", |b| {
         let cred = Credential::new(
             "github.com".to_string(),
@@ -189,14 +189,14 @@ fn benchmark_credential_expiry(c: &mut Criterion) {
             black_box(cred.is_expired());
         })
     });
-    
+
     group.finish();
 }
 
 /// Benchmark: 清理过期凭证（模拟）
 fn benchmark_cleanup_expired(c: &mut Criterion) {
     let mut group = c.benchmark_group("cleanup_expired");
-    
+
     // 准备不同大小的数据集（50%过期）
     for size in [10, 100, 1000].iter() {
         group.bench_with_input(BenchmarkId::new("memory", size), size, |b, &size| {
@@ -205,9 +205,13 @@ fn benchmark_cleanup_expired(c: &mut Criterion) {
                     // Setup: 创建存储，一半凭证已过期
                     let store = MemoryCredentialStore::new();
                     let now = SystemTime::now();
-                    let past = now.checked_sub(std::time::Duration::from_secs(86400)).unwrap();
-                    let future = now.checked_add(std::time::Duration::from_secs(86400)).unwrap();
-                    
+                    let past = now
+                        .checked_sub(std::time::Duration::from_secs(86400))
+                        .unwrap();
+                    let future = now
+                        .checked_add(std::time::Duration::from_secs(86400))
+                        .unwrap();
+
                     for i in 0..size {
                         let expires_at = if i % 2 == 0 { past } else { future };
                         let cred = Credential::new_with_expiry(
@@ -232,7 +236,7 @@ fn benchmark_cleanup_expired(c: &mut Criterion) {
             )
         });
     }
-    
+
     group.finish();
 }
 
@@ -247,7 +251,7 @@ fn benchmark_credential_creation(c: &mut Criterion) {
             )
         })
     });
-    
+
     c.bench_function("credential_new_with_expiry", |b| {
         let expires_at = SystemTime::now()
             .checked_add(std::time::Duration::from_secs(90 * 86400))
@@ -265,12 +269,8 @@ fn benchmark_credential_creation(c: &mut Criterion) {
 
 /// Benchmark: 凭证配置创建和验证
 fn benchmark_credential_config(c: &mut Criterion) {
-    c.bench_function("config_default", |b| {
-        b.iter(|| {
-            CredentialConfig::default()
-        })
-    });
-    
+    c.bench_function("config_default", |b| b.iter(|| CredentialConfig::default()));
+
     c.bench_function("config_validate", |b| {
         let config = CredentialConfig::default();
         b.iter(|| {

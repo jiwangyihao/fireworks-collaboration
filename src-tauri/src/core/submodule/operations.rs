@@ -1,4 +1,4 @@
-﻿//! 子模块操作实现
+//! 子模块操作实现
 //!
 //! 实现子模块的初始化、更新、同步等核心操作
 
@@ -15,19 +15,19 @@ pub type SubmoduleResult<T> = Result<T, SubmoduleError>;
 pub enum SubmoduleError {
     #[error("Git error: {0}")]
     Git(#[from] git2::Error),
-    
+
     #[error("Repository not found at path: {0}")]
     RepositoryNotFound(String),
-    
+
     #[error("Submodule not found: {0}")]
     SubmoduleNotFound(String),
-    
+
     #[error("Max recursion depth exceeded: {0}")]
     MaxDepthExceeded(u32),
-    
+
     #[error("Invalid submodule configuration: {0}")]
     InvalidConfig(String),
-    
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -57,15 +57,17 @@ impl SubmoduleManager {
     }
 
     /// 列出仓库中的所有子模块
-    pub fn list_submodules<P: AsRef<Path>>(&self, repo_path: P) -> SubmoduleResult<Vec<SubmoduleInfo>> {
+    pub fn list_submodules<P: AsRef<Path>>(
+        &self,
+        repo_path: P,
+    ) -> SubmoduleResult<Vec<SubmoduleInfo>> {
         let repo_path = repo_path.as_ref();
         info!(target: "submodule", "Listing submodules in repository: {}", repo_path.display());
 
-        let repo = Repository::open(repo_path)
-            .map_err(|e| {
-                error!(target: "submodule", "Failed to open repository: {}", e);
-                SubmoduleError::RepositoryNotFound(repo_path.display().to_string())
-            })?;
+        let repo = Repository::open(repo_path).map_err(|e| {
+            error!(target: "submodule", "Failed to open repository: {}", e);
+            SubmoduleError::RepositoryNotFound(repo_path.display().to_string())
+        })?;
 
         let mut submodules = Vec::new();
 
@@ -78,7 +80,10 @@ impl SubmoduleManager {
 
             // 检查子模块是否已克隆（子模块目录存在）
             let cloned = if let Some(path) = submodule.path().parent() {
-                repo_path.join(path).join(submodule.path().file_name().unwrap_or_default()).exists()
+                repo_path
+                    .join(path)
+                    .join(submodule.path().file_name().unwrap_or_default())
+                    .exists()
             } else {
                 false
             };
@@ -112,7 +117,7 @@ impl SubmoduleManager {
 
         for mut submodule in repo.submodules()? {
             let name = submodule.name().unwrap_or("unknown").to_string();
-            
+
             match submodule.init(false) {
                 Ok(_) => {
                     info!(target: "submodule", "Initialized submodule: {}", name);
@@ -135,7 +140,8 @@ impl SubmoduleManager {
         let repo = Repository::open(repo_path)
             .map_err(|_e| SubmoduleError::RepositoryNotFound(repo_path.display().to_string()))?;
 
-        let mut submodule = repo.find_submodule(submodule_name)
+        let mut submodule = repo
+            .find_submodule(submodule_name)
             .map_err(|_| SubmoduleError::SubmoduleNotFound(submodule_name.to_string()))?;
 
         submodule.init(false)?;
@@ -144,9 +150,13 @@ impl SubmoduleManager {
     }
 
     /// 更新所有子模块
-    pub fn update_all<P: AsRef<Path>>(&self, repo_path: P, depth: u32) -> SubmoduleResult<Vec<String>> {
+    pub fn update_all<P: AsRef<Path>>(
+        &self,
+        repo_path: P,
+        depth: u32,
+    ) -> SubmoduleResult<Vec<String>> {
         let repo_path = repo_path.as_ref();
-        
+
         if depth >= self.config.max_depth {
             return Err(SubmoduleError::MaxDepthExceeded(depth));
         }
@@ -161,7 +171,7 @@ impl SubmoduleManager {
 
         for mut submodule in repo.submodules()? {
             let name = submodule.name().unwrap_or("unknown").to_string();
-            
+
             match submodule.update(true, Some(&mut update_opts)) {
                 Ok(_) => {
                     info!(target: "submodule", "Updated submodule: {}", name);
@@ -187,19 +197,24 @@ impl SubmoduleManager {
     }
 
     /// 更新指定子模块
-    pub fn update<P: AsRef<Path>>(&self, repo_path: P, submodule_name: &str) -> SubmoduleResult<()> {
+    pub fn update<P: AsRef<Path>>(
+        &self,
+        repo_path: P,
+        submodule_name: &str,
+    ) -> SubmoduleResult<()> {
         let repo_path = repo_path.as_ref();
         info!(target: "submodule", "Updating submodule '{}' in: {}", submodule_name, repo_path.display());
 
         let repo = Repository::open(repo_path)
             .map_err(|_e| SubmoduleError::RepositoryNotFound(repo_path.display().to_string()))?;
 
-        let mut submodule = repo.find_submodule(submodule_name)
+        let mut submodule = repo
+            .find_submodule(submodule_name)
             .map_err(|_| SubmoduleError::SubmoduleNotFound(submodule_name.to_string()))?;
 
         let mut update_opts = SubmoduleUpdateOptions::new();
         submodule.update(true, Some(&mut update_opts))?;
-        
+
         info!(target: "submodule", "Successfully updated submodule: {}", submodule_name);
         Ok(())
     }
@@ -216,7 +231,7 @@ impl SubmoduleManager {
 
         for mut submodule in repo.submodules()? {
             let name = submodule.name().unwrap_or("unknown").to_string();
-            
+
             match submodule.sync() {
                 Ok(_) => {
                     info!(target: "submodule", "Synced submodule: {}", name);
@@ -239,11 +254,12 @@ impl SubmoduleManager {
         let repo = Repository::open(repo_path)
             .map_err(|_e| SubmoduleError::RepositoryNotFound(repo_path.display().to_string()))?;
 
-        let mut submodule = repo.find_submodule(submodule_name)
+        let mut submodule = repo
+            .find_submodule(submodule_name)
             .map_err(|_| SubmoduleError::SubmoduleNotFound(submodule_name.to_string()))?;
 
         submodule.sync()?;
-        
+
         info!(target: "submodule", "Successfully synced submodule: {}", submodule_name);
         Ok(())
     }
@@ -251,7 +267,7 @@ impl SubmoduleManager {
     /// 检查仓库是否有子模块
     pub fn has_submodules<P: AsRef<Path>>(&self, repo_path: P) -> SubmoduleResult<bool> {
         let repo_path = repo_path.as_ref();
-        
+
         let repo = Repository::open(repo_path)
             .map_err(|_e| SubmoduleError::RepositoryNotFound(repo_path.display().to_string()))?;
 

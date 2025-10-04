@@ -87,18 +87,13 @@ fn decide_https_to_custom_inner(
         path.push_str(".git");
     }
     // 重构 URL 字符串：scheme 改为 https+custom，path 更新
-    let query = parsed
-        .query()
-        .map(|q| format!("?{q}"))
-        .unwrap_or_default();
+    let query = parsed.query().map(|q| format!("?{q}")).unwrap_or_default();
     let fragment = parsed
         .fragment()
         .map(|f| format!("#{f}"))
         .unwrap_or_default();
     let authority = parsed.authority();
     decision.sampled = true;
-    decision.rewritten = Some(format!(
-        "https+custom://{authority}{path}{query}{fragment}"
-    ));
+    decision.rewritten = Some(format!("https+custom://{authority}{path}{query}{fragment}"));
     decision
 }

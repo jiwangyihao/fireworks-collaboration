@@ -428,7 +428,7 @@ mod section_strategy_summary_multiop {
                 depth: None,
                 filter: None,
                 strategy_override: None,
-            recurse_submodules: false,
+                recurse_submodules: false,
             });
             let override_json =
                 serde_json::json!({"http": {"follow_redirects": false}, "retry": {"max": 5}});
@@ -585,7 +585,7 @@ mod section_override_no_conflict {
                 depth: None,
                 filter: None,
                 strategy_override: None,
-            recurse_submodules: false,
+                recurse_submodules: false,
             });
             let ch = reg.clone().spawn_git_clone_task_with_opts(
                 Some(app.clone()),
@@ -863,7 +863,7 @@ mod section_tls_mixed_scenarios {
                 depth: None,
                 filter: None,
                 strategy_override: None,
-            recurse_submodules: false,
+                recurse_submodules: false,
             });
             let h_base = reg.clone().spawn_git_clone_task_with_opts(
                 Some(app.clone()),
@@ -993,7 +993,7 @@ mod section_summary_gating {
                 depth: None,
                 filter: None,
                 strategy_override: None,
-            recurse_submodules: false,
+                recurse_submodules: false,
             });
             let ov = serde_json::json!({"http": {"follow_redirects": false}, "retry": {"max": 5}});
             let h = reg.spawn_git_clone_task_with_opts(
@@ -1023,7 +1023,7 @@ mod section_summary_gating {
                 depth: None,
                 filter: None,
                 strategy_override: None,
-            recurse_submodules: false,
+                recurse_submodules: false,
             });
             let govr =
                 serde_json::json!({"http": {"follow_redirects": false}, "retry": {"max": 3}});
@@ -1059,8 +1059,8 @@ mod section_summary_gating {
             depth: None,
             filter: None,
             strategy_override: None,
-        recurse_submodules: false,
-            });
+            recurse_submodules: false,
+        });
         let ov =
             serde_json::json!({"tls": {"insecure_skip_verify": true, "skip_san_whitelist": true}});
         let h = reg.spawn_git_clone_task_with_opts(
@@ -1090,8 +1090,8 @@ mod section_summary_gating {
             depth: None,
             filter: None,
             strategy_override: None,
-        recurse_submodules: false,
-            });
+            recurse_submodules: false,
+        });
         let ov2 = serde_json::json!({"tls": {"insecure_skip_verify": true}});
         let h2 = reg.spawn_git_clone_task_with_opts(
             Some(AppHandle {}),

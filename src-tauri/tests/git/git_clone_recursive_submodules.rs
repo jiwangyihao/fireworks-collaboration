@@ -15,15 +15,15 @@ use crate::common::test_env;
 #[tokio::test(flavor = "current_thread")]
 async fn test_clone_without_recurse_submodules() {
     test_env::init_test_env();
-    
+
     let registry = Arc::new(TaskRegistry::new());
     let temp_dest = TempDir::new().unwrap();
-    
+
     // 使用一个简单的远程仓库(无子模块)
     let origin = crate::common::repo_factory::RepoBuilder::new()
         .with_base_commit("readme.txt", "test content", "Initial commit")
         .build();
-    
+
     // 创建任务,不启用递归子模块
     let (id, token) = registry.create(TaskKind::GitClone {
         repo: origin.path.to_str().unwrap().to_string(),
@@ -33,7 +33,7 @@ async fn test_clone_without_recurse_submodules() {
         strategy_override: None,
         recurse_submodules: false,
     });
-    
+
     let handle = registry.clone().spawn_git_clone_task_with_opts(
         None,
         id,
@@ -43,18 +43,18 @@ async fn test_clone_without_recurse_submodules() {
         None,
         None,
         None,
-    false, // recurse_submodules = false
-    None,
+        false, // recurse_submodules = false
+        None,
     );
-    
+
     // 等待任务完成
     wait_until_task_done(&registry, id).await;
     handle.await.unwrap();
-    
+
     // 验证任务完成
     let snapshot = registry.snapshot(&id).unwrap();
     assert_eq!(snapshot.state, TaskState::Completed);
-    
+
     // 验证仓库存在
     assert!(temp_dest.path().join(".git").exists());
 }
@@ -63,15 +63,15 @@ async fn test_clone_without_recurse_submodules() {
 #[tokio::test(flavor = "current_thread")]
 async fn test_clone_with_recurse_submodules_parameter() {
     test_env::init_test_env();
-    
+
     let registry = Arc::new(TaskRegistry::new());
     let temp_dest = TempDir::new().unwrap();
-    
+
     // 使用一个简单的仓库测试参数传递
     let origin = crate::common::repo_factory::RepoBuilder::new()
         .with_base_commit("file.txt", "content", "Commit")
         .build();
-    
+
     // 创建任务,启用递归子模块
     let (id, token) = registry.create(TaskKind::GitClone {
         repo: origin.path.to_str().unwrap().to_string(),
@@ -81,7 +81,7 @@ async fn test_clone_with_recurse_submodules_parameter() {
         strategy_override: None,
         recurse_submodules: true, // 启用递归
     });
-    
+
     let handle = registry.clone().spawn_git_clone_task_with_opts(
         None,
         id,
@@ -91,14 +91,14 @@ async fn test_clone_with_recurse_submodules_parameter() {
         None,
         None,
         None,
-    true, // recurse_submodules = true
-    None,
+        true, // recurse_submodules = true
+        None,
     );
-    
+
     // 等待任务完成
     wait_until_task_done(&registry, id).await;
     handle.await.unwrap();
-    
+
     // 验证任务完成(即使没有子模块也应该正常完成)
     let snapshot = registry.snapshot(&id).unwrap();
     assert_eq!(snapshot.state, TaskState::Completed);
@@ -116,16 +116,21 @@ fn test_git_clone_task_kind_serde_with_recurse_submodules() {
         strategy_override: None,
         recurse_submodules: true,
     };
-    
+
     let json = serde_json::to_string(&task).unwrap();
-    eprintln!("Serialized JSON: {json}");  // Debug output
-    assert!(json.contains("recurseSubmodules") || json.contains("recurse_submodules"), 
-        "JSON should contain recurseSubmodules field: {json}");
+    eprintln!("Serialized JSON: {json}"); // Debug output
+    assert!(
+        json.contains("recurseSubmodules") || json.contains("recurse_submodules"),
+        "JSON should contain recurseSubmodules field: {json}"
+    );
     assert!(json.contains("true"));
-    
+
     // 测试反序列化
     let deserialized: TaskKind = serde_json::from_str(&json).unwrap();
-    if let TaskKind::GitClone { recurse_submodules, .. } = deserialized {
+    if let TaskKind::GitClone {
+        recurse_submodules, ..
+    } = deserialized
+    {
         assert!(recurse_submodules);
     } else {
         panic!("Expected GitClone task kind");
@@ -144,10 +149,13 @@ fn test_git_clone_backward_compatible_default() {
         "filter": null,
         "strategyOverride": null
     }"#;
-    
+
     // 应该能够反序列化,且 recurse_submodules 默认为 false
     let deserialized: TaskKind = serde_json::from_str(old_json).unwrap();
-    if let TaskKind::GitClone { recurse_submodules, .. } = deserialized {
+    if let TaskKind::GitClone {
+        recurse_submodules, ..
+    } = deserialized
+    {
         assert!(!recurse_submodules, "默认值应该是 false");
     } else {
         panic!("Expected GitClone task kind");

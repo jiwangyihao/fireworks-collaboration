@@ -3,9 +3,7 @@
 //! 测试加密文件在各种损坏场景下的错误处理和恢复能力。
 
 use fireworks_collaboration_lib::core::credential::{
-    config::CredentialConfig,
-    file_store::EncryptedFileStore,
-    model::Credential,
+    config::CredentialConfig, file_store::EncryptedFileStore, model::Credential,
     storage::CredentialStore,
 };
 use std::fs;
@@ -26,19 +24,18 @@ fn test_corrupted_json_structure() {
     cleanup(&test_file);
 
     // 创建包含无效 JSON 的文件
-    fs::write(&test_file, "{invalid json content}}")
-        .expect("应该写入文件");
+    fs::write(&test_file, "{invalid json content}}").expect("应该写入文件");
 
-    let config = CredentialConfig::new()
-        .with_file_path(test_file.to_string_lossy().to_string());
+    let config = CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
     let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-    store.set_master_password("password".to_string())
+    store
+        .set_master_password("password".to_string())
         .expect("应该设置主密码");
 
     // 尝试读取损坏的文件应该返回错误或空列表
     let result = store.list();
-    
+
     // 应该优雅处理，不应该 panic
     if let Ok(list) = result {
         assert_eq!(list.len(), 0, "损坏的文件应该返回空列表");
@@ -57,11 +54,12 @@ fn test_truncated_file() {
 
     // 先创建正常的加密文件
     {
-        let config = CredentialConfig::new()
-            .with_file_path(test_file.to_string_lossy().to_string());
+        let config =
+            CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
         let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-        store.set_master_password(password.to_string())
+        store
+            .set_master_password(password.to_string())
             .expect("应该设置主密码");
 
         let cred = Credential::new(
@@ -79,15 +77,16 @@ fn test_truncated_file() {
 
     // 尝试读取截断的文件
     {
-        let config = CredentialConfig::new()
-            .with_file_path(test_file.to_string_lossy().to_string());
+        let config =
+            CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
         let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-        store.set_master_password(password.to_string())
+        store
+            .set_master_password(password.to_string())
             .expect("应该设置主密码");
 
         let result = store.get("test.com", Some("user"));
-        
+
         // 应该优雅地处理错误
         assert!(
             result.is_err() || result.unwrap().is_none(),
@@ -106,11 +105,11 @@ fn test_empty_file() {
     // 创建空文件
     fs::write(&test_file, "").expect("应该创建空文件");
 
-    let config = CredentialConfig::new()
-        .with_file_path(test_file.to_string_lossy().to_string());
+    let config = CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
     let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-    store.set_master_password("password".to_string())
+    store
+        .set_master_password("password".to_string())
         .expect("应该设置主密码");
 
     // 应该能处理空文件
@@ -132,16 +131,19 @@ fn test_binary_garbage_file() {
     let garbage: Vec<u8> = (0..=255).cycle().take(1024).collect();
     fs::write(&test_file, garbage).expect("应该写入垃圾数据");
 
-    let config = CredentialConfig::new()
-        .with_file_path(test_file.to_string_lossy().to_string());
+    let config = CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
     let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-    store.set_master_password("password".to_string())
+    store
+        .set_master_password("password".to_string())
         .expect("应该设置主密码");
 
     // 应该优雅处理二进制垃圾数据
     let result = store.list();
-    assert!(result.is_ok() || result.is_err(), "应该能处理垃圾数据而不 panic");
+    assert!(
+        result.is_ok() || result.is_err(),
+        "应该能处理垃圾数据而不 panic"
+    );
 
     cleanup(&test_file);
 }
@@ -157,17 +159,19 @@ fn test_file_with_missing_required_fields() {
     }"#;
     fs::write(&test_file, invalid_json).expect("应该写入文件");
 
-    let config = CredentialConfig::new()
-        .with_file_path(test_file.to_string_lossy().to_string());
+    let config = CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
     let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-    store.set_master_password("password".to_string())
+    store
+        .set_master_password("password".to_string())
         .expect("应该设置主密码");
 
     let result = store.list();
-    
+
     // 应该能处理缺少字段的 JSON
-    if let Ok(list) = result { assert_eq!(list.len(), 0) }
+    if let Ok(list) = result {
+        assert_eq!(list.len(), 0)
+    }
 
     cleanup(&test_file);
 }
@@ -181,11 +185,12 @@ fn test_file_permissions_readonly() {
 
     // 创建正常的加密文件
     {
-        let config = CredentialConfig::new()
-            .with_file_path(test_file.to_string_lossy().to_string());
+        let config =
+            CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
         let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-        store.set_master_password(password.to_string())
+        store
+            .set_master_password(password.to_string())
             .expect("应该设置主密码");
 
         let cred = Credential::new(
@@ -206,11 +211,12 @@ fn test_file_permissions_readonly() {
         fs::set_permissions(&test_file, perms).expect("应该设置权限");
 
         // 尝试写入只读文件
-        let config = CredentialConfig::new()
-            .with_file_path(test_file.to_string_lossy().to_string());
+        let config =
+            CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
         let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-        store.set_master_password(password.to_string())
+        store
+            .set_master_password(password.to_string())
             .expect("应该设置主密码");
 
         let new_cred = Credential::new(
@@ -220,7 +226,7 @@ fn test_file_permissions_readonly() {
         );
 
         let add_result = store.add(new_cred);
-        
+
         // 应该因为权限不足而失败
         assert!(add_result.is_err(), "写入只读文件应该失败");
 
@@ -243,11 +249,11 @@ fn test_very_large_file() {
     let test_file = get_test_file("large_file");
     cleanup(&test_file);
 
-    let config = CredentialConfig::new()
-        .with_file_path(test_file.to_string_lossy().to_string());
+    let config = CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
     let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-    store.set_master_password("password".to_string())
+    store
+        .set_master_password("password".to_string())
         .expect("应该设置主密码");
 
     // 添加大量凭证
@@ -257,7 +263,9 @@ fn test_very_large_file() {
             format!("user{i}"),
             format!("token_{i}"),
         );
-        store.add(cred).unwrap_or_else(|_| panic!("应该添加凭证 {i}"));
+        store
+            .add(cred)
+            .unwrap_or_else(|_| panic!("应该添加凭证 {i}"));
     }
 
     // 验证能正确读取大文件
@@ -279,13 +287,11 @@ fn test_concurrent_file_corruption() {
     let test_file = get_test_file("concurrent_corruption");
     cleanup(&test_file);
 
-    let config = CredentialConfig::new()
-        .with_file_path(test_file.to_string_lossy().to_string());
+    let config = CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
-    let store = Arc::new(
-        EncryptedFileStore::new(&config).expect("应该创建文件存储")
-    );
-    store.set_master_password("password".to_string())
+    let store = Arc::new(EncryptedFileStore::new(&config).expect("应该创建文件存储"));
+    store
+        .set_master_password("password".to_string())
         .expect("应该设置主密码");
 
     let mut handles = vec![];
@@ -312,7 +318,7 @@ fn test_concurrent_file_corruption() {
 
     // 验证文件仍然有效
     let list = store.list().expect("并发写入后文件应该仍然有效");
-    
+
     // 由于并发和文件锁，可能不是所有 50 个凭证都成功添加
     // 但应该至少有一些凭证
     assert!(!list.is_empty(), "应该至少添加了一些凭证");
@@ -329,11 +335,12 @@ fn test_file_recovery_after_partial_write() {
 
     // 创建初始凭证
     {
-        let config = CredentialConfig::new()
-            .with_file_path(test_file.to_string_lossy().to_string());
+        let config =
+            CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
         let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-        store.set_master_password(password.to_string())
+        store
+            .set_master_password(password.to_string())
             .expect("应该设置主密码");
 
         let cred = Credential::new(
@@ -354,22 +361,27 @@ fn test_file_recovery_after_partial_write() {
             .truncate(false)
             .open(&test_file)
             .expect("应该打开文件");
-        
-        file.write_all(b"{\"incomplete\":").expect("应该写入部分数据");
+
+        file.write_all(b"{\"incomplete\":")
+            .expect("应该写入部分数据");
     }
 
     // 尝试读取损坏的文件
     {
-        let config = CredentialConfig::new()
-            .with_file_path(test_file.to_string_lossy().to_string());
+        let config =
+            CredentialConfig::new().with_file_path(test_file.to_string_lossy().to_string());
 
         let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
-        store.set_master_password(password.to_string())
+        store
+            .set_master_password(password.to_string())
             .expect("应该设置主密码");
 
         // 应该检测到损坏
         let result = store.get("original.com", Some("user"));
-        assert!(result.is_err() || result.unwrap().is_none(), "应该检测到文件损坏");
+        assert!(
+            result.is_err() || result.unwrap().is_none(),
+            "应该检测到文件损坏"
+        );
     }
 
     cleanup(&test_file);

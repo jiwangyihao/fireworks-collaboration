@@ -513,10 +513,9 @@ impl SniffingStream {
                 if self.inbuf.len() < 2 {
                     let _ = self.read_more()?;
                 }
-                if self.inbuf.len() >= 2
-                    && &self.inbuf[..2] == b"\r\n" {
-                        self.inbuf.drain(..2);
-                    }
+                if self.inbuf.len() >= 2 && &self.inbuf[..2] == b"\r\n" {
+                    self.inbuf.drain(..2);
+                }
                 self.reading_chunk_size = true;
                 continue;
             }
@@ -731,10 +730,9 @@ impl Write for SniffingStream {
         }
     }
     fn flush(&mut self) -> std::io::Result<()> {
-        if matches!(self.op, HttpOp::UploadPack | HttpOp::ReceivePack)
-            && !self.posted {
-                self.send_post()?;
-            }
+        if matches!(self.op, HttpOp::UploadPack | HttpOp::ReceivePack) && !self.posted {
+            self.send_post()?;
+        }
         Ok(())
     }
 }

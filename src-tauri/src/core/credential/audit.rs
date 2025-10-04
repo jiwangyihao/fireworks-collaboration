@@ -185,7 +185,7 @@ impl AccessControl {
             last_failure_time: None,
             locked: false,
             locked_until: None,
-            max_failures: 5, // 默认最多5次失败
+            max_failures: 5,             // 默认最多5次失败
             lockout_duration_secs: 1800, // 默认锁定30分钟
         }
     }
@@ -197,9 +197,8 @@ impl AccessControl {
 
         if self.failure_count >= self.max_failures {
             self.locked = true;
-            self.locked_until = Some(
-                SystemTime::now() + Duration::from_secs(self.lockout_duration_secs),
-            );
+            self.locked_until =
+                Some(SystemTime::now() + Duration::from_secs(self.lockout_duration_secs));
         }
     }
 
@@ -250,13 +249,15 @@ impl AuditLogger {
     ///
     /// - `audit_mode`: 是否启用审计模式
     /// - `log_file_path`: 日志文件路径
-    pub fn with_log_file<P: AsRef<Path>>(audit_mode: bool, log_file_path: P) -> Result<Self, String> {
+    pub fn with_log_file<P: AsRef<Path>>(
+        audit_mode: bool,
+        log_file_path: P,
+    ) -> Result<Self, String> {
         let path = log_file_path.as_ref().to_path_buf();
 
         // 确保日志目录存在
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("创建日志目录失败: {e}"))?;
+            fs::create_dir_all(parent).map_err(|e| format!("创建日志目录失败: {e}"))?;
         }
 
         let mut logger = Self::new(audit_mode);
@@ -350,11 +351,10 @@ impl AuditLogger {
 
     /// 从文件加载审计日志
     fn load_from_file(&self, path: &Path) -> Result<(), String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("读取文件失败: {e}"))?;
+        let content = fs::read_to_string(path).map_err(|e| format!("读取文件失败: {e}"))?;
 
-        let loaded_events: Vec<AuditEvent> = serde_json::from_str(&content)
-            .map_err(|e| format!("解析JSON失败: {e}"))?;
+        let loaded_events: Vec<AuditEvent> =
+            serde_json::from_str(&content).map_err(|e| format!("解析JSON失败: {e}"))?;
 
         if let Ok(mut events) = self.events.lock() {
             *events = loaded_events;
@@ -367,10 +367,8 @@ impl AuditLogger {
     fn append_to_file(&self, event: &AuditEvent, path: &Path) -> Result<(), String> {
         // 读取现有事件
         let mut all_events = if path.exists() {
-            let content = fs::read_to_string(path)
-                .map_err(|e| format!("读取文件失败: {e}"))?;
-            serde_json::from_str::<Vec<AuditEvent>>(&content)
-                .unwrap_or_default()
+            let content = fs::read_to_string(path).map_err(|e| format!("读取文件失败: {e}"))?;
+            serde_json::from_str::<Vec<AuditEvent>>(&content).unwrap_or_default()
         } else {
             Vec::new()
         };
@@ -379,8 +377,7 @@ impl AuditLogger {
         all_events.push(event.clone());
 
         // 写回文件
-        let file = File::create(path)
-            .map_err(|e| format!("创建文件失败: {e}"))?;
+        let file = File::create(path).map_err(|e| format!("创建文件失败: {e}"))?;
         let writer = BufWriter::new(file);
         serde_json::to_writer_pretty(writer, &all_events)
             .map_err(|e| format!("写入JSON失败: {e}"))?;
@@ -398,8 +395,7 @@ impl AuditLogger {
     ///
     /// 返回删除的日志数量
     pub fn cleanup_expired_logs(&self, retention_days: u64) -> Result<usize, String> {
-        let cutoff_time = SystemTime::now()
-            - Duration::from_secs(retention_days * 24 * 60 * 60);
+        let cutoff_time = SystemTime::now() - Duration::from_secs(retention_days * 24 * 60 * 60);
 
         let removed_count = if let Ok(mut events) = self.events.lock() {
             let original_len = events.len();
@@ -423,11 +419,9 @@ impl AuditLogger {
 
     /// 保存事件到文件（覆盖写）
     fn save_to_file(&self, events: &[AuditEvent], path: &Path) -> Result<(), String> {
-        let file = File::create(path)
-            .map_err(|e| format!("创建文件失败: {e}"))?;
+        let file = File::create(path).map_err(|e| format!("创建文件失败: {e}"))?;
         let writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(writer, events)
-            .map_err(|e| format!("写入JSON失败: {e}"))?;
+        serde_json::to_writer_pretty(writer, events).map_err(|e| format!("写入JSON失败: {e}"))?;
         Ok(())
     }
 
@@ -457,9 +451,7 @@ impl AuditLogger {
     pub fn remaining_attempts(&self) -> u32 {
         self.access_control
             .lock()
-            .map(|ac| {
-                ac.max_failures.saturating_sub(ac.failure_count)
-            })
+            .map(|ac| ac.max_failures.saturating_sub(ac.failure_count))
             .unwrap_or(0)
     }
 
@@ -486,10 +478,7 @@ impl AuditLogger {
 
     /// 获取事件数量
     pub fn event_count(&self) -> usize {
-        self.events
-            .lock()
-            .map(|events| events.len())
-            .unwrap_or(0)
+        self.events.lock().map(|events| events.len()).unwrap_or(0)
     }
 
     /// 检查是否启用审计模式

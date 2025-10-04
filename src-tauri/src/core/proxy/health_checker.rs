@@ -1,4 +1,4 @@
-﻿//! Proxy health checker for automatic recovery
+//! Proxy health checker for automatic recovery
 //!
 //! This module provides health checking functionality to test proxy availability
 //! during recovery phase. It supports:
@@ -364,4 +364,3 @@ fn current_timestamp() -> u64 {
         .map(|d| d.as_secs())
         .unwrap_or(0)
 }
-

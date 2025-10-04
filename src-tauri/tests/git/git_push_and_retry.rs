@@ -23,7 +23,7 @@ use super::common::{
         assert_terminal_exclusive, expect_optional_tags_subsequence, expect_subsequence,
     },
     git_scenarios::{run_push_with_retry, PushResultKind, PushRetrySpec},
-    retry_matrix::{retry_cases, compute_backoff_sequence, PolicyOverride},
+    retry_matrix::{compute_backoff_sequence, retry_cases, PolicyOverride},
     test_env,
 };
 
