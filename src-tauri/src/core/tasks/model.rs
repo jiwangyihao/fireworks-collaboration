@@ -14,6 +14,14 @@ pub enum TaskState {
     Canceled,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkspaceBatchOperation {
+    Clone,
+    Fetch,
+    Push,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum TaskKind {
@@ -55,6 +63,10 @@ pub enum TaskKind {
         allow_empty: bool,
         author_name: Option<String>,
         author_email: Option<String>,
+    },
+    WorkspaceBatch {
+        operation: WorkspaceBatchOperation,
+        total: u32,
     },
     GitBranch {
         dest: String,
@@ -107,6 +119,7 @@ impl TaskKind {
             Self::GitInit { .. } => "GitInit",
             Self::GitAdd { .. } => "GitAdd",
             Self::GitCommit { .. } => "GitCommit",
+            Self::WorkspaceBatch { .. } => "WorkspaceBatch",
             Self::GitBranch { .. } => "GitBranch",
             Self::GitCheckout { .. } => "GitCheckout",
             Self::GitTag { .. } => "GitTag",

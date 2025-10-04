@@ -30,9 +30,12 @@ impl TaskRegistry {
         filter: Option<String>,
         strategy_override: Option<serde_json::Value>,
         recurse_submodules: bool,
+        progress_hook: Option<Arc<dyn Fn(TaskProgressEvent) + Send + Sync>>,
     ) -> JoinHandle<()> {
         let this = Arc::clone(self);
+        let progress_hook_outer = progress_hook.clone();
         tokio::task::spawn_blocking(move || {
+            let progress_hook = progress_hook_outer;
             fn emit_adaptive_tls_observability(id: Uuid, kind: &str) {
                 use crate::core::git::transport::{
                     metrics_enabled, tl_snapshot, tl_take_fallback_events, FallbackEventRecord,
@@ -114,6 +117,9 @@ impl TaskRegistry {
                     retried_times: None,
                 };
                 emit_all(app_ref, EV_PROGRESS, &prog);
+                if let Some(hook) = &progress_hook {
+                    hook(prog.clone());
+                }
             }
 
             std::thread::sleep(std::time::Duration::from_millis(50));
@@ -346,6 +352,7 @@ impl TaskRegistry {
                     let service = crate::core::git::DefaultGitService::new();
                     let app_for_cb = app.clone();
                     let id_for_cb = id;
+                    let hook_for_cb = progress_hook.clone();
                     service.clone_blocking(
                         repo.as_str(),
                         &dest_path,
@@ -364,6 +371,9 @@ impl TaskRegistry {
                                     retried_times: None,
                                 };
                                 emit_all(app_ref, EV_PROGRESS, &prog);
+                                if let Some(hook) = &hook_for_cb {
+                                    hook(prog.clone());
+                                }
                             }
                         },
                     )
@@ -397,6 +407,9 @@ impl TaskRegistry {
                                     retried_times: None,
                                 };
                                 emit_all(app_ref, EV_PROGRESS, &prog);
+                                if let Some(hook) = &progress_hook {
+                                    hook(prog.clone());
+                                }
                             }
 
                             // 初始化子模块
@@ -418,6 +431,9 @@ impl TaskRegistry {
                                     retried_times: None,
                                 };
                                 emit_all(app_ref, EV_PROGRESS, &prog);
+                                if let Some(hook) = &progress_hook {
+                                    hook(prog.clone());
+                                }
                             }
 
                             // 更新子模块(递归,depth=0表示从根层级开始)
@@ -438,6 +454,9 @@ impl TaskRegistry {
                                 retried_times: None,
                             };
                             emit_all(app_ref, EV_PROGRESS, &prog);
+                            if let Some(hook) = &progress_hook {
+                                hook(prog.clone());
+                            }
                         }
                         emit_adaptive_tls_observability(id, "GitClone");
                         this.mark_completed(&app, &id);
@@ -510,6 +529,6 @@ impl TaskRegistry {
         repo: String,
         dest: String,
     ) -> JoinHandle<()> {
-        self.spawn_git_clone_task_with_opts(app, id, token, repo, dest, None, None, None, false)
+        self.spawn_git_clone_task_with_opts(app, id, token, repo, dest, None, None, None, false, None)
     }
 }

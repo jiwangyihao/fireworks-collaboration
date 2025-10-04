@@ -27,9 +27,12 @@ impl TaskRegistry {
         depth: Option<serde_json::Value>,
         filter: Option<String>,
         strategy_override: Option<serde_json::Value>,
+        progress_hook: Option<Arc<dyn Fn(TaskProgressEvent) + Send + Sync>>,
     ) -> JoinHandle<()> {
         let this = Arc::clone(self);
+        let progress_hook_outer = progress_hook.clone();
         tokio::task::spawn_blocking(move || {
+            let progress_hook = progress_hook_outer;
             fn emit_adaptive_tls_observability(id: Uuid, kind: &str) {
                 use crate::core::git::transport::{
                     metrics_enabled, tl_snapshot, tl_take_fallback_events, FallbackEventRecord,
@@ -116,6 +119,9 @@ impl TaskRegistry {
                     retried_times: None,
                 };
                 emit_all(app_ref, EV_PROGRESS, &prog);
+                if let Some(hook) = &progress_hook {
+                    hook(prog.clone());
+                }
             }
 
             if token.is_cancelled() {
@@ -357,6 +363,9 @@ impl TaskRegistry {
                         retried_times: None,
                     };
                     emit_all(app_ref, EV_PROGRESS, &prog);
+                    if let Some(hook) = &progress_hook {
+                        hook(prog.clone());
+                    }
                 }
 
                 let dest_path = std::path::PathBuf::from(dest.clone());
@@ -365,6 +374,7 @@ impl TaskRegistry {
                     let service = crate::core::git::DefaultGitService::new();
                     let app_for_cb = app.clone();
                     let id_for_cb = id;
+                    let hook_for_cb = progress_hook.clone();
                     service.fetch_blocking(
                         repo.as_str(),
                         &dest_path,
@@ -383,6 +393,9 @@ impl TaskRegistry {
                                     retried_times: None,
                                 };
                                 emit_all(app_ref, EV_PROGRESS, &prog);
+                                if let Some(hook) = &hook_for_cb {
+                                    hook(prog.clone());
+                                }
                             }
                         },
                     )
@@ -423,6 +436,9 @@ impl TaskRegistry {
                                 retried_times: None,
                             };
                             emit_all(app_ref, EV_PROGRESS, &prog);
+                            if let Some(hook) = &progress_hook {
+                                hook(prog.clone());
+                            }
                         }
                         emit_adaptive_tls_observability(id, "GitFetch");
                         match &app {
@@ -467,6 +483,9 @@ impl TaskRegistry {
                                     retried_times: Some(attempt),
                                 };
                                 emit_all(app_ref, EV_PROGRESS, &prog);
+                                if let Some(hook) = &progress_hook {
+                                    hook(prog.clone());
+                                }
                             }
                             interrupt_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                             let _ = watcher.join();
@@ -499,6 +518,6 @@ impl TaskRegistry {
         dest: String,
         preset: Option<String>,
     ) -> JoinHandle<()> {
-        self.spawn_git_fetch_task_with_opts(app, id, token, repo, dest, preset, None, None, None)
+        self.spawn_git_fetch_task_with_opts(app, id, token, repo, dest, preset, None, None, None, None)
     }
 }

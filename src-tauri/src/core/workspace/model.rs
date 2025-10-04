@@ -174,6 +174,16 @@ impl Workspace {
         self.update_timestamp();
         Ok(())
     }
+
+    /// 兼容旧的 WorkspaceManager 接口，返回自身引用
+    pub fn get_workspace(&self) -> &Self {
+        self
+    }
+
+    /// 兼容旧的 WorkspaceManager 接口，返回自身可变引用
+    pub fn get_workspace_mut(&mut self) -> &mut Self {
+        self
+    }
 }
 
 impl RepositoryEntry {

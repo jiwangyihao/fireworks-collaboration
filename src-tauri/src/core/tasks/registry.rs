@@ -27,6 +27,8 @@ pub struct TaskRegistry {
     pub(in crate::core::tasks) inner: Mutex<HashMap<Uuid, TaskMeta>>,
     pub(in crate::core::tasks) structured_bus:
         Mutex<Option<Arc<dyn crate::events::structured::EventBusAny>>>,
+    pub(in crate::core::tasks) parent_children: Mutex<HashMap<Uuid, Vec<Uuid>>>,
+    pub(in crate::core::tasks) child_parent: Mutex<HashMap<Uuid, Uuid>>,
 }
 
 impl Default for TaskRegistry {
@@ -40,6 +42,8 @@ impl TaskRegistry {
         Self {
             inner: Mutex::new(HashMap::new()),
             structured_bus: Mutex::new(None),
+            parent_children: Mutex::new(HashMap::new()),
+            child_parent: Mutex::new(HashMap::new()),
         }
     }
 
@@ -82,6 +86,37 @@ impl TaskRegistry {
 
     pub fn snapshot(&self, id: &Uuid) -> Option<TaskSnapshot> {
         self.inner.lock().unwrap().get(id).map(TaskSnapshot::from)
+    }
+
+    pub fn fail_reason(&self, id: &Uuid) -> Option<String> {
+        self.inner
+            .lock()
+            .unwrap()
+            .get(id)
+            .and_then(|m| m.fail_reason.clone())
+    }
+
+    pub fn link_parent_child(&self, parent: Uuid, child: Uuid) {
+        self.parent_children
+            .lock()
+            .unwrap()
+            .entry(parent)
+            .or_default()
+            .push(child);
+        self.child_parent.lock().unwrap().insert(child, parent);
+    }
+
+    pub fn children_of(&self, parent: &Uuid) -> Vec<Uuid> {
+        self.parent_children
+            .lock()
+            .unwrap()
+            .get(parent)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn parent_of(&self, child: &Uuid) -> Option<Uuid> {
+        self.child_parent.lock().unwrap().get(child).cloned()
     }
 
     pub fn cancel(&self, id: &Uuid) -> bool {
