@@ -1,0 +1,92 @@
+{
+  "schemaVersion": "1.0.0",
+  "metadata": {
+    "name": "team-defaults",
+    "description": "Shared proxy, TLS and credential defaults for the Fireworks Collaboration team",
+    "generatedBy": "fireworks-collaboration",
+    "generatedAt": "2025-10-05T00:00:00Z"
+  },
+  "sections": {
+    "ipPool": {
+      "runtime": {
+        "enabled": true,
+        "sources": {
+          "builtin": true,
+          "dns": true,
+          "history": true,
+          "userStatic": true,
+          "fallback": false
+        },
+        "maxParallelProbes": 4,
+        "probeTimeoutMs": 1500,
+        "historyPath": null,
+        "cachePruneIntervalSecs": 60,
+        "maxCacheEntries": 512,
+        "singleflightTimeoutMs": 10000,
+        "failureThreshold": 5,
+        "failureRateThreshold": 0.4,
+        "failureWindowSeconds": 120,
+        "minSamplesInWindow": 5,
+        "cooldownSeconds": 120,
+        "circuitBreakerEnabled": true
+      },
+      "file": {
+        "preheatDomains": [
+          {
+            "host": "github.com",
+            "ports": [443]
+          }
+        ],
+        "scoreTtlSeconds": 600,
+        "userStatic": [
+          {
+            "host": "internal.registry.local",
+            "ip": "192.0.2.20",
+            "ports": [443]
+          }
+        ],
+        "blacklist": ["10.0.0.0/8"],
+        "whitelist": ["203.0.113.10"]
+      }
+    },
+    "proxy": {
+      "mode": "http",
+      "url": "http://proxy.corp.example:8080",
+      "username": "svc-fireworks",
+      "disableCustomTransport": true,
+      "timeoutSeconds": 45,
+      "fallbackThreshold": 0.3,
+      "fallbackWindowSeconds": 120,
+      "recoveryCooldownSeconds": 120,
+      "healthCheckIntervalSeconds": 60,
+      "recoveryStrategy": "consecutive",
+      "probeUrl": "www.github.com:443",
+      "probeTimeoutSeconds": 10,
+      "recoveryConsecutiveThreshold": 3,
+      "debugProxyLogging": false
+    },
+    "tls": {
+      "sanWhitelist": [
+        "github.com",
+        "*.github.com",
+        "*.githubassets.com",
+        "example.com"
+      ],
+      "insecureSkipVerify": false,
+      "skipSanWhitelist": false,
+      "spkiPins": [],
+      "realHostVerifyEnabled": true,
+      "metricsEnabled": true,
+      "certFpLogEnabled": true,
+      "certFpMaxBytes": 5242880
+    },
+    "credential": {
+      "storage": "system",
+      "defaultTtlSeconds": 7776000,
+      "debugLogging": false,
+      "auditMode": true,
+      "requireConfirmation": true,
+      "keyCacheTtlSeconds": 1800
+    }
+  }
+}

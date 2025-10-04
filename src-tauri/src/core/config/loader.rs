@@ -57,6 +57,16 @@ fn config_path() -> PathBuf {
     join_default_path(&base)
 }
 
+/// 返回当前生效的配置文件完整路径。
+pub fn resolved_config_path() -> PathBuf {
+    config_path()
+}
+
+/// 计算给定基目录下的配置文件路径。
+pub fn config_path_at(base_dir: &Path) -> PathBuf {
+    join_default_path(base_dir)
+}
+
 /// 返回配置基目录（包含 config 子目录的上一级）。仅用于派生其它观测文件（如 cert-fp.log）。
 pub fn base_dir() -> PathBuf {
     let p = config_path();

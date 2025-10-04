@@ -53,6 +53,8 @@ pub fn run() {
             super::commands::get_system_proxy,
             super::commands::get_config,
             super::commands::set_config,
+            super::commands::export_team_config_template,
+            super::commands::import_team_config_template,
             super::commands::task_list,
             super::commands::task_cancel,
             super::commands::task_start_sleep,

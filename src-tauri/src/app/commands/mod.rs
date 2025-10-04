@@ -11,7 +11,9 @@ pub mod tasks;
 pub mod workspace;
 
 // Re-export all command functions
-pub use config::{get_config, greet, set_config};
+pub use config::{
+    export_team_config_template, get_config, greet, import_team_config_template, set_config,
+};
 pub use credential::{
     add_credential, delete_credential, export_audit_log, get_credential, list_credentials,
     set_master_password, unlock_store, update_credential, SharedAuditLogger,
@@ -37,6 +39,5 @@ pub use workspace::{
     get_workspace, get_workspace_config, list_enabled_repositories, list_repositories,
     load_workspace, remove_repository, restore_workspace, save_workspace,
     toggle_repository_enabled, update_repository_tags, validate_workspace_file,
-    workspace_batch_clone, workspace_batch_fetch, workspace_batch_push,
-    SharedWorkspaceManager,
+    workspace_batch_clone, workspace_batch_fetch, workspace_batch_push, SharedWorkspaceManager,
 };
