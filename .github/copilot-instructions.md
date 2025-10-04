@@ -1,4 +1,4 @@
-当前开发的终端 Shell 环境为 Powershell，请根据该环境编写终端 Shell，注意没有必要在命令内容中使用 `powershell -Command` 的方式显式指定执行 Shell，因为这么做容易产生额外的冲突。
+当前开发的终端 Shell 环境为 Powershell，请根据该环境编写终端 Shell，注意没有必要在命令内容中使用 `powershell -Command` 的方式显式指定执行 Shell，因为这么做容易产生额外的冲突。注意不要使用 Powershell 操作文件，因为会导致文字编码问题。
 
 在本地开发环境运行后端测试时，不需要禁用 E2E 测试功能。
 
