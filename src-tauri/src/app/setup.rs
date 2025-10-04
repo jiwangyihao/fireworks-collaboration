@@ -22,7 +22,7 @@ use super::{
     commands::credential::initialize_credential_store,
     types::{
         ConfigBaseDir, OAuthState, SharedAuditLogger, SharedConfig, SharedCredentialFactory,
-        SharedIpPool, TaskRegistryState,
+        SharedIpPool, SharedWorkspaceManager, TaskRegistryState,
     },
 };
 
@@ -86,7 +86,24 @@ pub fn run() {
             super::commands::cleanup_audit_logs,
             super::commands::is_credential_locked,
             super::commands::reset_credential_lock,
-            super::commands::remaining_auth_attempts
+            super::commands::remaining_auth_attempts,
+            // Workspace management commands
+            super::commands::create_workspace,
+            super::commands::load_workspace,
+            super::commands::save_workspace,
+            super::commands::get_workspace,
+            super::commands::close_workspace,
+            super::commands::add_repository,
+            super::commands::remove_repository,
+            super::commands::get_repository,
+            super::commands::list_repositories,
+            super::commands::list_enabled_repositories,
+            super::commands::update_repository_tags,
+            super::commands::toggle_repository_enabled,
+            super::commands::get_workspace_config,
+            super::commands::validate_workspace_file,
+            super::commands::backup_workspace,
+            super::commands::restore_workspace
         ]);
 
     // Setup application state and configuration
@@ -201,6 +218,13 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
         target = "credential",
         audit_mode = audit_mode,
         "Audit logger initialized"
+    );
+
+    // Initialize workspace manager (initially empty)
+    app.manage(Arc::new(Mutex::new(None)) as SharedWorkspaceManager);
+    tracing::info!(
+        target = "workspace",
+        "Workspace manager initialized (no workspace loaded)"
     );
 
     Ok(())
