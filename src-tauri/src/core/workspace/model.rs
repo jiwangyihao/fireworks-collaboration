@@ -50,6 +50,9 @@ pub struct RepositoryEntry {
     /// 是否启用
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    /// 是否包含子模块
+    #[serde(default)]
+    pub has_submodules: bool,
     /// 自定义配置（可继承工作区配置）
     #[serde(default)]
     pub custom_config: HashMap<String, serde_json::Value>,
@@ -184,6 +187,7 @@ impl RepositoryEntry {
             default_branch: default_branch(),
             tags: Vec::new(),
             enabled: default_enabled(),
+            has_submodules: false,
             custom_config: HashMap::new(),
         }
     }

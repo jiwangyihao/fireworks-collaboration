@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::credential::config::CredentialConfig;
 use crate::core::ip_pool::IpPoolRuntimeConfig;
 use crate::core::proxy::ProxyConfig;
+use crate::core::submodule::SubmoduleConfig;
 use crate::core::workspace::WorkspaceConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +99,9 @@ pub struct AppConfig {
     /// P7.0: 工作区与多仓库管理配置，默认禁用。
     #[serde(default)]
     pub workspace: WorkspaceConfig,
+    /// P7.1: 子模块管理配置，默认启用自动递归。
+    #[serde(default)]
+    pub submodule: SubmoduleConfig,
 }
 
 fn default_true() -> bool {
@@ -196,6 +200,7 @@ impl Default for AppConfig {
             proxy: ProxyConfig::default(),
             credential: CredentialConfig::default(),
             workspace: WorkspaceConfig::default(),
+            submodule: SubmoduleConfig::default(),
         }
     }
 }
