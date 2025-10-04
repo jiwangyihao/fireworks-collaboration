@@ -8,6 +8,7 @@ mod git_add_and_commit;
 mod git_basic_operations;
 mod git_branch_and_checkout;
 mod git_clone_shallow_and_depth;
+mod git_clone_recursive_submodules;
 mod git_credential_autofill;
 mod git_fetch_core_and_shallow;
 mod git_preconditions_and_cancel;
