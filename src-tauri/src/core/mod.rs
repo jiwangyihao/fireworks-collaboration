@@ -11,6 +11,7 @@ pub mod git;
 pub mod http;
 pub mod ip_pool;
 pub mod proxy;
+pub mod submodule;
 pub mod tasks;
 pub mod tls;
 pub mod workspace;

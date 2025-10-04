@@ -6,6 +6,7 @@ pub mod git;
 pub mod http;
 pub mod oauth;
 pub mod proxy;
+pub mod submodule;
 pub mod tasks;
 pub mod workspace;
 
@@ -24,6 +25,11 @@ pub use http::http_fake_request;
 pub use oauth::{clear_oauth_state, get_oauth_callback_data, start_oauth_server};
 pub use proxy::{
     detect_system_proxy, force_proxy_fallback, force_proxy_recovery, get_system_proxy,
+};
+pub use submodule::{
+    get_submodule_config, has_submodules, init_all_submodules, init_submodule, list_submodules,
+    sync_all_submodules, sync_submodule, update_all_submodules, update_submodule,
+    SharedSubmoduleManager,
 };
 pub use tasks::{task_cancel, task_list, task_snapshot, task_start_sleep};
 pub use workspace::{

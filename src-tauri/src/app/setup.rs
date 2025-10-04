@@ -22,7 +22,7 @@ use super::{
     commands::credential::initialize_credential_store,
     types::{
         ConfigBaseDir, OAuthState, SharedAuditLogger, SharedConfig, SharedCredentialFactory,
-        SharedIpPool, SharedWorkspaceManager, TaskRegistryState,
+        SharedIpPool, SharedSubmoduleManager, SharedWorkspaceManager, TaskRegistryState,
     },
 };
 
@@ -103,7 +103,17 @@ pub fn run() {
             super::commands::get_workspace_config,
             super::commands::validate_workspace_file,
             super::commands::backup_workspace,
-            super::commands::restore_workspace
+            super::commands::restore_workspace,
+            // Submodule management commands
+            super::commands::list_submodules,
+            super::commands::has_submodules,
+            super::commands::init_all_submodules,
+            super::commands::init_submodule,
+            super::commands::update_all_submodules,
+            super::commands::update_submodule,
+            super::commands::sync_all_submodules,
+            super::commands::sync_submodule,
+            super::commands::get_submodule_config
         ]);
 
     // Setup application state and configuration
@@ -225,6 +235,15 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
     tracing::info!(
         target = "workspace",
         "Workspace manager initialized (no workspace loaded)"
+    );
+
+    // Initialize submodule manager with default config
+    let submodule_config = cfg.submodule.clone().unwrap_or_default();
+    let submodule_manager = crate::core::submodule::SubmoduleManager::new(submodule_config);
+    app.manage(Arc::new(Mutex::new(submodule_manager)) as SharedSubmoduleManager);
+    tracing::info!(
+        target = "submodule",
+        "Submodule manager initialized with default config"
     );
 
     Ok(())

@@ -20,6 +20,7 @@ fn parse_depth(depth: Option<serde_json::Value>) -> Option<u32> {
 /// - `depth`: Optional shallow clone depth
 /// - `filter`: Optional object filter (e.g., "blob:none")
 /// - `strategy_override`: Optional strategy configuration override
+/// - `recurse_submodules`: Whether to recursively clone submodules (P7.1)
 #[tauri::command]
 pub async fn git_clone(
     repo: String,
@@ -27,10 +28,12 @@ pub async fn git_clone(
     depth: Option<serde_json::Value>,
     filter: Option<String>,
     strategy_override: Option<serde_json::Value>,
+    recurse_submodules: Option<bool>,
     reg: State<'_, TaskRegistryState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let depth_parsed = parse_depth(depth.clone());
+    let recurse = recurse_submodules.unwrap_or(false);
 
     let (id, token) = reg.create(TaskKind::GitClone {
         repo: repo.clone(),
@@ -38,6 +41,7 @@ pub async fn git_clone(
         depth: depth_parsed,
         filter: filter.clone(),
         strategy_override: strategy_override.clone(),
+        recurse_submodules: recurse,
     });
 
     reg.clone().spawn_git_clone_task_with_opts(
@@ -49,6 +53,7 @@ pub async fn git_clone(
         depth,
         filter,
         strategy_override,
+        recurse,
     );
 
     Ok(id.to_string())
