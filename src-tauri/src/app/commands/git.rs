@@ -54,6 +54,7 @@ pub async fn git_clone(
         filter,
         strategy_override,
         recurse,
+        None,
     );
 
     Ok(id.to_string())
@@ -99,6 +100,7 @@ pub async fn git_fetch(
         depth,
         filter,
         strategy_override,
+        None,
     );
 
     Ok(id.to_string())
@@ -167,6 +169,7 @@ pub async fn git_push(
         final_username,
         final_password,
         strategy_override,
+        None,
     );
 
     Ok(id.to_string())

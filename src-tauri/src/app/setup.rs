@@ -104,6 +104,9 @@ pub fn run() {
             super::commands::validate_workspace_file,
             super::commands::backup_workspace,
             super::commands::restore_workspace,
+            super::commands::workspace_batch_clone,
+            super::commands::workspace_batch_fetch,
+            super::commands::workspace_batch_push,
             // Submodule management commands
             super::commands::list_submodules,
             super::commands::has_submodules,

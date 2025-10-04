@@ -37,5 +37,6 @@ pub use workspace::{
     get_workspace, get_workspace_config, list_enabled_repositories, list_repositories,
     load_workspace, remove_repository, restore_workspace, save_workspace,
     toggle_repository_enabled, update_repository_tags, validate_workspace_file,
+    workspace_batch_clone, workspace_batch_fetch, workspace_batch_push,
     SharedWorkspaceManager,
 };
