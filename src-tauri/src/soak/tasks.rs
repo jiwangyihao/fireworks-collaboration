@@ -46,6 +46,7 @@ pub fn run_push_task(
                 None,
                 None,
                 None,
+                None,
             )
         }
     });
@@ -95,6 +96,7 @@ pub fn run_fetch_task(
                 token,
                 "".to_string(),
                 repo_str,
+                None,
                 None,
                 None,
                 None,
@@ -149,7 +151,7 @@ pub fn run_clone_task(
         let registry = Arc::clone(registry);
         async move {
             registry.spawn_git_clone_task_with_opts(
-                None, id, token, origin_str, dest_str, None, None, None, false,
+                None, id, token, origin_str, dest_str, None, None, None, false, None,
             )
         }
     });

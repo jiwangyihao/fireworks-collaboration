@@ -16,11 +16,22 @@ fn __init_env() {
     init_test_env();
 }
 
+use common::{repo_factory::RepoBuilder, task_wait::wait_until_task_done};
+use fireworks_collaboration_lib::core::tasks::{
+    model::{TaskKind, TaskState, WorkspaceBatchOperation},
+    registry::TaskRegistry,
+    workspace_batch::{
+        CloneOptions, FetchOptions, PushOptions, WorkspaceBatchChildOperation, WorkspaceBatchChildSpec,
+    },
+};
 use fireworks_collaboration_lib::core::workspace::{
     RepositoryEntry, Workspace, WorkspaceConfig, WorkspaceConfigManager, WorkspaceManager,
     WorkspaceStorage,
 };
-use std::path::PathBuf;
+use git2::{Repository as GitRepository, Signature};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tempfile::TempDir;
 
 // ============================================================================
@@ -532,4 +543,538 @@ fn test_large_workspace_performance() {
     assert!(add_duration.as_millis() < 500, "添加仓库不应超过500ms");
     assert!(save_duration.as_millis() < 500, "保存不应超过500ms");
     assert!(load_duration.as_millis() < 500, "加载不应超过500ms");
+}
+
+fn create_commit(repo_path: &Path, file: &str, content: &str, message: &str) {
+    let repo = GitRepository::open(repo_path).expect("open repo for commit");
+    std::fs::write(repo_path.join(file), content).expect("write file for commit");
+    let mut index = repo.index().expect("repo index");
+    index.add_path(Path::new(file)).expect("add path to index");
+    index.write().expect("write index");
+    let tree_id = index.write_tree().expect("write tree");
+    let tree = repo.find_tree(tree_id).expect("find tree");
+    let sig = repo
+        .signature()
+        .or_else(|_| Signature::now("Workspace Tester", "tester@example.com"))
+        .expect("signature");
+    let parents: Vec<git2::Commit> = match repo.head() {
+        Ok(head) => head
+            .target()
+            .map(|oid| repo.find_commit(oid).expect("find parent commit"))
+            .into_iter()
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parent_refs)
+        .expect("commit change");
+}
+
+// ============================================================================
+// 工作区批量操作任务测试
+// ============================================================================
+
+#[tokio::test]
+async fn test_workspace_batch_clone_success() {
+    let registry = Arc::new(TaskRegistry::new());
+    let workspace_root = TempDir::new().unwrap();
+
+    let origin1 = RepoBuilder::new()
+        .with_base_commit("a.txt", "one", "c1")
+        .build();
+    let origin2 = RepoBuilder::new()
+        .with_base_commit("b.txt", "two", "c1")
+        .build();
+
+    let dest1 = workspace_root.path().join("repo-one");
+    let dest2 = workspace_root.path().join("repo-two");
+
+    let specs = vec![
+        WorkspaceBatchChildSpec {
+            repo_id: "repo1".into(),
+            repo_name: "Repo One".into(),
+            operation: WorkspaceBatchChildOperation::Clone(CloneOptions {
+                repo_url: origin1.path.to_string_lossy().to_string(),
+                dest: dest1.to_string_lossy().to_string(),
+                depth_u32: None,
+                depth_value: None,
+                filter: None,
+                strategy_override: None,
+                recurse_submodules: false,
+            }),
+        },
+        WorkspaceBatchChildSpec {
+            repo_id: "repo2".into(),
+            repo_name: "Repo Two".into(),
+            operation: WorkspaceBatchChildOperation::Clone(CloneOptions {
+                repo_url: origin2.path.to_string_lossy().to_string(),
+                dest: dest2.to_string_lossy().to_string(),
+                depth_u32: None,
+                depth_value: None,
+                filter: None,
+                strategy_override: None,
+                recurse_submodules: false,
+            }),
+        },
+    ];
+
+    let operation = WorkspaceBatchOperation::Clone;
+    let (parent_id, parent_token) = registry.create(TaskKind::WorkspaceBatch {
+        operation: operation.clone(),
+        total: specs.len() as u32,
+    });
+
+    let handle = registry.clone().spawn_workspace_batch_task(
+        None,
+        parent_id,
+        parent_token,
+        operation,
+        specs,
+        2,
+    );
+
+    handle.await.unwrap();
+    wait_until_task_done(registry.as_ref(), parent_id).await;
+
+    let parent_state = registry.snapshot(&parent_id).unwrap();
+    assert_eq!(parent_state.state, TaskState::Completed);
+
+    let children = registry.children_of(&parent_id);
+    assert_eq!(children.len(), 2);
+
+    for child in children {
+        wait_until_task_done(registry.as_ref(), child).await;
+        let snapshot = registry.snapshot(&child).unwrap();
+        assert_eq!(snapshot.state, TaskState::Completed);
+    }
+
+    assert!(dest1.join(".git").exists());
+    assert!(dest2.join(".git").exists());
+}
+
+#[tokio::test]
+async fn test_workspace_batch_clone_failure_summary() {
+    let registry = Arc::new(TaskRegistry::new());
+    let workspace_root = TempDir::new().unwrap();
+
+    let origin = RepoBuilder::new()
+        .with_base_commit("c.txt", "three", "c1")
+        .build();
+
+    let good_dest = workspace_root.path().join("repo-good");
+    let bad_dest = workspace_root.path().join("repo-bad");
+    let missing_remote = workspace_root.path().join("missing");
+
+    let specs = vec![
+        WorkspaceBatchChildSpec {
+            repo_id: "good".into(),
+            repo_name: "Good".into(),
+            operation: WorkspaceBatchChildOperation::Clone(CloneOptions {
+                repo_url: origin.path.to_string_lossy().to_string(),
+                dest: good_dest.to_string_lossy().to_string(),
+                depth_u32: None,
+                depth_value: None,
+                filter: None,
+                strategy_override: None,
+                recurse_submodules: false,
+            }),
+        },
+        WorkspaceBatchChildSpec {
+            repo_id: "bad".into(),
+            repo_name: "Bad".into(),
+            operation: WorkspaceBatchChildOperation::Clone(CloneOptions {
+                repo_url: missing_remote.to_string_lossy().to_string(),
+                dest: bad_dest.to_string_lossy().to_string(),
+                depth_u32: None,
+                depth_value: None,
+                filter: None,
+                strategy_override: None,
+                recurse_submodules: false,
+            }),
+        },
+    ];
+
+    let operation = WorkspaceBatchOperation::Clone;
+    let (parent_id, parent_token) = registry.create(TaskKind::WorkspaceBatch {
+        operation: operation.clone(),
+        total: specs.len() as u32,
+    });
+
+    let handle = registry.clone().spawn_workspace_batch_task(
+        None,
+        parent_id,
+        parent_token,
+        operation,
+        specs,
+        2,
+    );
+
+    handle.await.unwrap();
+    wait_until_task_done(registry.as_ref(), parent_id).await;
+
+    let parent_state = registry.snapshot(&parent_id).unwrap();
+    assert_eq!(parent_state.state, TaskState::Failed);
+
+    let summary = registry.fail_reason(&parent_id).unwrap();
+    assert!(summary.contains("Bad"));
+    assert!(summary.contains("bad"));
+
+    let children = registry.children_of(&parent_id);
+    assert_eq!(children.len(), 2);
+
+    let mut states = Vec::new();
+    for child in children {
+        wait_until_task_done(registry.as_ref(), child).await;
+        let snapshot = registry.snapshot(&child).unwrap();
+        states.push(snapshot.state);
+    }
+    assert!(states.contains(&TaskState::Completed));
+    assert!(states.contains(&TaskState::Failed));
+}
+
+// ============================================================================
+// 工作区批量 Fetch 操作测试
+// ============================================================================
+
+#[tokio::test]
+async fn test_workspace_batch_fetch_success() {
+    let registry = Arc::new(TaskRegistry::new());
+    let workspace_root = TempDir::new().unwrap();
+
+    let origin = RepoBuilder::new()
+        .with_base_commit("a.txt", "fetch", "init")
+        .build();
+    let remote_dir = tempfile::tempdir().unwrap();
+    let remote_path = remote_dir.path().join("remote.git");
+    GitRepository::init_bare(&remote_path).expect("init bare remote");
+    let origin_url = remote_path.to_string_lossy().to_string();
+
+    let origin_repo = GitRepository::open(&origin.path).unwrap();
+    origin_repo
+        .remote("bare", &origin_url)
+        .expect("add bare remote")
+        .push(&["refs/heads/master:refs/heads/master"], None)
+        .expect("seed bare remote");
+
+    let dest = workspace_root.path().join("repo-fetch");
+    GitRepository::clone(&origin_url, &dest).expect("clone repo for fetch test");
+
+    let specs = vec![WorkspaceBatchChildSpec {
+        repo_id: "fetch".into(),
+        repo_name: "Fetch Repo".into(),
+        operation: WorkspaceBatchChildOperation::Fetch(FetchOptions {
+            repo_url: origin_url,
+            dest: dest.to_string_lossy().to_string(),
+            preset: None,
+            depth_u32: None,
+            depth_value: None,
+            filter: None,
+            strategy_override: None,
+        }),
+    }];
+
+    let operation = WorkspaceBatchOperation::Fetch;
+    let (parent_id, parent_token) = registry.create(TaskKind::WorkspaceBatch {
+        operation: operation.clone(),
+        total: specs.len() as u32,
+    });
+
+    let handle = registry.clone().spawn_workspace_batch_task(
+        None,
+        parent_id,
+        parent_token,
+        operation,
+        specs,
+        1,
+    );
+
+    handle.await.unwrap();
+    wait_until_task_done(registry.as_ref(), parent_id).await;
+
+    let parent_state = registry.snapshot(&parent_id).unwrap();
+    assert_eq!(parent_state.state, TaskState::Completed);
+    assert!(registry.fail_reason(&parent_id).is_none());
+
+    let children = registry.children_of(&parent_id);
+    assert_eq!(children.len(), 1);
+    let child_id = children[0];
+    wait_until_task_done(registry.as_ref(), child_id).await;
+    let child_state = registry.snapshot(&child_id).unwrap();
+    assert_eq!(child_state.state, TaskState::Completed);
+}
+
+#[tokio::test]
+async fn test_workspace_batch_fetch_missing_repository() {
+    let registry = Arc::new(TaskRegistry::new());
+    let workspace_root = TempDir::new().unwrap();
+
+    let origin = RepoBuilder::new()
+        .with_base_commit("b.txt", "fetch-miss", "init")
+        .build();
+    let origin_url = origin.path.to_string_lossy().to_string();
+
+    let dest = workspace_root.path().join("missing-repo");
+    fs::create_dir_all(&dest).unwrap();
+
+    let specs = vec![WorkspaceBatchChildSpec {
+        repo_id: "missing".into(),
+        repo_name: "Missing Repo".into(),
+        operation: WorkspaceBatchChildOperation::Fetch(FetchOptions {
+            repo_url: origin_url,
+            dest: dest.to_string_lossy().to_string(),
+            preset: None,
+            depth_u32: None,
+            depth_value: None,
+            filter: None,
+            strategy_override: None,
+        }),
+    }];
+
+    let operation = WorkspaceBatchOperation::Fetch;
+    let (parent_id, parent_token) = registry.create(TaskKind::WorkspaceBatch {
+        operation: operation.clone(),
+        total: specs.len() as u32,
+    });
+
+    let handle = registry.clone().spawn_workspace_batch_task(
+        None,
+        parent_id,
+        parent_token,
+        operation,
+        specs,
+        1,
+    );
+
+    handle.await.unwrap();
+    wait_until_task_done(registry.as_ref(), parent_id).await;
+
+    let parent_state = registry.snapshot(&parent_id).unwrap();
+    assert_eq!(parent_state.state, TaskState::Failed);
+    let summary = registry.fail_reason(&parent_id).unwrap();
+    assert!(summary.starts_with("batch fetch"));
+    assert!(summary.contains("Missing Repo"));
+
+    let children = registry.children_of(&parent_id);
+    assert_eq!(children.len(), 1);
+    let child_id = children[0];
+    wait_until_task_done(registry.as_ref(), child_id).await;
+    let child_state = registry.snapshot(&child_id).unwrap();
+    assert_eq!(child_state.state, TaskState::Failed);
+}
+
+#[tokio::test]
+async fn test_workspace_batch_fetch_failure_summary_truncation() {
+    let registry = Arc::new(TaskRegistry::new());
+    let workspace_root = TempDir::new().unwrap();
+
+    let origin = RepoBuilder::new()
+        .with_base_commit("c.txt", "fetch-trunc", "init")
+        .build();
+    let origin_url = origin.path.to_string_lossy().to_string();
+
+    let mut specs = Vec::new();
+    for idx in 0..4 {
+        let dest = workspace_root
+            .path()
+            .join(format!("missing-{}", idx));
+        fs::create_dir_all(&dest).unwrap();
+        specs.push(WorkspaceBatchChildSpec {
+            repo_id: format!("missing-{idx}"),
+            repo_name: format!("Repo {idx}"),
+            operation: WorkspaceBatchChildOperation::Fetch(FetchOptions {
+                repo_url: origin_url.clone(),
+                dest: dest.to_string_lossy().to_string(),
+                preset: None,
+                depth_u32: None,
+                depth_value: None,
+                filter: None,
+                strategy_override: None,
+            }),
+        });
+    }
+
+    let operation = WorkspaceBatchOperation::Fetch;
+    let (parent_id, parent_token) = registry.create(TaskKind::WorkspaceBatch {
+        operation: operation.clone(),
+        total: specs.len() as u32,
+    });
+
+    let handle = registry.clone().spawn_workspace_batch_task(
+        None,
+        parent_id,
+        parent_token,
+        operation,
+        specs,
+        2,
+    );
+
+    handle.await.unwrap();
+    wait_until_task_done(registry.as_ref(), parent_id).await;
+
+    let parent_state = registry.snapshot(&parent_id).unwrap();
+    assert_eq!(parent_state.state, TaskState::Failed);
+    let summary = registry.fail_reason(&parent_id).unwrap();
+    assert!(summary.starts_with("batch fetch: 4 repository failures"));
+    assert!(summary.contains("Repo 0"));
+    assert!(summary.contains("... +1 more"));
+
+    let children = registry.children_of(&parent_id);
+    assert_eq!(children.len(), 4);
+    for child in children {
+        wait_until_task_done(registry.as_ref(), child).await;
+        let state = registry.snapshot(&child).unwrap();
+        assert_eq!(state.state, TaskState::Failed);
+    }
+}
+
+// ============================================================================
+// 工作区批量 Push 操作测试
+// ============================================================================
+
+#[tokio::test]
+async fn test_workspace_batch_push_success() {
+    let registry = Arc::new(TaskRegistry::new());
+    let workspace_root = TempDir::new().unwrap();
+
+    let origin = RepoBuilder::new()
+        .with_base_commit("init.txt", "push", "init")
+        .build();
+    let remote_dir = tempfile::tempdir().unwrap();
+    let remote_path = remote_dir.path().join("remote.git");
+    GitRepository::init_bare(&remote_path).expect("init bare remote");
+    let origin_url = remote_path.to_string_lossy().to_string();
+
+    let origin_repo = GitRepository::open(&origin.path).unwrap();
+    origin_repo
+        .remote("bare", &origin_url)
+        .expect("add bare remote")
+        .push(&["refs/heads/master:refs/heads/master"], None)
+        .expect("seed bare remote");
+    let remote_head_before = GitRepository::open(&remote_path)
+        .unwrap()
+        .refname_to_id("refs/heads/master")
+        .expect("remote head before push");
+
+    let dest = workspace_root.path().join("repo-push");
+    GitRepository::clone(&origin_url, &dest).expect("clone repo for push test");
+    create_commit(&dest, "local.txt", "local", "feat: local change");
+
+    let specs = vec![WorkspaceBatchChildSpec {
+        repo_id: "push".into(),
+        repo_name: "Push Repo".into(),
+        operation: WorkspaceBatchChildOperation::Push(PushOptions {
+            dest: dest.to_string_lossy().to_string(),
+            remote: None,
+            refspecs: Some(vec!["refs/heads/master:refs/heads/master".into()]),
+            username: None,
+            password: None,
+            strategy_override: None,
+        }),
+    }];
+
+    let operation = WorkspaceBatchOperation::Push;
+    let (parent_id, parent_token) = registry.create(TaskKind::WorkspaceBatch {
+        operation: operation.clone(),
+        total: specs.len() as u32,
+    });
+
+    let handle = registry.clone().spawn_workspace_batch_task(
+        None,
+        parent_id,
+        parent_token,
+        operation,
+        specs,
+        1,
+    );
+
+    handle.await.unwrap();
+    wait_until_task_done(registry.as_ref(), parent_id).await;
+
+    let parent_state = registry.snapshot(&parent_id).unwrap();
+    assert_eq!(parent_state.state, TaskState::Completed);
+    assert!(registry.fail_reason(&parent_id).is_none());
+
+    let children = registry.children_of(&parent_id);
+    assert_eq!(children.len(), 1);
+    let child_id = children[0];
+    wait_until_task_done(registry.as_ref(), child_id).await;
+    let child_state = registry.snapshot(&child_id).unwrap();
+    assert_eq!(child_state.state, TaskState::Completed);
+
+    let remote_head_after = GitRepository::open(&remote_path)
+        .unwrap()
+        .refname_to_id("refs/heads/master")
+        .expect("remote head after push");
+    assert_ne!(remote_head_before, remote_head_after);
+}
+
+#[tokio::test]
+async fn test_workspace_batch_push_missing_remote() {
+    let registry = Arc::new(TaskRegistry::new());
+    let workspace_root = TempDir::new().unwrap();
+
+    let origin = RepoBuilder::new()
+        .with_base_commit("init.txt", "push", "init")
+        .build();
+    let remote_dir = tempfile::tempdir().unwrap();
+    let remote_path = remote_dir.path().join("remote.git");
+    GitRepository::init_bare(&remote_path).expect("init bare remote");
+    let origin_url = remote_path.to_string_lossy().to_string();
+    let origin_repo = GitRepository::open(&origin.path).unwrap();
+    origin_repo
+        .remote("bare", &origin_url)
+        .expect("add bare remote")
+        .push(&["refs/heads/master:refs/heads/master"], None)
+        .expect("seed bare remote");
+
+    let dest = workspace_root.path().join("repo-push-missing");
+    GitRepository::clone(&origin_url, &dest).expect("clone repo for push failure test");
+    create_commit(&dest, "local.txt", "local", "feat: local change");
+
+    let repo = GitRepository::open(&dest).unwrap();
+    repo.remote_delete("origin").expect("remove origin remote");
+
+    let specs = vec![WorkspaceBatchChildSpec {
+        repo_id: "push-missing".into(),
+        repo_name: "Push Missing".into(),
+        operation: WorkspaceBatchChildOperation::Push(PushOptions {
+            dest: dest.to_string_lossy().to_string(),
+            remote: None,
+            refspecs: None,
+            username: None,
+            password: None,
+            strategy_override: None,
+        }),
+    }];
+
+    let operation = WorkspaceBatchOperation::Push;
+    let (parent_id, parent_token) = registry.create(TaskKind::WorkspaceBatch {
+        operation: operation.clone(),
+        total: specs.len() as u32,
+    });
+
+    let handle = registry.clone().spawn_workspace_batch_task(
+        None,
+        parent_id,
+        parent_token,
+        operation,
+        specs,
+        1,
+    );
+
+    handle.await.unwrap();
+    wait_until_task_done(registry.as_ref(), parent_id).await;
+
+    let parent_state = registry.snapshot(&parent_id).unwrap();
+    assert_eq!(parent_state.state, TaskState::Failed);
+    let summary = registry.fail_reason(&parent_id).unwrap();
+    assert!(summary.starts_with("batch push"));
+    assert!(summary.contains("Push Missing"));
+
+    let children = registry.children_of(&parent_id);
+    assert_eq!(children.len(), 1);
+    let child_id = children[0];
+    wait_until_task_done(registry.as_ref(), child_id).await;
+    let child_state = registry.snapshot(&child_id).unwrap();
+    assert_eq!(child_state.state, TaskState::Failed);
 }

@@ -43,7 +43,8 @@ async fn test_clone_without_recurse_submodules() {
         None,
         None,
         None,
-        false, // recurse_submodules = false
+    false, // recurse_submodules = false
+    None,
     );
     
     // 等待任务完成
@@ -90,7 +91,8 @@ async fn test_clone_with_recurse_submodules_parameter() {
         None,
         None,
         None,
-        true, // recurse_submodules = true
+    true, // recurse_submodules = true
+    None,
     );
     
     // 等待任务完成

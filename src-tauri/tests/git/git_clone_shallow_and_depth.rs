@@ -158,6 +158,7 @@ mod section_invalid_depth {
                     None,
                     None,
                     false,
+                    None,
                 );
                 let failed = wait_state(&reg, id, TaskState::Failed, 2000);
                 assert!(failed, "[invalid-depth] expected fail-fast for {case}");

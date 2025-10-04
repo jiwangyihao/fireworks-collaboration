@@ -277,6 +277,7 @@ mod section_strategy_summary_multiop {
             None,
             None,
             Some(ov),
+            None,
         );
         let _ = h.await;
         crate::common::event_assert::assert_applied_code(
@@ -319,6 +320,7 @@ mod section_strategy_summary_multiop {
             None,
             None,
             Some(ov),
+            None,
         );
         let _ = h.await;
         // 断言：summary 含 http/tls codes + 独立 applied 事件存在
@@ -367,6 +369,7 @@ mod section_strategy_summary_multiop {
                 None,
                 None,
                 None,
+                None,
             );
             let _ = fh.await;
             crate::common::event_assert::assert_no_applied_codes(&fid.to_string());
@@ -396,6 +399,7 @@ mod section_strategy_summary_multiop {
                 ptk,
                 src_desc.path.to_string_lossy().to_string(),
                 Some("origin".into()),
+                None,
                 None,
                 None,
                 None,
@@ -438,6 +442,7 @@ mod section_strategy_summary_multiop {
                 None,
                 Some(override_json),
                 false,
+                None,
             );
             let _ = h.await;
             // summary appliedCodes
@@ -535,29 +540,29 @@ mod section_override_no_conflict {
             // 1) changed
             let d1 = tempfile::tempdir().unwrap(); let ov1 = serde_json::json!({"tls": {"insecure_skip_verify": true}});
             let (id1, tk1) = reg.create(TaskKind::GitClone { repo: src_path.clone(), dest: d1.path().to_string_lossy().to_string(), depth: None, filter: None, strategy_override: Some(ov1.clone()), recurse_submodules: false });
-            let h1 = reg.clone().spawn_git_clone_task_with_opts(Some(app.clone()), id1, tk1, src_path.clone(), d1.path().to_string_lossy().to_string(), None, None, Some(ov1), false);
+            let h1 = reg.clone().spawn_git_clone_task_with_opts(Some(app.clone()), id1, tk1, src_path.clone(), d1.path().to_string_lossy().to_string(), None, None, Some(ov1), false, None);
             wait_done(&reg, id1).await; h1.await.unwrap();
             crate::common::event_assert::assert_applied_code(&id1.to_string(), "tls_strategy_override_applied");
             // 2) unchanged
             let d2 = tempfile::tempdir().unwrap(); let ov2 = serde_json::json!({"tls": {"insecure_skip_verify": false, "skip_san_whitelist": false}});
             let (id2, tk2) = reg.create(TaskKind::GitClone { repo: src_path.clone(), dest: d2.path().to_string_lossy().to_string(), depth: None, filter: None, strategy_override: Some(ov2.clone()), recurse_submodules: false });
-            let h2 = reg.clone().spawn_git_clone_task_with_opts(Some(app.clone()), id2, tk2, src_path.clone(), d2.path().to_string_lossy().to_string(), None, None, Some(ov2), false);
+            let h2 = reg.clone().spawn_git_clone_task_with_opts(Some(app.clone()), id2, tk2, src_path.clone(), d2.path().to_string_lossy().to_string(), None, None, Some(ov2), false, None);
             wait_done(&reg, id2).await; h2.await.unwrap();
             crate::common::event_assert::assert_no_applied_code(&id2.to_string(), "tls_strategy_override_applied");
             // 3) fetch skipSan
             let work3 = tempfile::tempdir().unwrap(); let (idc, tkc) = reg.create(TaskKind::GitClone { repo: src_path.clone(), dest: work3.path().to_string_lossy().to_string(), depth: None, filter: None, strategy_override: None , recurse_submodules: false });
-            let hc = reg.clone().spawn_git_clone_task_with_opts(Some(app.clone()), idc, tkc, src_path.clone(), work3.path().to_string_lossy().to_string(), None, None, None, false); wait_done(&reg, idc).await; hc.await.unwrap();
+            let hc = reg.clone().spawn_git_clone_task_with_opts(Some(app.clone()), idc, tkc, src_path.clone(), work3.path().to_string_lossy().to_string(), None, None, None, false, None); wait_done(&reg, idc).await; hc.await.unwrap();
             let ovf = serde_json::json!({"tls": {"skip_san_whitelist": true}});
             let (idf, tkf) = reg.create(TaskKind::GitFetch { repo: src_path.clone(), dest: work3.path().to_string_lossy().to_string(), depth: None, filter: None, strategy_override: Some(ovf.clone()) });
-            let hf = reg.clone().spawn_git_fetch_task_with_opts(Some(app.clone()), idf, tkf, src_path.clone(), work3.path().to_string_lossy().to_string(), None, None, None, Some(ovf));
+            let hf = reg.clone().spawn_git_fetch_task_with_opts(Some(app.clone()), idf, tkf, src_path.clone(), work3.path().to_string_lossy().to_string(), None, None, None, Some(ovf), None);
             wait_done(&reg, idf).await; hf.await.unwrap();
             crate::common::event_assert::assert_applied_code(&idf.to_string(), "tls_strategy_override_applied");
             // 4) push insecure + skipSan
             let work4 = tempfile::tempdir().unwrap(); let (idc4, tkc4) = reg.create(TaskKind::GitClone { repo: src_path.clone(), dest: work4.path().to_string_lossy().to_string(), depth: None, filter: None, strategy_override: None , recurse_submodules: false });
-            let hc4 = reg.clone().spawn_git_clone_task_with_opts(Some(app.clone()), idc4, tkc4, src_path.clone(), work4.path().to_string_lossy().to_string(), None, None, None, false); wait_done(&reg, idc4).await; hc4.await.unwrap();
+            let hc4 = reg.clone().spawn_git_clone_task_with_opts(Some(app.clone()), idc4, tkc4, src_path.clone(), work4.path().to_string_lossy().to_string(), None, None, None, false, None); wait_done(&reg, idc4).await; hc4.await.unwrap();
             let ovp = serde_json::json!({"tls": {"insecure_skip_verify": true, "skip_san_whitelist": true}});
             let (idp, tkp) = reg.create(TaskKind::GitPush { dest: work4.path().to_string_lossy().to_string(), remote: None, refspecs: None, username: None, password: None, strategy_override: Some(ovp.clone()) });
-            let hp = reg.clone().spawn_git_push_task(Some(app.clone()), idp, tkp, work4.path().to_string_lossy().to_string(), None, None, None, None, Some(ovp));
+            let hp = reg.clone().spawn_git_push_task(Some(app.clone()), idp, tkp, work4.path().to_string_lossy().to_string(), None, None, None, None, Some(ovp), None);
             wait_done(&reg, idp).await; hp.await.unwrap();
             crate::common::event_assert::assert_applied_code(&idp.to_string(), "tls_strategy_override_applied");
         });
@@ -592,6 +597,7 @@ mod section_override_no_conflict {
                 None,
                 None,
                 false,
+                None,
             );
             wait_done(&reg, cid).await;
             ch.await.unwrap();
@@ -614,6 +620,7 @@ mod section_override_no_conflict {
                 None,
                 None,
                 Some(ov),
+                None,
             );
             wait_done(&reg, pid).await;
             ph.await.unwrap();
@@ -653,6 +660,7 @@ mod section_override_empty_unknown {
             None,
             Some(serde_json::json!({})),
             false,
+            None,
         );
         h.await.unwrap();
         let snap = reg.snapshot(&id).unwrap();
@@ -687,6 +695,7 @@ mod section_override_empty_unknown {
             None,
             None,
             Some(unknown),
+            None,
         );
         h.await.unwrap();
         let snap = reg.snapshot(&id).unwrap();
@@ -724,6 +733,7 @@ mod section_override_invalid_inputs {
             None,
             None,
             Some(bad),
+            None,
         );
         h.await.unwrap();
         let snap = reg.snapshot(&id).unwrap();
@@ -755,6 +765,7 @@ mod section_override_invalid_inputs {
             None,
             Some(bad),
             false,
+            None,
         );
         h.await.unwrap();
         let snap = reg.snapshot(&id).unwrap();
@@ -785,6 +796,7 @@ mod section_override_invalid_inputs {
             None,
             None,
             Some(bad),
+            None,
         );
         h.await.unwrap();
         let snap = reg.snapshot(&id).unwrap();
@@ -841,6 +853,7 @@ mod section_tls_mixed_scenarios {
                 None,
                 Some(ova),
                 false,
+                None,
             );
             // baseline
             let base = tempfile::tempdir().unwrap();
@@ -862,6 +875,7 @@ mod section_tls_mixed_scenarios {
                 None,
                 None,
                 false,
+                None,
             );
             wait_done(&reg, id_a).await;
             ha.await.unwrap();
@@ -886,6 +900,7 @@ mod section_tls_mixed_scenarios {
                 None,
                 None,
                 Some(ovb),
+                None,
             );
             // push skipSan only
             let (id_c, tk_c) = reg.create(TaskKind::GitPush {
@@ -906,6 +921,7 @@ mod section_tls_mixed_scenarios {
                 None,
                 None,
                 Some(serde_json::json!({"tls": {"skip_san_whitelist": true}})),
+                None,
             );
             // fetch unknown field
             let ovd = serde_json::json!({"tls": {"foo": true}});
@@ -926,6 +942,7 @@ mod section_tls_mixed_scenarios {
                 None,
                 None,
                 Some(ovd),
+                None,
             );
             wait_done(&reg, id_b).await;
             hb.await.unwrap();
@@ -989,6 +1006,7 @@ mod section_summary_gating {
                 None,
                 Some(ov),
                 false,
+                None,
             );
             let _ = h.await;
             assert_applied_code(&id.to_string(), "http_strategy_override_applied");
@@ -1019,6 +1037,7 @@ mod section_summary_gating {
                 None,
                 Some(govr),
                 false,
+                None,
             );
             let _ = gh.await;
             assert_applied_code(&gid.to_string(), "http_strategy_override_applied");
@@ -1054,6 +1073,7 @@ mod section_summary_gating {
             None,
             Some(ov),
             false,
+            None,
         );
         let _ = h.await;
         assert_applied_code(&id.to_string(), "tls_strategy_override_applied");
@@ -1083,6 +1103,7 @@ mod section_summary_gating {
             None,
             Some(ov2),
             false,
+            None,
         );
         let _ = h2.await;
         assert_applied_code(&id2.to_string(), "tls_strategy_override_applied");
