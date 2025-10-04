@@ -146,6 +146,21 @@ name = "soak"
 path = "tests/soak/mod.rs"
 required-features = []
 
+[[test]]
+name = "workspace"
+path = "tests/workspace/mod.rs"
+required-features = []
+
+[[test]]
+name = "submodule"
+path = "tests/submodule/mod.rs"
+required-features = []
+
+[[test]]
+name = "commands"
+path = "tests/commands/mod.rs"
+required-features = []
+
 # 独立测试文件（tests/ 根目录下的测试）
 
 [[test]]

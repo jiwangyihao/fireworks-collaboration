@@ -7,7 +7,7 @@
 //! - WorkspaceManager 的完整工作流
 
 #[path = "../common/mod.rs"]
-mod common;
+pub(crate) mod common;
 
 use common::test_env::init_test_env;
 
