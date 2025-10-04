@@ -7,6 +7,7 @@ pub mod http;
 pub mod oauth;
 pub mod proxy;
 pub mod tasks;
+pub mod workspace;
 
 // Re-export all command functions
 pub use config::{get_config, greet, set_config};
@@ -25,3 +26,10 @@ pub use proxy::{
     detect_system_proxy, force_proxy_fallback, force_proxy_recovery, get_system_proxy,
 };
 pub use tasks::{task_cancel, task_list, task_snapshot, task_start_sleep};
+pub use workspace::{
+    add_repository, backup_workspace, close_workspace, create_workspace, get_repository,
+    get_workspace, get_workspace_config, list_enabled_repositories, list_repositories,
+    load_workspace, remove_repository, restore_workspace, save_workspace,
+    toggle_repository_enabled, update_repository_tags, validate_workspace_file,
+    SharedWorkspaceManager,
+};
