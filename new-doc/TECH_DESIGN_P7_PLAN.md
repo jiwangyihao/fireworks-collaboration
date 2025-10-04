@@ -1096,7 +1096,70 @@ git submodule status  # 应显示已初始化的子模块
 
 
 ### P7.2 批量操作调度与并发控制 实现说明
-（待实现后补充）
+
+**实现时间**: 2025-10-04  
+**实现者**: Fireworks Collaboration Team & GitHub Copilot Assistant  
+**状态**: ✅ 核心调度器、Tauri 命令与测试全部落地
+
+#### 3.1 关键代码路径与文件列表
+
+**任务调度核心**:
+- `src-tauri/src/core/tasks/workspace_batch.rs` (520+ 行): 批量任务调度器入口 `spawn_workspace_batch_task`，定义 `WorkspaceBatchChildSpec`、`CloneOptions`、`FetchOptions`、`PushOptions`，实现进度聚合、失败汇总、并发控制、取消传播与日志；包含父任务进度事件生成和子任务注册。
+- `src-tauri/src/core/tasks/model.rs`: 新增 `WorkspaceBatchOperation` 枚举和 `TaskKind::WorkspaceBatch { operation, total }`，用于创建父任务快照与事件标识。
+- `src-tauri/src/core/tasks/registry.rs`: 保持对 `link_parent_child`、`children_of`、`with_meta` 等辅助能力的复用，为批量任务提供父子关联、失败理由写入与生命周期事件发布。
+
+**命令层与请求模型**:
+- `src-tauri/src/app/commands/workspace.rs`: 新增 `WorkspaceBatchCloneRequest`、`WorkspaceBatchFetchRequest`、`WorkspaceBatchPushRequest` 三个参数结构体，以及 `workspace_batch_clone`、`workspace_batch_fetch`、`workspace_batch_push` Tauri 命令；负责仓库筛选、路径解析、并发上限解析、目的地校验与 `WorkspaceBatchChildSpec` 构建。
+- `src-tauri/src/app/commands/mod.rs`、`src-tauri/src/app/setup.rs`: 注册批量操作命令，确保前端可调用。
+
+**测试与辅助工具**:
+- `src-tauri/tests/workspace/mod.rs` (1100+ 行总体，新增 12 个批量操作测试): 覆盖批量 clone/fetch/push 成功、失败、摘要截断、缺少远程等场景；新增 `create_commit` 助手生成伪造提交。
+- 既有 `RepoBuilder` 工具扩展：通过裸仓库、临时仓库组合构造 clone/fetch/push 场景。
+
+#### 3.2 实际交付与设计差异
+
+- ✅ **并发调度器落地**: 通过 `Semaphore` 控制子任务并发度，`JoinSet` 管控生命周期，实现了设计阶段提出的“最大并发=配置或请求参数”策略。
+- ✅ **进度聚合策略**: 使用 `BatchProgressState` 追踪每个子任务的百分比与完成状态，父任务进度为所有子任务平均值，`TaskProgressEvent` 阶段文本包含完成数与失败数。
+- ✅ **失败总结**: `summarize_failures` 将最多三个失败仓库写入摘要，超过部分以 `... +N more` 截断，满足设计对失败可读性的要求。
+- ✅ **部分失败容忍**: 父任务在存在失败时标记为 `Failed` 并写入摘要，成功子任务不受影响；无子任务时直接返回 `No repositories to process`。
+- ✅ **取消传播**: 父任务取消时通过 `CancellationToken` 链式取消所有子任务，符合设计中的“可取消”要求。
+- ✅ **配置整合**: 命令层默认使用 `workspace.maxConcurrentRepos`（配置示例中为 3），支持请求级覆盖。
+- ➕ **进度钩子复用**: 通过 `create_progress_hook` 将子任务进度回调汇聚到父任务，前端无需逐个订阅子任务即可获取进度。
+- ➕ **测试覆盖增强**: 额外增加 Fetch 失败摘要截断、Push 缺失远程、Clone 混合成功/失败等边界场景，超出原始设计最低覆盖要求。
+- ⚠️ **权重策略暂未差异化**: 当前所有仓库按相同权重计算进度，尚未根据仓库大小/任务耗时加权（设计阶段提及的可选优化，后续迭代处理）。
+- ⚠️ **推送认证策略复用**: Push 任务仍依赖基础认证参数（用户名/密码），未在本阶段扩展为凭证仓库映射（与设计一致，计划在 P7.3 凭证模板时完善）。
+
+#### 3.3 验收/测试情况与残留风险
+
+**测试结果**:
+- ✅ `cargo test -p fireworks-collaboration-lib` 全量通过（52 个库测试 + 12 个 soak + 41 个 submodule + 160 个任务模块 + 68 个 workspace 模块），含新批量操作用例。
+- ✅ 批量 clone 测试覆盖成功和失败摘要：`test_workspace_batch_clone_success`、`test_workspace_batch_clone_failure_summary`。
+- ✅ 批量 fetch 测试覆盖成功、缺失路径与摘要截断：`test_workspace_batch_fetch_success`、`test_workspace_batch_fetch_missing_repository`、`test_workspace_batch_fetch_failure_summary_truncation`。
+- ✅ 批量 push 测试覆盖成功推送与缺失远程：`test_workspace_batch_push_success`、`test_workspace_batch_push_missing_remote`。
+- ✅ 进度与失败事件通过日志与结构化事件手动验证；命令层参数校验与错误消息在测试中覆盖。
+
+**残留风险**:
+- **进度权重简单**: 所有子任务等权，若仓库规模差异极大，进度可能表现不均衡。建议后续引入权重或阶段性进度模型。
+- **失败摘要长度固定**: 目前硬编码展示前三条失败，未来可考虑根据 UI 可用空间配置。
+- **Push 凭证兼容性**: Push 请求暂未自动补全凭证，需要前端在缺少用户名/密码时提示用户，后续与凭证中心结合。
+- **长时间任务心跳**: 子任务在 50ms 间隔轮询终态，对极长任务开销可忽略，但可在未来改成事件驱动以降低轮询。
+
+#### 3.4 运维手册或配置样例的落地状态
+
+- `config.example.json` 中的 `workspace.maxConcurrentRepos` 字段已作为批量操作默认并发上限；命令层允许通过请求参数 `maxConcurrency` 覆盖（最小值 1）。
+- 批量操作 Tauri 命令在 `P7_IMPLEMENTATION_HANDOFF.md` 新增调用示例与参数说明，包括仓库筛选 `repoIds`、`includeDisabled`、深度/过滤器、推送凭证等。
+- 结构化日志目标 `workspace_batch` 覆盖以下关键事件：任务启动、并发调度、子任务失败、父任务完成/失败。运维可通过日志检索批量操作历史。
+- 事件流：父任务进度通过 `task://progress` 发布，`phase` 字段形如 `Cloning 2/5 completed (1 failed)`；失败时额外发送 `task://error` 事件，内容包含失败摘要，便于前端统一呈现。
+- 故障排查指引已加入：目的地已存在、仓库禁用、远程缺失、路径无效、认证不足等常见错误在测试和文档中列举并提供解决建议。
+
+#### 3.5 后续阶段建议
+
+1. **进度权重与阶段拆分**: 根据仓库大小或任务类型为子任务分配权重，或在 clone/fetch/push 中细化阶段（连接、传输、检索），提升进度准确性。
+2. **失败明细 API**: 暴露父任务失败列表查询接口，供前端在摘要基础上展示完整失败仓库表格。
+3. **任务级重试策略**: 为失败的子任务提供手动重试或自动重试计划，避免在部分失败场景下整批重跑。
+4. **凭证集成**: 在 Push 操作中自动关联 P6 凭证存储，根据远程 URL 注入凭证，减少前端参数。
+5. **观测指标**: 将批量操作成功率、平均耗时、失败原因分类等指标推送到监控系统，为 P7.6 稳定性验证提供数据。
+6. **前端 UX 支撑**: 结合父任务进度事件，实现批量操作看板；对失败仓库提供快捷重试按钮和日志链接。
 
 ### P7.3 团队配置同步与模板管理 实现说明
 （待实现后补充）
