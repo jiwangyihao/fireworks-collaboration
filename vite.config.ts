@@ -5,36 +5,40 @@ import tailwindcss from "@tailwindcss/vite";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vitejs.dev/config/
-export default defineConfig(async () => ({
-  plugins: [vue(), tailwindcss()],
+export default defineConfig(() => {
+  const isTest = process.env.VITEST === "true";
 
-  // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  //
-  // 1. prevent vite from obscuring rust errors
-  clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
-  server: {
-    port: 1420,
-    strictPort: true,
-    host: host || false,
-    hmr: host
-      ? {
-          protocol: "ws",
-          host,
-          port: 1421,
-        }
-      : undefined,
-    watch: {
-      // 3. tell vite to ignore watching `src-tauri` and app config dir
-      ignored: ["**/src-tauri/**", "**/config/**"],
+  return {
+    plugins: isTest ? [vue()] : [vue(), tailwindcss()],
+
+    // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
+    //
+    // 1. prevent vite from obscuring rust errors
+    clearScreen: false,
+    // 2. tauri expects a fixed port, fail if that port is not available
+    server: {
+      port: 1420,
+      strictPort: true,
+      host: host || false,
+      hmr: host
+        ? {
+            protocol: "ws",
+            host,
+            port: 1421,
+          }
+        : undefined,
+      watch: {
+        // 3. tell vite to ignore watching `src-tauri` and app config dir
+        ignored: ["**/src-tauri/**", "**/config/**"],
+      },
     },
-  },
-  test: {
-    environment: "happy-dom",
-    setupFiles: ["./vitest.setup.ts"],
-    coverage: {
-      provider: "v8",
-      reporter: ["text", "html"],
+    test: {
+      environment: "happy-dom",
+      setupFiles: ["./vitest.setup.ts"],
+      coverage: {
+        provider: "v8",
+        reporter: ["text", "html"],
+      },
     },
-  },
-}));
+  };
+});
