@@ -1,19 +1,27 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use fireworks_collaboration_lib::core::config::model::ObservabilityConfig;
+use fireworks_collaboration_lib::core::config::model::{
+    ObservabilityConfig, ObservabilityExportConfig,
+};
 use fireworks_collaboration_lib::core::metrics::{
-    aggregate_enabled, global_registry, init_aggregate_observability_with_provider,
-    init_basic_observability, HistogramWindowConfig, ManualTimeProvider, MetricError, TimeProvider,
-    WindowRange, CIRCUIT_BREAKER_RECOVER_TOTAL, CIRCUIT_BREAKER_TRIP_TOTAL, GIT_RETRY_TOTAL,
-    GIT_TASKS_TOTAL, GIT_TASK_DURATION_MS, HTTP_STRATEGY_FALLBACK_TOTAL,
+    aggregate_enabled, build_snapshot, encode_prometheus, global_registry,
+    init_aggregate_observability_with_provider, init_basic_observability, parse_snapshot_query,
+    HistogramWindowConfig, ManualTimeProvider, MetricError, SnapshotQuery, SnapshotQueryError,
+    TimeProvider, WindowRange, CIRCUIT_BREAKER_RECOVER_TOTAL, CIRCUIT_BREAKER_TRIP_TOTAL,
+    GIT_RETRY_TOTAL, GIT_TASKS_TOTAL, GIT_TASK_DURATION_MS, HTTP_STRATEGY_FALLBACK_TOTAL,
     IP_POOL_AUTO_DISABLE_TOTAL, IP_POOL_LATENCY_MS, IP_POOL_REFRESH_TOTAL, IP_POOL_SELECTION_TOTAL,
+    METRICS_EXPORT_RATE_LIMITED_TOTAL, METRICS_EXPORT_REQUESTS_TOTAL, METRICS_EXPORT_SERIES_TOTAL,
     PROXY_FALLBACK_TOTAL, TLS_HANDSHAKE_MS,
 };
 use fireworks_collaboration_lib::events::structured::{
     publish_global, Event, StrategyEvent, TaskEvent,
 };
+use hyper::body::to_bytes;
+use hyper::client::HttpConnector;
+use hyper::{Body, Client, Request, StatusCode, Uri};
 use once_cell::sync::Lazy;
+use serde_json::Value;
 use uuid::Uuid;
 
 fn ensure_metrics_init() {
@@ -887,4 +895,468 @@ fn metrics_series_listing_reports_last_update() {
         .last_updated_seconds
         .map(|secs| secs >= 360)
         .unwrap_or(false));
+}
+
+#[test]
+fn prometheus_encoder_outputs_metrics() {
+    ensure_metrics_init();
+    let registry = global_registry();
+    let kind = format!("PrometheusTest_{}", Uuid::new_v4());
+    let labels = [("kind", kind.as_str()), ("state", "completed")];
+
+    registry
+        .incr_counter(GIT_TASKS_TOTAL, &labels, 2)
+        .expect("counter increment");
+    registry
+        .observe_histogram(
+            TLS_HANDSHAKE_MS,
+            &[("sni_strategy", "fake"), ("outcome", "ok")],
+            42.0,
+        )
+        .expect("histogram sample");
+
+    let output = encode_prometheus(&registry);
+    assert!(output.contains("# HELP git_tasks_total"));
+    assert!(output.contains(&format!(
+        "git_tasks_total{{kind=\"{}\",state=\"completed\"}}",
+        kind
+    )));
+    assert!(output.contains("tls_handshake_ms_bucket"));
+    assert!(output.contains("tls_handshake_ms_sum"));
+}
+
+#[test]
+fn snapshot_builder_filters_metrics() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+    provider.set(Duration::from_secs(120));
+
+    let registry = global_registry();
+    let kind = format!("SnapshotCounter_{}", Uuid::new_v4().simple());
+    let counter_labels = [("kind", kind.as_str()), ("state", "completed")];
+
+    registry
+        .incr_counter(GIT_TASKS_TOTAL, &counter_labels, 1)
+        .expect("counter increment");
+    provider.advance(Duration::from_secs(60));
+    registry
+        .observe_histogram(
+            TLS_HANDSHAKE_MS,
+            &[("sni_strategy", "fake"), ("outcome", "ok")],
+            30.0,
+        )
+        .expect("histogram sample");
+
+    let query = SnapshotQuery {
+        names: vec!["git_tasks_total".into(), "tls_handshake_ms".into()],
+        range: Some(WindowRange::LastFiveMinutes),
+        quantiles: vec![0.5],
+    };
+
+    let snapshot = build_snapshot(&registry, &query, 10);
+    assert!(snapshot
+        .series
+        .iter()
+        .any(|series| series.name == "git_tasks_total"));
+    let hist = snapshot
+        .series
+        .iter()
+        .find(|series| series.name == "tls_handshake_ms")
+        .expect("histogram series present");
+    assert!(hist.count.unwrap_or(0) >= 1);
+    if let Some(quantiles) = &hist.quantiles {
+        assert!(quantiles.contains_key("p50"));
+    }
+}
+
+#[test]
+fn snapshot_query_rejects_invalid_params() {
+    let uri: Uri = "http://localhost/metrics/snapshot?range=15m"
+        .parse()
+        .unwrap();
+    let err = parse_snapshot_query(&uri).expect_err("invalid range should error");
+    assert!(matches!(err, SnapshotQueryError::InvalidRange(_)));
+
+    let uri: Uri = "http://localhost/metrics/snapshot?quantiles=p200"
+        .parse()
+        .unwrap();
+    let err = parse_snapshot_query(&uri).expect_err("invalid quantile should error");
+    assert!(matches!(err, SnapshotQueryError::InvalidQuantile(_)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn metrics_http_server_enforces_auth() {
+    ensure_metrics_init();
+    let cfg = ObservabilityExportConfig {
+        auth_token: Some("secret-token".into()),
+        rate_limit_qps: 1,
+        max_series_per_snapshot: 50,
+        bind_address: "127.0.0.1:0".into(),
+    };
+
+    let handle = fireworks_collaboration_lib::core::metrics::start_http_server(&cfg)
+        .expect("start http server");
+    let addr = handle.local_addr;
+    let client: Client<HttpConnector, Body> = Client::new();
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let uri = format!("http://{}/metrics", addr).parse::<Uri>().unwrap();
+    let resp = client
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(uri.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request without auth");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    let resp = client
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(uri)
+                .header("Authorization", "Bearer secret-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("authorized request");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let res_second = client
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(format!("http://{}/metrics", addr).parse::<Uri>().unwrap())
+                .header("Authorization", "Bearer secret-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("second authorized request");
+    assert!(
+        res_second.status() == StatusCode::OK
+            || res_second.status() == StatusCode::TOO_MANY_REQUESTS
+    );
+
+    handle.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn metrics_http_server_applies_rate_limit() {
+    ensure_metrics_init();
+    let registry = global_registry();
+    let cfg = ObservabilityExportConfig {
+        auth_token: None,
+        rate_limit_qps: 1,
+        max_series_per_snapshot: 50,
+        bind_address: "127.0.0.1:0".into(),
+    };
+
+    let handle = fireworks_collaboration_lib::core::metrics::start_http_server(&cfg)
+        .expect("start http server");
+    let addr = handle.local_addr;
+    let client: Client<HttpConnector, Body> = Client::new();
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let uri: Uri = format!("http://{}/metrics", addr).parse().unwrap();
+    let baseline_rate_limited = registry
+        .get_counter(METRICS_EXPORT_RATE_LIMITED_TOTAL, &[])
+        .unwrap_or(0);
+    let baseline_success = registry
+        .get_counter(METRICS_EXPORT_REQUESTS_TOTAL, &[("status", "success")])
+        .unwrap_or(0);
+
+    let mut success_count = 0;
+    let mut rate_limited_count = 0;
+
+    for _ in 0..3 {
+        let response = client
+            .request(
+                Request::builder()
+                    .method("GET")
+                    .uri(uri.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("metrics request");
+        let status = response.status();
+        let _ = to_bytes(response.into_body()).await.expect("drain body");
+        match status {
+            StatusCode::OK => success_count += 1,
+            StatusCode::TOO_MANY_REQUESTS => rate_limited_count += 1,
+            other => panic!("unexpected status: {}", other),
+        }
+    }
+
+    assert!(
+        rate_limited_count >= 1,
+        "expected at least one rate-limited response"
+    );
+
+    let updated_rate_limited = registry
+        .get_counter(METRICS_EXPORT_RATE_LIMITED_TOTAL, &[])
+        .unwrap_or(0);
+    assert!(
+        updated_rate_limited >= baseline_rate_limited + rate_limited_count,
+        "rate limited counter did not advance"
+    );
+
+    let updated_success = registry
+        .get_counter(METRICS_EXPORT_REQUESTS_TOTAL, &[("status", "success")])
+        .unwrap_or(0);
+    assert!(
+        updated_success >= baseline_success + success_count as u64,
+        "success counter did not advance"
+    );
+
+    handle.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn metrics_snapshot_endpoint_respects_limits() {
+    ensure_metrics_init();
+    let registry = global_registry();
+    let kind = format!("snapshot_limit_{}", Uuid::new_v4().simple());
+    let counter_labels = [("kind", kind.as_str()), ("state", "completed")];
+    registry
+        .incr_counter(GIT_TASKS_TOTAL, &counter_labels, 1)
+        .expect("counter increment");
+    registry
+        .observe_histogram(
+            TLS_HANDSHAKE_MS,
+            &[("sni_strategy", "fake"), ("outcome", "ok")],
+            45.0,
+        )
+        .expect("histogram sample");
+
+    let cfg = ObservabilityExportConfig {
+        auth_token: None,
+        rate_limit_qps: 5,
+        max_series_per_snapshot: 1,
+        bind_address: "127.0.0.1:0".into(),
+    };
+
+    let handle = fireworks_collaboration_lib::core::metrics::start_http_server(&cfg)
+        .expect("start http server");
+    let addr = handle.local_addr;
+    let client: Client<HttpConnector, Body> = Client::new();
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let baseline_series = registry
+        .get_counter(METRICS_EXPORT_SERIES_TOTAL, &[("endpoint", "snapshot")])
+        .unwrap_or(0);
+
+    let uri: Uri = format!(
+        "http://{}/metrics/snapshot?names=git_tasks_total,tls_handshake_ms&range=1m&quantiles=p50",
+        addr
+    )
+    .parse()
+    .unwrap();
+
+    let response = client
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("snapshot request");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body()).await.expect("read body");
+    let payload: Value = serde_json::from_slice(&body).expect("parse snapshot json");
+    let series = payload
+        .get("series")
+        .and_then(|value| value.as_array())
+        .expect("series array");
+    assert_eq!(series.len(), 1, "max_series limit should cap results");
+
+    let entry = series[0]
+        .as_object()
+        .expect("series entry should be object");
+    assert_eq!(
+        entry.get("name").and_then(Value::as_str),
+        Some("git_tasks_total")
+    );
+    assert_eq!(entry.get("type").and_then(Value::as_str), Some("counter"));
+    let total_value = entry
+        .get("value")
+        .and_then(Value::as_u64)
+        .expect("counter value present");
+    assert!(total_value >= 1, "counter value should be at least one");
+
+    let updated_series = registry
+        .get_counter(METRICS_EXPORT_SERIES_TOTAL, &[("endpoint", "snapshot")])
+        .unwrap_or(0);
+    assert!(
+        updated_series >= baseline_series + 1,
+        "series counter did not advance"
+    );
+
+    handle.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn metrics_http_server_records_request_statuses() {
+    ensure_metrics_init();
+    let registry = global_registry();
+
+    let series_kind = format!("status_counter_{}", Uuid::new_v4().simple());
+    let counter_labels = [("kind", series_kind.as_str()), ("state", "completed")];
+    registry
+        .incr_counter(GIT_TASKS_TOTAL, &counter_labels, 4)
+        .expect("counter increment");
+
+    let cfg = ObservabilityExportConfig {
+        auth_token: Some("status-token".into()),
+        rate_limit_qps: 5,
+        max_series_per_snapshot: 100,
+        bind_address: "127.0.0.1:0".into(),
+    };
+
+    let handle = fireworks_collaboration_lib::core::metrics::start_http_server(&cfg)
+        .expect("start http server");
+    let addr = handle.local_addr;
+    let client: Client<HttpConnector, Body> = Client::new();
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let baseline_unauthorized = registry
+        .get_counter(METRICS_EXPORT_REQUESTS_TOTAL, &[("status", "unauthorized")])
+        .unwrap_or(0);
+    let baseline_method_not_allowed = registry
+        .get_counter(
+            METRICS_EXPORT_REQUESTS_TOTAL,
+            &[("status", "method_not_allowed")],
+        )
+        .unwrap_or(0);
+    let baseline_bad_request = registry
+        .get_counter(METRICS_EXPORT_REQUESTS_TOTAL, &[("status", "bad_request")])
+        .unwrap_or(0);
+    let baseline_success = registry
+        .get_counter(METRICS_EXPORT_REQUESTS_TOTAL, &[("status", "success")])
+        .unwrap_or(0);
+    let baseline_prom_series = registry
+        .get_counter(METRICS_EXPORT_SERIES_TOTAL, &[("endpoint", "prometheus")])
+        .unwrap_or(0);
+
+    let metrics_uri: Uri = format!("http://{}/metrics", addr).parse().unwrap();
+    let snapshot_bad_uri: Uri = format!("http://{}/metrics/snapshot?range=invalid", addr)
+        .parse()
+        .unwrap();
+
+    let unauthorized_resp = client
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(metrics_uri.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("unauthorized request");
+    assert_eq!(unauthorized_resp.status(), StatusCode::UNAUTHORIZED);
+    let _ = to_bytes(unauthorized_resp.into_body())
+        .await
+        .expect("drain body");
+
+    let method_resp = client
+        .request(
+            Request::builder()
+                .method("POST")
+                .uri(metrics_uri.clone())
+                .header("Authorization", "Bearer status-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("method not allowed request");
+    assert_eq!(method_resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+    let _ = to_bytes(method_resp.into_body()).await.expect("drain body");
+
+    let bad_resp = client
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(snapshot_bad_uri)
+                .header("Authorization", "Bearer status-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("bad snapshot request");
+    assert_eq!(bad_resp.status(), StatusCode::BAD_REQUEST);
+    let _ = to_bytes(bad_resp.into_body()).await.expect("drain body");
+
+    let success_resp = client
+        .request(
+            Request::builder()
+                .method("GET")
+                .uri(metrics_uri)
+                .header("Authorization", "Bearer status-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("authorized metrics request");
+    assert_eq!(success_resp.status(), StatusCode::OK);
+    let _ = to_bytes(success_resp.into_body())
+        .await
+        .expect("drain body");
+
+    let unauthorized_after = registry
+        .get_counter(METRICS_EXPORT_REQUESTS_TOTAL, &[("status", "unauthorized")])
+        .unwrap_or(0);
+    assert!(
+        unauthorized_after >= baseline_unauthorized + 1,
+        "unauthorized counter did not advance"
+    );
+
+    let method_after = registry
+        .get_counter(
+            METRICS_EXPORT_REQUESTS_TOTAL,
+            &[("status", "method_not_allowed")],
+        )
+        .unwrap_or(0);
+    assert!(
+        method_after >= baseline_method_not_allowed + 1,
+        "method_not_allowed counter did not advance"
+    );
+
+    let bad_after = registry
+        .get_counter(METRICS_EXPORT_REQUESTS_TOTAL, &[("status", "bad_request")])
+        .unwrap_or(0);
+    assert!(
+        bad_after >= baseline_bad_request + 1,
+        "bad_request counter did not advance"
+    );
+
+    let success_after = registry
+        .get_counter(METRICS_EXPORT_REQUESTS_TOTAL, &[("status", "success")])
+        .unwrap_or(0);
+    assert!(
+        success_after >= baseline_success + 1,
+        "success counter did not advance"
+    );
+
+    let prom_series_after = registry
+        .get_counter(METRICS_EXPORT_SERIES_TOTAL, &[("endpoint", "prometheus")])
+        .unwrap_or(0);
+    assert!(
+        prom_series_after >= baseline_prom_series + 1,
+        "prometheus series counter did not advance"
+    );
+
+    handle.shutdown().await;
 }
