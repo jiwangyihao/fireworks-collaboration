@@ -1,0 +1,491 @@
+use std::time::Duration;
+
+use fireworks_collaboration_lib::core::config::model::ObservabilityConfig;
+use fireworks_collaboration_lib::core::metrics::{
+    global_registry, init_basic_observability, CIRCUIT_BREAKER_RECOVER_TOTAL,
+    CIRCUIT_BREAKER_TRIP_TOTAL, GIT_RETRY_TOTAL, GIT_TASKS_TOTAL, GIT_TASK_DURATION_MS,
+    HTTP_STRATEGY_FALLBACK_TOTAL, IP_POOL_AUTO_DISABLE_TOTAL, IP_POOL_LATENCY_MS,
+    IP_POOL_REFRESH_TOTAL, IP_POOL_SELECTION_TOTAL, PROXY_FALLBACK_TOTAL, TLS_HANDSHAKE_MS,
+};
+use fireworks_collaboration_lib::events::structured::{
+    publish_global, Event, StrategyEvent, TaskEvent,
+};
+use uuid::Uuid;
+
+fn ensure_metrics_init() {
+    let cfg = ObservabilityConfig::default();
+    init_basic_observability(&cfg).expect("basic observability should initialize");
+}
+
+#[test]
+fn git_task_metrics_increment_on_lifecycle() {
+    ensure_metrics_init();
+    let registry = global_registry();
+    let kind = format!("GitCloneTest_{}", Uuid::new_v4());
+    let task_id = Uuid::new_v4().to_string();
+
+    let counter_before = registry
+        .get_counter(
+            GIT_TASKS_TOTAL,
+            &[("kind", kind.as_str()), ("state", "completed")],
+        )
+        .unwrap_or(0);
+    let hist_before = registry
+        .get_histogram(GIT_TASK_DURATION_MS, &[("kind", kind.as_str())])
+        .map(|h| h.count)
+        .unwrap_or(0);
+
+    publish_global(Event::Task(TaskEvent::Started {
+        id: task_id.clone(),
+        kind: kind.clone(),
+    }));
+    std::thread::sleep(Duration::from_millis(5));
+    publish_global(Event::Task(TaskEvent::Completed { id: task_id }));
+
+    let counter_after = registry
+        .get_counter(
+            GIT_TASKS_TOTAL,
+            &[("kind", kind.as_str()), ("state", "completed")],
+        )
+        .unwrap();
+    let hist_after = registry
+        .get_histogram(GIT_TASK_DURATION_MS, &[("kind", kind.as_str())])
+        .map(|h| h.count)
+        .unwrap();
+
+    assert_eq!(counter_after, counter_before + 1);
+    assert_eq!(hist_after, hist_before + 1);
+}
+
+#[test]
+fn git_failure_records_retry_totals() {
+    ensure_metrics_init();
+    let registry = global_registry();
+    let kind = format!("GitCloneTestFail_{}", Uuid::new_v4());
+    let task_id = Uuid::new_v4().to_string();
+
+    let fail_before = registry
+        .get_counter(
+            GIT_TASKS_TOTAL,
+            &[("kind", kind.as_str()), ("state", "failed")],
+        )
+        .unwrap_or(0);
+    let retry_before = registry
+        .get_counter(
+            GIT_RETRY_TOTAL,
+            &[("kind", kind.as_str()), ("category", "network")],
+        )
+        .unwrap_or(0);
+
+    publish_global(Event::Task(TaskEvent::Started {
+        id: task_id.clone(),
+        kind: kind.clone(),
+    }));
+    publish_global(Event::Task(TaskEvent::Failed {
+        id: task_id,
+        category: "Network".into(),
+        code: None,
+        message: "simulated failure".into(),
+    }));
+
+    let fail_after = registry
+        .get_counter(
+            GIT_TASKS_TOTAL,
+            &[("kind", kind.as_str()), ("state", "failed")],
+        )
+        .unwrap();
+    let retry_after = registry
+        .get_counter(
+            GIT_RETRY_TOTAL,
+            &[("kind", kind.as_str()), ("category", "network")],
+        )
+        .unwrap();
+
+    assert_eq!(fail_after, fail_before + 1);
+    assert_eq!(retry_after, retry_before + 1);
+}
+
+#[test]
+fn strategy_events_emit_metrics() {
+    ensure_metrics_init();
+    let registry = global_registry();
+    let task_id = Uuid::new_v4().to_string();
+    let reason = format!("refresh_reason_{}", Uuid::new_v4().simple());
+
+    let tls_before = registry
+        .get_histogram(
+            TLS_HANDSHAKE_MS,
+            &[("sni_strategy", "fake"), ("outcome", "ok")],
+        )
+        .map(|h| h.count)
+        .unwrap_or(0);
+    let latency_before = registry
+        .get_histogram(IP_POOL_LATENCY_MS, &[("source", "builtin")])
+        .map(|h| h.count)
+        .unwrap_or(0);
+    let refresh_before = registry
+        .get_counter(
+            IP_POOL_REFRESH_TOTAL,
+            &[("reason", reason.as_str()), ("success", "true")],
+        )
+        .unwrap_or(0);
+    let selection_before = registry
+        .get_counter(
+            IP_POOL_SELECTION_TOTAL,
+            &[("strategy", "cached"), ("outcome", "success")],
+        )
+        .unwrap_or(0);
+    let fallback_before = registry
+        .get_counter(
+            HTTP_STRATEGY_FALLBACK_TOTAL,
+            &[("stage", "fallback"), ("from", "fake")],
+        )
+        .unwrap_or(0);
+
+    publish_global(Event::Strategy(StrategyEvent::AdaptiveTlsTiming {
+        id: task_id.clone(),
+        kind: "GitClone".into(),
+        used_fake_sni: true,
+        fallback_stage: "Fake".into(),
+        connect_ms: Some(5),
+        tls_ms: Some(12),
+        first_byte_ms: Some(15),
+        total_ms: Some(20),
+        cert_fp_changed: false,
+        ip_source: Some("Builtin".into()),
+        ip_latency_ms: Some(18),
+        ip_selection_stage: None,
+    }));
+
+    publish_global(Event::Strategy(StrategyEvent::AdaptiveTlsFallback {
+        id: task_id.clone(),
+        kind: "GitClone".into(),
+        from: "Fake".into(),
+        to: "Real".into(),
+        reason: "Fallback".into(),
+        ip_source: None,
+        ip_latency_ms: None,
+    }));
+
+    publish_global(Event::Strategy(StrategyEvent::IpPoolSelection {
+        id: task_id.clone(),
+        domain: "example.com".into(),
+        port: 443,
+        strategy: "Cached".into(),
+        source: Some("Builtin".into()),
+        latency_ms: Some(18),
+        candidates_count: 3,
+    }));
+
+    publish_global(Event::Strategy(StrategyEvent::IpPoolRefresh {
+        id: task_id,
+        domain: "example.com".into(),
+        success: true,
+        candidates_count: 2,
+        min_latency_ms: Some(15),
+        max_latency_ms: Some(25),
+        reason: reason.clone(),
+    }));
+
+    let tls_after = registry
+        .get_histogram(
+            TLS_HANDSHAKE_MS,
+            &[("sni_strategy", "fake"), ("outcome", "ok")],
+        )
+        .map(|h| h.count)
+        .unwrap();
+    let latency_after = registry
+        .get_histogram(IP_POOL_LATENCY_MS, &[("source", "builtin")])
+        .map(|h| h.count)
+        .unwrap();
+    let refresh_after = registry
+        .get_counter(
+            IP_POOL_REFRESH_TOTAL,
+            &[("reason", reason.as_str()), ("success", "true")],
+        )
+        .unwrap();
+    let selection_after = registry
+        .get_counter(
+            IP_POOL_SELECTION_TOTAL,
+            &[("strategy", "cached"), ("outcome", "success")],
+        )
+        .unwrap();
+    let fallback_after = registry
+        .get_counter(
+            HTTP_STRATEGY_FALLBACK_TOTAL,
+            &[("stage", "fallback"), ("from", "fake")],
+        )
+        .unwrap();
+
+    assert!(tls_after >= tls_before + 1);
+    assert!(latency_after >= latency_before + 1);
+    assert_eq!(refresh_after, refresh_before + 1);
+    assert_eq!(selection_after, selection_before + 1);
+    assert_eq!(fallback_after, fallback_before + 1);
+}
+
+#[test]
+fn proxy_and_circuit_events_emit_metrics() {
+    ensure_metrics_init();
+    let registry = global_registry();
+
+    let proxy_reason = "Proxy Fallback+Reason";
+    let proxy_label = "proxy_fallback_reason";
+    let auto_disable_reason = "Auto Disable#";
+    let auto_disable_label = "auto_disable";
+    let circuit_reason = "Circuit Trip!";
+    let circuit_label = "circuit_trip";
+
+    let proxy_before = registry
+        .get_counter(PROXY_FALLBACK_TOTAL, &[("reason", proxy_label)])
+        .unwrap_or(0);
+    let auto_disable_before = registry
+        .get_counter(
+            IP_POOL_AUTO_DISABLE_TOTAL,
+            &[("reason", auto_disable_label)],
+        )
+        .unwrap_or(0);
+    let trip_before = registry
+        .get_counter(CIRCUIT_BREAKER_TRIP_TOTAL, &[("reason", circuit_label)])
+        .unwrap_or(0);
+    let recover_before = registry
+        .get_counter(CIRCUIT_BREAKER_RECOVER_TOTAL, &[])
+        .unwrap_or(0);
+
+    publish_global(Event::Strategy(StrategyEvent::ProxyFallback {
+        id: Uuid::new_v4().to_string(),
+        reason: proxy_reason.into(),
+        failure_count: 3,
+        window_seconds: 60,
+    }));
+
+    publish_global(Event::Strategy(StrategyEvent::IpPoolAutoDisable {
+        reason: auto_disable_reason.into(),
+        until_ms: 30_000,
+    }));
+
+    publish_global(Event::Strategy(StrategyEvent::IpPoolIpTripped {
+        ip: "10.0.0.1".into(),
+        reason: circuit_reason.into(),
+    }));
+
+    publish_global(Event::Strategy(StrategyEvent::IpPoolIpRecovered {
+        ip: "10.0.0.1".into(),
+    }));
+
+    let proxy_after = registry
+        .get_counter(PROXY_FALLBACK_TOTAL, &[("reason", proxy_label)])
+        .unwrap();
+    let auto_disable_after = registry
+        .get_counter(
+            IP_POOL_AUTO_DISABLE_TOTAL,
+            &[("reason", auto_disable_label)],
+        )
+        .unwrap();
+    let trip_after = registry
+        .get_counter(CIRCUIT_BREAKER_TRIP_TOTAL, &[("reason", circuit_label)])
+        .unwrap();
+    let recover_after = registry
+        .get_counter(CIRCUIT_BREAKER_RECOVER_TOTAL, &[])
+        .unwrap();
+
+    assert_eq!(proxy_after, proxy_before + 1);
+    assert_eq!(auto_disable_after, auto_disable_before + 1);
+    assert_eq!(trip_after, trip_before + 1);
+    assert_eq!(recover_after, recover_before + 1);
+}
+
+#[test]
+fn duplicate_completion_events_do_not_double_count() {
+    ensure_metrics_init();
+    let registry = global_registry();
+    let kind = format!("GitFetchDup_{}", Uuid::new_v4());
+    let task_id = Uuid::new_v4().to_string();
+
+    let counter_before = registry
+        .get_counter(
+            GIT_TASKS_TOTAL,
+            &[("kind", kind.as_str()), ("state", "completed")],
+        )
+        .unwrap_or(0);
+
+    publish_global(Event::Task(TaskEvent::Started {
+        id: task_id.clone(),
+        kind: kind.clone(),
+    }));
+    publish_global(Event::Task(TaskEvent::Completed {
+        id: task_id.clone(),
+    }));
+    publish_global(Event::Task(TaskEvent::Completed { id: task_id }));
+
+    let counter_after = registry
+        .get_counter(
+            GIT_TASKS_TOTAL,
+            &[("kind", kind.as_str()), ("state", "completed")],
+        )
+        .unwrap();
+
+    assert_eq!(counter_after, counter_before + 1);
+}
+
+#[test]
+fn tls_timing_failure_records_fail_outcome() {
+    ensure_metrics_init();
+    let registry = global_registry();
+    let task_id = Uuid::new_v4().to_string();
+
+    let before = registry
+        .get_histogram(
+            TLS_HANDSHAKE_MS,
+            &[("sni_strategy", "real"), ("outcome", "fail")],
+        )
+        .map(|h| (h.count, h.sum))
+        .unwrap_or((0, 0.0));
+
+    publish_global(Event::Strategy(StrategyEvent::AdaptiveTlsTiming {
+        id: task_id,
+        kind: "GitFetch".into(),
+        used_fake_sni: false,
+        fallback_stage: "initial".into(),
+        connect_ms: None,
+        tls_ms: None,
+        first_byte_ms: None,
+        total_ms: Some(42),
+        cert_fp_changed: false,
+        ip_source: None,
+        ip_latency_ms: None,
+        ip_selection_stage: None,
+    }));
+
+    let after = registry
+        .get_histogram(
+            TLS_HANDSHAKE_MS,
+            &[("sni_strategy", "real"), ("outcome", "fail")],
+        )
+        .map(|h| (h.count, h.sum))
+        .unwrap();
+
+    assert_eq!(after.0, before.0 + 1);
+    assert!(after.1 >= before.1 + 42.0);
+}
+
+#[test]
+fn ip_selection_failure_records_fail_outcome() {
+    ensure_metrics_init();
+    let registry = global_registry();
+    let task_id = Uuid::new_v4().to_string();
+
+    let before = registry
+        .get_counter(
+            IP_POOL_SELECTION_TOTAL,
+            &[("strategy", "on_demand"), ("outcome", "fail")],
+        )
+        .unwrap_or(0);
+
+    publish_global(Event::Strategy(StrategyEvent::IpPoolSelection {
+        id: task_id,
+        domain: "example.com".into(),
+        port: 443,
+        strategy: "On-Demand".into(),
+        source: None,
+        latency_ms: None,
+        candidates_count: 0,
+    }));
+
+    let after = registry
+        .get_counter(
+            IP_POOL_SELECTION_TOTAL,
+            &[("strategy", "on_demand"), ("outcome", "fail")],
+        )
+        .unwrap();
+
+    assert_eq!(after, before + 1);
+}
+
+#[test]
+fn duplicate_failure_events_do_not_double_count() {
+    ensure_metrics_init();
+    let registry = global_registry();
+    let kind = format!("GitFetchFailDup_{}", Uuid::new_v4());
+    let task_id = Uuid::new_v4().to_string();
+
+    let fail_before = registry
+        .get_counter(
+            GIT_TASKS_TOTAL,
+            &[("kind", kind.as_str()), ("state", "failed")],
+        )
+        .unwrap_or(0);
+    let retry_before = registry
+        .get_counter(
+            GIT_RETRY_TOTAL,
+            &[("kind", kind.as_str()), ("category", "network")],
+        )
+        .unwrap_or(0);
+
+    publish_global(Event::Task(TaskEvent::Started {
+        id: task_id.clone(),
+        kind: kind.clone(),
+    }));
+    publish_global(Event::Task(TaskEvent::Failed {
+        id: task_id.clone(),
+        category: "Network".into(),
+        code: Some("ECONNRESET".into()),
+        message: "network flake".into(),
+    }));
+    publish_global(Event::Task(TaskEvent::Failed {
+        id: task_id,
+        category: "Network".into(),
+        code: Some("ECONNRESET".into()),
+        message: "network flake".into(),
+    }));
+
+    let fail_after = registry
+        .get_counter(
+            GIT_TASKS_TOTAL,
+            &[("kind", kind.as_str()), ("state", "failed")],
+        )
+        .unwrap();
+    let retry_after = registry
+        .get_counter(
+            GIT_RETRY_TOTAL,
+            &[("kind", kind.as_str()), ("category", "network")],
+        )
+        .unwrap();
+
+    assert_eq!(fail_after, fail_before + 1);
+    assert_eq!(retry_after, retry_before + 1);
+}
+
+#[test]
+fn ip_refresh_failure_records_false_outcome() {
+    ensure_metrics_init();
+    let registry = global_registry();
+    let task_id = Uuid::new_v4().to_string();
+    let reason = format!("refresh_fail_{}", Uuid::new_v4().simple());
+
+    let before = registry
+        .get_counter(
+            IP_POOL_REFRESH_TOTAL,
+            &[("reason", reason.as_str()), ("success", "false")],
+        )
+        .unwrap_or(0);
+
+    publish_global(Event::Strategy(StrategyEvent::IpPoolRefresh {
+        id: task_id,
+        domain: "example.com".into(),
+        success: false,
+        candidates_count: 1,
+        min_latency_ms: Some(30),
+        max_latency_ms: Some(40),
+        reason: reason.clone(),
+    }));
+
+    let after = registry
+        .get_counter(
+            IP_POOL_REFRESH_TOTAL,
+            &[("reason", reason.as_str()), ("success", "false")],
+        )
+        .unwrap();
+
+    assert_eq!(after, before + 1);
+}
