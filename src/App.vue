@@ -73,6 +73,24 @@ provide("user", user);
         </svg>
         <span class="hidden sm:inline">凭据管理</span>
       </RouterLink>
+      <RouterLink to="/workspace" class="btn btn-sm btn-ghost gap-1.5">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+          <path d="M3 9h18"></path>
+          <path d="M9 21V9"></path>
+        </svg>
+        <span class="hidden sm:inline">工作区</span>
+      </RouterLink>
       <RouterLink to="/git" class="btn btn-sm btn-ghost gap-1.5">
         <svg
           xmlns="http://www.w3.org/2000/svg"

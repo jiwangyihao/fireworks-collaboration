@@ -51,10 +51,83 @@ export interface AppConfig {
   proxy: ProxyCfg;
 }
 
+export type SectionStrategy = "overwrite" | "keepLocal" | "merge";
+
+export interface TemplateExportOptions {
+  includeIpPool?: boolean;
+  includeIpPoolFile?: boolean;
+  includeProxy?: boolean;
+  includeTls?: boolean;
+  includeCredential?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ImportStrategyConfig {
+  ipPool?: SectionStrategy;
+  ipPoolFile?: SectionStrategy;
+  proxy?: SectionStrategy;
+  tls?: SectionStrategy;
+  credential?: SectionStrategy;
+}
+
+export interface TemplateImportOptions {
+  includeIpPool?: boolean;
+  includeIpPoolFile?: boolean;
+  includeProxy?: boolean;
+  includeTls?: boolean;
+  includeCredential?: boolean;
+  strategies?: ImportStrategyConfig;
+}
+
+export type TemplateSectionKind =
+  | "ipPoolRuntime"
+  | "ipPoolFile"
+  | "proxy"
+  | "tls"
+  | "credential";
+
+export interface AppliedSection {
+  section: TemplateSectionKind;
+  strategy: SectionStrategy;
+}
+
+export interface SkippedSection {
+  section: TemplateSectionKind;
+  reason: string;
+}
+
+export interface TemplateImportReport {
+  schemaVersion: string;
+  applied: AppliedSection[];
+  skipped: SkippedSection[];
+  warnings: string[];
+  backupPath?: string;
+}
+
 export async function getConfig(): Promise<AppConfig> {
   return invoke<AppConfig>("get_config");
 }
 
 export async function setConfig(cfg: AppConfig): Promise<void> {
   return invoke<void>("set_config", { newCfg: cfg });
+}
+
+export async function exportTeamConfigTemplate(
+  destination?: string,
+  options?: TemplateExportOptions,
+): Promise<string> {
+  const payload: Record<string, unknown> = {};
+  if (destination) payload.destination = destination;
+  if (options) payload.options = options;
+  return invoke<string>("export_team_config_template", payload);
+}
+
+export async function importTeamConfigTemplate(
+  source?: string,
+  options?: TemplateImportOptions,
+): Promise<TemplateImportReport> {
+  const payload: Record<string, unknown> = {};
+  if (source) payload.source = source;
+  if (options) payload.options = options;
+  return invoke<TemplateImportReport>("import_team_config_template", payload);
 }
