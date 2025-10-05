@@ -1,7 +1,7 @@
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 /// 任务相关事件（示例：最小子集，后续可扩展）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -230,6 +230,7 @@ pub enum Event {
 /// 事件总线 trait：T0 阶段最小能力
 pub trait EventBus: Send + Sync + 'static {
     fn publish(&self, evt: Event);
+    fn as_any(&self) -> &dyn Any;
 }
 
 // 为 downcast 提供标记 trait
@@ -270,15 +271,74 @@ impl EventBus for MemoryEventBus {
             g.push(evt);
         }
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+#[derive(Default)]
+pub struct FanoutEventBus {
+    listeners: RwLock<Vec<Arc<dyn EventBusAny>>>,
+    memory_listeners: RwLock<Vec<MemoryEventBus>>,
+}
+
+impl FanoutEventBus {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register(&self, bus: Arc<dyn EventBusAny>) {
+        if bus.as_ref().as_any().is::<FanoutEventBus>() {
+            return;
+        }
+        if let Some(mem) = bus.as_ref().as_any().downcast_ref::<MemoryEventBus>() {
+            if let Ok(mut guard) = self.memory_listeners.write() {
+                guard.push(mem.clone());
+            }
+        }
+        if let Ok(mut guard) = self.listeners.write() {
+            guard.push(bus);
+        }
+    }
+
+    fn snapshot_memory(&self) -> Option<MemoryEventBus> {
+        self.memory_listeners
+            .read()
+            .ok()
+            .and_then(|guard| guard.first().cloned())
+    }
+}
+
+impl EventBus for FanoutEventBus {
+    fn publish(&self, evt: Event) {
+        let listeners = match self.listeners.read() {
+            Ok(guard) => guard.clone(),
+            Err(_) => return,
+        };
+        for bus in listeners {
+            bus.publish(evt.clone());
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 // ====== 全局可选事件总线（T1 引入，后续任务/策略可选择双写） ======
 static GLOBAL_BUS: OnceCell<Arc<dyn EventBusAny>> = OnceCell::new();
+static FANOUT_BUS: OnceCell<Arc<FanoutEventBus>> = OnceCell::new();
 
 pub fn set_global_event_bus(bus: Arc<dyn EventBusAny>) -> Result<(), &'static str> {
-    GLOBAL_BUS
-        .set(bus)
-        .map_err(|_| "global event bus already set")
+    if let Some(fanout) = FANOUT_BUS.get() {
+        fanout.register(bus);
+        Ok(())
+    } else {
+        GLOBAL_BUS
+            .set(bus)
+            .map_err(|_| "global event bus already set")
+    }
 }
 
 pub fn publish_global(evt: Event) {
@@ -293,11 +353,35 @@ pub fn publish_global(evt: Event) {
 
 /// 若全局已设置且为 MemoryEventBus，获取其克隆副本（共享同一内部存储）。
 pub fn get_global_memory_bus() -> Option<MemoryEventBus> {
+    if let Some(fanout) = FANOUT_BUS.get() {
+        if let Some(bus) = fanout.snapshot_memory() {
+            return Some(bus);
+        }
+    }
     GLOBAL_BUS.get().and_then(|b| {
-        // 直接引用方式 downcast_ref
-        let any_ref = b.as_ref() as &dyn Any;
-        any_ref.downcast_ref::<MemoryEventBus>().cloned()
+        b.as_ref()
+            .as_any()
+            .downcast_ref::<MemoryEventBus>()
+            .cloned()
     })
+}
+
+pub fn ensure_fanout_bus() -> Result<Arc<FanoutEventBus>, &'static str> {
+    if let Some(bus) = FANOUT_BUS.get() {
+        return Ok(bus.clone());
+    }
+    if GLOBAL_BUS.get().is_some() {
+        return Err("global event bus already set");
+    }
+    let fanout = Arc::new(FanoutEventBus::new());
+    let fanout_arc: Arc<dyn EventBusAny> = fanout.clone();
+    GLOBAL_BUS
+        .set(fanout_arc)
+        .map_err(|_| "global event bus already set")?;
+    FANOUT_BUS
+        .set(fanout.clone())
+        .map_err(|_| "fanout bus already set")?;
+    Ok(fanout)
 }
 
 // ==== 测试覆盖专用：线程局部可替换总线（不影响生产 OnceCell） ====

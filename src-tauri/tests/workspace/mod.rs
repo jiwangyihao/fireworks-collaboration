@@ -1372,18 +1372,14 @@ async fn test_workspace_batch_push_failure_summary_truncation() {
 
     let mut specs = Vec::new();
     for idx in 0..4 {
-        let dest = workspace_root
-            .path()
-            .join(format!("repo-push-fail-{idx}"));
-        GitRepository::clone(&origin_url, &dest)
-            .expect("clone repo for push truncation test");
+        let dest = workspace_root.path().join(format!("repo-push-fail-{idx}"));
+        GitRepository::clone(&origin_url, &dest).expect("clone repo for push truncation test");
         let file_name = format!("local-{idx}.txt");
         let payload = format!("payload-{idx}");
         create_commit(&dest, &file_name, &payload, "feat: local change");
 
         let repo = GitRepository::open(&dest).unwrap();
-        repo.remote_delete("origin")
-            .expect("remove origin remote");
+        repo.remote_delete("origin").expect("remove origin remote");
 
         specs.push(WorkspaceBatchChildSpec {
             repo_id: format!("push-fail-{idx}"),

@@ -102,6 +102,9 @@ pub struct AppConfig {
     /// P7.1: 子模块管理配置，默认启用自动递归。
     #[serde(default)]
     pub submodule: SubmoduleConfig,
+    /// P8.1: 可观测性与指标配置，默认启用基础埋点。
+    #[serde(default)]
+    pub observability: ObservabilityConfig,
 }
 
 fn default_true() -> bool {
@@ -201,6 +204,7 @@ impl Default for AppConfig {
             credential: CredentialConfig::default(),
             workspace: WorkspaceConfig::default(),
             submodule: SubmoduleConfig::default(),
+            observability: ObservabilityConfig::default(),
         }
     }
 }
@@ -239,6 +243,36 @@ impl Default for RetryCfg {
             base_ms: default_retry_base_ms(),
             factor: default_retry_factor(),
             jitter: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObservabilityConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub basic_enabled: bool,
+    #[serde(default = "default_true")]
+    pub aggregate_enabled: bool,
+    #[serde(default = "default_true")]
+    pub export_enabled: bool,
+    #[serde(default = "default_true")]
+    pub ui_enabled: bool,
+    #[serde(default = "default_true")]
+    pub alerts_enabled: bool,
+}
+
+impl Default for ObservabilityConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            basic_enabled: default_true(),
+            aggregate_enabled: default_true(),
+            export_enabled: default_true(),
+            ui_enabled: default_true(),
+            alerts_enabled: default_true(),
         }
     }
 }

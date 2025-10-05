@@ -10,6 +10,7 @@ pub mod credential;
 pub mod git;
 pub mod http;
 pub mod ip_pool;
+pub mod metrics;
 pub mod proxy;
 pub mod submodule;
 pub mod tasks;
