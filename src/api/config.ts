@@ -44,11 +44,27 @@ export interface ProxyCfg {
   recoveryConsecutiveThreshold: number;
   debugProxyLogging: boolean;
 }
+export interface ObservabilityExportConfig {
+  authToken?: string | null;
+  rateLimitQps: number;
+  maxSeriesPerSnapshot: number;
+  bindAddress: string;
+}
+export interface ObservabilityConfig {
+  enabled: boolean;
+  basicEnabled: boolean;
+  aggregateEnabled: boolean;
+  exportEnabled: boolean;
+  uiEnabled: boolean;
+  alertsEnabled: boolean;
+  export: ObservabilityExportConfig;
+}
 export interface AppConfig {
   http: HttpCfg;
   tls: TlsCfg;
   logging: LoggingCfg;
   proxy: ProxyCfg;
+  observability?: ObservabilityConfig;
 }
 
 export type SectionStrategy = "overwrite" | "keepLocal" | "merge";

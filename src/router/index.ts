@@ -56,6 +56,11 @@ const router = createRouter({
       name: "workspace",
       component: WorkspaceView,
     },
+    {
+      path: "/observability",
+      name: "observability",
+      component: () => import("../views/ObservabilityView.vue"),
+    },
   ],
 });
 

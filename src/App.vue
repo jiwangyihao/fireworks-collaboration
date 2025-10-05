@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { RouterView } from "vue-router";
 import { themeChange } from "theme-change";
-import { onMounted, provide, ref } from "vue";
+import { computed, onMounted, provide, ref } from "vue";
 import { UserInfo } from "./utils/github-auth.ts";
 import GlobalErrors from "./components/GlobalErrors.vue";
+import { useConfigStore } from "./stores/config";
+import { storeToRefs } from "pinia";
 
 onMounted(() => {
   themeChange(false);
@@ -51,6 +53,27 @@ const authenticated = ref(false);
 provide("authenticated", authenticated);
 const user = ref<UserInfo | null>(null);
 provide("user", user);
+
+const configStore = useConfigStore();
+const { cfg: config } = storeToRefs(configStore);
+
+const observabilityNavVisible = computed(() => {
+  const cfg = config.value;
+  if (!cfg) {
+    return true;
+  }
+  const obs = cfg.observability;
+  if (!obs) {
+    return false;
+  }
+  if (!obs.enabled) {
+    return false;
+  }
+  if (obs.uiEnabled === false) {
+    return false;
+  }
+  return true;
+});
 </script>
 
 <template>
@@ -104,6 +127,30 @@ provide("user", user);
           ></path>
         </svg>
         <span class="hidden sm:inline">Git 面板</span>
+      </RouterLink>
+      <RouterLink
+        v-if="observabilityNavVisible"
+        to="/observability"
+        class="btn btn-sm btn-ghost gap-1.5"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M4 19V9"></path>
+          <path d="M8 19V5"></path>
+          <path d="M12 19v-7"></path>
+          <path d="M16 19v-3"></path>
+          <path d="M20 19V8"></path>
+        </svg>
+        <span class="hidden sm:inline">可观测性</span>
       </RouterLink>
       <RouterLink to="/http-tester" class="btn btn-sm btn-ghost gap-1.5">
         <svg
