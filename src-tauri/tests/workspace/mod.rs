@@ -1350,6 +1350,89 @@ async fn test_workspace_batch_push_missing_remote() {
     assert_eq!(child_state.state, TaskState::Failed);
 }
 
+#[tokio::test]
+async fn test_workspace_batch_push_failure_summary_truncation() {
+    let registry = Arc::new(TaskRegistry::new());
+    let workspace_root = TempDir::new().unwrap();
+
+    let origin = RepoBuilder::new()
+        .with_base_commit("init.txt", "push", "init")
+        .build();
+    let remote_dir = tempfile::tempdir().unwrap();
+    let remote_path = remote_dir.path().join("remote.git");
+    GitRepository::init_bare(&remote_path).expect("init bare remote");
+    let origin_url = remote_path.to_string_lossy().to_string();
+
+    let origin_repo = GitRepository::open(&origin.path).unwrap();
+    origin_repo
+        .remote("bare", &origin_url)
+        .expect("add bare remote")
+        .push(&["refs/heads/master:refs/heads/master"], None)
+        .expect("seed bare remote");
+
+    let mut specs = Vec::new();
+    for idx in 0..4 {
+        let dest = workspace_root
+            .path()
+            .join(format!("repo-push-fail-{idx}"));
+        GitRepository::clone(&origin_url, &dest)
+            .expect("clone repo for push truncation test");
+        let file_name = format!("local-{idx}.txt");
+        let payload = format!("payload-{idx}");
+        create_commit(&dest, &file_name, &payload, "feat: local change");
+
+        let repo = GitRepository::open(&dest).unwrap();
+        repo.remote_delete("origin")
+            .expect("remove origin remote");
+
+        specs.push(WorkspaceBatchChildSpec {
+            repo_id: format!("push-fail-{idx}"),
+            repo_name: format!("Push Repo {idx}"),
+            operation: WorkspaceBatchChildOperation::Push(PushOptions {
+                dest: dest.to_string_lossy().to_string(),
+                remote: None,
+                refspecs: Some(vec!["refs/heads/master:refs/heads/master".into()]),
+                username: None,
+                password: None,
+                strategy_override: None,
+            }),
+        });
+    }
+
+    let operation = WorkspaceBatchOperation::Push;
+    let (parent_id, parent_token) = registry.create(TaskKind::WorkspaceBatch {
+        operation: operation.clone(),
+        total: specs.len() as u32,
+    });
+
+    let handle = registry.clone().spawn_workspace_batch_task(
+        None,
+        parent_id,
+        parent_token,
+        operation,
+        specs,
+        2,
+    );
+
+    handle.await.unwrap();
+    wait_until_task_done(registry.as_ref(), parent_id).await;
+
+    let parent_state = registry.snapshot(&parent_id).unwrap();
+    assert_eq!(parent_state.state, TaskState::Failed);
+    let summary = registry.fail_reason(&parent_id).unwrap();
+    assert!(summary.starts_with("batch push: 4 repository failures"));
+    assert!(summary.contains("Push Repo 0"));
+    assert!(summary.contains("... +1 more"));
+
+    let children = registry.children_of(&parent_id);
+    assert_eq!(children.len(), 4);
+    for child in children {
+        wait_until_task_done(registry.as_ref(), child).await;
+        let child_state = registry.snapshot(&child).unwrap();
+        assert_eq!(child_state.state, TaskState::Failed);
+    }
+}
+
 // ============================================================================
 // P7.6 稳定性验证测试
 // ============================================================================
