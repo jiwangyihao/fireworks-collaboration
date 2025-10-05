@@ -1,8 +1,8 @@
-# Fireworks Collaboration 实现总览（MP0 -> P6 & 测试重构）
+# Fireworks Collaboration 实现总览（MP0 -> P7 & 测试重构）
 
 > 目的：以统一视角梳理 MP0、MP1、P2、P3、P4、P5、P6 七个阶段以及测试重构后的现状，面向后续演进的研发、运维与质量成员，提供完整的实现细节、配置指引、事件契约、测试矩阵与回退策略。
 >
-> 版本：v1.3（2025-10-04） 维护者：Core Team
+> 版本：v1.4（2025-10-05） 维护者：Core Team
 
 ---
 
@@ -16,6 +16,7 @@
   - **P4**：IP 池采样与优选、预热调度、熔断治理、Soak 阈值；
   - **P5**：代理支持（HTTP/SOCKS5/System）、自动降级与恢复、健康检查、前端集成；
   - **P6**：凭证存储与安全管理（三层存储、AES-256-GCM加密、Argon2id密钥派生、审计日志、访问控制、Git集成）；
+  - **P7**：多仓工作区（Workspace）模型、Git 子模块支持、批量并发调度（clone/fetch/push）、团队配置模板导出/导入、跨仓库状态监控、前端一体化视图与性能/稳定性基准；
   - **测试重构**：`src-tauri/tests` 聚合结构、事件 DSL、属性测试与回归种子策略。
 - **读者画像**：
   - 新接手的后端/前端开发；
@@ -37,6 +38,7 @@
 | P5 | 代理支持（HTTP/SOCKS5/System）、自动降级与恢复、前端集成 | `ProxyStateEvent`、`ProxyFallbackEvent`、`ProxyRecoveredEvent`、`ProxyHealthCheckEvent` 等 | `proxy.*` 配置（mode/url/auth/超时/降级/恢复/健康检查/调试日志）| 配置禁用代理/手动降级恢复/调整阈值 | 276个测试（243 Rust + 33 TypeScript），跨平台系统检测，状态机转换验证 |
 | P6 | 凭证存储（三层：系统钥匙串/加密文件/内存）、加密安全（AES-256-GCM + Argon2id）、审计日志、访问控制、Git自动填充 | `CredentialEvent`（Add/Get/Update/Delete/List/Cleanup）、`AuditEvent`（操作审计）、`AccessControlEvent`（失败锁定） | `credential.*` 配置（mode/masterPassword/auditMode/accessControl/keyCache/过期管理）| 配置逐层禁用存储/关闭审计/调整锁定阈值 | 1286个测试（991 Rust + 295 前端），99.9%通过率，88.5%覆盖率，批准生产环境上线 |
 | 测试重构 | 主题聚合、事件 DSL、属性测试集中管理 | DSL 输出 Tag 子序列 | N/A | N/A | `src-tauri/tests` 结构稳定，CI 使用共享 helper |
+| P7 | 工作区模型、子模块支持、批量并发 clone/fetch/push、团队配置模板、跨仓库状态监控、前端一体化视图 | 无新增事件类型（复用 task/state/progress/error），批量任务 progress phase 含聚合文本 | `workspace.*`、`submodule.*`、`teamTemplate`、`workspace.status*` | 配置禁用 workspace 或降并发；子模块/模板/状态可单项停用 | 新增 24 子模块测试 + 12 批量调度测试 + 状态缓存测试 + 前端 store 17 测试 + 性能基准 |
 
 ---
 
@@ -85,6 +87,49 @@ http_fake_request(input: HttpRequestInput): Promise<HttpResponseOutput>
 
 所有命令返回 `taskId`，前端通过事件流追踪生命周期。
 
+命令返回值约定补充（P7 扩展）：
+- 直接返回字符串：通常为生成的 `taskId` 或导出文件路径（如 `export_team_config_template`、`backup_workspace`）。
+- 返回布尔：表示快速成功/失败（如 `save_workspace`、`restore_workspace`）。
+- 返回结构化对象：配置/状态查询或模板导入报告（`get_workspace_statuses`、`import_team_config_template`）。
+- 返回列表：子模块名称集合或仓库集合操作结果（`init_all_submodules` 等）。
+前端应根据类型决定是否进入任务事件订阅路径（有 taskId）或直接更新本地 store（无 taskId 的同步命令）。
+
+P7 新增的工作区/子模块/批量与团队配置相关命令（命名保持 camelCase，可与上表并列理解）：
+
+```ts
+// 工作区管理
+create_workspace(opts: { name: string; rootPath: string }): Promise<string>
+load_workspace(path?: string): Promise<string>
+save_workspace(): Promise<boolean>
+add_repository(opts: { workspaceId: string; repo: RepositorySpec }): Promise<string>
+remove_repository(opts: { workspaceId: string; repoId: string }): Promise<boolean>
+update_repository_tags(opts: { workspaceId: string; repoId: string; tags: string[] }): Promise<boolean>
+validate_workspace_file(path: string): Promise<boolean>   // 校验 workspace.json 结构
+backup_workspace(path: string): Promise<string>           // 返回带时间戳的备份文件路径
+restore_workspace(backupPath: string, workspacePath: string): Promise<void>
+
+// 子模块操作
+list_submodules(opts: { repoPath: string }): Promise<SubmoduleInfo[]>
+has_submodules(opts: { repoPath: string }): Promise<boolean>
+init_all_submodules(opts: { repoPath: string }): Promise<string[]>
+update_all_submodules(opts: { repoPath: string }): Promise<string[]>
+sync_all_submodules(opts: { repoPath: string }): Promise<string[]>
+
+// 批量任务（返回父任务 taskId）
+workspace_batch_clone(req: WorkspaceBatchCloneRequest): Promise<string>
+workspace_batch_fetch(req: WorkspaceBatchFetchRequest): Promise<string>
+workspace_batch_push(req: WorkspaceBatchPushRequest): Promise<string>
+
+// 团队配置模板
+export_team_config_template(opts?: { path?: string; sections?: string[] }): Promise<string> // 返回生成文件路径
+import_team_config_template(opts: { path?: string; strategy?: ImportStrategyConfig }): Promise<TemplateImportReport>
+
+// 跨仓库状态
+get_workspace_statuses(opts: StatusQuery): Promise<WorkspaceStatusResult>
+clear_workspace_status_cache(): Promise<number>
+invalidate_workspace_status_entry(opts: { repoId: string }): Promise<boolean>
+```
+
 ### 3.2 事件总览
 
 - `task://state`：`{ taskId, kind, state, createdAt }`，`state ∈ pending|running|completed|failed|canceled`；
@@ -100,7 +145,28 @@ http_fake_request(input: HttpRequestInput): Promise<HttpResponseOutput>
 
 事件顺序约束在测试中锁定：策略 applied -> conflict -> ignored -> partial fallback -> summary；TLS 事件在任务结束前统一刷出；凭证操作触发审计事件在命令执行后同步发射。
 
+P7 未新增独立事件类型：工作区、子模块、批量调度与状态查询均复用既有 `task://state|progress|error` 语义。批量任务父进度的 `phase` 字段采用聚合文本（如 `Cloning 2/5 completed (1 failed)`），子模块递归克隆阶段通过主任务进度区间（0-70-85-100%）映射，不引入单独子模块事件流。状态服务（WorkspaceStatusService）目前仅通过命令拉取结果，后续事件推送在后续迭代规划中。
+
+P7 已知限制（未纳入本次交付）：
+- 子模块并行初始化/更新参数 `parallel/maxParallel` 预留但未实现（串行足够 <10 子模块常见场景）。
+- 子模块粒度实时进度事件（`SubmoduleProgressEvent`）尚未连接前端事件总线，仅通过主任务阶段映射。
+- 批量任务进度权重均等，未按仓库体积/历史耗时加权；大体量差异下显示可能不线性。
+- 工作区状态服务无事件推送（需轮询）；大量仓库高频刷新需手动调大 `statusCacheTtlSecs` 与关闭自动刷新。
+
+TaskKind 扩展（P7 补充说明）：
+- 递归克隆：沿用 `TaskKind::GitClone`，仅在克隆完成后根据配置附加子模块 init/update 两阶段（映射到 70–85%、85–100% 进度区间）。
+- 子模块独立操作：未新增专属 TaskKind，命令直接进行同步/初始化逻辑，失败通过日志与返回值暴露。
+- 批量调度：新增 `TaskKind::WorkspaceBatch { operation, total }` 作为父任务快照，子任务仍为原生 Git TaskKind（Clone/Fetch/Push），通过父子关联表跟踪；父任务进度 = 子任务完成百分比平均。
+
 ### 3.3 服务与分层
+
+**P7 状态管理架构补充**:
+Tauri 应用层使用 `Arc<Mutex<T>>` 模式管理三个独立的全局状态:
+- `SharedWorkspaceManager = Arc<Mutex<Option<Workspace>>>`：当前加载的工作区实例，commands 通过 State 注入访问；
+- `SharedWorkspaceStatusService = Arc<WorkspaceStatusService>`：跨仓库状态查询服务，内部维护 TTL 缓存与并发控制，与 WorkspaceManager 解耦；
+- `SharedSubmoduleManager = Arc<Mutex<SubmoduleManager>>`：子模块管理器，拥有独立配置(`SubmoduleConfig`)，支持递归初始化/更新/同步操作。
+
+`WorkspaceStorage` 不是全局单例，每次 `load_workspace`/`save_workspace` 调用时实例化并传入路径，确保多工作区场景下无状态冲突。批量任务通过快照(`workspace.clone()`)避免持锁跨 async 边界。
 
 ```
 TaskRegistry (core/tasks/registry.rs)
@@ -163,6 +229,62 @@ Credential Service (core/credential/*)
 - 配置加载：`src-tauri/src/config/loader.rs` 使用 `directories` crate 定位应用目录，支持热加载；更改配置文件后由任务注册器下一次读取时生效。
 - 版本管理：所有 Git 子传输代码在 `src-tauri/src/core/git/transport` 下有 `COVERAGE.md` 与 `MUTATION_TESTING.md`，升级依赖须同步更新两份保障文档。
 
+P7 追加的主要配置键（集中在 `config.json`）：
+`workspace.enabled`（启用工作区，**实际默认 false**，保持向后兼容）、`workspace.maxConcurrentRepos`（批量并发上限，**实际默认 3**，保守配置）、`workspace.statusCacheTtlSecs`（**实际默认 15秒**）/ `workspace.statusMaxConcurrency`（**实际默认 4**）/ `workspace.statusAutoRefreshSecs`（默认 null，禁用自动刷新）；`submodule.*`（autoRecurse/maxDepth/autoInitOnClone/recursiveUpdate/parallel/maxParallel，其中并行当前未实现）；`teamTemplate`（导出/导入默认路径及策略开关）；其余保持向后兼容，未启用时不影响已有单仓库功能。
+
+最小可用配置示例（启用工作区 + 子模块支持 + 保守刷新）：
+```jsonc
+{
+  "workspace": {
+    "enabled": true,              // 默认 false，需要显式启用
+    "maxConcurrentRepos": 3,      // 默认值即为 3，保守并发
+    "statusCacheTtlSecs": 15,     // 默认值 15 秒
+    "statusMaxConcurrency": 4,    // 默认值 4
+    "statusAutoRefreshSecs": 60   // 可选，默认 null（禁用）
+  },
+  "submodule": {
+    "autoRecurse": true,
+    "maxDepth": 5,
+    "autoInitOnClone": true,
+    "recursiveUpdate": true,
+    "parallel": false,
+    "maxParallel": 3
+  },
+  "teamTemplate": {
+    "defaultExportPath": "config/team-config-template.json"
+  }
+}
+```
+
+P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；批量调度（clone/fetch/push）集成测试 12 项，验证并发、失败摘要与取消传播；状态服务缓存/失效/性能测试若干（含 10/50/100 仓库 p95 基准）；团队模板导出/导入 7 项；前端 Pinia store 新增 17 项单测（批量任务、模板报告、状态缓存）；端到端性能基准测试纳入 Nightly（批量 clone、状态刷新）。
+
+性能基线（本地自动化环境 p95 指标，用于回归门槛参考）：
+- 批量 clone：10/50/100 仓库 p95 用时分别 ≈15.5ms / 11.2ms / 10.2ms（相对单仓 baseline 105.5ms 聚合后均 < 0.2×/仓）。
+- 状态刷新：10/50/100 仓库总耗时 ≈10.9ms / 54.2ms / 80.8ms（100 仓库 <3s 目标内充足裕度）。
+- 子模块递归初始化+更新阶段占主任务 30%（70→100% 区间），失败不阻塞主任务完成。
+- 性能回归策略：Nightly 比对最近 7 次运行滚动窗口，如 p95 超出基线 2× 触发告警并要求人工复核差异日志（任务元数据与结构化事件）。
+
+回退快速参考（按优先级从最小影响到功能全禁用）：
+| 场景 | 操作 | 影响范围 | 备注 |
+|------|------|----------|------|
+| 批量任务负载过高 | 将 `workspace.maxConcurrentRepos` 降为 1 | 退化为顺序执行 | 不中断现有父任务，但新任务生效 |
+| 子模块初始化频繁失败 | `submodule.autoInitOnClone=false` | 保留主仓库克隆 | 可手动调用 init_all_submodules |
+| 状态刷新造成 IO 压力 | `workspace.statusAutoRefreshSecs=0` 提高 `statusCacheTtlSecs` | 停止自动轮询 | 需要手动刷新按钮或命令 |
+| 模板导入疑似破坏配置 | 使用最近备份文件覆盖 `config.json` | 恢复所有配置节 | 备份命名含时间戳易定位 |
+| 工作区整体不稳定 | `workspace.enabled=false` | 回退单仓模式 | 不需要重编译，重启后生效 |
+| 仅想屏蔽批量 UI | 保持 enabled，前端配置隐藏入口（可选） | 后端能力仍可保留 | 方便灰度逐步恢复 |
+
+工作区文件与并发风险提示：
+- 当前未实现显式锁文件；多进程同时写入 `workspace.json` 理论上存在竞态，建议运维避免同一物理目录并行启动两个实例（或通过容器编排保证单实例）。
+- 保存操作采用原子写（写临时文件后 rename），若写入中断可回退最近备份或使用 `.bak` 文件恢复。
+- 频繁批量操作配合低 TTL 状态刷新可能导致磁盘 I/O 峰值，建议：高并发任务时临时调大 `statusCacheTtlSecs` 并暂停自动刷新。
+
+团队模板安全与去敏化要点：
+- 导出时自动清理：代理密码、凭证文件路径、IP 池历史文件路径、运行态敏感统计字段。
+- 备份策略：每次导入前生成 `team-config-backup-YYYYMMDDHHMMSS.json`，回滚只需将备份覆盖现有 `config.json` 并重新加载。
+- Merge 策略忽略本地默认值（保持最小差异），保留本地 IP 池 historyPath 以避免分发机器路径。
+- Schema 主版本不匹配直接拒绝导入；报告中列出 `applied` 与 `skipped` 节及原因（如 strategyKeepLocal / sectionDisabled / noChanges）。
+
 ### 3.5 发布节奏与跨阶段集成
 - **推广顺序**：遵循 MP0 -> MP1 -> P2 -> P3 的递进路径，每阶段功能上线前都需确认前置阶段的回退手段仍可用；详见 `new-doc/MP*_IMPLEMENTATION_HANDOFF.md`。
 - **配置切换流程**：
@@ -177,9 +299,16 @@ Credential Service (core/credential/*)
   - P2 的策略覆盖与 P3 的 adaptive TLS 共享 HTTP/TLS 配置，只在任务级做差异化；
   - P3 的指纹日志与自动禁用依赖 MP1 方式A 的传输框架，如需临时关闭 Fake SNI，应评估 P3 指标链路的可见性。
   - P4 的 IP 池与 P3 的 Adaptive TLS 深度联动：传输层在同一线程上下文填充 `ip_source`/`ip_latency_ms` 并继续触发 `AdaptiveTlsTiming/Fallback`；关闭 IP 池时需同步评估 P3 自动禁用与指标的观测空洞；黑白名单/熔断策略依赖 P2 的任务配置热加载能力。
+  - P7 工作区/批量/子模块逻辑仅在 `workspace.enabled=true` 时激活；批量调度复用任务注册器与进度事件，不改变 MP0-P6 任务语义；子模块递归克隆建立在现有 `TaskKind::GitClone` 之后附加阶段（70-85-100%）；团队配置模板导入仅写入配置文件与内存运行态，不影响已存在 TLS/IP/代理/凭证模块的回退路径；跨仓库状态服务读取仓库索引，不修改 Git 操作代码。
+  - 跨模块影响：
+    - 代理启用（P5）时不影响工作区/批量逻辑；批量任务内部仍复用 Git 传输层现有代理互斥策略（自定义传输与 Fake SNI 已由前序逻辑屏蔽）。
+    - 凭证存储（P6）自动为批量 clone/push 子任务统一回调，无需在批量请求中重复提供凭证；子模块操作沿用主仓库凭证。
+    - IP 池（P4）与工作区解耦：批量任务底层仍按单仓 Git 任务路径调用；若 IP 池禁用不会影响 Workspace 元数据与任务调度。
+    - 模板导入仅覆盖配置，不直接触发批量/子模块任务；导入后需要手动 reload 或下一次任务读取时生效。
 - **回滚指引**：
   - 生产事故时优先通过配置禁用新增功能（Push、策略覆盖、Fake SNI、指标采集等）；
   - 若需降级二进制，参考 `src-tauri/_archive` 中的 legacy 实现及各阶段 handoff 文档的“回退矩阵”。
+  - P7 回退：关闭 `workspace.enabled` 即可整体禁用工作区、批量与子模块 UI 入口；如仅批量操作异常，可下调 `workspace.maxConcurrentRepos=1` 退化为顺序；子模块异常时禁用递归（`submodule.autoInitOnClone=false`，手动操作可用）；模板导入风险时避免执行 `import_team_config_template` 并保留自动备份回滚；状态服务异常时将 `workspace.statusAutoRefreshSecs=0` 并清空缓存。
 - **交接资料**：
   - 每次版本发布前更新 `CHANGELOG.md`、`new-doc/IMPLEMENTATION_OVERVIEW.md` 与对应的 handoff 文档；
   - 附上最新 soak 报告、配置快照、事件截图，供下游团队复用。
@@ -530,9 +659,9 @@ Credential Service (core/credential/*)
     - 清理统计：重启应用或手动调用 `force_proxy_recovery()` 重置滑动窗口的失败统计并尝试恢复；
     - 运维介入：通过日志观察 `ProxyStateEvent` 和 `ProxyHealthCheckEvent` 获取诊断信息（当前状态、失败计数、健康检查结果），必要时临时设置 `healthCheckIntervalSeconds` 为更大值（如3600）延长探测间隔，或直接禁用代理。
 
-### 4.6 P6 - 凭证存储与安全管理
+### 4.7 P6 - 凭证存储与安全管理
 
-  - **目标**：
+  - **目标**:
     - 提供生产级凭证存储方案，支持三层存储智能回退（系统钥匙串 → 加密文件 → 内存）；
     - 实现企业级加密安全（AES-256-GCM + Argon2id密钥派生 + ZeroizeOnDrop内存保护）；
     - 提供完整审计日志与访问控制机制（失败锁定、自动过期、持久化）；
@@ -661,7 +790,82 @@ Credential Service (core/credential/*)
     - 短期（1-3个月）：macOS/Linux实机验证、审计日志滚动策略、性能基准测试执行、用户体验优化（搜索/过滤/批量操作）；
     - 长期（3-12个月）：生物识别解锁（Touch ID/Windows Hello）、OAuth 2.0自动刷新、凭证跨设备同步、审计日志远程上传、HSM集成。
 
-### 4.7 测试重构 - 统一验证体系
+### 4.8 P7 - 工作区与批量能力
+
+- **目标**:
+  - 建立多仓库工作区(Workspace)管理模型,支持仓库 CRUD、标签分类与序列化存储;
+  - 实现 Git 子模块探测与批量操作(init/update/sync),复用现有 git2 能力;
+  - 提供批量并发任务调度(clone/fetch/push),通过 Semaphore 控制并发度,避免资源竞争;
+  - 支持团队配置模板导出/导入,便于跨团队标准化与安全化;
+  - 引入跨仓库状态监控服务,带 TTL 缓存与无效化 API,减少重复查询开销;
+  - 前端一体化视图,集成任务进度、错误聚合与 Pinia store 响应式状态;
+  - 提供性能基准与稳定性测试,支撑灰度上线决策。
+
+- **批量任务并发控制实现细节**:
+  - `workspace_batch_*` 命令通过 `resolve_concurrency(requested, config)` 解析最终并发数:优先使用请求中的 `maxConcurrency`,回退到配置的 `workspace.maxConcurrentRepos`(实际默认值 3),强制校验 `value > 0` 避免死锁;
+  - 内部使用 `tokio::sync::Semaphore` 持有 `max_concurrency` 个 permit,每个子任务执行前 `acquire()`,完成后自动释放,确保同时运行的子任务数不超过阈值;
+  - 父任务(`TaskKind::WorkspaceBatch { operation, total }`)创建后立即返回父 `taskId`,子任务递归创建为 `TaskKind::GitClone`/`GitFetch`/`GitPush`,通过 `parent_id` 关联,进度事件聚合到父任务的 phase 文本中(`Cloning 3/10 repositories`);
+  - 失败策略:默认 `continueOnError=true`,单个子任务失败不中断批量流程,最终父任务汇总所有子任务状态到 `task://state`(`completed` 表示全部成功,`failed` 表示至少一个失败),错误详情通过 `task://error` 子任务事件分发。
+
+- **RepositoryEntry.hasSubmodules 字段作用**:
+  - 在 `workspace_batch_clone` 命令中,若请求未明确指定 `recurseSubmodules` 参数,则回退到该字段值作为默认行为:
+    ```rust
+    recurse_submodules: request.recurse_submodules.unwrap_or(repo.has_submodules)
+    ```
+  - 允许为不同仓库单独配置子模块处理策略(例如前端仓库启用,后端服务禁用),提高灵活性;
+  - 该字段默认值为 `false`,在 `workspace.json` 中显式声明后生效。
+
+- **SubmoduleManager 独立状态**:
+  - `SharedSubmoduleManager = Arc<Mutex<SubmoduleManager>>` 与 workspace/status service 并行,拥有独立 `SubmoduleConfig`(默认 autoRecurse=true, maxDepth=5, autoInitOnClone=true, recursiveUpdate=true);
+  - 命令返回 `SubmoduleCommandResult { success: bool, message: String, data?: string[] }`:前端必须检查 `success` 字段判断成功/失败,而非直接依赖 Promise resolve/reject。`data` 字段包含受影响子模块名称列表。
+
+- **运维命令扩展**:
+  - `validate_workspace_file(path)`: 校验 workspace.json 结构合法性,返回布尔值;
+  - `backup_workspace(path)`: 创建带时间戳的备份文件(`workspace.json.bak-YYYYMMDDHHMMSS`),返回完整路径字符串;
+  - `restore_workspace(backupPath, workspacePath)`: 从备份恢复,直接覆盖目标文件(原子操作);
+  - 备份策略建议:每次批量操作前手动备份或配置自动备份钩子(未实现)。
+
+- **测试覆盖**:
+  - 子模块: 24 项(列表/检测/初始化/更新/同步,含递归场景);
+  - 批量调度: 12 项(clone/fetch/push 各 4个,含并发/失败聚合/取消传播);
+  - 状态服务: 缓存/TTL/失效集成测试 + 10/50/100 仓库性能基准;
+  - 前端 store: 17 项 Pinia 测试(批量任务、模板报告、状态缓存);
+  - 性能基准 Nightly 门槛: 批量 clone p95 < 0.2×/仓、状态刷新 100 仓 < 3s。
+
+- **回退策略快速参考**:
+  - 批量负载过高:降 `workspace.maxConcurrentRepos=1` 退化为顺序;
+  - 子模块初始化失败:禁用 `submodule.autoInitOnClone=false`,手动调用;
+  - 状态刷新 IO 压力:停止自动轮询(`statusAutoRefreshSecs=0`)提高 TTL;
+  - 模板导入风险:使用自动备份覆盖 config.json 回滚;
+  - 整体禁用:`workspace.enabled=false` 回退单仓模式(不需重编译)。
+
+- **模块映射与代码指针**:
+  - `src-tauri/src/core/workspace/`: model.rs(核心结构), config.rs(配置管理), storage.rs(序列化/验证/备份), status.rs(状态服务);
+  - `src-tauri/src/core/submodule/`: model.rs, manager.rs(init/update/sync 操作), config.rs(子模块配置);
+  - `src-tauri/src/core/tasks/workspace_batch.rs`: Semaphore 调度、父子任务关联、进度聚合;
+  - `src-tauri/src/core/config/team_template.rs`: 模板导出/导入、安全化清理、备份机制;
+  - `src-tauri/src/app/commands/workspace.rs`: 18 个 Tauri 命令(CRUD/批量/状态/备份);
+  - `src-tauri/src/app/commands/submodule.rs`: 9 个 Tauri 命令(list/has/init/update/sync + 配置);
+  - `src/views/WorkspaceView.vue`: 工作区视图(仓库列表、批量操作、状态监控);
+  - `src/stores/workspace.ts`: Pinia store(CRUD actions/getters, 与后端命令桥接);
+  - `src/stores/tasks.ts`: 批量任务父子关系跟踪、进度聚合。
+
+- **跨阶段集成补充**:
+  - P7 工作区/批量逻辑仅在 `workspace.enabled=true` 时激活,不改变 MP0-P6 任务语义;
+  - 子模块递归克隆附加在 `TaskKind::GitClone` 之后(70-85-100% 进度区间映射);
+  - 团队配置模板导入仅写入 config.json,不影响 TLS/IP/代理/凭证回退路径;
+  - 代理(P5)启用时不影响批量逻辑,内部仍复用 Git 传输层现有互斥策略;
+  - 凭证存储(P6)自动为批量 clone/push 子任务统一回调,无需重复提供凭证;
+  - IP 池(P4)与工作区解耦,批量任务底层按单仓 Git 路径调用。
+
+- **已知限制**:
+  - 子模块并行参数(`parallel`/`maxParallel`)预留但未实现(串行足够 <10 子模块场景);
+  - 子模块粒度进度事件尚未连接前端总线,仅通过主任务阶段映射;
+  - 批量进度权重均等,未按仓库体积/历史耗时加权(大体量差异下不线性);
+  - 工作区状态服务无事件推送(需轮询),大量仓库高频刷新需调大 TTL 与关闭自动刷新;
+  - 工作区文件并发风险:未实现显式锁,多进程同时写 workspace.json 存在竞态(建议容器编排保证单实例)。
+
+### 4.9 测试重构 - 统一验证体系
 
 - **目录布局**：`src-tauri/tests` 现按主题聚合——`common/`（共享 DSL 与 fixtures）、`git/`（Git 语义）、`events/`、`quality/`、`tasks/`、`e2e/`；每个聚合文件控制在 800 行内，新增用例优先追加至现有 section。
 - **公共模块**：`common/test_env.rs`（全局初始化）、`fixtures.rs` 与 `repo_factory.rs`（仓库构造）、`git_scenarios.rs`（复合操作）、`shallow_matrix.rs`/`partial_filter_matrix.rs`/`retry_matrix.rs`（参数矩阵），确保相同语义只实现一次。
