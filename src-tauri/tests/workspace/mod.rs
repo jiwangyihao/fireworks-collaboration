@@ -26,8 +26,8 @@ use fireworks_collaboration_lib::core::tasks::{
     },
 };
 use fireworks_collaboration_lib::core::workspace::{
-    RepositoryEntry, Workspace, WorkspaceConfig, WorkspaceConfigManager, WorkspaceManager,
-    WorkspaceStorage,
+    RepositoryEntry, StatusQuery, SyncState, WorkingTreeState, Workspace, WorkspaceConfig,
+    WorkspaceConfigManager, WorkspaceManager, WorkspaceStatusService, WorkspaceStorage,
 };
 use git2::{Repository as GitRepository, Signature};
 use std::fs;
@@ -162,6 +162,9 @@ fn test_workspace_config_defaults() {
     assert_eq!(config.max_concurrent_repos, 3);
     assert!(config.default_template.is_none());
     assert!(config.workspace_file.is_none());
+    assert_eq!(config.status_cache_ttl_secs, 15);
+    assert_eq!(config.status_max_concurrency, 4);
+    assert!(config.status_auto_refresh_secs.is_none());
 }
 
 #[test]
@@ -552,6 +555,264 @@ fn test_large_workspace_performance() {
     assert!(add_duration.as_millis() < 500, "添加仓库不应超过500ms");
     assert!(save_duration.as_millis() < 500, "保存不应超过500ms");
     assert!(load_duration.as_millis() < 500, "加载不应超过500ms");
+}
+
+// ============================================================================
+// 工作区状态服务测试
+// ============================================================================
+
+#[tokio::test]
+async fn test_workspace_status_basic_and_cache() {
+    let temp_dir = TempDir::new().unwrap();
+    let repo1_path = temp_dir.path().join("repo-one");
+    GitRepository::init(&repo1_path).expect("init repo1");
+    create_commit(&repo1_path, "README.md", "hello", "feat: init repo1");
+    std::fs::write(repo1_path.join("untracked.txt"), "pending change")
+        .expect("create untracked file");
+
+    let repo2_path = temp_dir.path().join("repo-two");
+    GitRepository::init(&repo2_path).expect("init repo2");
+    create_commit(&repo2_path, "lib.rs", "pub fn hi() {}", "feat: init repo2");
+
+    let mut config = WorkspaceConfig::default();
+    config.enabled = true;
+    config.status_cache_ttl_secs = 60;
+    config.status_max_concurrency = 4;
+    config.status_auto_refresh_secs = None;
+
+    let status_service = WorkspaceStatusService::new(&config);
+
+    let mut workspace = Workspace::new("ws".into(), temp_dir.path().to_path_buf());
+
+    let mut repo1 = RepositoryEntry::new(
+        "repo1".into(),
+        "Repo One".into(),
+        PathBuf::from("repo-one"),
+        "https://example.com/repo1.git".into(),
+    );
+    repo1.tags = vec!["frontend".into()];
+    repo1.enabled = true;
+
+    let mut repo2 = RepositoryEntry::new(
+        "repo2".into(),
+        "Repo Two".into(),
+        PathBuf::from("repo-two"),
+        "https://example.com/repo2.git".into(),
+    );
+    repo2.tags = vec!["backend".into()];
+    repo2.enabled = false;
+
+    workspace.add_repository(repo1).unwrap();
+    workspace.add_repository(repo2).unwrap();
+
+    let response = status_service
+        .query_statuses(&workspace, StatusQuery::default())
+        .await
+        .expect("query status");
+
+    assert_eq!(response.total, 1);
+    assert_eq!(response.refreshed, 1);
+    assert_eq!(response.cached, 0);
+    assert_eq!(response.statuses[0].repo_id, "repo1");
+    assert_eq!(response.statuses[0].working_state, WorkingTreeState::Dirty);
+    assert!(response.statuses[0].untracked >= 1);
+    assert!(!response.statuses[0].is_cached);
+    assert_eq!(response.summary.working_states.dirty, 1);
+    assert_eq!(response.summary.working_states.clean, 0);
+    assert_eq!(response.summary.sync_states.clean, 1);
+    assert_eq!(response.summary.error_count, 0);
+
+    let cached = status_service
+        .query_statuses(&workspace, StatusQuery::default())
+        .await
+        .expect("query cached status");
+    assert_eq!(cached.total, 1);
+    assert_eq!(cached.cached, 1);
+    assert_eq!(cached.refreshed, 0);
+    assert!(cached.statuses[0].is_cached);
+    assert_eq!(cached.summary.working_states.dirty, 1);
+    assert_eq!(cached.summary.sync_states.clean, 1);
+
+    let mut clean_filter = StatusQuery::default();
+    clean_filter.filter.has_local_changes = Some(false);
+    let clean = status_service
+        .query_statuses(&workspace, clean_filter)
+        .await
+        .expect("query clean filter");
+    assert_eq!(clean.total, 0);
+
+    let mut include_disabled = StatusQuery::default();
+    include_disabled.include_disabled = true;
+    include_disabled.filter.tags = Some(vec!["backend".into()]);
+    let with_disabled = status_service
+        .query_statuses(&workspace, include_disabled)
+        .await
+        .expect("query disabled repo");
+    assert_eq!(with_disabled.total, 1);
+    assert_eq!(with_disabled.statuses[0].repo_id, "repo2");
+
+    let mut refresh_query = StatusQuery::default();
+    refresh_query.include_disabled = true;
+    refresh_query.force_refresh = true;
+    let refreshed = status_service
+        .query_statuses(&workspace, refresh_query)
+        .await
+        .expect("force refresh statuses");
+    assert!(refreshed.refreshed >= 1);
+    assert_eq!(refreshed.summary.working_states.dirty, 1);
+    assert_eq!(refreshed.summary.working_states.clean, 1);
+
+    let mut missing = StatusQuery::default();
+    missing.include_disabled = true;
+    missing.repo_ids = Some(vec!["missing".into()]);
+    let missing_resp = status_service
+        .query_statuses(&workspace, missing)
+        .await
+        .expect("query missing repo");
+    assert_eq!(missing_resp.total, 0);
+    assert_eq!(missing_resp.missing_repo_ids, vec!["missing".to_string()]);
+    assert_eq!(missing_resp.summary.working_states.clean, 0);
+    assert_eq!(missing_resp.summary.error_count, 0);
+}
+
+#[tokio::test]
+async fn test_workspace_status_cache_invalidation() {
+    let temp_dir = TempDir::new().unwrap();
+    let repo_path = temp_dir.path().join("repo-one");
+    GitRepository::init(&repo_path).expect("init repo");
+    create_commit(&repo_path, "main.rs", "fn main() {}", "feat: init repo");
+
+    let mut config = WorkspaceConfig::default();
+    config.enabled = true;
+    config.status_cache_ttl_secs = 120;
+    config.status_max_concurrency = 2;
+
+    let status_service = WorkspaceStatusService::new(&config);
+
+    let mut workspace = Workspace::new("ws".into(), temp_dir.path().to_path_buf());
+    let mut repo = RepositoryEntry::new(
+        "repo1".into(),
+        "Repo One".into(),
+        PathBuf::from("repo-one"),
+        "https://example.com/repo1.git".into(),
+    );
+    repo.enabled = true;
+    workspace.add_repository(repo).unwrap();
+
+    let initial = status_service
+        .query_statuses(&workspace, StatusQuery::default())
+        .await
+        .expect("initial status");
+    assert_eq!(initial.statuses[0].working_state, WorkingTreeState::Clean);
+    assert!(!initial.statuses[0].is_cached);
+    assert_eq!(initial.summary.working_states.clean, 1);
+
+    std::fs::write(repo_path.join("dirty.txt"), "dirty").expect("create dirty file");
+
+    let cached = status_service
+        .query_statuses(&workspace, StatusQuery::default())
+        .await
+        .expect("cached status");
+    assert_eq!(cached.statuses[0].working_state, WorkingTreeState::Clean);
+    assert!(cached.statuses[0].is_cached);
+
+    assert!(status_service.invalidate_repo("repo1"));
+
+    let refreshed = status_service
+        .query_statuses(&workspace, StatusQuery::default())
+        .await
+        .expect("refreshed status");
+    assert_eq!(refreshed.statuses[0].working_state, WorkingTreeState::Dirty);
+    assert!(!refreshed.statuses[0].is_cached);
+    assert_eq!(refreshed.summary.working_states.dirty, 1);
+}
+
+#[tokio::test]
+async fn test_workspace_status_summary_counts() {
+    let temp_dir = TempDir::new().unwrap();
+    let repo_clean_path = temp_dir.path().join("repo-clean");
+    GitRepository::init(&repo_clean_path).expect("init clean repo");
+    create_commit(
+        &repo_clean_path,
+        "main.rs",
+        "fn main() {}",
+        "feat: init clean",
+    );
+
+    let mut config = WorkspaceConfig::default();
+    config.enabled = true;
+    config.status_cache_ttl_secs = 30;
+    config.status_max_concurrency = 2;
+
+    let status_service = WorkspaceStatusService::new(&config);
+
+    let mut workspace = Workspace::new("ws".into(), temp_dir.path().to_path_buf());
+
+    let mut clean_repo = RepositoryEntry::new(
+        "repo_clean".into(),
+        "Repo Clean".into(),
+        PathBuf::from("repo-clean"),
+        "https://example.com/clean.git".into(),
+    );
+    clean_repo.enabled = true;
+
+    let mut missing_repo = RepositoryEntry::new(
+        "repo_missing".into(),
+        "Repo Missing".into(),
+        PathBuf::from("repo-missing"),
+        "https://example.com/missing.git".into(),
+    );
+    missing_repo.enabled = true;
+
+    workspace.add_repository(clean_repo).unwrap();
+    workspace.add_repository(missing_repo).unwrap();
+
+    let response = status_service
+        .query_statuses(&workspace, StatusQuery::default())
+        .await
+        .expect("query status summary");
+
+    assert_eq!(response.total, 2);
+
+    let mut clean_present = false;
+    let mut missing_present = false;
+    for status in &response.statuses {
+        match status.repo_id.as_str() {
+            "repo_clean" => {
+                clean_present = true;
+                assert_eq!(status.working_state, WorkingTreeState::Clean);
+                assert!(status.error.is_none());
+                assert_eq!(status.sync_state, SyncState::Clean);
+            }
+            "repo_missing" => {
+                missing_present = true;
+                assert_eq!(status.working_state, WorkingTreeState::Missing);
+                assert_eq!(status.sync_state, SyncState::Unknown);
+                let err = status
+                    .error
+                    .as_ref()
+                    .expect("missing repo should have error");
+                assert!(err.contains("not found"));
+            }
+            other => panic!("unexpected repo id {}", other),
+        }
+    }
+    assert!(clean_present);
+    assert!(missing_present);
+
+    let summary = &response.summary;
+    assert_eq!(summary.working_states.clean, 1);
+    assert_eq!(summary.working_states.dirty, 0);
+    assert_eq!(summary.working_states.missing, 1);
+    assert_eq!(summary.working_states.error, 0);
+    assert_eq!(summary.sync_states.clean, 1);
+    assert_eq!(summary.sync_states.unknown, 1);
+    assert_eq!(summary.sync_states.ahead, 0);
+    assert_eq!(summary.sync_states.behind, 0);
+    assert_eq!(summary.sync_states.diverged, 0);
+    assert_eq!(summary.sync_states.detached, 0);
+    assert_eq!(summary.error_count, 1);
+    assert_eq!(summary.error_repositories, vec!["repo_missing".to_string()]);
 }
 
 fn create_commit(repo_path: &Path, file: &str, content: &str, message: &str) {
