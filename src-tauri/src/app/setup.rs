@@ -102,6 +102,7 @@ pub fn run() {
             super::commands::get_repository,
             super::commands::list_repositories,
             super::commands::list_enabled_repositories,
+            super::commands::reorder_repositories,
             super::commands::get_workspace_statuses,
             super::commands::clear_workspace_status_cache,
             super::commands::invalidate_workspace_status_entry,
