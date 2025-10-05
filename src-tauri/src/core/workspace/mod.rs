@@ -9,11 +9,16 @@
 
 pub mod config;
 pub mod model;
+pub mod status;
 pub mod storage;
 
 // 重新导出常用类型
 pub use config::{PartialWorkspaceConfig, WorkspaceConfigManager};
 pub use model::{RepositoryEntry, Workspace, WorkspaceConfig};
+pub use status::{
+    RepositoryStatus, StatusFilter, StatusQuery, StatusSort, StatusSortDirection, StatusSortField,
+    SyncState, WorkingTreeState, WorkspaceStatusResponse, WorkspaceStatusService,
+};
 pub use storage::WorkspaceStorage;
 
 /// 工作区管理器

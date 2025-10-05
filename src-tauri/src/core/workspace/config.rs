@@ -47,10 +47,25 @@ impl WorkspaceConfigManager {
             anyhow::bail!("max_concurrent_repos 必须大于 0");
         }
 
+        if config.status_cache_ttl_secs == 0 {
+            anyhow::bail!("status_cache_ttl_secs 必须大于 0");
+        }
+
+        if config.status_max_concurrency == 0 {
+            anyhow::bail!("status_max_concurrency 必须大于 0");
+        }
+
         if config.max_concurrent_repos > 100 {
             warn!(
                 "max_concurrent_repos 设置较高 ({}), 可能导致资源耗尽",
                 config.max_concurrent_repos
+            );
+        }
+
+        if config.status_max_concurrency > 32 {
+            warn!(
+                "status_max_concurrency 设置较高 ({}), 可能导致状态查询过载",
+                config.status_max_concurrency
             );
         }
 
@@ -134,6 +149,21 @@ impl WorkspaceConfigManager {
         if partial.workspace_file.is_some() {
             self.config.workspace_file = partial.workspace_file;
         }
+        if let Some(ttl) = partial.status_cache_ttl_secs {
+            if ttl == 0 {
+                anyhow::bail!("status_cache_ttl_secs 必须大于 0");
+            }
+            self.config.status_cache_ttl_secs = ttl;
+        }
+        if let Some(status_concurrency) = partial.status_max_concurrency {
+            if status_concurrency == 0 {
+                anyhow::bail!("status_max_concurrency 必须大于 0");
+            }
+            self.config.status_max_concurrency = status_concurrency;
+        }
+        if let Some(auto_refresh) = partial.status_auto_refresh_secs {
+            self.config.status_auto_refresh_secs = auto_refresh;
+        }
 
         self.validate_config(&self.config)?;
         info!("合并工作区配置完成");
@@ -148,4 +178,7 @@ pub struct PartialWorkspaceConfig {
     pub max_concurrent_repos: Option<usize>,
     pub default_template: Option<String>,
     pub workspace_file: Option<PathBuf>,
+    pub status_cache_ttl_secs: Option<u64>,
+    pub status_max_concurrency: Option<usize>,
+    pub status_auto_refresh_secs: Option<Option<u64>>,
 }

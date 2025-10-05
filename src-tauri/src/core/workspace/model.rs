@@ -81,6 +81,15 @@ pub struct WorkspaceConfig {
     pub default_template: Option<String>,
     /// 工作区配置文件路径
     pub workspace_file: Option<PathBuf>,
+    /// 状态缓存 TTL（秒）
+    #[serde(default = "default_status_cache_ttl_secs")]
+    pub status_cache_ttl_secs: u64,
+    /// 状态查询最大并发数
+    #[serde(default = "default_status_max_concurrency")]
+    pub status_max_concurrency: usize,
+    /// 自动刷新间隔（秒），None 表示禁用自动刷新
+    #[serde(default)]
+    pub status_auto_refresh_secs: Option<u64>,
 }
 
 fn default_workspace_enabled() -> bool {
@@ -91,6 +100,14 @@ fn default_max_concurrent_repos() -> usize {
     3 // 保守的默认并发数
 }
 
+fn default_status_cache_ttl_secs() -> u64 {
+    15
+}
+
+fn default_status_max_concurrency() -> usize {
+    4
+}
+
 impl Default for WorkspaceConfig {
     fn default() -> Self {
         Self {
@@ -98,6 +115,9 @@ impl Default for WorkspaceConfig {
             max_concurrent_repos: default_max_concurrent_repos(),
             default_template: None,
             workspace_file: None,
+            status_cache_ttl_secs: default_status_cache_ttl_secs(),
+            status_max_concurrency: default_status_max_concurrency(),
+            status_auto_refresh_secs: None,
         }
     }
 }

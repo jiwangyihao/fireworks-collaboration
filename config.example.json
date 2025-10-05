@@ -270,7 +270,24 @@
     "//": "  Default: null (use default: workspace.json in app data dir)",
     "//": "  Example: \"/path/to/custom/workspace.json\"",
     "//": "  Note: Absolute path to workspace.json file",
-    "workspaceFile": null
+    "workspaceFile": null,
+
+    "//": "statusCacheTtlSecs: Workspace status cache TTL (seconds)",
+    "//": "  Range: 1-3600",
+    "//": "  Default: 15",
+    "//": "  Note: Lower values refresh status more frequently",
+    "statusCacheTtlSecs": 15,
+
+    "//": "statusMaxConcurrency: Maximum concurrent status queries",
+    "//": "  Range: 1-32",
+    "//": "  Default: 4",
+    "//": "  Note: Higher values increase filesystem load",
+    "statusMaxConcurrency": 4,
+
+    "//": "statusAutoRefreshSecs: Optional automatic status refresh interval",
+    "//": "  Default: null (disabled)",
+    "//": "  Example: 60 to auto-refresh status every minute",
+    "statusAutoRefreshSecs": null
   },
 
   "//": "",
@@ -309,6 +326,14 @@
   "//": "    \"defaultTemplate\": \"team-template\"",
   "//": "  }",
   "//": "}",
+  "//": "Scenario 5: Frequent Status Refresh",
+  "//": "{",
+  "//": "  \"workspace\": {",
+  "//": "    \"enabled\": true,",
+  "//": "    \"statusCacheTtlSecs\": 5,",
+  "//": "    \"statusAutoRefreshSecs\": 30",
+  "//": "  }",
+  "//": "}",
   "//": "",
   "//": "=========================================================",
   "//": "  Workspace Best Practices (P7.0)",
@@ -335,6 +360,10 @@
   "//": "   - Workspace disabled by default (backward compatible)",
   "//": "   - Single-repo operations work without workspace",
   "//": "   - Workspace can be enabled/disabled without data loss",
+  "//": "5. Status Monitoring:",
+  "//": "   - Shorter statusCacheTtlSecs (5-10s) improves freshness",
+  "//": "   - Adjust statusMaxConcurrency based on disk/CPU capacity",
+  "//": "   - Use statusAutoRefreshSecs to auto-refresh dashboard views",
   "//": "",
   "//": "=========================================================",
 
