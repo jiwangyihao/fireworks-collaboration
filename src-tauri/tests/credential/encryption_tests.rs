@@ -123,17 +123,22 @@ fn test_hmac_verification_detects_tampering() {
     }
 
     // 篡改文件内容
-    let mut file_content = fs::read_to_string(&test_file).expect("应该读取文件");
+    let file_content = fs::read_to_string(&test_file).expect("应该读取文件");
 
     // 修改 JSON 中的密文（破坏 HMAC）
-    if let Some(pos) = file_content.find("\"ciphertext\"") {
-        // 修改密文的一部分
-        let mut chars: Vec<char> = file_content.chars().collect();
-        if pos + 20 < chars.len() {
-            chars[pos + 20] = 'X';
-            file_content = chars.into_iter().collect();
-            fs::write(&test_file, file_content).expect("应该写入篡改的文件");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&file_content).expect("存储文件应该是有效 JSON");
+    if let Some(ciphertext) = json.get("ciphertext").and_then(|value| value.as_str()) {
+        let mut tampered = ciphertext.to_string();
+        if let Some(first) = tampered.chars().next() {
+            let replacement = if first == 'A' { 'B' } else { 'A' };
+            tampered.replace_range(0..1, &replacement.to_string());
+        } else {
+            tampered.push('A');
         }
+        json["ciphertext"] = serde_json::Value::String(tampered);
+        let serialized = serde_json::to_string(&json).expect("应该能重新序列化 JSON");
+        fs::write(&test_file, serialized).expect("应该写入篡改的文件");
     }
 
     // 尝试读取被篡改的文件

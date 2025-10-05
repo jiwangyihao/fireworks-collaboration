@@ -8,6 +8,7 @@ use std::{
 };
 
 use super::model::AppConfig;
+use uuid::Uuid;
 
 fn join_default_path(base: &Path) -> PathBuf {
     let mut p = base.to_path_buf();
@@ -137,6 +138,11 @@ pub fn save_at(cfg: &AppConfig, base_dir: &Path) -> Result<()> {
 fn load_or_init_at_path(path: &Path) -> Result<AppConfig> {
     if path.exists() {
         let data = fs::read(path).with_context(|| format!("read config: {}", path.display()))?;
+        if data.iter().all(|b| b.is_ascii_whitespace()) {
+            let cfg = AppConfig::default();
+            save_at_path(&cfg, path)?;
+            return Ok(cfg);
+        }
         let cfg: AppConfig = serde_json::from_slice(&data).context("parse config json")?;
         Ok(cfg)
     } else {
@@ -151,9 +157,28 @@ fn save_at_path(cfg: &AppConfig, path: &Path) -> Result<()> {
         fs::create_dir_all(dir).ok();
     }
     let json = serde_json::to_string_pretty(cfg).context("serialize config")?;
-    let mut f =
-        fs::File::create(path).with_context(|| format!("create config: {}", path.display()))?;
-    f.write_all(json.as_bytes()).context("write config")?;
+    let tmp_name = format!(
+        ".{}.{}.tmp",
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("config"),
+        Uuid::new_v4()
+    );
+    let tmp_path = path
+        .parent()
+        .map(|dir| dir.join(&tmp_name))
+        .unwrap_or_else(|| PathBuf::from(&tmp_name));
+    {
+        let mut f = fs::File::create(&tmp_path)
+            .with_context(|| format!("create temp config: {}", tmp_path.display()))?;
+        f.write_all(json.as_bytes()).context("write temp config")?;
+        f.sync_all().ok();
+    }
+    if path.exists() {
+        fs::remove_file(path).ok();
+    }
+    fs::rename(&tmp_path, path)
+        .with_context(|| format!("replace config with temp file: {}", path.display()))?;
     tracing::info!(target = "config", path = %path.display(), "config saved");
     Ok(())
 }

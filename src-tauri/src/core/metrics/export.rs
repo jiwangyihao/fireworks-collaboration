@@ -409,7 +409,10 @@ fn parse_quantile(token: &str) -> Result<f64, SnapshotQueryError> {
         let parsed: f64 = number
             .parse::<f64>()
             .map_err(|_| SnapshotQueryError::InvalidQuantile(token.to_string()))?;
-        return Ok((parsed / 100.0).clamp(0.0, 1.0));
+        if !(0.0..=100.0).contains(&parsed) {
+            return Err(SnapshotQueryError::InvalidQuantile(token.to_string()));
+        }
+        return Ok(parsed / 100.0);
     }
     let value: f64 = token
         .parse()
