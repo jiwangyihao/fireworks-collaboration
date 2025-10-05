@@ -747,13 +747,42 @@ observability.performance: {
 
 ---
 ## 3. 实现说明（占位）
-### 3.1 P8.1 基础指标与埋点标准化（实现说明占位）
-TODO:
-- [ ] 建立 `core/metrics/registry.rs`（注册/查找）
-- [ ] 宏 `metric_counter!` / `metric_histogram!` 生成静态描述
-- [ ] 事件适配器 `core/metrics/event_bridge.rs`
-- [ ] 单元测试：重复注册、标签排序、线程并发更新
-- [ ] 基线基准测试（criterion）输出 CPU 额外占用
+### 3.1 P8.1 基础指标与埋点标准化（实现说明）
+
+#### 实施拆解
+- **注册表与描述符落地**
+   1. 在 `core/metrics/registry.rs` 提供线程安全的 `MetricRegistry`，包含 Counter/Histogram 存储、标签规范化与重复注册检测（`MetricError::AlreadyRegistered`、`MissingLabel` 等）。
+   2. 在 `core/metrics/descriptors.rs` 定义全部基础指标的 `MetricDescriptor` 常量，并集中为 Histogram 提供统一桶（`LATENCY_MS_BUCKETS`）。
+   3. 通过 `register_basic_metrics` 把描述符批量写入注册表，对已注册项容忍（跳过），其余错误向调用方冒泡。
+
+- **事件到指标桥接层**
+   1. 在 `core/metrics/event_bridge.rs` 构建 `EventMetricsBridge`，实现 `EventBus`，负责订阅结构化事件并转化为指标更新。
+   2. 为任务事件维护 `DashMap<TaskId, TaskInfo>`，通过 `completed_recorded/failed_recorded/canceled_recorded` 标记去重多次结尾事件，保证 `git_tasks_total` 不重复计数并记录持续时间。
+   3. 对策略事件引入统一标签脱敏：`sanitize_label_value` 将自由字符串规整为小写下划线，避免指标爆炸；对 IP/TLS 等延迟指标调用 Histogram 观察接口。
+   4. 对缺失数据容错：当事件字段缺省时使用 `unknown` 或安全默认值，确保标签数与描述符定义严格一致。
+
+- **初始化入口与配置控制**
+   1. 在 `core/metrics/mod.rs` 提供 `init_basic_observability`，基于 `ObservabilityConfig` 的 `enabled/basic_enabled` 控制是否装载指标模块。
+   2. 利用 `OnceCell` 缓存全局注册表、初始化哨兵以及 `EventMetricsBridge`，保证多次调用安全幂等。
+   3. 通过 `ensure_fanout_bus()` 把桥接层注册到结构化事件总线，实现与既有内存事件管道解耦。
+
+- **工程化保障**
+   1. 在 `src-tauri/tests/metrics/mod.rs` 编写端到端测试，验证成功/失败/取消去重、代理与 IP 池事件、多次重复事件不增量等关键路径。
+   2. 增补针对 `MetricRegistry` 的单元测试：重复注册、缺失/多余标签、Histogram 桶选择、并发增量等。
+   3. 提供基准测试占位（Criterion），后续用于评估 2k/s 事件下的 CPU 增量；基准数据记录在 `COVERAGE.md` 或专用性能文档。
+   4. 通过 `cargo fmt`、`cargo clippy --manifest-path src-tauri/Cargo.toml`、`cargo test --manifest-path src-tauri/Cargo.toml metrics` 组成的最低验证流程，纳入 CI。
+
+#### 可交付物
+- `core/metrics` 目录下的注册表、错误枚举、事件桥接与描述符实现。
+- `init_basic_observability` API 与配置开关文档（`ObservabilityConfig` 字段说明已同步到配置章节）。
+- `metrics_spec.md`（或等效表格）罗列指标名、类型、标签和值域，作为后续阶段扩展的基线。
+- 针对指标行为的单元测试与 `metrics` 模块集成测试。
+
+#### 验收标准（Definition of Done）
+- 所有基础指标在注册时无冲突，事件驱动通路对重复事件具备幂等防护。
+- 结构化事件中任意字段缺失仍可落地指标，且标签值已经过统一脱敏。
+- 配置关闭 `basic_enabled` 时不会注册指标或挂接事件监听；开启后事件数量>0 时可观察指标随之递增。
+- `cargo test --manifest-path src-tauri/Cargo.toml metrics`、`cargo clippy`、`cargo fmt --check` 全部通过；典型负载下 CPU 增量 < 2%（基准结果记录在性能文档）。
 
 ### 3.2 P8.2 指标聚合与存储层（实现说明占位）
 TODO:
