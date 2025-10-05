@@ -784,13 +784,57 @@ observability.performance: {
 - 配置关闭 `basic_enabled` 时不会注册指标或挂接事件监听；开启后事件数量>0 时可观察指标随之递增。
 - `cargo test --manifest-path src-tauri/Cargo.toml metrics`、`cargo clippy`、`cargo fmt --check` 全部通过；典型负载下 CPU 增量 < 2%（基准结果记录在性能文档）。
 
-### 3.2 P8.2 指标聚合与存储层（实现说明占位）
-TODO:
-- [ ] `window.rs` 定义 WindowedCounter/HistogramWindow
-- [ ] `quantile/ckms.rs` 实现 epsilon 配置
-- [ ] 旋转调度 `rotation_task`（tokio interval）
-- [ ] Lazy 合并缓存（1h/24h）过期字段
-- [ ] 内存估算与自检指标 `metrics_mem_bytes`
+### 3.2 P8.2 指标聚合与存储层（实现说明）
+
+P8.2 在 P8.1 基础上补齐“可查询窗口统计 + 分位 + 原始样本”能力。本阶段的落地已拆分为三方面：聚合器内核、注册表集成、验证与运行期保障。
+
+#### 实施拆解
+
+- **聚合器内核（`core/metrics/aggregate.rs`）**
+   1. 定义 `WindowAggregator`，内部维护 `DashMap<AggregateKey, CounterEntry>` 与 `DashMap<AggregateKey, HistogramEntry>`，并由 `TimeProvider`（`SystemTimeProvider`/`ManualTimeProvider`）控制窗口切片。`AggregateKey` 通过预哈希标签向量保障高并发下的查找效率。
+   2. `CounterEntry`/`HistogramEntry` 分别实现分钟、小时双层环形缓冲（`MINUTE_SLOTS=60`、`HOUR_SLOTS=24`）。每条记录将分钟槽与小时槽同步累加，滚动时依赖时间戳比对避免重复累加。
+   3. Histogram 采用 HDR（`hdrhistogram` crate）作为近似分位方案，并将桶计数、sum/count 与 HDR 累计联动，保证 50/90 等分位的近似值。
+   4. 引入 `HistogramWindowConfig` / `HistogramWindowOptions`，为延迟类指标提供“近窗口原始样本”可选缓存，支持运行期动态调整窗口时长与最大样本数。缓存使用 `VecDeque<RawSamplePoint>` 按分钟裁剪，容量超限或功能关闭时即时丢弃旧样本。
+   5. 输出结构 `CounterWindowSnapshot`、`HistogramWindowSnapshot`、`WindowSeriesDescriptor` 封装 descriptor、标签、窗口点序列、分位和原始样本，方便后续导出接口和 UI 直接消费。
+
+- **注册表与聚合器集成（`core/metrics/registry.rs` / `core/metrics/mod.rs`）**
+   1. 在 `MetricRegistry` 中增加 `attach_aggregator` 与 `enable_*_window` 能力。注册表在每次指标更新时将规范化后的 `LabelKey` 传递给聚合器，实现“事件更新 → 即时聚合”链路。
+   2. `counter_windows: DashSet<&'static str>`、`histogram_windows: DashMap<&'static str, HistogramWindowConfig>` 用于记忆已经启用窗口的指标，即便聚合器重新初始化也能自动恢复配置。
+   3. `init_aggregate_observability()` 负责创建单例聚合器并挂载到注册表，同时向基础指标注册流程（`register_basic_metrics`）中注入 `enable_counter_window` / `enable_histogram_window` 调用，确保 P8.1 指标在聚合层默认生效。
+   4. 新增只读入口 `list_counter_series` / `list_histogram_series`，用于发现当前所有标签系列及最近更新时间，支撑后续导出/前端筛选功能。
+
+- **窗口切片与边界处理**
+   1. 聚合器通过 `provider.now()` 计算启动以来的分钟/小时序号，无需额外后台任务；使用手动时间源时可在测试中 deterministically 驱动窗口滚动。
+   2. 为避免跨窗口查询在历史不足时出现重复累积，`snapshot_*` 会在读取槽前判定 `offset <= end_minute/hour` 并校验时间戳。这保证窗口不足一整段时以 0 填充，不再重复记入当前分钟。
+
+#### 测试与验证
+
+- **单元/集成测试（`src-tauri/tests/metrics/mod.rs`）**
+   1. `metrics_counter_window_tracks_recent_values`、`metrics_counter_window_captures_last_day`：验证分钟/小时环形数组滚动正确且总和与窗口点一致。
+   2. `metrics_histogram_window_combines_samples`：覆盖多分钟采样、分位计算、桶总和一致性。
+   3. `metrics_histogram_raw_samples_respect_window` 与 `metrics_histogram_raw_sample_capacity_updates`：确保原始样本按照窗口/容量裁剪，并在关闭功能后清空缓存。
+   4. `metrics_counter_window_returns_error_when_series_missing`、`metrics_histogram_invalid_quantile_rejected`：验证错误处理（未注册系列 / 非法分位）会返回 `MetricError` 而非 panic。
+   5. 所有窗口相关测试通过 `aggregate_lock()` 进行串行化，杜绝共享 `ManualTimeProvider` 状态导致的漂移。
+
+- **边界条件**
+   1. 无数据系列：`snapshot_*` 返回 `MetricError::SeriesNotFound`，上层可以据此回退到空图表。
+   2. 原始样本关闭：`HistogramWindowSnapshot.raw_samples` 回落为空数组，同时仍保证 `count == Σpoints.count`。
+   3. 时间倒退：若 `ManualTimeProvider` 被重置，会清空分钟/小时数组的时间戳，使旧槽不再参与统计。
+
+#### 工程化保障
+
+1. `cargo test metrics --manifest-path src-tauri/Cargo.toml` 已纳入回归必跑项，覆盖窗口统计、原始样本、异常分支等路径。
+2. 通过 `cargo fmt` / `cargo clippy --manifest-path src-tauri/Cargo.toml` 保持风格一致并捕获潜在借用/并发问题。
+3. 计划在 P8.6 再引入性能基准，但当前聚合实现已在典型测试（密集插入 + 快照）下验证无死锁。
+4. 文档与代码中明确 `histogram` 默认使用 HDR，如果未来切换 CKMS，可在 `HistogramEntry` 层替换量化器而不影响对外 API。
+
+#### 验收标准（Definition of Done）
+
+- 指标窗口快照在 1m/5m/1h/24h 场景下均返回正确长度与总和（测试覆盖）。
+- Histogram 分位值与 `raw_samples` 始终与窗口时间范围对应，不出现重复或过期样本。
+- `MetricRegistry` 在聚合禁用/未初始化时返回 `MetricError::AggregatorDisabled`，与配置开关行为一致。
+- 聚合层新增 API（`snapshot_*`、`list_*`）具备单元测试与错误分支覆盖；CI 中 `metrics` 目标全部绿色。
+- 文档（本文与 `COVERAGE.md`）记录窗口/分位方案，方便 P8.3 导出和 P8.4 UI 引用。
 
 ### 3.3 P8.3 指标导出与采集接口（实现说明占位）
 TODO:
