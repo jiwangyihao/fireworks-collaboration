@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::super::types::{SharedConfig, TaskRegistryState};
 use crate::core::tasks::{
@@ -18,6 +18,7 @@ use crate::core::tasks::{
 };
 use crate::core::workspace::{
     model::{RepositoryEntry, Workspace, WorkspaceConfig},
+    status::{StatusQuery, WorkspaceStatusResponse, WorkspaceStatusService},
     storage::WorkspaceStorage,
 };
 
@@ -28,6 +29,8 @@ use std::sync::{Arc, Mutex};
 
 /// Shared workspace state (just holds the current workspace).
 pub type SharedWorkspaceManager = Arc<Mutex<Option<Workspace>>>;
+/// Shared workspace status service.
+pub type SharedWorkspaceStatusService = Arc<WorkspaceStatusService>;
 
 /// Workspace information for frontend.
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -290,14 +293,14 @@ pub async fn add_repository(
         "No workspace loaded".to_string()
     })?;
 
-    let repo = RepositoryEntry {
-        id: request.id.clone(),
-        name: request.name.clone(),
-        path: request.path,
-        remote_url: request.remote_url,
-        tags: request.tags.unwrap_or_default(),
-        enabled: request.enabled.unwrap_or(true),
-    };
+    let mut repo = RepositoryEntry::new(
+        request.id.clone(),
+        request.name.clone(),
+        PathBuf::from(&request.path),
+        request.remote_url.clone(),
+    );
+    repo.tags = request.tags.unwrap_or_default();
+    repo.enabled = request.enabled.unwrap_or(true);
 
     workspace_manager.add_repository(repo).map_err(|e| {
         error!("Failed to add repository {}: {}", request.name, e);
@@ -406,6 +409,74 @@ pub async fn list_enabled_repositories(
         .collect();
 
     Ok(repos)
+}
+
+/// Query cached workspace repository statuses.
+#[tauri::command]
+pub async fn get_workspace_statuses(
+    request: Option<StatusQuery>,
+    manager: State<'_, SharedWorkspaceManager>,
+    status_service: State<'_, SharedWorkspaceStatusService>,
+) -> Result<WorkspaceStatusResponse, String> {
+    let query = request.unwrap_or_default();
+
+    let workspace_snapshot = {
+        let guard = manager.lock().map_err(|e| {
+            error!("Failed to lock workspace manager: {}", e);
+            format!("Workspace manager lock error: {}", e)
+        })?;
+
+        let workspace = guard.as_ref().ok_or_else(|| {
+            warn!("No workspace loaded");
+            "No workspace loaded".to_string()
+        })?;
+
+        workspace.clone()
+    };
+
+    status_service
+        .query_statuses(&workspace_snapshot, query)
+        .await
+        .map_err(|e| {
+            error!("Failed to collect workspace statuses: {}", e);
+            e.to_string()
+        })
+}
+
+/// Clear the workspace status cache.
+#[tauri::command]
+pub async fn clear_workspace_status_cache(
+    status_service: State<'_, SharedWorkspaceStatusService>,
+) -> Result<(), String> {
+    status_service.clear_cache();
+    debug!(
+        target = "workspace::status",
+        "Workspace status cache cleared"
+    );
+    Ok(())
+}
+
+/// Invalidate cached status for a specific repository.
+#[tauri::command]
+pub async fn invalidate_workspace_status_entry(
+    repo_id: String,
+    status_service: State<'_, SharedWorkspaceStatusService>,
+) -> Result<bool, String> {
+    let removed = status_service.invalidate_repo(&repo_id);
+    if removed {
+        debug!(
+            target = "workspace::status",
+            repo_id = %repo_id,
+            "Workspace status cache entry invalidated"
+        );
+    } else {
+        debug!(
+            target = "workspace::status",
+            repo_id = %repo_id,
+            "Workspace status cache entry not present"
+        );
+    }
+    Ok(removed)
 }
 
 /// Start a batch clone task for workspace repositories.

@@ -14,6 +14,7 @@ use crate::{
         credential::{audit::AuditLogger, config::CredentialConfig},
         ip_pool,
         tasks::TaskRegistry,
+        workspace::WorkspaceStatusService,
     },
     logging,
 };
@@ -22,7 +23,8 @@ use super::{
     commands::credential::initialize_credential_store,
     types::{
         ConfigBaseDir, OAuthState, SharedAuditLogger, SharedConfig, SharedCredentialFactory,
-        SharedIpPool, SharedSubmoduleManager, SharedWorkspaceManager, TaskRegistryState,
+        SharedIpPool, SharedSubmoduleManager, SharedWorkspaceManager, SharedWorkspaceStatusService,
+        TaskRegistryState,
     },
 };
 
@@ -100,6 +102,9 @@ pub fn run() {
             super::commands::get_repository,
             super::commands::list_repositories,
             super::commands::list_enabled_repositories,
+            super::commands::get_workspace_statuses,
+            super::commands::clear_workspace_status_cache,
+            super::commands::invalidate_workspace_status_entry,
             super::commands::update_repository_tags,
             super::commands::toggle_repository_enabled,
             super::commands::get_workspace_config,
@@ -241,6 +246,11 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
         target = "workspace",
         "Workspace manager initialized (no workspace loaded)"
     );
+
+    // Initialize workspace status service with current configuration
+    let workspace_status_service = WorkspaceStatusService::new(&cfg.workspace);
+    app.manage(Arc::new(workspace_status_service) as SharedWorkspaceStatusService);
+    tracing::info!(target = "workspace", "Workspace status service initialized");
 
     // Initialize submodule manager with default config
     let submodule_config = cfg.submodule.clone().unwrap_or_default();

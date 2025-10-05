@@ -73,4 +73,5 @@ pub type SharedProxyManager = Arc<Mutex<ProxyManager>>;
 // Re-export credential-related types from commands module
 pub use super::commands::{
     SharedAuditLogger, SharedCredentialFactory, SharedSubmoduleManager, SharedWorkspaceManager,
+    SharedWorkspaceStatusService,
 };

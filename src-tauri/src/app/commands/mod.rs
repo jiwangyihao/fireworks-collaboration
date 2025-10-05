@@ -35,9 +35,11 @@ pub use submodule::{
 };
 pub use tasks::{task_cancel, task_list, task_snapshot, task_start_sleep};
 pub use workspace::{
-    add_repository, backup_workspace, close_workspace, create_workspace, get_repository,
-    get_workspace, get_workspace_config, list_enabled_repositories, list_repositories,
+    add_repository, backup_workspace, clear_workspace_status_cache, close_workspace,
+    create_workspace, get_repository, get_workspace, get_workspace_config, get_workspace_statuses,
+    invalidate_workspace_status_entry, list_enabled_repositories, list_repositories,
     load_workspace, remove_repository, restore_workspace, save_workspace,
     toggle_repository_enabled, update_repository_tags, validate_workspace_file,
     workspace_batch_clone, workspace_batch_fetch, workspace_batch_push, SharedWorkspaceManager,
+    SharedWorkspaceStatusService,
 };

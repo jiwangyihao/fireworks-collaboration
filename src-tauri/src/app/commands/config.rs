@@ -17,7 +17,9 @@ use crate::core::{
     ip_pool::{self, config as ip_pool_cfg},
 };
 
-use super::super::types::{ConfigBaseDir, SharedConfig, SharedIpPool};
+use super::super::types::{
+    ConfigBaseDir, SharedConfig, SharedIpPool, SharedWorkspaceStatusService,
+};
 
 /// Get the current application configuration.
 #[tauri::command]
@@ -36,12 +38,16 @@ pub async fn set_config(
     cfg: State<'_, SharedConfig>,
     base: State<'_, ConfigBaseDir>,
     pool: State<'_, SharedIpPool>,
+    status_service: State<'_, SharedWorkspaceStatusService>,
 ) -> Result<(), String> {
     // Update in-memory configuration
     {
         let mut guard = cfg.lock().map_err(|e| e.to_string())?;
         *guard = newCfg.clone();
     }
+
+    // Update workspace status service configuration
+    status_service.update_from_config(&newCfg.workspace);
 
     // Save configuration to disk
     cfg_loader::save_at(&newCfg, &*base).map_err(|e| e.to_string())?;
