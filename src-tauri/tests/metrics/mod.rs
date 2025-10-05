@@ -1,20 +1,45 @@
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use fireworks_collaboration_lib::core::config::model::ObservabilityConfig;
 use fireworks_collaboration_lib::core::metrics::{
-    global_registry, init_basic_observability, CIRCUIT_BREAKER_RECOVER_TOTAL,
-    CIRCUIT_BREAKER_TRIP_TOTAL, GIT_RETRY_TOTAL, GIT_TASKS_TOTAL, GIT_TASK_DURATION_MS,
-    HTTP_STRATEGY_FALLBACK_TOTAL, IP_POOL_AUTO_DISABLE_TOTAL, IP_POOL_LATENCY_MS,
-    IP_POOL_REFRESH_TOTAL, IP_POOL_SELECTION_TOTAL, PROXY_FALLBACK_TOTAL, TLS_HANDSHAKE_MS,
+    aggregate_enabled, global_registry, init_aggregate_observability_with_provider,
+    init_basic_observability, HistogramWindowConfig, ManualTimeProvider, MetricError, TimeProvider,
+    WindowRange, CIRCUIT_BREAKER_RECOVER_TOTAL, CIRCUIT_BREAKER_TRIP_TOTAL, GIT_RETRY_TOTAL,
+    GIT_TASKS_TOTAL, GIT_TASK_DURATION_MS, HTTP_STRATEGY_FALLBACK_TOTAL,
+    IP_POOL_AUTO_DISABLE_TOTAL, IP_POOL_LATENCY_MS, IP_POOL_REFRESH_TOTAL, IP_POOL_SELECTION_TOTAL,
+    PROXY_FALLBACK_TOTAL, TLS_HANDSHAKE_MS,
 };
 use fireworks_collaboration_lib::events::structured::{
     publish_global, Event, StrategyEvent, TaskEvent,
 };
+use once_cell::sync::Lazy;
 use uuid::Uuid;
 
 fn ensure_metrics_init() {
     let cfg = ObservabilityConfig::default();
     init_basic_observability(&cfg).expect("basic observability should initialize");
+}
+
+fn ensure_aggregate_init() -> Arc<ManualTimeProvider> {
+    static PROVIDER: Lazy<Arc<ManualTimeProvider>> =
+        Lazy::new(|| Arc::new(ManualTimeProvider::new()));
+    if !aggregate_enabled() {
+        let cfg = ObservabilityConfig::default();
+        let provider = PROVIDER.clone();
+        let trait_arc: Arc<dyn TimeProvider> = provider.clone();
+        init_aggregate_observability_with_provider(&cfg, trait_arc)
+            .expect("aggregate observability should initialize");
+    }
+    PROVIDER.clone()
+}
+
+static AGGREGATE_TEST_GUARD: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+fn aggregate_lock() -> MutexGuard<'static, ()> {
+    AGGREGATE_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
 }
 
 #[test]
@@ -488,4 +513,378 @@ fn ip_refresh_failure_records_false_outcome() {
         .unwrap();
 
     assert_eq!(after, before + 1);
+}
+
+#[test]
+fn metrics_counter_window_tracks_recent_values() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+    provider.set(Duration::from_secs(600)); // start from minute 10
+
+    let registry = global_registry();
+    let strategy = format!("cached_{}", Uuid::new_v4().simple());
+    let labels = [("strategy", strategy.as_str()), ("outcome", "success")];
+
+    registry
+        .incr_counter(IP_POOL_SELECTION_TOTAL, &labels, 1)
+        .expect("counter increment");
+
+    provider.advance(Duration::from_secs(60));
+    registry
+        .incr_counter(IP_POOL_SELECTION_TOTAL, &labels, 2)
+        .expect("counter increment");
+
+    provider.advance(Duration::from_secs(60));
+
+    let snapshot = registry
+        .snapshot_counter_window(
+            IP_POOL_SELECTION_TOTAL,
+            &labels,
+            WindowRange::LastFiveMinutes,
+        )
+        .expect("counter window snapshot");
+
+    assert_eq!(snapshot.points.len(), 5);
+    let values: Vec<u64> = snapshot.points.iter().map(|p| p.value).collect();
+    assert_eq!(values[2], 1);
+    assert_eq!(values[3], 2);
+    assert_eq!(values[4], 0);
+    assert_eq!(snapshot.total, values.iter().sum::<u64>());
+}
+
+#[test]
+fn metrics_histogram_window_combines_samples() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+    provider.set(Duration::from_secs(3_600)); // start from minute 60
+
+    let registry = global_registry();
+    let strategy = format!("fake_{}", Uuid::new_v4().simple());
+    let outcome = format!("ok_{}", Uuid::new_v4().simple());
+    let labels = [
+        ("sni_strategy", strategy.as_str()),
+        ("outcome", outcome.as_str()),
+    ];
+
+    registry
+        .observe_histogram(TLS_HANDSHAKE_MS, &labels, 25.0)
+        .expect("record sample");
+    provider.advance(Duration::from_secs(60));
+    registry
+        .observe_histogram(TLS_HANDSHAKE_MS, &labels, 40.0)
+        .expect("record sample");
+    provider.advance(Duration::from_secs(60));
+    registry
+        .observe_histogram(TLS_HANDSHAKE_MS, &labels, 80.0)
+        .expect("record sample");
+
+    let snapshot = registry
+        .snapshot_histogram_window(
+            TLS_HANDSHAKE_MS,
+            &labels,
+            WindowRange::LastFiveMinutes,
+            &[0.5, 0.9],
+        )
+        .expect("histogram window snapshot");
+
+    assert_eq!(snapshot.points.len(), 5);
+    assert_eq!(snapshot.count, 3);
+    assert!((snapshot.sum - 145.0).abs() < f64::EPSILON);
+    let counts: Vec<u64> = snapshot.points.iter().map(|p| p.count).collect();
+    assert_eq!(counts.iter().sum::<u64>(), snapshot.count);
+    assert_eq!(counts.iter().filter(|&&v| v > 0).count(), 3);
+    let recent: Vec<u64> = counts.iter().rev().take(3).copied().collect();
+    assert!(recent.iter().all(|&v| v > 0));
+    let bucket_total: u64 = snapshot.buckets.iter().map(|(_, v)| *v).sum();
+    assert_eq!(bucket_total, snapshot.count);
+
+    let p50 = snapshot
+        .quantiles
+        .iter()
+        .find(|(q, _)| (*q - 0.5).abs() < f64::EPSILON)
+        .map(|(_, v)| *v)
+        .expect("p50 present");
+    assert!(p50 >= 25.0 && p50 <= 80.0);
+    if let Some((_, p90)) = snapshot
+        .quantiles
+        .iter()
+        .find(|(q, _)| (*q - 0.9).abs() < f64::EPSILON)
+    {
+        assert!(*p90 >= 40.0);
+    }
+}
+
+#[test]
+fn metrics_histogram_raw_samples_respect_window() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+
+    let registry = global_registry();
+    registry.enable_histogram_window(
+        TLS_HANDSHAKE_MS,
+        HistogramWindowConfig::enable_raw_samples(Duration::from_secs(300), 4),
+    );
+
+    provider.set(Duration::from_secs(600)); // minute 10
+    let strategy = format!("sampled_{}", Uuid::new_v4().simple());
+    let labels = [("sni_strategy", strategy.as_str()), ("outcome", "ok_raw")];
+
+    registry
+        .observe_histogram(TLS_HANDSHAKE_MS, &labels, 20.0)
+        .expect("record sample");
+    provider.advance(Duration::from_secs(60));
+    registry
+        .observe_histogram(TLS_HANDSHAKE_MS, &labels, 30.0)
+        .expect("record sample");
+    provider.advance(Duration::from_secs(240));
+    registry
+        .observe_histogram(TLS_HANDSHAKE_MS, &labels, 40.0)
+        .expect("record sample");
+    provider.advance(Duration::from_secs(120));
+    registry
+        .observe_histogram(TLS_HANDSHAKE_MS, &labels, 75.0)
+        .expect("record sample");
+
+    let snapshot = registry
+        .snapshot_histogram_window(TLS_HANDSHAKE_MS, &labels, WindowRange::LastFiveMinutes, &[])
+        .expect("histogram window snapshot");
+
+    let raw_values: Vec<f64> = snapshot.raw_samples.iter().map(|s| s.value).collect();
+    let raw_offsets: Vec<u64> = snapshot
+        .raw_samples
+        .iter()
+        .map(|s| s.offset_seconds)
+        .collect();
+    assert_eq!(raw_values, vec![40.0, 75.0]);
+    assert_eq!(raw_offsets.len(), 2);
+    assert_eq!(raw_offsets[1].saturating_sub(raw_offsets[0]), 2 * 60);
+    assert_eq!(snapshot.count, 2);
+    registry.enable_histogram_window(TLS_HANDSHAKE_MS, HistogramWindowConfig::default());
+}
+
+#[test]
+fn metrics_histogram_raw_sample_capacity_updates() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+    provider.set(Duration::from_secs(60 * 20));
+
+    let registry = global_registry();
+    let base_config = HistogramWindowConfig::enable_raw_samples(Duration::from_secs(600), 3);
+    registry.enable_histogram_window(TLS_HANDSHAKE_MS, base_config);
+
+    let strategy = format!("raw_cap_{}", Uuid::new_v4().simple());
+    let outcome = format!("ok_{}", Uuid::new_v4().simple());
+    let labels = [
+        ("sni_strategy", strategy.as_str()),
+        ("outcome", outcome.as_str()),
+    ];
+
+    for sample in [10.0, 20.0, 30.0] {
+        registry
+            .observe_histogram(TLS_HANDSHAKE_MS, &labels, sample)
+            .expect("record sample");
+        provider.advance(Duration::from_secs(60));
+    }
+
+    let snapshot = registry
+        .snapshot_histogram_window(TLS_HANDSHAKE_MS, &labels, WindowRange::LastFiveMinutes, &[])
+        .expect("histogram window snapshot");
+    assert_eq!(snapshot.raw_samples.len(), 3);
+    let initial_values: Vec<f64> = snapshot.raw_samples.iter().map(|s| s.value).collect();
+    assert_eq!(initial_values, vec![10.0, 20.0, 30.0]);
+    assert!(snapshot
+        .raw_samples
+        .windows(2)
+        .all(|pair| pair[1].offset_seconds > pair[0].offset_seconds));
+
+    registry.enable_histogram_window(
+        TLS_HANDSHAKE_MS,
+        HistogramWindowConfig::enable_raw_samples(Duration::from_secs(600), 2),
+    );
+    registry
+        .observe_histogram(TLS_HANDSHAKE_MS, &labels, 40.0)
+        .expect("record sample");
+    provider.advance(Duration::from_secs(60));
+
+    let snapshot = registry
+        .snapshot_histogram_window(TLS_HANDSHAKE_MS, &labels, WindowRange::LastFiveMinutes, &[])
+        .expect("histogram window snapshot");
+    assert_eq!(snapshot.raw_samples.len(), 2);
+    let trimmed: Vec<f64> = snapshot.raw_samples.iter().map(|s| s.value).collect();
+    assert_eq!(trimmed, vec![30.0, 40.0]);
+    assert!(snapshot.raw_samples.windows(2).all(|pair| pair[1]
+        .offset_seconds
+        .saturating_sub(pair[0].offset_seconds)
+        == 60));
+
+    registry.enable_histogram_window(TLS_HANDSHAKE_MS, HistogramWindowConfig::default());
+    provider.advance(Duration::from_secs(60));
+    registry
+        .observe_histogram(TLS_HANDSHAKE_MS, &labels, 50.0)
+        .expect("record sample");
+
+    let snapshot = registry
+        .snapshot_histogram_window(TLS_HANDSHAKE_MS, &labels, WindowRange::LastFiveMinutes, &[])
+        .expect("histogram window snapshot");
+    assert!(snapshot.raw_samples.is_empty());
+    let window_total: u64 = snapshot.points.iter().map(|p| p.count).sum();
+    assert_eq!(snapshot.count, window_total);
+    assert_eq!(snapshot.count, 4);
+}
+
+#[test]
+fn metrics_counter_window_returns_error_when_series_missing() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+
+    let registry = global_registry();
+    let strategy = format!("missing_series_{}", Uuid::new_v4().simple());
+    let labels = [("strategy", strategy.as_str()), ("outcome", "success")];
+
+    let err = registry
+        .snapshot_counter_window(
+            IP_POOL_SELECTION_TOTAL,
+            &labels,
+            WindowRange::LastFiveMinutes,
+        )
+        .expect_err("series should be missing");
+    assert!(
+        matches!(err, MetricError::SeriesNotFound { metric } if metric == "ip_pool_selection_total")
+    );
+}
+
+#[test]
+fn metrics_histogram_invalid_quantile_rejected() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+
+    let registry = global_registry();
+    let strategy = format!("invalid_q_{}", Uuid::new_v4().simple());
+    let outcome = format!("ok_{}", Uuid::new_v4().simple());
+    let labels = [
+        ("sni_strategy", strategy.as_str()),
+        ("outcome", outcome.as_str()),
+    ];
+
+    registry
+        .observe_histogram(TLS_HANDSHAKE_MS, &labels, 42.0)
+        .expect("record sample");
+
+    let err = registry
+        .snapshot_histogram_window(
+            TLS_HANDSHAKE_MS,
+            &labels,
+            WindowRange::LastFiveMinutes,
+            &[1.25],
+        )
+        .expect_err("invalid quantile should be rejected");
+    assert!(matches!(err, MetricError::InvalidQuantile(q) if (q - 1.25).abs() < f64::EPSILON));
+
+    let snapshot = registry
+        .snapshot_histogram_window(
+            TLS_HANDSHAKE_MS,
+            &labels,
+            WindowRange::LastFiveMinutes,
+            &[0.5],
+        )
+        .expect("valid quantile accepted");
+    assert_eq!(snapshot.count, 1);
+}
+
+#[test]
+fn metrics_counter_window_captures_last_day() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+
+    let registry = global_registry();
+    let strategy = format!("day_span_{}", Uuid::new_v4().simple());
+    let labels = [("strategy", strategy.as_str()), ("outcome", "success")];
+
+    registry
+        .incr_counter(IP_POOL_SELECTION_TOTAL, &labels, 5)
+        .expect("initial increment");
+    provider.set(Duration::from_secs(12 * 3_600));
+    registry
+        .incr_counter(IP_POOL_SELECTION_TOTAL, &labels, 7)
+        .expect("mid increment");
+    provider.set(Duration::from_secs(26 * 3_600));
+    registry
+        .incr_counter(IP_POOL_SELECTION_TOTAL, &labels, 11)
+        .expect("recent increment");
+
+    let snapshot = registry
+        .snapshot_counter_window(IP_POOL_SELECTION_TOTAL, &labels, WindowRange::LastDay)
+        .expect("counter window snapshot");
+
+    assert_eq!(snapshot.points.len(), 24);
+    let total: u64 = snapshot.points.iter().map(|p| p.value).sum();
+    assert_eq!(total, 18);
+    assert_eq!(snapshot.points.last().map(|p| p.value), Some(11));
+    assert!(snapshot.points.iter().any(|p| p.value == 7));
+    assert!(!snapshot.points.iter().any(|p| p.value == 5));
+}
+
+#[test]
+fn metrics_series_listing_reports_last_update() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+    provider.set(Duration::from_secs(300));
+
+    let registry = global_registry();
+    let strategy = format!("series_counter_{}", Uuid::new_v4().simple());
+    let labels = [("strategy", strategy.as_str()), ("outcome", "success")];
+
+    registry
+        .incr_counter(IP_POOL_SELECTION_TOTAL, &labels, 3)
+        .expect("counter increment");
+
+    provider.advance(Duration::from_secs(60));
+    let outcome = format!("series_hist_{}", Uuid::new_v4().simple());
+    let hist_labels = [
+        ("sni_strategy", strategy.as_str()),
+        ("outcome", outcome.as_str()),
+    ];
+    registry
+        .observe_histogram(TLS_HANDSHAKE_MS, &hist_labels, 55.0)
+        .expect("record histogram");
+
+    let counter_series = registry
+        .list_counter_series(IP_POOL_SELECTION_TOTAL)
+        .expect("counter series");
+    let counter_desc = counter_series
+        .into_iter()
+        .find(|desc| desc.labels == vec![strategy.clone(), "success".into()])
+        .expect("counter series present");
+    assert!(counter_desc
+        .last_updated_seconds
+        .map(|secs| secs >= 300)
+        .unwrap_or(false));
+
+    let hist_series = registry
+        .list_histogram_series(TLS_HANDSHAKE_MS)
+        .expect("histogram series");
+    let hist_desc = hist_series
+        .into_iter()
+        .find(|desc| desc.labels == vec![strategy.clone(), outcome.clone()])
+        .expect("histogram series present");
+    assert!(hist_desc
+        .last_updated_seconds
+        .map(|secs| secs >= 360)
+        .unwrap_or(false));
 }
