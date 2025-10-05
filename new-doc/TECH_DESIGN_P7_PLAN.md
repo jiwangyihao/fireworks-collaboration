@@ -113,42 +113,6 @@
 | P7.5 | 前端集成与用户体验 | 工作区 UI / 批量操作面板 / 配置导入导出界面 |
 | P7.6 | 稳定性验证与准入 | 集成测试 / 性能基准 / 文档完善 |
 
-### P7.4 跨仓库状态监控与视图 实现说明
-
-**实现时间**: 2025-10-05  
-**实现者**: Fireworks Collaboration Team & GitHub Copilot Assistant  
-**状态**: ✅ 已交付并通过自动化测试
-
-#### 3.1 关键代码路径与文件列表
-
-- `src-tauri/src/core/workspace/status.rs`：实现 `WorkspaceStatusService`，负责仓库状态采集、TTL 缓存、并发控制、过滤/排序、缺失仓库识别与 `WorkspaceStatusSummary` 聚合统计，同时暴露按仓库粒度的 `invalidate_repo` 能力。
-- `src-tauri/src/app/commands/workspace.rs`：暴露 `get_workspace_statuses`、`clear_workspace_status_cache`、`invalidate_workspace_status_entry` 三个 Tauri 命令，并通过 `SharedWorkspaceStatusService` 共享服务实例。
-- `src-tauri/src/app/commands/config.rs`：在 `set_config` 路径中调用 `WorkspaceStatusService::update_from_config`，配置热更新时即时下发新的 TTL、并发与自动刷新参数。
-- `src-tauri/src/app/setup.rs` 与 `src-tauri/src/app/commands/mod.rs`：在应用启动阶段构造状态服务并注册新增命令，确保前端可见。
-- `config.example.json`：补充 `workspace.statusCacheTtlSecs`、`workspace.statusMaxConcurrency`、`workspace.statusAutoRefreshSecs` 等字段示例与调优建议。
-- `src-tauri/tests/workspace/mod.rs`：新增 `test_workspace_status_basic_and_cache`（缓存命中与过滤）、`test_workspace_status_cache_invalidation`（单仓库失效流程）、`test_workspace_status_summary_counts`（聚合统计与缺失仓库处理）三项集成测试。
-
-#### 3.2 交付能力
-
-- 提供带缓存的状态查询：首次采集后按 TTL 复用缓存，并在查询响应中标记 `isCached` 与刷新统计。
-- 聚合统计面向仪表盘：`WorkspaceStatusSummary` 汇总工作树状态、同步状态、错误仓库列表，便于前端快速渲染概览卡片。
-- 灵活的过滤与排序：支持按标签、分支、名称、同步状态与本地变更筛选，并可多字段排序。
-- 缺失仓库检测：自动汇报 `missingRepoIds` 与错误列表，提示配置/磁盘漂移。
-- 配置热更新：支持在不重启应用的情况下调整 TTL、并发与自动刷新间隔。
-- 精细化缓存控制：提供整体清空与按仓库失效两种命令，满足局部刷新与大范围刷新场景。
-
-#### 3.3 验收结果
-
-- ✅ `cargo fmt --manifest-path src-tauri/Cargo.toml`
-- ✅ `cargo test workspace --manifest-path src-tauri/Cargo.toml`
-- 测试覆盖缓存、过滤、缺失仓库、聚合统计及按仓库失效，全量工作区用例保持通过。
-
-#### 3.4 风险与缓解
-
-- 自动刷新事件未落地 → 目前仅在查询返回 `autoRefreshSecs`，需前端定时轮询；后续可接入文件系统监听或后台拉取任务。
-- 摘要粒度仍以计数为主 → 可结合 P7.5 前端阶段扩展为趋势指标（例如变更仓库列表缓存）。
-- 大规模仓库场景需进一步压测 → 现有并发默认值为 4，可通过配置下调；后续在 P7.6 增加基准测试。
-
 ### P7.1 子模块支持与集成
 - **目标**：完整实现 Git Submodule 的核心操作（初始化、更新、同步），并与主仓库任务系统集成，确保子模块操作的进度和错误能够正确上报。
 - **范围**：
@@ -1309,3 +1273,114 @@ git submodule status  # 应显示已初始化的子模块
 4. **批量 Push 指标**：补充 Push 路径的性能测试与基准，确保上线后可预测回滚窗口。
 5. **配置守护**：在后续迭代中扩展状态服务配置守护脚本，定期核验 TTL/并发等运行态配置与模板一致性，避免人工误修改。
 6. **事件归档**：将准入结论、灰度日志、监控截图归档至运维知识库，形成可复用模板。
+
+## 4. 测试策略与质量度量
+
+### 4.1 自动化测试矩阵
+
+| 子阶段 | 单元测试 | 集成测试 | 前端测试 | 性能/稳定性 | 主要命令 |
+|--------|----------|----------|----------|-------------|----------|
+| P7.0 工作区基础 | Y | Y | - | - | `cargo test workspace` |
+| P7.1 子模块 | Y | Y | - | - | `cargo test submodule` |
+| P7.2 批量调度 | Y | Y | - | - | `cargo test workspace_batch` |
+| P7.3 团队模板 | Y | Y | - | - | `cargo test --test config` |
+| P7.4 状态服务 | Y | Y | - | 部分 (缓存命中比) | `cargo test workspace_status_service` |
+| P7.5 前端集成 | - | - | Y (Vitest) | - | `pnpm test --filter workspace` |
+| P7.6 稳定性 | - | Y | - | Y (性能/回归) | `cargo test --test workspace -- workspace_*performance*` |
+
+- “Y” 表示该子阶段已有覆盖；“部分”表示存在自动化支撑但仍需补充更高负载或场景化测试。
+- 统一在 CI 中串行执行 Rust 与前端测试，输出覆盖率与日志归档到 `coverage/` 与 Artifacts。
+
+### 4.2 质量门禁流程
+
+- **Pre-merge**：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test workspace`、`cargo test submodule`、`pnpm test --runInBand`。未通过禁止合并。
+- **Nightly**：触发批量 Clone/Fetch/Push 集成测试与状态服务性能用例，生成基线趋势图，异常时自动通知负责人。
+- **Pre-release**：执行 `P7_6_READINESS_CHECKLIST.md` 全量脚本，收集性能指标与模板导入报告，确认灰度、回滚演练完成。
+- **Post-release 守护**：对照监控面板（任务成功率、状态查询错误率、p95 延迟）持续观察 48 小时，异常触发回溯分析。
+
+> 若需快速复核，可依次执行 `cargo test --manifest-path src-tauri/Cargo.toml` 与 `pnpm -s test`，两项通过视为核心校验完成。
+
+### 4.3 手动与探索性测试脚本
+
+- 工作区 UI：按 `MANUAL_TESTS.md` 中的“Workspace Workflow”脚本验证新增拖拽排序、批量操作、模板导入流程；确保多窗口并发操作无冲突。
+- 子模块异常：模拟无效 URL、深度超限、凭证缺失场景，确认错误提示与日志可定位问题。
+- 批量操作回滚：在高并发和网络波动条件下触发取消与失败，验证父任务摘要、失败列表与重试指引。
+- 团队模板协作：不同成员机器使用同一模板导入，核对备份生成、敏感字段清理与报告一致性。
+- 状态服务大规模仓库：导入 100+ 仓库配置，观察缓存命中率、手动失效与前端刷新行为，记录耗时与瓶颈。
+
+### 4.4 质量度量与反馈通道
+
+- **覆盖率目标**：后端工作区/子模块模块行覆盖率保持 ≥85%，前端 workspace store/视图语句覆盖率 ≥80%，每周在 CI 中输出覆盖趋势。
+- **性能门控**：批量 Clone/Fetch p95 ≤ 单仓库基线 2 倍；状态查询 100 仓库总耗时 ≤ 3 秒；若超出则阻断发布并回归调优。
+- **缺陷回流**：上线后所有与工作区相关缺陷需在看板创建 P7 标签 Issue，包含复现步骤、影响面、回归用例补强计划。
+- **反馈机制**：前端提供“Report Issue” 按钮直达工单模板，后台自动附带最近一次任务日志和状态摘要，缩短排查时间。
+
+### 4.5 待补测试与后续行动
+
+1. 在预生产环境补充真实仓库的批量 Push 性能基准，并将脚本纳入夜间计划。
+2. 引入 Playwright 端到端脚本覆盖工作区 UI 主路径（创建→批量操作→模板导入），作为发布前的最后一道守卫。
+3. 为团队模板增加跨版本迁移测试与兼容性回归，覆盖 `schemaVersion` 变更与字段新增场景。
+4. 扩展 Soak 脚本，模拟连续 24 小时的批量 Clone/Fetch，观测资源泄漏与缓存命中情况。
+5. 针对状态服务的事件推送改造预留集成测试骨架，待事件系统落地后第一时间补齐。
+
+### 4.6 验收项与测试用例映射
+
+| 验收条件 | 验证方式 | 测试/脚本 |
+|-----------|----------|-----------|
+| 1. 工作区创建/持久化 | 集成测试 + 手动 UI 流程 | `cargo test workspace_manager_workflow`、`cargo test workspace_storage_save_and_load`、`P7_6_READINESS_CHECKLIST.md#6-手动验证上线前最后一步` |
+| 2. 子模块 init/update/sync | 子模块集成测试 + 递归克隆测试 | `cargo test submodule`、`cargo test --test workspace -- test_workspace_clone_with_submodule_and_config_roundtrip` |
+| 3. 批量 clone 并发控制与进度聚合 | 批量调度集成测试 + Nightly 性能脚本 | `cargo test workspace_batch_clone_success`、`cargo test --test workspace -- test_workspace_batch_clone_performance_targets` |
+| 4. 团队配置导出/导入准确性 | 配置模板测试 + 手动导入流程 | `cargo test --test config -- test_export_team_template_sanitizes_sensitive_fields`、`cargo test --test config -- test_import_team_template_applies_sections_and_backup`、`P7_6_READINESS_CHECKLIST.md#6-手动验证上线前最后一步` |
+| 5. 工作区状态视图刷新 ≤3s | 状态服务性能测试 + 前端验证 | `cargo test --test workspace -- test_workspace_status_performance_targets`、`pnpm test --filter workspace.store` |
+| 6. 配置热加载 | 配置命令测试 + 手动切换场景 | `cargo test workspace_status_service_applies_runtime_updates`、`P7_6_READINESS_CHECKLIST.md#6-手动验证上线前最后一步` |
+| 7. 单元/集成测试全量通过 | CI Gate | `cargo test`、`pnpm test` |
+| 8. 文档/配置样例更新 | 文档审查 | `P7_IMPLEMENTATION_HANDOFF.md` Checklist |
+
+### 4.7 工具链与数据管理
+
+- **CI 集成**：GitHub Actions 流水线串行执行 Rust 与前端用例，使用 `cargo nextest` 可选加速，覆盖率通过 `grcov` 合并生成。计划在 Nightly 流水线启用 Playwright 容器化执行。
+- **测试数据**：
+   - 统一通过 `tests/common/repo_builder.rs` 创建临时 Git 仓库，保证幂等与跨平台一致性；
+      - 批量操作性能测试使用本地裸仓库缓存目录，执行前建议通过 `scripts/` 目录下的预热脚本（计划新增 `setup_local_repo_cache.ps1`）完成缓存准备；
+   - 团队模板脚本在 `%APPDATA%/Fireworks/backup` 下生成备份，夜间任务定期清理历史文件。
+- **观测与日志**：`tracing` 输出以任务 ID、工作区 ID 作为结构化字段；Nightly 流水线收集 `workspace_batch_operation` 指标并推送到 Prometheus 网关，支持回溯性能趋势。
+- **故障注入**：待 Playwright 场景落地后，引入代理超时、凭证缺失、磁盘只读等可配置故障注入脚本，复现关键失败路径并验证恢复策略。
+- **验证命令**：上线前按顺序执行 `cargo test --manifest-path src-tauri/Cargo.toml` 与 `pnpm -s test`，必要时附加性能基准用例，供 Oncall 或发布前快速验证。
+
+## 5. 持续改进与排期
+
+### 5.1 迭代看板（开发/测试协同）
+
+| backlog 项 | 描述 | 所属子阶段 | 优先级 | 责任人 | 目标时间 | 当前状态 |
+|-------------|------|------------|--------|--------|----------|----------|
+| Playwright Workspace E2E | 构建创建→批量操作→模板导入端到端脚本，覆盖核心 UI 流程 | P7.5 | 高 | Workspace Frontend | 2025-10-12 | 待启动 |
+| 批量 Push 性能基线 | 在预生产环境测量 10/50/100 仓库 Push p95 并接入 Nightly | P7.2/P7.6 | 高 | Workspace Core | 2025-10-10 | 进行中 |
+| 模板跨版本迁移器 | 支持 `schemaVersion` 自动迁移与回退脚本，补充回归用例 | P7.3 | 中 | Config Platform | 2025-10-18 | 待启动 |
+| 状态服务事件推送 | 后端发布增量事件，前端订阅替代轮询，并补齐集成测试 | P7.4/P7.5 | 中 | Workspace Core + Frontend | 2025-10-20 | 规划中 |
+| Soak 脚本扩展 | 追加 24 小时批量 Clone/Fetch Soak 用例与资源监控 | P7.6 | 中 | QA Infra | 2025-10-25 | 待启动 |
+
+> 所有 backlog 项需在每周例会上同步进展，完成后更新测试矩阵与准入清单。
+
+### 5.2 里程碑与发布节奏
+
+- **灰度准备（2025-10-09）**：完成高优先级 backlog，两轮 Nightly 成功，更新 `P7_6_READINESS_CHECKLIST.md`。
+- **首次灰度（2025-10-11）**：按 10% → 30% → 100% 逐步放量，同时执行 `cargo test --test workspace -- workspace_batch_clone_performance_targets` 与 `pnpm test --filter workspace.store` 复核。
+- **正式发布（2025-10-18）**：确认 E2E、性能、模板迁移器全部上线，产出最终准入报告与知识库条目。
+- **稳定观察（2025-10-18 ~ 2025-10-25）**：每日审查监控、日志与缺陷看板，如无 P0/P1 问题则转入常规维护。
+
+### 5.3 沟通节奏与责任矩阵
+
+- 每周二：跨团队同步会（后端/前端/QA/运维），对齐 backlog 推进、缺陷处理与监控异常。
+- 每日 Standup：关注批量任务错误率、状态服务异常。若连续两日异常未收敛，升级至值班 Oncall。
+- 文档维保：所有开发/测试更新需在 24 小时内同步至 `TECH_DESIGN_P7_PLAN.md`、`P7_6_READINESS_CHECKLIST.md` 与相关手册，避免信息漂移。
+
+## 6. 发布结论与后续维护
+
+- **验证状态**：`cargo test`、`cargo test -p fireworks-collaboration-lib`（含 workspace/submodule/batch/perf 套件）与 `pnpm test` 均保持通过；夜间流水线近 3 日无回归。
+- **发布准备**：`P7_6_READINESS_CHECKLIST.md` 条目全部勾选，性能指标满足 p95 ≤ 基线 2×，批量任务成功率 ≥99%，状态服务错误率 <1%。
+- **上线策略**：按照 5.2 的节奏执行灰度与正发布；若出现批量任务堆积或状态刷新超时，参考回滚预案在 10 分钟内回退至单仓库模式。
+- **维护要点**：
+   - 监控 Grafana `workspace/overview` 面板，异常即刻通知 Oncall；
+   - 每周复盘 backlog 执行情况，并在完成后更新第 4 章测试矩阵；
+   - 任何对 Workspace/Batch/Template 模块的代码改动，必须补充相应自动化用例并在发布记录中注明影响面。
+- **后续阶段衔接**：P8 计划聚焦 Git LFS 与工作区事件推送增强；现有测试与监控将作为 P8 基线，避免回归。
