@@ -169,6 +169,9 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
     if let Err(err) = crate::core::metrics::init_basic_observability(&cfg.observability) {
         tracing::warn!(target = "metrics", error = %err, "failed to initialize basic observability metrics");
     }
+    if let Err(err) = crate::core::metrics::init_aggregate_observability(&cfg.observability) {
+        tracing::warn!(target = "metrics", error = %err, "failed to initialize aggregate observability metrics");
+    }
 
     // Manage configuration state
     app.manage(Arc::new(Mutex::new(cfg.clone())) as SharedConfig);

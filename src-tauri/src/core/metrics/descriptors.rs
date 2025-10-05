@@ -1,5 +1,6 @@
+use super::aggregate::HistogramWindowConfig;
 use super::error::MetricError;
-use super::registry::{MetricDescriptor, MetricRegistry};
+use super::registry::{MetricDescriptor, MetricKind, MetricRegistry};
 
 pub const LATENCY_MS_BUCKETS: &[f64] = &[
     1.0, 5.0, 10.0, 25.0, 50.0, 75.0, 100.0, 150.0, 200.0, 300.0, 500.0, 750.0, 1_000.0, 1_500.0,
@@ -110,10 +111,16 @@ pub fn register_basic_metrics(registry: &MetricRegistry) -> Result<(), MetricErr
 
     for desc in METRICS {
         if let Err(err) = registry.register(*desc) {
-            match err {
-                MetricError::AlreadyRegistered(_) => continue,
-                _ => return Err(err),
+            if !matches!(err, MetricError::AlreadyRegistered(_)) {
+                return Err(err);
             }
+        }
+        match desc.kind {
+            MetricKind::Counter => registry.enable_counter_window(*desc),
+            MetricKind::Histogram => {
+                registry.enable_histogram_window(*desc, HistogramWindowConfig::default());
+            }
+            MetricKind::Gauge => {}
         }
     }
     Ok(())

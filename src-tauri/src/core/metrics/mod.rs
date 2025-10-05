@@ -3,11 +3,17 @@ use std::sync::Arc;
 
 use crate::core::config::model::ObservabilityConfig;
 
+mod aggregate;
 mod descriptors;
 mod error;
 mod event_bridge;
 mod registry;
 
+pub use aggregate::{
+    CounterWindowSnapshot, HistogramRawSample, HistogramWindowConfig, HistogramWindowSnapshot,
+    ManualTimeProvider, SystemTimeProvider, TimeProvider, WindowPoint, WindowRange,
+    WindowResolution, WindowSeriesDescriptor,
+};
 pub use descriptors::*;
 pub use error::{MetricError, MetricInitError};
 pub use registry::{HistogramSnapshot, MetricDescriptor, MetricKind, MetricRegistry};
@@ -15,6 +21,8 @@ pub use registry::{HistogramSnapshot, MetricDescriptor, MetricKind, MetricRegist
 static REGISTRY: OnceCell<Arc<MetricRegistry>> = OnceCell::new();
 static BASIC_INIT: OnceCell<()> = OnceCell::new();
 static BRIDGE: OnceCell<Arc<event_bridge::EventMetricsBridge>> = OnceCell::new();
+static AGGREGATE_INIT: OnceCell<()> = OnceCell::new();
+static AGGREGATOR: OnceCell<Arc<aggregate::WindowAggregator>> = OnceCell::new();
 
 pub fn global_registry() -> Arc<MetricRegistry> {
     REGISTRY
@@ -39,4 +47,35 @@ pub fn init_basic_observability(cfg: &ObservabilityConfig) -> Result<(), MetricI
     })?;
 
     Ok(())
+}
+
+pub fn init_aggregate_observability(cfg: &ObservabilityConfig) -> Result<(), MetricInitError> {
+    let provider: Arc<dyn TimeProvider> = Arc::new(SystemTimeProvider::default());
+    init_aggregate_observability_with_provider(cfg, provider)
+}
+
+pub fn init_aggregate_observability_with_provider(
+    cfg: &ObservabilityConfig,
+    provider: Arc<dyn TimeProvider>,
+) -> Result<(), MetricInitError> {
+    if !cfg.enabled || !cfg.basic_enabled || !cfg.aggregate_enabled {
+        return Ok(());
+    }
+
+    init_basic_observability(cfg)?;
+
+    if AGGREGATOR.get().is_some() {
+        return Ok(());
+    }
+
+    let registry = global_registry();
+    let aggregator = Arc::new(aggregate::WindowAggregator::new(provider));
+    registry.attach_aggregator(aggregator.clone());
+    let _ = AGGREGATOR.set(aggregator);
+    let _ = AGGREGATE_INIT.set(());
+    Ok(())
+}
+
+pub fn aggregate_enabled() -> bool {
+    AGGREGATOR.get().is_some()
 }

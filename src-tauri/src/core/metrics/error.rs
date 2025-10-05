@@ -20,6 +20,12 @@ pub enum MetricError {
     },
     #[error("metric '{0}' kind not supported yet")]
     UnsupportedKind(&'static str),
+    #[error("metric aggregator not initialized")]
+    AggregatorDisabled,
+    #[error("metric '{metric}' window series not found")]
+    SeriesNotFound { metric: &'static str },
+    #[error("invalid quantile '{0}' supplied")]
+    InvalidQuantile(f64),
 }
 
 #[derive(Debug, Error)]

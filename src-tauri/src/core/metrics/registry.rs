@@ -1,9 +1,14 @@
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
+use once_cell::sync::OnceCell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use super::aggregate::{
+    CounterWindowSnapshot, HistogramWindowConfig, HistogramWindowSnapshot, WindowAggregator,
+    WindowRange, WindowSeriesDescriptor,
+};
 use super::error::MetricError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,15 +65,61 @@ pub struct HistogramSnapshot {
     pub buckets: Vec<(f64, u64)>,
 }
 
-#[derive(Default)]
 pub struct MetricRegistry {
     counters: DashMap<&'static str, CounterMetric>,
     histograms: DashMap<&'static str, HistogramMetric>,
+    aggregator: OnceCell<Arc<WindowAggregator>>,
+    counter_windows: DashSet<&'static str>,
+    histogram_windows: DashMap<&'static str, HistogramWindowConfig>,
+}
+
+impl Default for MetricRegistry {
+    fn default() -> Self {
+        Self {
+            counters: DashMap::new(),
+            histograms: DashMap::new(),
+            aggregator: OnceCell::new(),
+            counter_windows: DashSet::new(),
+            histogram_windows: DashMap::new(),
+        }
+    }
 }
 
 impl MetricRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn attach_aggregator(&self, aggregator: Arc<WindowAggregator>) {
+        if self.aggregator.set(aggregator.clone()).is_err() {
+            return;
+        }
+        for metric in self.counter_windows.iter() {
+            aggregator.enable_counter_metric(*metric);
+        }
+        for entry in self.histogram_windows.iter() {
+            aggregator.enable_histogram_metric(*entry.key(), entry.value().clone());
+        }
+    }
+
+    pub fn enable_counter_window(&self, desc: MetricDescriptor) {
+        if desc.kind != MetricKind::Counter {
+            return;
+        }
+        self.counter_windows.insert(desc.name);
+        if let Some(aggregator) = self.aggregator.get() {
+            aggregator.enable_counter_metric(desc.name);
+        }
+    }
+
+    pub fn enable_histogram_window(&self, desc: MetricDescriptor, config: HistogramWindowConfig) {
+        if desc.kind != MetricKind::Histogram {
+            return;
+        }
+        self.histogram_windows.insert(desc.name, config.clone());
+        if let Some(aggregator) = self.aggregator.get() {
+            aggregator.enable_histogram_metric(desc.name, config);
+        }
     }
 
     pub fn register(&self, desc: MetricDescriptor) -> Result<(), MetricError> {
@@ -122,12 +173,17 @@ impl MetricRegistry {
             .counters
             .get(desc.name)
             .ok_or(MetricError::NotRegistered(desc.name))?;
+        let aggregator = self.aggregator.get().cloned();
         let key = normalize_labels(desc, labels)?;
+        let agg_key = aggregator.as_ref().map(|_| key.clone());
         let entry = metric
             .series
             .entry(key)
             .or_insert_with(|| Arc::new(AtomicU64::new(0)));
         entry.fetch_add(value, Ordering::Relaxed);
+        if let (Some(agg), Some(label_key)) = (aggregator, agg_key) {
+            agg.record_counter(desc, label_key, value);
+        }
         Ok(())
     }
 
@@ -143,12 +199,17 @@ impl MetricRegistry {
             .ok_or(MetricError::NotRegistered(desc.name))?;
         let boundaries = desc.buckets.ok_or(MetricError::MissingBuckets(desc.name))?;
         let index = locate_bucket(boundaries, value);
+        let aggregator = self.aggregator.get().cloned();
         let key = normalize_labels(desc, labels)?;
+        let agg_key = aggregator.as_ref().map(|_| key.clone());
         let series = metric
             .series
             .entry(key)
             .or_insert_with(|| Arc::new(HistogramSeries::new(metric.bucket_count)));
         series.observe(index, value);
+        if let (Some(agg), Some(label_key)) = (aggregator, agg_key) {
+            agg.record_histogram(desc, label_key, value);
+        }
         Ok(())
     }
 
@@ -177,6 +238,68 @@ impl MetricRegistry {
             .series
             .get(&key)
             .map(|series| series.snapshot(boundaries))
+    }
+
+    pub fn snapshot_counter_window(
+        &self,
+        desc: MetricDescriptor,
+        labels: &[(&'static str, &str)],
+        range: WindowRange,
+    ) -> Result<CounterWindowSnapshot, MetricError> {
+        let aggregator = self
+            .aggregator
+            .get()
+            .ok_or(MetricError::AggregatorDisabled)?;
+        let key = normalize_labels(desc, labels)?;
+        aggregator
+            .snapshot_counter(desc, key, range)
+            .ok_or(MetricError::SeriesNotFound { metric: desc.name })
+    }
+
+    pub fn snapshot_histogram_window(
+        &self,
+        desc: MetricDescriptor,
+        labels: &[(&'static str, &str)],
+        range: WindowRange,
+        quantiles: &[f64],
+    ) -> Result<HistogramWindowSnapshot, MetricError> {
+        let aggregator = self
+            .aggregator
+            .get()
+            .ok_or(MetricError::AggregatorDisabled)?;
+        if let Some(bad) = quantiles
+            .iter()
+            .copied()
+            .find(|q| !(*q >= 0.0 && *q <= 1.0))
+        {
+            return Err(MetricError::InvalidQuantile(bad));
+        }
+        let key = normalize_labels(desc, labels)?;
+        aggregator
+            .snapshot_histogram(desc, key, range, quantiles)
+            .ok_or(MetricError::SeriesNotFound { metric: desc.name })
+    }
+
+    pub fn list_counter_series(
+        &self,
+        desc: MetricDescriptor,
+    ) -> Result<Vec<WindowSeriesDescriptor>, MetricError> {
+        let aggregator = self
+            .aggregator
+            .get()
+            .ok_or(MetricError::AggregatorDisabled)?;
+        Ok(aggregator.list_counter_series(desc.name))
+    }
+
+    pub fn list_histogram_series(
+        &self,
+        desc: MetricDescriptor,
+    ) -> Result<Vec<WindowSeriesDescriptor>, MetricError> {
+        let aggregator = self
+            .aggregator
+            .get()
+            .ok_or(MetricError::AggregatorDisabled)?;
+        Ok(aggregator.list_histogram_series(desc.name))
     }
 }
 
@@ -239,7 +362,7 @@ impl HistogramSeries {
 }
 
 #[derive(Clone, Debug, Eq)]
-struct LabelKey {
+pub(super) struct LabelKey {
     values: Vec<String>,
     hash: u64,
 }
@@ -263,9 +386,13 @@ impl LabelKey {
         let hash = hasher.finish();
         Self { values, hash }
     }
+
+    pub(super) fn values(&self) -> &[String] {
+        &self.values
+    }
 }
 
-fn normalize_labels(
+pub(super) fn normalize_labels(
     desc: MetricDescriptor,
     labels: &[(&'static str, &str)],
 ) -> Result<LabelKey, MetricError> {
@@ -313,7 +440,7 @@ fn normalize_labels(
     Ok(LabelKey::new(ordered))
 }
 
-fn locate_bucket(boundaries: &[f64], value: f64) -> usize {
+pub(super) fn locate_bucket(boundaries: &[f64], value: f64) -> usize {
     for (idx, boundary) in boundaries.iter().enumerate() {
         if value <= *boundary {
             return idx;
