@@ -17,6 +17,7 @@ fn __init_env() {
 }
 
 use common::{repo_factory::RepoBuilder, task_wait::wait_until_task_done};
+use fireworks_collaboration_lib::core::submodule::{SubmoduleConfig, SubmoduleManager};
 use fireworks_collaboration_lib::core::tasks::{
     model::{TaskKind, TaskState, WorkspaceBatchOperation},
     registry::TaskRegistry,
@@ -32,7 +33,9 @@ use fireworks_collaboration_lib::core::workspace::{
 use git2::{Repository as GitRepository, Signature};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
+use std::time::Instant;
 use tempfile::TempDir;
 
 // ============================================================================
@@ -1345,4 +1348,382 @@ async fn test_workspace_batch_push_missing_remote() {
     wait_until_task_done(registry.as_ref(), child_id).await;
     let child_state = registry.snapshot(&child_id).unwrap();
     assert_eq!(child_state.state, TaskState::Failed);
+}
+
+// ============================================================================
+// P7.6 稳定性验证测试
+// ============================================================================
+
+#[tokio::test]
+async fn test_workspace_clone_with_submodule_and_config_roundtrip() {
+    let sandbox = TempDir::new().unwrap();
+    let workspace_file = sandbox.path().join("workspace.json");
+    let workspace_root = sandbox.path().join("workspace-root");
+    fs::create_dir_all(&workspace_root).expect("create workspace root");
+
+    let upstream_root = sandbox.path().join("upstream");
+    fs::create_dir_all(&upstream_root).expect("create upstream root");
+    let upstream_remote = create_remote_with_submodule(&upstream_root);
+
+    let mut cfg = WorkspaceConfig::default();
+    cfg.enabled = true;
+    let mut manager = WorkspaceManager::new(cfg.clone(), workspace_file.clone());
+    manager
+        .create_workspace("p7.6-readiness".into(), workspace_root.clone())
+        .expect("create workspace");
+
+    let mut entry = RepositoryEntry::new(
+        "primary".into(),
+        "Primary Repo".into(),
+        PathBuf::from("primary"),
+        upstream_remote.to_string_lossy().to_string(),
+    );
+    entry.has_submodules = true;
+    entry.tags = vec!["p7.6".into()];
+    manager.add_repository(entry.clone()).expect("add repo");
+    manager.save_workspace().expect("persist workspace");
+
+    let storage = WorkspaceStorage::new(workspace_file.clone());
+    storage.validate().expect("validate workspace");
+    let backup_path = storage.backup().expect("backup workspace");
+    storage
+        .restore_from_backup(&backup_path)
+        .expect("restore from backup");
+    storage.validate().expect("validate after restore");
+
+    manager.close_workspace();
+    let mut manager = WorkspaceManager::new(cfg.clone(), workspace_file.clone());
+    manager.load_workspace().expect("reload workspace");
+    let workspace_snapshot = manager.current_workspace().unwrap().clone();
+    assert_eq!(
+        workspace_snapshot.repositories.len(),
+        1,
+        "reload should restore repository list"
+    );
+    let reloaded_repo = workspace_snapshot.repositories[0].clone();
+    assert_eq!(
+        reloaded_repo.tags, entry.tags,
+        "repository tags should persist after roundtrip"
+    );
+    assert_eq!(
+        reloaded_repo.path, entry.path,
+        "repository path should persist after roundtrip"
+    );
+    entry = reloaded_repo;
+
+    let registry = Arc::new(TaskRegistry::new());
+    let (parent_id, parent_token) = registry.create(TaskKind::WorkspaceBatch {
+        operation: WorkspaceBatchOperation::Clone,
+        total: 1,
+    });
+
+    let dest = workspace_root.join("primary");
+    let clone_spec = WorkspaceBatchChildSpec {
+        repo_id: "primary".into(),
+        repo_name: "Primary Repo".into(),
+        operation: WorkspaceBatchChildOperation::Clone(CloneOptions {
+            repo_url: entry.remote_url.clone(),
+            dest: dest.to_string_lossy().to_string(),
+            depth_u32: None,
+            depth_value: None,
+            filter: None,
+            strategy_override: None,
+            recurse_submodules: true,
+        }),
+    };
+
+    let handle = registry.clone().spawn_workspace_batch_task(
+        None,
+        parent_id,
+        parent_token.clone(),
+        WorkspaceBatchOperation::Clone,
+        vec![clone_spec],
+        4,
+    );
+    handle.await.unwrap();
+    wait_until_task_done(registry.as_ref(), parent_id).await;
+
+    let parent_snapshot = registry.snapshot(&parent_id).unwrap();
+    assert_eq!(parent_snapshot.state, TaskState::Completed);
+    assert!(dest.join(".git").exists(), "expected cloned repository");
+    assert!(
+        dest.join(".gitmodules").exists(),
+        "expected .gitmodules in cloned repository"
+    );
+    assert!(
+        dest.join("modules/child/.git").exists(),
+        "expected submodule git directory to be populated"
+    );
+
+    let submodule_manager = SubmoduleManager::new(SubmoduleConfig::default());
+    let submodules = submodule_manager
+        .list_submodules(&dest)
+        .expect("list submodules");
+    assert_eq!(submodules.len(), 1, "expected cloned submodule");
+    assert!(submodules[0].cloned, "submodule should be cloned");
+
+    let fetch_registry = Arc::new(TaskRegistry::new());
+    let (fetch_parent, fetch_token) = fetch_registry.create(TaskKind::WorkspaceBatch {
+        operation: WorkspaceBatchOperation::Fetch,
+        total: 1,
+    });
+    let fetch_spec = WorkspaceBatchChildSpec {
+        repo_id: "primary".into(),
+        repo_name: "Primary Repo".into(),
+        operation: WorkspaceBatchChildOperation::Fetch(FetchOptions {
+            repo_url: entry.remote_url.clone(),
+            dest: dest.to_string_lossy().to_string(),
+            preset: None,
+            depth_u32: None,
+            depth_value: None,
+            filter: None,
+            strategy_override: None,
+        }),
+    };
+    let fetch_handle = fetch_registry.clone().spawn_workspace_batch_task(
+        None,
+        fetch_parent,
+        fetch_token.clone(),
+        WorkspaceBatchOperation::Fetch,
+        vec![fetch_spec],
+        1,
+    );
+    fetch_handle.await.unwrap();
+    wait_until_task_done(fetch_registry.as_ref(), fetch_parent).await;
+    let fetch_snapshot = fetch_registry.snapshot(&fetch_parent).unwrap();
+    assert_eq!(fetch_snapshot.state, TaskState::Completed);
+
+    let mut status_cfg = WorkspaceConfig::default();
+    status_cfg.enabled = true;
+    status_cfg.status_max_concurrency = 4;
+    let status_service = WorkspaceStatusService::new(&status_cfg);
+    let status_response = status_service
+        .query_statuses(&workspace_snapshot, StatusQuery::default())
+        .await
+        .expect("query workspace status");
+    assert_eq!(status_response.total, 1);
+    assert_eq!(status_response.summary.error_count, 0);
+    assert!(
+        status_response.statuses[0]
+            .tags
+            .contains(&"p7.6".to_string()),
+        "expected readiness tag"
+    );
+    assert!(
+        !status_response.statuses[0].is_cached,
+        "initial status query should be live"
+    );
+    assert_eq!(status_response.summary.sync_states.clean, 1);
+
+    let cached_status = status_service
+        .query_statuses(&workspace_snapshot, StatusQuery::default())
+        .await
+        .expect("query cached workspace status");
+    assert_eq!(cached_status.cached, 1, "subsequent query should hit cache");
+    assert!(
+        cached_status.statuses[0].is_cached,
+        "status entry should be cached on repeat query"
+    );
+}
+
+#[tokio::test]
+async fn test_workspace_batch_clone_performance_targets() {
+    let baseline = measure_clone_batch(1, 1).await;
+    eprintln!("workspace_batch_clone: count=1 per_repo={baseline:.2}ms");
+    for &count in &[10usize, 50, 100] {
+        let per_repo = measure_clone_batch(count, count.min(20)).await;
+        eprintln!(
+            "workspace_batch_clone: count={count} per_repo={per_repo:.2}ms baseline={baseline:.2}ms"
+        );
+        assert!(
+            per_repo <= baseline * 2.0,
+            "per-repo latency {per_repo:.2}ms exceeded baseline {baseline:.2}ms"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_workspace_status_performance_targets() {
+    let baseline = measure_status_query(1, 1).await;
+    eprintln!("workspace_status: count=1 per_repo={baseline:.2}ms total={baseline:.2}ms");
+    for &(count, concurrency) in &[(10usize, 4usize), (50, 10), (100, 16)] {
+        let per_repo = measure_status_query(count, concurrency).await;
+        let total = per_repo * count as f64;
+        eprintln!(
+            "workspace_status: count={count} concurrency={concurrency} per_repo={per_repo:.2}ms total={total:.2}ms baseline={baseline:.2}ms"
+        );
+        assert!(
+            per_repo <= baseline * 2.0 + 10.0,
+            "status per-repo latency {per_repo:.2}ms exceeded threshold (baseline {baseline:.2}ms)"
+        );
+        assert!(
+            total <= 3_000.0,
+            "status query total latency {total:.2}ms exceeded 3000ms target"
+        );
+    }
+}
+
+async fn measure_clone_batch(total: usize, concurrency: usize) -> f64 {
+    let origin = RepoBuilder::new()
+        .with_base_commit("bench.txt", "benchmark", "init bench")
+        .build();
+    let bare_dir = tempfile::tempdir().expect("create bare remote dir");
+    let bare_path = bare_dir.path().join("remote.git");
+    GitRepository::init_bare(&bare_path).expect("init bare remote");
+    let origin_repo = GitRepository::open(&origin.path).expect("open origin repo");
+    let bare_url = bare_path.to_string_lossy().to_string();
+    origin_repo
+        .remote("bench", bare_url.as_str())
+        .expect("add bench remote")
+        .push(&["refs/heads/master:refs/heads/master"], None)
+        .expect("seed bare remote");
+
+    let workspace_root = TempDir::new().expect("create workspace root");
+    let registry = Arc::new(TaskRegistry::new());
+    let (parent_id, parent_token) = registry.create(TaskKind::WorkspaceBatch {
+        operation: WorkspaceBatchOperation::Clone,
+        total: total as u32,
+    });
+
+    let specs: Vec<_> = (0..total)
+        .map(|idx| {
+            let dest = workspace_root.path().join(format!("bench-repo-{idx}"));
+            WorkspaceBatchChildSpec {
+                repo_id: format!("bench-{idx}"),
+                repo_name: format!("Benchmark Repo {idx}"),
+                operation: WorkspaceBatchChildOperation::Clone(CloneOptions {
+                    repo_url: bare_url.clone(),
+                    dest: dest.to_string_lossy().to_string(),
+                    depth_u32: None,
+                    depth_value: None,
+                    filter: None,
+                    strategy_override: None,
+                    recurse_submodules: false,
+                }),
+            }
+        })
+        .collect();
+
+    let started = Instant::now();
+    let handle = registry.clone().spawn_workspace_batch_task(
+        None,
+        parent_id,
+        parent_token,
+        WorkspaceBatchOperation::Clone,
+        specs,
+        concurrency.max(1),
+    );
+    handle.await.unwrap();
+    wait_until_task_done(registry.as_ref(), parent_id).await;
+
+    let parent_state = registry.snapshot(&parent_id).unwrap();
+    assert_eq!(parent_state.state, TaskState::Completed);
+
+    let elapsed = started.elapsed();
+    (elapsed.as_secs_f64() * 1_000.0) / total.max(1) as f64
+}
+
+async fn measure_status_query(total: usize, concurrency: usize) -> f64 {
+    let workspace_root = TempDir::new().expect("create status workspace root");
+    let mut config = WorkspaceConfig::default();
+    config.enabled = true;
+    config.status_cache_ttl_secs = 1;
+    config.status_max_concurrency = concurrency.max(1);
+    config.status_auto_refresh_secs = None;
+
+    let status_service = WorkspaceStatusService::new(&config);
+    let mut workspace = Workspace::new(
+        format!("status-bench-{total}"),
+        workspace_root.path().to_path_buf(),
+    );
+
+    for idx in 0..total {
+        let repo_dir = workspace_root.path().join(format!("status-repo-{idx}"));
+        GitRepository::init(&repo_dir).expect("init status repo");
+        let file_name = format!("file-{idx}.txt");
+        let commit_message = format!("feat: init status repo {idx}");
+        create_commit(&repo_dir, &file_name, "workspace bench", &commit_message);
+        if idx % 3 == 0 {
+            fs::write(repo_dir.join("untracked.txt"), "pending changes")
+                .expect("write untracked file");
+        }
+
+        let mut entry = RepositoryEntry::new(
+            format!("status-{idx}"),
+            format!("Status Repo {idx}"),
+            PathBuf::from(format!("status-repo-{idx}")),
+            format!("https://example.com/status-{idx}.git"),
+        );
+        entry.enabled = true;
+        if idx % 2 == 0 {
+            entry.tags = vec!["bench".into()];
+        }
+        workspace.add_repository(entry).expect("add status repo");
+    }
+
+    let started = Instant::now();
+    let response = status_service
+        .query_statuses(&workspace, StatusQuery::default())
+        .await
+        .expect("collect status metrics");
+    assert_eq!(response.total, total);
+    let elapsed = started.elapsed();
+    (elapsed.as_secs_f64() * 1_000.0) / total.max(1) as f64
+}
+
+fn create_remote_with_submodule(base: &Path) -> PathBuf {
+    let submodule_path = base.join("submodule-src");
+    fs::create_dir_all(&submodule_path).expect("create submodule dir");
+    run_git(Some(&submodule_path), &["init"]);
+    run_git(
+        Some(&submodule_path),
+        &["config", "user.email", "ci@example.com"],
+    );
+    run_git(Some(&submodule_path), &["config", "user.name", "CI Tester"]);
+    fs::write(submodule_path.join("README.md"), "submodule\n").expect("write submodule file");
+    run_git(Some(&submodule_path), &["add", "README.md"]);
+    run_git(Some(&submodule_path), &["commit", "-m", "init submodule"]);
+
+    let parent_path = base.join("workspace-src");
+    fs::create_dir_all(&parent_path).expect("create parent dir");
+    run_git(Some(&parent_path), &["init"]);
+    run_git(
+        Some(&parent_path),
+        &["config", "user.email", "ci@example.com"],
+    );
+    run_git(Some(&parent_path), &["config", "user.name", "CI Tester"]);
+    run_git(
+        Some(&parent_path),
+        &["config", "protocol.file.allow", "always"],
+    );
+    fs::write(parent_path.join("README.md"), "workspace\n").expect("write workspace file");
+    run_git(Some(&parent_path), &["add", "README.md"]);
+    run_git(Some(&parent_path), &["commit", "-m", "init workspace"]);
+
+    let submodule_url = submodule_path.to_string_lossy().to_string();
+    run_git(
+        Some(&parent_path),
+        &["submodule", "add", submodule_url.as_str(), "modules/child"],
+    );
+    run_git(Some(&parent_path), &["commit", "-am", "add submodule"]);
+
+    let bare_path = base.join("workspace-src.git");
+    let parent_url = parent_path.to_string_lossy().to_string();
+    let bare_url = bare_path.to_string_lossy().to_string();
+    run_git(
+        None,
+        &["clone", "--bare", parent_url.as_str(), bare_url.as_str()],
+    );
+    bare_path
+}
+
+fn run_git(dir: Option<&Path>, args: &[&str]) {
+    let mut cmd = Command::new("git");
+    if let Some(path) = dir {
+        cmd.current_dir(path);
+    }
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.args(args);
+    let status = cmd.status().expect("run git command");
+    assert!(status.success(), "git command failed: {:?} {:?}", dir, args);
 }
