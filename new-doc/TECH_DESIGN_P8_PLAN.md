@@ -836,14 +836,47 @@ P8.2 在 P8.1 基础上补齐“可查询窗口统计 + 分位 + 原始样本”
 - 聚合层新增 API（`snapshot_*`、`list_*`）具备单元测试与错误分支覆盖；CI 中 `metrics` 目标全部绿色。
 - 文档（本文与 `COVERAGE.md`）记录窗口/分位方案，方便 P8.3 导出和 P8.4 UI 引用。
 
-### 3.3 P8.3 指标导出与采集接口（实现说明占位）
-TODO:
-- [ ] 路由 `GET /metrics` `GET /metrics/snapshot`
-- [ ] Prom 编码器（HELP/TYPE + 序列缓存）
-- [ ] Snapshot 过滤与分页
-- [ ] 令牌桶限流（atomic refill）
-- [ ] Token 热更新监听 & 事件
-- [ ] 集成测试（授权/限流/性能）
+### 3.3 P8.3 指标导出与采集接口（实现说明）
+
+P8.3 在已有注册表与聚合层之上提供可被 Prometheus 与前端消费的统一导出通道，落地于 `core/metrics/export.rs`，同时补齐访问控制、速率限制与审计指标。
+
+#### 实施拆解
+- **HTTP 服务器与生命周期管理**
+   1. `start_http_server` 读取 `ObservabilityExportConfig` 构造 `ExportSettings`（解析绑定地址、最大序列数、QPS 与可选 Token），使用 `std::net::TcpListener` + `hyper::Server::from_tcp` 监听，并暴露 `MetricsServerHandle`（包含 `shutdown`、join handle 与本地地址）。
+   2. 服务端通过 `make_service_fn` 捕获 `AddrStream` 的远端地址，每次请求调用 `MetricsExporter::serve`；执行完成后借助 `log_access` 将请求路径、状态码、序列数量与耗时写入 `metrics` 目标日志，远端地址使用 `Sha256` 哈希截取前 12 个十六进制字符避免泄漏原 IP。
+- **请求路由与安全控制**
+   1. `MetricsExporter::serve` 仅接受 `GET`，其余方法返回 405 并记 `metrics_export_requests_total{status="method_not_allowed"}`。
+   2. 配置了 `auth_token` 时校验 `Authorization: Bearer <token>`，未通过时回 401 并更新 `status="unauthorized"` 计数。
+   3. 内建 `RateLimiter`（令牌桶：容量=2*QPS，1s 线性补充）限制过载访问，超限返回 429，额外自增 `metrics_export_rate_limited_total`。
+- **Prometheus 输出与 JSON Snapshot**
+   1. `encode_prometheus_internal` 对 Counter/Histogram 序列逐条输出 `# HELP`、`# TYPE`、样本值及 `_bucket`/`_sum`/`_count` 行，保证标签顺序与描述符一致，并对引号、换行等特殊字符做转义。
+   2. `/metrics/snapshot` 通过 `parse_snapshot_query` 解析 `names`、`range`、`quantiles` 参数，`build_snapshot_internal` 结合聚合器快照生成 JSON：包含标签、窗口点、分位、原始样本以及 `range` 字段。配置 `max_series_per_snapshot` 时在超限前短路返回。
+   3. Snapshot 响应使用 `serde_json::to_vec` 序列化，写入 `Content-Type: application/json`；Prometheus 端设置 `text/plain; version=0.0.4`，兼容标准抓取器。
+- **导出侧指标与配置对齐**
+   1. 新增 `METRICS_EXPORT_REQUESTS_TOTAL`、`METRICS_EXPORT_SERIES_TOTAL`、`METRICS_EXPORT_RATE_LIMITED_TOTAL` 常量，在成功/失败/限流路径分别打点，帮助后续审计导出健康度。
+   2. 失败序列化、未知路径等分支均返回适当状态码（500/404），并在日志中携带错误上下文。
+   3. `ObservabilityConfig.export` 默认启用导出，若 `export_enabled=false` 则不会启动 HTTP 服务，同时 `MetricInitError::Export` 会将 `start_http_server` 的底层错误冒泡至初始化调用方。
+
+#### 测试与验证
+- 集成测试覆盖关键路径：
+   - `metrics_http_server_enforces_auth`：验证 401/200 切换及基本速率限制兼容。
+   - `metrics_http_server_applies_rate_limit`：循环请求触发 429，断言计数器随之增加。
+   - `metrics_http_server_records_request_statuses`：分别构造未授权、错误方法、非法查询和成功请求，确认各自的 `metrics_export_requests_total{status=...}` 以及 Prometheus 序列计数增长。
+   - `metrics_snapshot_endpoint_respects_limits`：配置 `max_series_per_snapshot=1` 并断言结果被截断且 `metrics_export_series_total` 增量正确。
+   - `snapshot_query_rejects_invalid_params`：确认查询参数解析的错误分支会返回 `SnapshotQueryError`。
+- 以上测试位于 `src-tauri/tests/metrics/mod.rs`，通过串联 `start_http_server` + `hyper::Client` 与真实网络堆栈执行；CI 中执行 `cargo test -j 1 --manifest-path src-tauri/Cargo.toml metrics` 确保端到端行为回归。
+
+#### 工程化保障
+1. 导出模块遵循现有 `OnceCell` 初始化序列，确保多次调用幂等，`MetricsServerHandle::shutdown` 用于测试与退出阶段的资源回收。
+2. 所有公共 API 经过 `cargo fmt` 统一格式；`cargo clippy` 针对 async/错误分支未报告新的 Lint。
+3. 文档更新同步记录在 `core/metrics/descriptors.rs` 与配置章节，保持实现与设计对齐。
+
+#### 验收标准（Definition of Done）
+- `/metrics` 与 `/metrics/snapshot` 在默认配置下返回合法 Prometheus 文本与 JSON，并覆盖基础指标及聚合窗口数据。
+- Token 认证与令牌桶限流可以独立启用，所有状态码均产生日志与审计指标；远端地址记录保持脱敏。
+- 导出模块出现异常（序列化、绑定失败、非法参数）时返回明确错误并不中止应用；`MetricInitError::Export` 将底层原因反馈给初始化调用者。
+- `metrics_export_*` 计数器在授权、限流、成功等情形下均可通过测试验证可靠增长。
+- `cargo test --manifest-path src-tauri/Cargo.toml metrics`、`cargo fmt`, `cargo clippy` 均通过，导出层功能与文档描述保持一致。
 
 ### 3.4 P8.4 可观测性前端面板 UI（实现说明占位）
 TODO:
