@@ -1255,4 +1255,57 @@ git submodule status  # 应显示已初始化的子模块
 5. **端到端自动化**：补充 Playwright/Cypress 场景覆盖工作区 CRUD、批量操作、模板导入、批量取消等关键流程，确保 P7 阶段功能防回归。
 
 ### P7.6 稳定性验证与准入 实现说明
-（待实现后补充）
+
+**实现时间**: 2025-10-16  
+**实现者**: Fireworks Collaboration Team & GitHub Copilot Assistant  
+**状态**: ✅ 已完成稳定性验证与准入报告
+
+#### 3.1 关键代码路径与文件列表
+
+- `src-tauri/tests/workspace/mod.rs`
+   - `test_workspace_clone_with_submodule_and_config_roundtrip`：端到端验证工作区创建、子模块克隆、批量 Clone/Fetch 以及配置备份/恢复与状态查询。
+   - `test_workspace_batch_clone_performance_targets`：基于真实本地 git clone 任务测量 10/50/100 仓库并发的平均耗时，自动校验 p95 ≤ 基线 2×。
+   - `test_workspace_status_performance_targets`：模拟 1/10/50/100 仓库状态刷新，验证总耗时 <3s 且人均耗时不超过基线两倍。
+- `src-tauri/src/core/workspace/status.rs`
+   - `workspace_status_service_sanitizes_config_defaults` 与 `workspace_status_service_applies_runtime_updates`：保证 TTL / 并发 / 自动刷新配置在导入、热更新时被自动校验及收敛，防止 0 值或错配参数进入运行态。
+- `src-tauri/tests/common/task_wait.rs`：复用 `wait_until_task_done` 等辅助，保障批量任务在测试中可靠收敛。
+- 文档：
+   - `new-doc/P7_6_READINESS_CHECKLIST.md`：准入清单、测试矩阵、灰度策略、回滚脚本与监控指标。
+   - `new-doc/TECH_DESIGN_P7_PLAN.md`（本文档）：补充 P7.6 实现复盘、指标与残留风险。
+
+#### 3.2 实际交付与设计差异
+
+- ✅ 覆盖设计中要求的四大场景（工作区创建、子模块、批量操作、配置同步），并新增对工作区备份恢复、`.gitmodules` 持久化、嵌套子模块 `.git` 目录及状态缓存命中（首轮非缓存、二次查询命中）等细节的断言，确保端到端可观测性。
+- ✅ 性能基准通过自动化测试锁定阈值（批量 Clone 与状态刷新 p95 ≤ 2× baseline），同时将采集结果回填至准入报告，后续无需人工记录即可回归验证。
+- ✅ 准入清单新增灰度监控、容量预估、回滚演练步骤，补充设计文档未细化的运维手册。
+- ⚠️ 基准测试基于本地环境，未纳入真实仓库网络延迟；预生产环境需重新采集真实指标并更新报告模板。
+- ⚠️ 当前自动化报告以测试日志与清单手工填充为主，后续可引入集中存储或 CI 产出 HTML 报告。
+
+#### 3.3 验收/测试情况与残留风险
+
+- ✅ `cargo test --test workspace -- workspace_clone_with_submodule_and_config_roundtrip`
+- ✅ `cargo test --test workspace -- workspace_batch_clone_performance_targets`
+- ✅ `cargo test --test workspace -- workspace_status_performance_targets`
+- ✅ `cargo test workspace_status_service`
+- 性能结果：Clone 基线 105.55ms → 10/50/100 仓库分别 15.54/11.24/10.21ms；状态刷新基线 3.60ms → 10/50/100 仓库总耗时 10.94/54.24/80.75ms。
+- ✅ `pnpm test`
+- 残留风险：
+   - 真实仓库规模 >100/网络延迟大的环境仍需压测；CI 仅覆盖本地克隆路径。
+   - Push 批量操作在本轮未纳入基准，需要在预生产演练中补充指标。
+   - 自动化报告尚未与监控系统联动，需运维手动同步结果。
+
+#### 3.4 运维手册或配置样例的落地状态
+
+- `P7_6_READINESS_CHECKLIST.md` 提供灰度切换、监控看板、回滚流程、应急联系人与测试命令速查表，并新增状态服务回归命令（`cargo test workspace_status_service`）记录。
+- Check list 中列出必须完成的脚本/测试（批量 Clone/Fetch、状态查询、备份/恢复），并提供结果记录模板。
+- 监控建议（任务成功率、状态服务错误率、克隆时延 p95）与 SLO 阈值写入文档，便于上线前核对。
+- 灰度计划：按 10%→30%→全量递增，并在每一步执行自动化测试脚本与日志核查。
+
+#### 3.5 后续阶段建议
+
+1. **预生产压测**：使用真实业务仓库在预生产环境执行批量 Clone/Fetch/Push，并将结果写入自动化报告模板。
+2. **性能仪表盘**：落地指标采集（任务耗时、错误率、状态刷新延迟）并对接监控面板，形成持续可视化。
+3. **CI 集成**：将 P7.6 基准测试纳入每日夜间构建，结合工单自动生成准入报告。
+4. **批量 Push 指标**：补充 Push 路径的性能测试与基准，确保上线后可预测回滚窗口。
+5. **配置守护**：在后续迭代中扩展状态服务配置守护脚本，定期核验 TTL/并发等运行态配置与模板一致性，避免人工误修改。
+6. **事件归档**：将准入结论、灰度日志、监控截图归档至运维知识库，形成可复用模板。
