@@ -141,6 +141,18 @@ fn default_cert_fp_max_bytes() -> u64 {
     5 * 1024 * 1024
 }
 
+fn default_export_rate_limit_qps() -> u32 {
+    5
+}
+
+fn default_export_max_series() -> u32 {
+    1_000
+}
+
+fn default_export_bind_address() -> String {
+    "127.0.0.1:9688".to_string()
+}
+
 /// 默认的假 SNI 候选列表（中国常见网站域名）
 fn default_fake_sni_hosts() -> Vec<String> {
     vec![
@@ -262,6 +274,8 @@ pub struct ObservabilityConfig {
     pub ui_enabled: bool,
     #[serde(default = "default_true")]
     pub alerts_enabled: bool,
+    #[serde(default)]
+    pub export: ObservabilityExportConfig,
 }
 
 impl Default for ObservabilityConfig {
@@ -273,6 +287,31 @@ impl Default for ObservabilityConfig {
             export_enabled: default_true(),
             ui_enabled: default_true(),
             alerts_enabled: default_true(),
+            export: ObservabilityExportConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObservabilityExportConfig {
+    #[serde(default)]
+    pub auth_token: Option<String>,
+    #[serde(default = "default_export_rate_limit_qps")]
+    pub rate_limit_qps: u32,
+    #[serde(default = "default_export_max_series")]
+    pub max_series_per_snapshot: u32,
+    #[serde(default = "default_export_bind_address")]
+    pub bind_address: String,
+}
+
+impl Default for ObservabilityExportConfig {
+    fn default() -> Self {
+        Self {
+            auth_token: None,
+            rate_limit_qps: default_export_rate_limit_qps(),
+            max_series_per_snapshot: default_export_max_series(),
+            bind_address: default_export_bind_address(),
         }
     }
 }

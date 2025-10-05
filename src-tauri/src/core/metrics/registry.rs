@@ -65,6 +65,20 @@ pub struct HistogramSnapshot {
     pub buckets: Vec<(f64, u64)>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CounterSeriesSnapshot {
+    pub descriptor: MetricDescriptor,
+    pub label_values: Vec<String>,
+    pub value: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct HistogramSeriesSnapshot {
+    pub descriptor: MetricDescriptor,
+    pub label_values: Vec<String>,
+    pub snapshot: HistogramSnapshot,
+}
+
 pub struct MetricRegistry {
     counters: DashMap<&'static str, CounterMetric>,
     histograms: DashMap<&'static str, HistogramMetric>,
@@ -131,7 +145,7 @@ impl MetricRegistry {
                 self.counters.insert(
                     desc.name,
                     CounterMetric {
-                        _desc: desc,
+                        descriptor: desc,
                         series: DashMap::new(),
                     },
                 );
@@ -152,7 +166,7 @@ impl MetricRegistry {
                 self.histograms.insert(
                     desc.name,
                     HistogramMetric {
-                        _desc: desc,
+                        descriptor: desc,
                         series: DashMap::new(),
                         bucket_count,
                     },
@@ -301,15 +315,54 @@ impl MetricRegistry {
             .ok_or(MetricError::AggregatorDisabled)?;
         Ok(aggregator.list_histogram_series(desc.name))
     }
+
+    pub fn collect_counter_series(&self) -> Vec<CounterSeriesSnapshot> {
+        let mut out = Vec::new();
+        for metric_entry in self.counters.iter() {
+            let metric = metric_entry.value();
+            let desc = metric.descriptor;
+            for series_entry in metric.series.iter() {
+                let labels = series_entry.key().values().to_vec();
+                let value = series_entry.value().load(Ordering::Relaxed);
+                out.push(CounterSeriesSnapshot {
+                    descriptor: desc,
+                    label_values: labels,
+                    value,
+                });
+            }
+        }
+        out
+    }
+
+    pub fn collect_histogram_series(&self) -> Vec<HistogramSeriesSnapshot> {
+        let mut out = Vec::new();
+        for metric_entry in self.histograms.iter() {
+            let metric = metric_entry.value();
+            let desc = metric.descriptor;
+            let Some(boundaries) = desc.buckets else {
+                continue;
+            };
+            for series_entry in metric.series.iter() {
+                let labels = series_entry.key().values().to_vec();
+                let snapshot = series_entry.value().snapshot(boundaries);
+                out.push(HistogramSeriesSnapshot {
+                    descriptor: desc,
+                    label_values: labels,
+                    snapshot,
+                });
+            }
+        }
+        out
+    }
 }
 
 struct CounterMetric {
-    _desc: MetricDescriptor,
+    descriptor: MetricDescriptor,
     series: DashMap<LabelKey, Arc<AtomicU64>>,
 }
 
 struct HistogramMetric {
-    _desc: MetricDescriptor,
+    descriptor: MetricDescriptor,
     series: DashMap<LabelKey, Arc<HistogramSeries>>,
     bucket_count: usize,
 }

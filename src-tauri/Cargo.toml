@@ -55,7 +55,7 @@ tokio-util = { version = "0.7", features = ["rt"] }
 rustls = { version = "0.21", features = ["dangerous_configuration"] }
 webpki-roots = "0.25"
 # HTTP client core (P0.4)
-hyper = { version = "0.14", features = ["client", "http1", "tcp", "stream"] }
+hyper = { version = "0.14", features = ["client", "server", "http1", "tcp", "stream"] }
 tokio-rustls = "0.24"
 url = "2"
 ipnet = "2"

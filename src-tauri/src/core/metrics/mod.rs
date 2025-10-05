@@ -7,6 +7,7 @@ mod aggregate;
 mod descriptors;
 mod error;
 mod event_bridge;
+mod export;
 mod registry;
 
 pub use aggregate::{
@@ -16,6 +17,10 @@ pub use aggregate::{
 };
 pub use descriptors::*;
 pub use error::{MetricError, MetricInitError};
+pub use export::{
+    build_snapshot, encode_prometheus, parse_snapshot_query, start_http_server, MetricsSnapshot,
+    MetricsSnapshotSeries, SnapshotQuery, SnapshotQueryError,
+};
 pub use registry::{HistogramSnapshot, MetricDescriptor, MetricKind, MetricRegistry};
 
 static REGISTRY: OnceCell<Arc<MetricRegistry>> = OnceCell::new();
@@ -23,6 +28,7 @@ static BASIC_INIT: OnceCell<()> = OnceCell::new();
 static BRIDGE: OnceCell<Arc<event_bridge::EventMetricsBridge>> = OnceCell::new();
 static AGGREGATE_INIT: OnceCell<()> = OnceCell::new();
 static AGGREGATOR: OnceCell<Arc<aggregate::WindowAggregator>> = OnceCell::new();
+static EXPORT_HANDLE: OnceCell<export::MetricsServerHandle> = OnceCell::new();
 
 pub fn global_registry() -> Arc<MetricRegistry> {
     REGISTRY
@@ -78,4 +84,21 @@ pub fn init_aggregate_observability_with_provider(
 
 pub fn aggregate_enabled() -> bool {
     AGGREGATOR.get().is_some()
+}
+
+pub fn init_export_observability(cfg: &ObservabilityConfig) -> Result<(), MetricInitError> {
+    if !cfg.enabled || !cfg.basic_enabled || !cfg.export_enabled {
+        return Ok(());
+    }
+
+    init_aggregate_observability(cfg)?;
+
+    if EXPORT_HANDLE.get().is_some() {
+        return Ok(());
+    }
+
+    let handle = export::start_http_server(&cfg.export)
+        .map_err(|err| MetricInitError::Export(err.to_string()))?;
+    let _ = EXPORT_HANDLE.set(handle);
+    Ok(())
 }

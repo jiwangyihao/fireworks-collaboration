@@ -91,25 +91,54 @@ pub const SOAK_THRESHOLD_VIOLATION_TOTAL: MetricDescriptor = MetricDescriptor::c
 pub const ALERTS_FIRED_TOTAL: MetricDescriptor =
     MetricDescriptor::counter("alerts_fired_total", "Alert firing events", &["severity"]);
 
-pub fn register_basic_metrics(registry: &MetricRegistry) -> Result<(), MetricError> {
-    const METRICS: &[MetricDescriptor] = &[
-        GIT_TASKS_TOTAL,
-        GIT_TASK_DURATION_MS,
-        GIT_RETRY_TOTAL,
-        TLS_HANDSHAKE_MS,
-        IP_POOL_SELECTION_TOTAL,
-        IP_POOL_REFRESH_TOTAL,
-        IP_POOL_LATENCY_MS,
-        IP_POOL_AUTO_DISABLE_TOTAL,
-        CIRCUIT_BREAKER_TRIP_TOTAL,
-        CIRCUIT_BREAKER_RECOVER_TOTAL,
-        PROXY_FALLBACK_TOTAL,
-        HTTP_STRATEGY_FALLBACK_TOTAL,
-        SOAK_THRESHOLD_VIOLATION_TOTAL,
-        ALERTS_FIRED_TOTAL,
-    ];
+pub const METRICS_EXPORT_REQUESTS_TOTAL: MetricDescriptor = MetricDescriptor::counter(
+    "metrics_export_requests_total",
+    "Metrics export request outcomes",
+    &["status"],
+);
 
-    for desc in METRICS {
+pub const METRICS_EXPORT_SERIES_TOTAL: MetricDescriptor = MetricDescriptor::counter(
+    "metrics_export_series_total",
+    "Metrics export series returned",
+    &["endpoint"],
+);
+
+pub const METRICS_EXPORT_RATE_LIMITED_TOTAL: MetricDescriptor = MetricDescriptor::counter(
+    "metrics_export_rate_limited_total",
+    "Metrics export rate limited responses",
+    &[],
+);
+
+pub const BASIC_METRICS: &[MetricDescriptor] = &[
+    GIT_TASKS_TOTAL,
+    GIT_TASK_DURATION_MS,
+    GIT_RETRY_TOTAL,
+    TLS_HANDSHAKE_MS,
+    IP_POOL_SELECTION_TOTAL,
+    IP_POOL_REFRESH_TOTAL,
+    IP_POOL_LATENCY_MS,
+    IP_POOL_AUTO_DISABLE_TOTAL,
+    CIRCUIT_BREAKER_TRIP_TOTAL,
+    CIRCUIT_BREAKER_RECOVER_TOTAL,
+    PROXY_FALLBACK_TOTAL,
+    HTTP_STRATEGY_FALLBACK_TOTAL,
+    SOAK_THRESHOLD_VIOLATION_TOTAL,
+    ALERTS_FIRED_TOTAL,
+    METRICS_EXPORT_REQUESTS_TOTAL,
+    METRICS_EXPORT_SERIES_TOTAL,
+    METRICS_EXPORT_RATE_LIMITED_TOTAL,
+];
+
+pub fn all_descriptors() -> &'static [MetricDescriptor] {
+    BASIC_METRICS
+}
+
+pub fn find_descriptor(name: &str) -> Option<MetricDescriptor> {
+    BASIC_METRICS.iter().copied().find(|desc| desc.name == name)
+}
+
+pub fn register_basic_metrics(registry: &MetricRegistry) -> Result<(), MetricError> {
+    for desc in BASIC_METRICS {
         if let Err(err) = registry.register(*desc) {
             if !matches!(err, MetricError::AlreadyRegistered(_)) {
                 return Err(err);
