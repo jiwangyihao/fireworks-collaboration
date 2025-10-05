@@ -417,10 +417,7 @@ pub async fn reorder_repositories(
     ordered_ids: Vec<String>,
     manager: State<'_, SharedWorkspaceManager>,
 ) -> Result<Vec<RepositoryInfo>, String> {
-    info!(
-        "Reordering repositories: {:?}",
-        ordered_ids
-    );
+    info!("Reordering repositories: {:?}", ordered_ids);
 
     let mut manager_guard = manager.lock().map_err(|e| {
         error!("Failed to lock workspace manager: {}", e);
@@ -437,13 +434,11 @@ pub async fn reorder_repositories(
 
     info!("Repositories reordered successfully");
 
-    Ok(
-        workspace
-            .repositories
-            .iter()
-            .map(RepositoryInfo::from)
-            .collect(),
-    )
+    Ok(workspace
+        .repositories
+        .iter()
+        .map(RepositoryInfo::from)
+        .collect())
 }
 
 fn apply_repository_reorder(
