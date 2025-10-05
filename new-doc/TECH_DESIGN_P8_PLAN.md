@@ -878,13 +878,87 @@ P8.3 在已有注册表与聚合层之上提供可被 Prometheus 与前端消费
 - `metrics_export_*` 计数器在授权、限流、成功等情形下均可通过测试验证可靠增长。
 - `cargo test --manifest-path src-tauri/Cargo.toml metrics`、`cargo fmt`, `cargo clippy` 均通过，导出层功能与文档描述保持一致。
 
-### 3.4 P8.4 可观测性前端面板 UI（实现说明占位）
-TODO:
-- [ ] `stores/metrics.ts` 缓存与 stale-while-refresh
-- [ ] 通用图表组件 + 降采样算法 util
-- [ ] 时间范围选择器与 URL state 同步
-- [ ] Panels: Overview→Git→Network→IpPool→TLS→Proxy→Alerts 逐步实现
-- [ ] 单测：缓存命中/失败重试/降采样正确性
+### 3.4 P8.4 可观测性前端面板 UI（实现说明）
+
+P8.4 负责把前述指标基础设施转化为可操作的可视化入口，覆盖导航、数据拉取、可视化、交互与容错。该阶段需要同时满足“默认轻量”“关闭导出接口也能工作”“可扩展到后续告警面板”的要求。
+
+#### 实施拆解
+
+- **路由与权限控制**
+   1. 在 `router/index.ts` 增加 `observability` 路由项（`/_/observability`），采用懒加载方式引入 `views/ObservabilityView.vue`，并通过 route meta 标记 `requiresObservabilityUi=true`。
+   2. 添加全局前置守卫：若 `configStore.config.observability.uiEnabled=false` 或 `!configStore.flags.observabilityAvailable`，则重定向到概览页并弹出提示；若 P8.3 导出未启用则仍允许访问（后续 fallback 内部调用）。
+   3. 在侧边栏导航组件中根据配置动态渲染入口，保持与 `observability.layer` 逻辑一致（仅 `layer>=ui` 时展示）。
+
+- **数据服务与缓存层**
+   1. 新增 `src/stores/observability.ts`（Pinia store）：管理时间范围、数据缓存、刷新状态与错误信息。对外暴露 `fetchSeries(params)`、`getCachedSeries(key)`、`primePanels(range)` 等 API。
+   2. 缓存策略：key = JSON.stringify({ names, range, quantiles, transport })；值包含 `series`, `fetchedAt`, `status`。TTL 依据范围（5m→10s，1h→30s，24h→120s），实现 stale-while-refresh：过期时立即返回旧缓存，同时触发后台刷新任务。
+   3. 传输层抽象：优先调用 `/metrics/snapshot`。当 `exportEnabled=false` 或 HTTP 返回 404/ECONNREFUSED 时，降级使用 `tauri.invoke("metrics_snapshot", params)`。内部使用 `withAbortController` 控制快速切换时取消旧请求。
+   4. 错误处理：按 key 维护 `consecutiveFailures`，达到 3 次进入冷却 60s 并提示用户；同时落日志（`console.warn` + `captureException`）。
+
+- **通用可视化组件**
+   1. 引入统一图表层：`components/observability/MetricChart.vue`（折线/面积）、`HistogramChart.vue`（分布列）以及 `KpiCard.vue`（数值卡片）。使用 ECharts 按需加载（300ms 内首屏），包装成惰性组件以保证 SSR/静态加载友好。
+   2. 降采样工具 `src/utils/timeseries-decimator.ts`：实现 Largest-Triangle-Three-Buckets (LTTB) 算法，确保点数 > 600 时降采样（保留极值 + 均匀分布）。单元测试覆盖均匀分布与突发峰值。
+   3. `TimeRangeSelector.vue` 负责 5m/1h/24h 切换，使用 `emit("change", range)` 并在 store 中记录最近一次选择；同时通过 query string `?range=1h` 与路由状态同步。
+
+- **面板组装**
+   1. `views/ObservabilityView.vue` 作为容器，内含 Tab 切换（Overview, Git, Network, IpPool, TLS, Proxy, Alerts）。Tab 切换时调用 `primePanels` 预取必需指标。
+   2. 每个 Panel（位于 `components/observability/<Panel>.vue`）负责把 store 提供的 series 映射到图表与关键指标：
+       - Overview：`git_tasks_total`, `git_task_duration_ms`, `tls_handshake_ms`, `ip_pool_refresh_total`, `alerts_fired_total` 转换为成功率、P95、刷新率等 KPI 卡与趋势。
+       - Git：分任务类型的持续时间曲线、重试直方图、成功/失败堆叠图。需要组合 counter 和 histogram 数据。
+       - Network：回退链次数（stacked bar）、Fake vs Real 占比（饼图）、失败阶段列表（表格）。
+       - IpPool：刷新成功率、latency P95、auto-disable sparkline；支持切换 strategy 标签过滤。
+       - TLS：握手直方图 + 分位折线（P50/P95/P99）、策略占比。
+       - Proxy：代理降级次数时序、模式切换时间线（若指标缺失则展示 EmptyState）。
+       - Alerts：获取 `/metrics/snapshot` + `alerts` tauri 命令返回的活跃/历史告警，支持 severity 筛选和状态标签。
+   3. 面板中统一使用 `LoadingState`/`EmptyState` 组件，区分 `loading`、`stale`、`empty`、`error` 四种状态；错误时展示重试按钮触发 `store.refetch(key,{force:true})`。
+
+- **交互与辅助功能**
+   1. 时间范围切换：向 store 下发 `setRange(range)`，触发全局刷新。切换频率 < 300ms 时通过 `lodash.debounce` 去抖，避免请求风暴。
+   2. Drill-down：在 Network/TLS 面板点击失败点位时，通过 Pinia 动作 `openEventDrawer({ metric, timestamp, labels })` 拉取最近 10 条相关事件（调用 `tauri.invoke("metrics_recent_events", ...)`），在右侧 `ObservabilityEventDrawer.vue` 中展示详细字段。
+   3. 自动刷新：Overview 默认 15s 自动刷新，可在 UI 顶部切换为暂停或自定义周期；自动刷新遵守缓存冷却与并发控制。
+   4. 可用性指示：右上角显示最近一次成功拉取时间（UTC + 本地偏移），当超过 2×TTL 未刷新时标记 `STALE`。
+
+- **样式与无障碍**
+   1. 使用现有 Tailwind 主题变量保证暗色/亮色兼容；图表颜色遵循设计令牌（`--color-success`, `--color-error` 等）。
+   2. 为所有图表提供 aria-label 与数据表下载按钮（CSV），满足无障碍和离线分析需求。
+   3. 在 Alerts 面板提供键盘导航支持（上下切换、Enter 展开详情）。
+
+#### 测试与质量保障
+
+- **单元测试（Vitest）**
+   - `stores/observability.spec.ts`：验证缓存 TTL、stale-while-refresh、降级调用 Tauri 的逻辑、错误冷却机制、drill-down 参数生成。
+   - `utils/timeseries-decimator.spec.ts`：覆盖等距离、尖峰、短序列（<阈值）与空序列情况。
+   - `components/observability/MetricChart.spec.ts`：快照测试 + 降采样触发校验。
+
+- **组件与集成测试**
+   - 使用 `@testing-library/vue` 为 `ObservabilityView` 编写交互测试：切换 Tab、切换范围、处理错误状态、触发 drill-down。
+   - Mock HTTP 和 tauri 调用，断言 fallback 行为。
+   - Router 测试：当 `uiEnabled=false` 时访问路由被重定向并出现 Toast。
+
+- **端到端测试（可选灰度阶段执行）**
+   - 在 Playwright 或 Cypress 中脚本化打开面板、模拟指标返回、验证图表渲染与 KPI 数值。
+   - 与 Soak 集成脚本联动：运行 soak 后面板 Alerts Tab 可展示新增告警。
+
+- **性能基准**
+   - `npm run test:benchmark:charts`（新增脚本）评估 10k 点降采样耗时 < 20ms。
+   - Chrome Performance Profiling：首屏渲染 JS 执行 < 500ms，ECharts 初始化单图 < 120ms。
+
+#### 工程化落地
+
+1. 引入 `@echarts/core` 按需依赖，配置 Vite 动态导入，确保生产包 < 150 KB（gzip）。
+2. 在 `package.json` 增加 `pnpm run test:observability`（包含 vitest + eslint + type-check）。
+3. 更新 `vitest.setup.ts` 提供 ECharts 与 ResizeObserver mock，避免测试环境警告。
+4. 在 `README.md` 新增 Observability 面板预览、启用条件与常见故障排查，与配置章节保持一致。
+5. 在 CI 中追加 `pnpm run test:observability` 步骤，并要求 `pnpm lint` 验证未使用的依赖。
+
+#### 验收标准（Definition of Done）
+
+- `observability.uiEnabled=true` 且导出接口开启时，面板各 Tab 均可展示数据、时间范围切换生效、自动刷新可暂停和恢复。
+- 导出接口关闭或不可用时，面板自动使用 Tauri fallback，关键 KPI 仍可显示，且顶部提示当前数据来源。
+- 缓存与降采样逻辑在测试覆盖下通过，并在 DevTools 监控中确认请求次数符合 TTL 设定（同范围 30s 内不超过 3 次）。
+- 面板在 Lighthouse Performance > 80、Accessibility > 90；键盘操作覆盖主要交互。
+- `pnpm run test:observability`、`pnpm test --filter observability`、`cargo test --manifest-path src-tauri/Cargo.toml metrics` 均通过，无 lint/类型错误。
+- 文档与内置帮助文本（tooltip、空状态说明）同步更新，确保使用者理解指标含义与数据延迟。
 
 ### 3.5 P8.5 阈值告警与 Soak 集成（实现说明占位）
 TODO:
