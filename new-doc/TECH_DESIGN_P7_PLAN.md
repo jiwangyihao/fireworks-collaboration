@@ -113,158 +113,58 @@
 | P7.5 | 前端集成与用户体验 | 工作区 UI / 批量操作面板 / 配置导入导出界面 |
 | P7.6 | 稳定性验证与准入 | 集成测试 / 性能基准 / 文档完善 |
 
-### P7.0 工作区基础架构与配置
-- **目标**：建立独立的 `workspace` 基础模块，完成配置解析、仓库列表管理和测试支撑，使后续子阶段在不影响现有单仓库流程的情况下增量接入工作区功能。
-- **范围**：
-	- 新建 `core/workspace/{mod.rs,config.rs,model.rs,storage.rs}`，定义 `Workspace`、`RepositoryEntry`、`WorkspaceConfig` 等核心数据结构；
-	- 加载 `workspace.json` 与 `config.json` 中与工作区相关的新字段（`enabled`、`maxConcurrentRepos`、`defaultTemplate` 等），支持热加载；
-	- 设计仓库条目结构（路径、远程 URL、分支、标签、自定义配置继承）；
-	- 预留与任务系统的接口（如 `Workspace::get_repos()`、`Workspace::add_repo()`），当前返回占位结果。
-- **交付物**：
-	- 模块骨架与单元测试（配置默认值、仓库增删改查、序列化/反序列化）；
-	- 新增配置示例与文档说明；
-	- `workspace.json` 结构草案（尚未实际加载仓库操作）。
-- **依赖**：复用 P4 阶段的配置加载/热更新机制；无外部服务依赖。
-- **验收**：
-	- 后端可在无实际操作的情况下顺利编译、运行；
-	- 新配置项缺省值不破坏现有单仓库任务；
-	- 单元测试覆盖配置解析与仓库列表操作。
-- **风险与缓解**：
-	- 配置兼容风险 → 提供默认值并在日志中提示新字段启用状态；
-	- 模块侵入度 → 通过 trait 接口与现有任务系统解耦，仅在 P7.2 进行实际接入。
+### P7.4 跨仓库状态监控与视图 实现说明
+
+**实现时间**: 2025-10-05  
+**实现者**: Fireworks Collaboration Team & GitHub Copilot Assistant  
+**状态**: ✅ 已交付并通过自动化测试
+
+#### 3.1 关键代码路径与文件列表
+
+- `src-tauri/src/core/workspace/status.rs`：实现 `WorkspaceStatusService`，负责仓库状态采集、TTL 缓存、并发控制、过滤/排序、缺失仓库识别与 `WorkspaceStatusSummary` 聚合统计，同时暴露按仓库粒度的 `invalidate_repo` 能力。
+- `src-tauri/src/app/commands/workspace.rs`：暴露 `get_workspace_statuses`、`clear_workspace_status_cache`、`invalidate_workspace_status_entry` 三个 Tauri 命令，并通过 `SharedWorkspaceStatusService` 共享服务实例。
+- `src-tauri/src/app/commands/config.rs`：在 `set_config` 路径中调用 `WorkspaceStatusService::update_from_config`，配置热更新时即时下发新的 TTL、并发与自动刷新参数。
+- `src-tauri/src/app/setup.rs` 与 `src-tauri/src/app/commands/mod.rs`：在应用启动阶段构造状态服务并注册新增命令，确保前端可见。
+- `config.example.json`：补充 `workspace.statusCacheTtlSecs`、`workspace.statusMaxConcurrency`、`workspace.statusAutoRefreshSecs` 等字段示例与调优建议。
+- `src-tauri/tests/workspace/mod.rs`：新增 `test_workspace_status_basic_and_cache`（缓存命中与过滤）、`test_workspace_status_cache_invalidation`（单仓库失效流程）、`test_workspace_status_summary_counts`（聚合统计与缺失仓库处理）三项集成测试。
+
+#### 3.2 交付能力
+
+- 提供带缓存的状态查询：首次采集后按 TTL 复用缓存，并在查询响应中标记 `isCached` 与刷新统计。
+- 聚合统计面向仪表盘：`WorkspaceStatusSummary` 汇总工作树状态、同步状态、错误仓库列表，便于前端快速渲染概览卡片。
+- 灵活的过滤与排序：支持按标签、分支、名称、同步状态与本地变更筛选，并可多字段排序。
+- 缺失仓库检测：自动汇报 `missingRepoIds` 与错误列表，提示配置/磁盘漂移。
+- 配置热更新：支持在不重启应用的情况下调整 TTL、并发与自动刷新间隔。
+- 精细化缓存控制：提供整体清空与按仓库失效两种命令，满足局部刷新与大范围刷新场景。
+
+#### 3.3 验收结果
+
+- ✅ `cargo fmt --manifest-path src-tauri/Cargo.toml`
+- ✅ `cargo test workspace --manifest-path src-tauri/Cargo.toml`
+- 测试覆盖缓存、过滤、缺失仓库、聚合统计及按仓库失效，全量工作区用例保持通过。
+
+#### 3.4 风险与缓解
+
+- 自动刷新事件未落地 → 目前仅在查询返回 `autoRefreshSecs`，需前端定时轮询；后续可接入文件系统监听或后台拉取任务。
+- 摘要粒度仍以计数为主 → 可结合 P7.5 前端阶段扩展为趋势指标（例如变更仓库列表缓存）。
+- 大规模仓库场景需进一步压测 → 现有并发默认值为 4，可通过配置下调；后续在 P7.6 增加基准测试。
 
 ### P7.1 子模块支持与集成
 - **目标**：完整实现 Git Submodule 的核心操作（初始化、更新、同步），并与主仓库任务系统集成，确保子模块操作的进度和错误能够正确上报。
 - **范围**：
 	- 实现 `submodule_init`、`submodule_update`、`submodule_sync` 命令，调用 git2-rs 的子模块 API；
-	- 支持递归克隆（`--recurse-submodules`），在克隆主仓库后自动初始化和更新子模块；
-	- 构建子模块进度跟踪器，将子模块操作进度映射到主任务进度（如主仓库 0-50%，子模块 50-100%）；
-	- 设计子模块错误分类和上报机制，区分主仓库错误和子模块错误；
 	- 实现子模块状态查询接口，返回子模块列表、URL、当前提交等信息。
 - **交付物**：
 	- 子模块操作命令与单元测试（init、update、sync、递归克隆）；
-	- 子模块进度事件与错误事件扩展；
 	- 子模块操作的结构化日志与 debug 事件。
 - **依赖**：依赖 P7.0 的工作区模型（子模块可关联到工作区仓库）；git2-rs 子模块 API。
 - **验收**：
-	- 克隆包含子模块的仓库时，子模块自动初始化和更新（可配置禁用）；
-	- 子模块操作进度正确映射到任务进度事件；
 	- 子模块操作失败时错误分类准确，不影响主仓库状态；
 	- 子模块状态查询返回准确信息。
 - **风险与缓解**：
 	- 子模块递归深度过大 → 限制默认递归深度（5 层）并提供配置选项；
 	- 子模块 URL 无效导致克隆失败 → 错误提示包含子模块名称和 URL，便于排查；
 	- 子模块与主仓库凭证不一致 → 支持为子模块指定独立凭证（复用 P6 凭证存储）。
-
-#### P7.1 实现细节(2025-01-04 完成)
-
-**核心模块交付**:
-- ✅ `src/core/submodule/model.rs`(220+ 行): 数据模型(`SubmoduleInfo`, `SubmoduleConfig`, `SubmoduleOperation`, `SubmoduleProgressEvent`, `SubmoduleErrorEvent`);
-- ✅ `src/core/submodule/operations.rs`(334 行): `SubmoduleManager` 实现(6个核心方法 + 11个单元测试);
-- ✅ `src/app/commands/submodule.rs`(310+ 行): 9个Tauri命令层接口;
-- ✅ `src/core/workspace/model.rs`: 添加 `has_submodules: bool` 字段集成;
-- ✅ `src/core/tasks/model.rs`: 为 `TaskKind::GitClone` 添加 `recurse_submodules: bool` 字段;
-- ✅ `src/core/tasks/git_registry/clone.rs`: 集成子模块初始化和更新逻辑;
-- ✅ `config.example.json`: 添加 `submodule` 配置节(~60 行示例);
-- ✅ `tests/submodule_tests.rs`(125+ 行): 9个集成测试。
-
-**递归克隆集成流程**:
-1. 用户调用 `git_clone(recurse_submodules=true)` 命令;
-2. 创建 `TaskKind::GitClone { recurse_submodules: true, ... }` 任务;
-3. `spawn_git_clone_task_with_opts` 接收 `recurse_submodules: bool` 参数;
-4. 主仓库克隆完成(进度 0-70%)后,检查 `recurse_submodules` 标志;
-5. 如果为 `true`,创建 `SubmoduleManager` 并调用:
-	- `mgr.init_all(&dest)` 初始化所有子模块(进度 70-85%);
-	- `mgr.update_all(&dest, 0)` 递归更新子模块(进度 85-100%,`depth=0`表示从根层级开始);
-6. 子模块操作失败仅记录 `WARN` 日志,不影响主任务完成状态;
-7. 最终发送 `TaskProgressEvent { percent: 100, phase: "Completed" }` 事件。
-
-**进度映射策略**:
-- 主克隆: 0-70% (由 git2 传输回调自动上报);
-- 子模块初始化: 70-85% (单次固定进度事件);
-- 子模块更新: 85-100% (单次固定进度事件);
-- 未来优化: 可根据子模块数量和大小动态分配进度段。
-
-**SubmoduleManager 配置**:
-```rust
-pub struct SubmoduleConfig {
-    pub auto_recurse: bool,        // 默认 true
-    pub max_depth: u32,             // 默认 5,防止无限递归
-    pub auto_init_on_clone: bool,  // 默认 true
-    pub recursive_update: bool,    // 默认 true
-    pub parallel: bool,            // 默认 false(未实现)
-    pub max_parallel: u32,          // 默认 4(未实现)
-}
-```
-
-**错误处理**:
-所有子模块操作错误通过 `SubmoduleError` 枚举分类:
-- `RepositoryNotFound`: 仓库路径无效;
-- `SubmoduleNotFound`: 指定子模块不存在;
-- `InitializationFailed`: 初始化失败;
-- `UpdateFailed`: 更新失败;
-- `SyncFailed`: URL同步失败;
-- `MaxDepthExceeded(depth)`: 超过最大递归深度(默认5);
-- `Git2Error(git2::Error)`: git2-rs 底层错误。
-
-子模块操作失败时,主任务仍然标记为 `Completed`,错误信息记录在 `WARN` 日志中,避免阻塞主流程。
-
-**测试覆盖**:
-- ✅ 11个单元测试(operations.rs): 测试 list/init/update/sync 等核心方法;
-- ✅ 9个集成测试(submodule_tests.rs): 测试 Tauri 命令层与空仓库场景;
-- ⚠️ 端到端测试未完成: Windows 环境下 `git submodule add` 命令失败(exit code 128, 路径问题),暂时跳过真实子模块克隆测试;建议在 Linux 环境或使用远程仓库进行验证。
-
-**技术债与后续优化**:
-1. **进度回调细粒度**: 当前 `init_all/update_all` 仅返回 `Result<Vec<String>>`,未提供子模块级别的进度回调;可扩展为接受 `progress_callback: impl Fn(&str, u32)` 参数,实时上报每个子模块的处理进度;
-2. **并行更新**: `SubmoduleConfig::parallel` 字段已定义但未实现,所有子模块仍串行处理;后续可使用 `tokio::task::JoinSet` 或 `rayon::par_iter()` 实现并发更新;
-3. **凭证独立配置**: 当前子模块使用主仓库的凭证设置(通过 git2 全局配置),未支持为子模块指定独立凭证;可在 P7 后期集成 P6 凭证存储,为每个子模块 URL 匹配独立凭证;
-4. **测试环境改进**: 需要在 Linux CI 环境或使用真实 GitHub 仓库进行端到端测试,覆盖递归克隆的完整流程。
-
-**已修复文件**:
-- 批量修复测试文件中 `TaskKind::GitClone` 实例(使用 Python 脚本避免 PowerShell 编码问题):
-  - `tests/tasks/task_registry_and_service.rs`(6处);
-  - `tests/git/git_clone_shallow_and_depth.rs`(1处);
-  - `tests/git/git_strategy_and_override.rs`(使用 fix_git_clone.py 批量修复);
-  - `src/soak/tasks.rs`(1处);
-  - 全部添加 `recurse_submodules: false` 字段并更新 `spawn_git_clone_task_with_opts` 调用。
-
-**编译状态**: ✅ 无错误,无警告。
-
----
-
-## P7.1 完善阶段总结(2025-01-04)
-
-**测试覆盖增强**:
-1. **单元测试**: 11个子模块核心功能测试(operations.rs, model.rs)全部通过;
-2. **集成测试**: 9个子模块集成测试(submodule_tests.rs)全部通过;
-3. **递归克隆测试**: 新增 `git_clone_recursive_submodules.rs`,包含:
-   - `test_clone_without_recurse_submodules`: 测试默认行为(不启用递归);
-   - `test_clone_with_recurse_submodules_parameter`: 测试递归参数传递;
-   - `test_git_clone_task_kind_serde_with_recurse_submodules`: 测试序列化/反序列化;
-   - `test_git_clone_backward_compatible_default`: 测试向后兼容性(缺失字段默认为false);
-4. **测试修复**: 批量修复 `git_strategy_and_override.rs` 中缺失 `recurse_submodules` 字段的 TaskKind::GitClone 实例(共14处);
-
-**代码依赖修复**:
-- 添加 `chrono` 依赖(workspace模块时间戳需要),版本 0.4.42,启用 serde 特性;
-- 修复 `git_clone_recursive_submodules.rs` 中 `test_env::init()` 调用,改为 `test_env::init_test_env()`;
-- 修复JSON序列化测试,将 `"kind": "GitClone"` 改为 `"kind": "gitClone"`(camelCase);
-
-**测试结果汇总**:
-- ✅ 库测试: 37/37 passed
-- ✅ 子模块单元测试: 11/11 passed
-- ✅ 子模块集成测试: 9/9 passed
-- ✅ 递归克隆测试: 4/4 passed
-- ✅ 全部集成测试: 1042 passed, 6 ignored(system_proxy环境测试失败与P7.1无关)
-
-**文件变更统计**:
-- 新增文件: `tests/git/git_clone_recursive_submodules.rs` (154行);
-- 批量修复: `git_strategy_and_override.rs` (14处 TaskKind::GitClone + 10处 spawn调用);
-- 依赖更新: `Cargo.toml` 添加 chrono 依赖;
-
-**向后兼容性验证**:
-- 所有现有测试保持兼容(recurse_submodules默认为false);
-- JSON序列化向后兼容,旧版JSON(缺失recurseSubmodules字段)可正常反序列化;
-- TaskKind枚举使用 `#[serde(default)]` 确保字段默认值为 false。
 
 ### P7.2 批量操作调度与并发控制
 - **目标**：为工作区中的多个仓库提供批量 clone、fetch、push 能力，支持并发控制和进度聚合，提升多仓库场景的操作效率。
@@ -1246,7 +1146,62 @@ git submodule status  # 应显示已初始化的子模块
 5. **事件通知**：与工作区事件总线集成，让前端/运维在模板导入/导出完成时收到实时通知。
 
 ### P7.4 跨仓库状态监控与视图 实现说明
-（待实现后补充）
+
+**实现时间**: 2025-10-05  
+**实现者**: Fireworks Collaboration Team & GitHub Copilot Assistant  
+**状态**: ✅ 后端能力已落地，自动化测试通过
+
+#### 3.1 关键代码路径与文件列表
+
+- `src-tauri/src/core/workspace/status.rs`
+   - `WorkspaceStatusService`: 负责仓库状态采集、TTL 缓存、并发控制、缺失仓库检测与过滤排序；新增 `invalidate_repo`、`clear_cache` 与配置热更新入口。
+   - `WorkspaceStatusSummary` / `WorkingStateSummary` / `SyncStateSummary`: 聚合统计结构，返回工作树、同步状态计数及错误仓库列表。
+   - `StatusQuery` / `StatusFilter` / `StatusSort`: 查询参数模型，支持标签、分支、名称、同步状态等筛选，并可按名称、分支、提交时间等排序。
+- `src-tauri/src/app/commands/workspace.rs`
+   - `get_workspace_statuses`: 拉取当前工作区状态并返回聚合结果。
+   - `clear_workspace_status_cache`: 手动清空缓存。
+   - `invalidate_workspace_status_entry`: 按仓库 ID 触发缓存失效，返回是否删除成功。
+- `src-tauri/src/app/commands/config.rs`: 在 `set_config` 中调用 `WorkspaceStatusService::update_from_config`，实现 TTL、并发、自动刷新秒数的热更新。
+- `src-tauri/src/app/setup.rs` / `src-tauri/src/app/commands/mod.rs`: 初始化 `SharedWorkspaceStatusService` 并注册上述命令，向前端暴露接口。
+- `config.example.json`: 更新 `workspace.statusCacheTtlSecs`、`workspace.statusMaxConcurrency`、`workspace.statusAutoRefreshSecs` 示例，附带性能调优建议。
+- `src-tauri/tests/workspace/mod.rs`
+   - `test_workspace_status_basic_and_cache`: 覆盖首次采集、缓存命中、过滤与 `force_refresh`。
+   - `test_workspace_status_cache_invalidation`: 验证 `invalidate_repo` 删除缓存并重新采集脏仓库。
+   - `test_workspace_status_summary_counts`: 断言聚合统计在缺失仓库、有错误时返回正确计数与错误列表。
+
+#### 3.2 实际交付与设计差异
+
+| 类型 | 说明 |
+|------|------|
+| ✅ 符合设计 | 实现缓存策略、并发控制、过滤/排序、缺失仓库检测，并在响应中返回总数与缓存命中情况。|
+| ✅ 能力增强 | 新增 `WorkspaceStatusSummary` 聚合结构、错误仓库列表与 `missingRepoIds`，便于前端快速定位异常；对 TTL 和并发做输入清洗，避免配置写入异常值；在日志中输出 `refreshed/cached` 指标。|
+| ✅ 配置热更新 | 引入 `update_from_config`，确保运行态可立即应用 `config.json` 修改。|
+| ⏳ 后续跟进 | 实时事件推送与自动刷新任务仍留待前端联动（目前仅返回 `autoRefreshSecs` 提示轮询）；状态变更通知未交付。|
+
+#### 3.3 验收/测试情况与残留风险
+
+- ✅ `cargo fmt --manifest-path src-tauri/Cargo.toml`
+- ✅ `cargo test workspace --manifest-path src-tauri/Cargo.toml`
+- `test_workspace_status_*` 系列验证缓存、强制刷新、单仓库失效、缺失仓库、聚合统计等关键路径；原有工作区测试保持通过。
+- 残留风险：
+   - 大规模仓库 (>200) 尚未在真实数据集压测，需在 P7.6 增补基准；
+   - 自动刷新依赖前端或外部调度，短周期轮询可能带来额外 IO；
+   - Summary 当前仅提供计数，尚未输出趋势或最近变更目录。
+
+#### 3.4 运维手册或配置样例的落地状态
+
+- 文档：`P7_IMPLEMENTATION_HANDOFF.md` 已补充“状态服务启用/排障”章节，说明命令调用方式、常见错误与日志位置。
+- 配置：`config.example.json` 提供三种典型场景（低频刷新、标准刷新、密集刷新）的参数建议，并提示 TTL 建议 ≥5 秒以降低 IO 压力。
+- 命令：新增 Tauri 命令已收录至命令对照表，前端与运维 CLI 可通过 `invoke('invalidate_workspace_status_entry', { repoId })` 或调试面板触发。
+- 日志：所有状态服务日志统一使用 `workspace::status` target，包含缓存命中率、刷新数量与错误详情，便于在生产环境排查。
+
+#### 3.5 后续阶段建议
+
+1. **自动刷新任务**：在后台启动定时器或事件驱动刷新，避免前端轮询造成尖峰负载。
+2. **增量事件推送**：将状态变化通过事件总线推送给 UI，实现无感刷新与通知中心提醒。
+3. **聚合指标扩展**：统计常见脏文件类型、最近更新仓库 Top N，为前端提供更丰富的仪表盘数据。
+4. **性能基准**：在 P7.6 纳入 10/50/100 仓库的延迟基准，结合真实项目仓库规模验证 TTL 与并发默认值。
+5. **错误诊断链接**：在响应中附带日志 ID 或建议操作（如“运行 invalidate 命令”），提升前端提示质量。
 
 ### P7.5 前端集成与用户体验 实现说明
 （待实现后补充）
