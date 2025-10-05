@@ -4,6 +4,7 @@ pub mod config;
 pub mod credential;
 pub mod git;
 pub mod http;
+pub mod metrics;
 pub mod oauth;
 pub mod proxy;
 pub mod submodule;
@@ -24,6 +25,7 @@ pub use git::{
     git_remote_add, git_remote_remove, git_remote_set, git_tag,
 };
 pub use http::http_fake_request;
+pub use metrics::metrics_snapshot;
 pub use oauth::{clear_oauth_state, get_oauth_callback_data, start_oauth_server};
 pub use proxy::{
     detect_system_proxy, force_proxy_fallback, force_proxy_recovery, get_system_proxy,

@@ -74,6 +74,7 @@ pub fn run() {
             super::commands::git_remote_add,
             super::commands::git_remote_remove,
             super::commands::http_fake_request,
+            super::commands::metrics_snapshot,
             super::commands::detect_system_proxy,
             super::commands::force_proxy_fallback,
             super::commands::force_proxy_recovery,
