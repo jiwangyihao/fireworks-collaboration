@@ -862,4 +862,37 @@ mod tests {
         status.sync_state = SyncState::Behind;
         assert!(!filter.matches(&status));
     }
+
+    #[test]
+    fn workspace_status_service_sanitizes_config_defaults() {
+        let mut cfg = WorkspaceConfig::default();
+        cfg.status_cache_ttl_secs = 0;
+        cfg.status_max_concurrency = 0;
+        cfg.status_auto_refresh_secs = Some(0);
+
+        let service = WorkspaceStatusService::new(&cfg);
+        assert_eq!(service.ttl().as_secs(), 10);
+        assert_eq!(service.concurrency(), 1);
+        assert_eq!(service.auto_refresh(), None);
+    }
+
+    #[test]
+    fn workspace_status_service_applies_runtime_updates() {
+        let mut initial = WorkspaceConfig::default();
+        initial.status_cache_ttl_secs = 30;
+        initial.status_max_concurrency = 4;
+        initial.status_auto_refresh_secs = Some(25);
+
+        let service = WorkspaceStatusService::new(&initial);
+
+        let mut updated = WorkspaceConfig::default();
+        updated.status_cache_ttl_secs = 5;
+        updated.status_max_concurrency = 2;
+        updated.status_auto_refresh_secs = Some(40);
+
+        service.update_from_config(&updated);
+        assert_eq!(service.ttl().as_secs(), 5);
+        assert_eq!(service.concurrency(), 2);
+        assert_eq!(service.auto_refresh(), Some(40));
+    }
 }
