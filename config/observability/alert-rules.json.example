@@ -1,0 +1,34 @@
+[
+  {
+    "id": "git_fail_rate",
+    "expr": "git_tasks_total{state=failed}/git_tasks_total > 0.05",
+    "severity": "warn",
+    "window": "5m",
+    "description": "Fire when git task failure rate exceeds 5%",
+    "enabled": true
+  },
+  {
+    "id": "tls_latency_p95",
+    "expr": "tls_handshake_ms[p95] > 800",
+    "severity": "warn",
+    "window": "5m",
+    "description": "Fire when TLS handshake P95 exceeds 800ms",
+    "enabled": true
+  },
+  {
+    "id": "ip_refresh_success_low",
+    "expr": "ip_pool_refresh_total{success=true}/ip_pool_refresh_total < 0.85",
+    "severity": "critical",
+    "window": "5m",
+    "description": "Fire when IP pool refresh success rate drops below 85%",
+    "enabled": true
+  },
+  {
+    "id": "proxy_fallback_spike",
+    "expr": "proxy_fallback_total > 10",
+    "severity": "warn",
+    "window": "5m",
+    "description": "Example: enable to warn when proxy fallback count exceeds 10",
+    "enabled": false
+  }
+]

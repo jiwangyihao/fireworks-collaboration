@@ -1,3 +1,5 @@
+use std::fs;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -5,23 +7,26 @@ use fireworks_collaboration_lib::core::config::model::{
     ObservabilityConfig, ObservabilityExportConfig,
 };
 use fireworks_collaboration_lib::core::metrics::{
-    aggregate_enabled, build_snapshot, encode_prometheus, global_registry,
-    init_aggregate_observability_with_provider, init_basic_observability, parse_snapshot_query,
-    HistogramWindowConfig, ManualTimeProvider, MetricError, SnapshotQuery, SnapshotQueryError,
-    TimeProvider, WindowRange, CIRCUIT_BREAKER_RECOVER_TOTAL, CIRCUIT_BREAKER_TRIP_TOTAL,
-    GIT_RETRY_TOTAL, GIT_TASKS_TOTAL, GIT_TASK_DURATION_MS, HTTP_STRATEGY_FALLBACK_TOTAL,
-    IP_POOL_AUTO_DISABLE_TOTAL, IP_POOL_LATENCY_MS, IP_POOL_REFRESH_TOTAL, IP_POOL_SELECTION_TOTAL,
+    aggregate_enabled, build_snapshot, encode_prometheus, evaluate_alerts_now, global_registry,
+    init_aggregate_observability_with_provider, init_alerts_observability,
+    init_basic_observability, parse_snapshot_query, HistogramWindowConfig, ManualTimeProvider,
+    MetricError, SnapshotQuery, SnapshotQueryError, TimeProvider, WindowRange, ALERTS_FIRED_TOTAL,
+    CIRCUIT_BREAKER_RECOVER_TOTAL, CIRCUIT_BREAKER_TRIP_TOTAL, GIT_RETRY_TOTAL, GIT_TASKS_TOTAL,
+    GIT_TASK_DURATION_MS, HTTP_STRATEGY_FALLBACK_TOTAL, IP_POOL_AUTO_DISABLE_TOTAL,
+    IP_POOL_LATENCY_MS, IP_POOL_REFRESH_TOTAL, IP_POOL_SELECTION_TOTAL,
     METRICS_EXPORT_RATE_LIMITED_TOTAL, METRICS_EXPORT_REQUESTS_TOTAL, METRICS_EXPORT_SERIES_TOTAL,
     PROXY_FALLBACK_TOTAL, TLS_HANDSHAKE_MS,
 };
 use fireworks_collaboration_lib::events::structured::{
-    publish_global, Event, StrategyEvent, TaskEvent,
+    ensure_fanout_bus, publish_global, Event, MemoryEventBus, MetricAlertState, StrategyEvent,
+    TaskEvent,
 };
 use hyper::body::to_bytes;
 use hyper::client::HttpConnector;
 use hyper::{Body, Client, Request, StatusCode, Uri};
-use once_cell::sync::Lazy;
+use once_cell::sync::{Lazy, OnceCell};
 use serde_json::Value;
+use tempfile::tempdir;
 use uuid::Uuid;
 
 fn ensure_metrics_init() {
@@ -48,6 +53,32 @@ fn aggregate_lock() -> MutexGuard<'static, ()> {
     AGGREGATE_TEST_GUARD
         .lock()
         .unwrap_or_else(|err| err.into_inner())
+}
+
+static ALERT_RULES_PATH: Lazy<PathBuf> = Lazy::new(|| {
+    let dir = tempdir().expect("alert rules dir");
+    let path = dir.into_path();
+    path.join("alert-rules.json")
+});
+
+static ALERTS_ENGINE_INIT: OnceCell<()> = OnceCell::new();
+
+fn alerts_rules_path() -> &'static PathBuf {
+    &ALERT_RULES_PATH
+}
+
+fn ensure_alerts_engine_initialized() {
+    ALERTS_ENGINE_INIT.get_or_init(|| {
+        ensure_metrics_init();
+        let provider = ensure_aggregate_init();
+        provider.reset();
+        provider.set(Duration::from_secs(600));
+        let mut cfg = ObservabilityConfig::default();
+        cfg.alerts_enabled = true;
+        cfg.alerts.eval_interval_secs = 0;
+        cfg.alerts.rules_path = alerts_rules_path().to_string_lossy().to_string();
+        init_alerts_observability(&cfg).expect("initialize alerts");
+    });
 }
 
 #[test]
@@ -955,7 +986,7 @@ fn snapshot_builder_filters_metrics() {
         quantiles: vec![0.5],
     };
 
-    let snapshot = build_snapshot(&registry, &query, 10);
+    let snapshot = build_snapshot(&registry, &query, 0);
     assert!(snapshot
         .series
         .iter()
@@ -984,6 +1015,339 @@ fn snapshot_query_rejects_invalid_params() {
         .unwrap();
     let err = parse_snapshot_query(&uri).expect_err("invalid quantile should error");
     assert!(matches!(err, SnapshotQueryError::InvalidQuantile(_)));
+}
+
+#[test]
+fn alerts_engine_triggers_and_resolves() {
+    let _guard = aggregate_lock();
+    ensure_alerts_engine_initialized();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+    provider.set(Duration::from_secs(600));
+
+    let fanout = ensure_fanout_bus().expect("fanout bus available");
+    let memory_bus = MemoryEventBus::new();
+    fanout.register(Arc::new(memory_bus.clone()));
+
+    let rule_spec = r#"[
+        {
+            "id": "git_fail_rate",
+            "expr": "git_tasks_total{state=failed}/git_tasks_total > 0.3",
+            "severity": "warn",
+            "window": "5m"
+        }
+    ]"#;
+    fs::write(alerts_rules_path(), rule_spec).expect("write rule file");
+    memory_bus.take_all();
+    evaluate_alerts_now();
+    memory_bus.take_all();
+
+    let registry = global_registry();
+    let kind = format!("GitAlert_{}", Uuid::new_v4());
+    for idx in 0..6 {
+        let id = format!("{kind}-{idx}");
+        publish_global(Event::Task(TaskEvent::Started {
+            id: id.clone(),
+            kind: kind.clone(),
+        }));
+        if idx < 4 {
+            publish_global(Event::Task(TaskEvent::Failed {
+                id,
+                category: "Network".into(),
+                code: None,
+                message: "fail".into(),
+            }));
+        } else {
+            publish_global(Event::Task(TaskEvent::Completed { id }));
+        }
+    }
+
+    let warn_before = registry
+        .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
+        .unwrap_or(0);
+    evaluate_alerts_now();
+
+    let events_first = memory_bus.take_all();
+    let warn_after = registry
+        .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
+        .unwrap_or(0);
+    assert!(warn_after >= warn_before + 1, "expected at least one firing alert");
+
+    let firing_states: Vec<MetricAlertState> = events_first
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::Strategy(StrategyEvent::MetricAlert { state, .. }) => Some(state),
+            _ => None,
+        })
+        .collect();
+    assert!(firing_states
+        .iter()
+        .any(|state| matches!(state, MetricAlertState::Firing)));
+
+    for idx in 6..16 {
+        let id = format!("{kind}-{idx}");
+        publish_global(Event::Task(TaskEvent::Started {
+            id: id.clone(),
+            kind: kind.clone(),
+        }));
+        publish_global(Event::Task(TaskEvent::Completed { id }));
+    }
+
+    evaluate_alerts_now();
+
+    let events_second = memory_bus.take_all();
+    let states: Vec<MetricAlertState> = events_second
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::Strategy(StrategyEvent::MetricAlert { state, .. }) => Some(state),
+            _ => None,
+        })
+        .collect();
+    assert!(states
+        .iter()
+        .any(|state| matches!(state, MetricAlertState::Resolved)));
+}
+
+#[test]
+fn alerts_engine_uses_builtin_rules_when_file_missing() {
+    let _guard = aggregate_lock();
+    ensure_alerts_engine_initialized();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+    provider.set(Duration::from_secs(600));
+
+    let fanout = ensure_fanout_bus().expect("fanout bus available");
+    let memory_bus = MemoryEventBus::new();
+    fanout.register(Arc::new(memory_bus.clone()));
+
+    if alerts_rules_path().exists() {
+        let _ = fs::remove_file(alerts_rules_path());
+    }
+    memory_bus.take_all();
+    evaluate_alerts_now();
+    memory_bus.take_all();
+
+    let registry = global_registry();
+    let warn_before = registry
+        .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
+        .unwrap_or(0);
+
+    let kind = format!("BuiltinAlert_{}", Uuid::new_v4());
+    for idx in 0..60 {
+        let id = format!("{kind}-{idx}");
+        publish_global(Event::Task(TaskEvent::Started {
+            id: id.clone(),
+            kind: kind.clone(),
+        }));
+        if idx < 54 {
+            publish_global(Event::Task(TaskEvent::Failed {
+                id,
+                category: "Network".into(),
+                code: None,
+                message: "fail".into(),
+            }));
+        } else {
+            publish_global(Event::Task(TaskEvent::Completed { id }));
+        }
+    }
+
+    evaluate_alerts_now();
+
+    let events = memory_bus.take_all();
+    let warn_after = registry
+        .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
+        .unwrap_or(0);
+    assert!(warn_after >= warn_before + 1, "expected builtin rule to fire");
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::Strategy(StrategyEvent::MetricAlert {
+            rule_id,
+            state,
+            ..
+        }) if rule_id == "git_fail_rate"
+            && matches!(state, MetricAlertState::Firing | MetricAlertState::Active)
+    )));
+}
+
+#[test]
+fn alerts_engine_respects_min_repeat_interval() {
+    let _guard = aggregate_lock();
+    ensure_alerts_engine_initialized();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+    provider.set(Duration::from_secs(600));
+
+    let fanout = ensure_fanout_bus().expect("fanout bus available");
+    let memory_bus = MemoryEventBus::new();
+    fanout.register(Arc::new(memory_bus.clone()));
+
+    let rule_spec = r#"[
+        {
+            "id": "repeat_interval_rule",
+            "expr": "ip_pool_refresh_total{reason=repeat_test,success=false} > 0",
+            "severity": "warn",
+            "window": "5m"
+        }
+    ]"#;
+    fs::write(alerts_rules_path(), rule_spec).expect("write repeat rule");
+    memory_bus.take_all();
+    evaluate_alerts_now();
+    memory_bus.take_all();
+
+    publish_global(Event::Strategy(StrategyEvent::IpPoolRefresh {
+        id: "repeat-1".into(),
+        domain: "example.com".into(),
+        success: false,
+        candidates_count: 0,
+        min_latency_ms: None,
+        max_latency_ms: None,
+        reason: "repeat_test".into(),
+    }));
+
+    evaluate_alerts_now();
+    let first_events = memory_bus.take_all();
+    assert!(first_events.iter().any(|event| matches!(
+        event,
+        Event::Strategy(StrategyEvent::MetricAlert { rule_id, .. })
+            if rule_id == "repeat_interval_rule"
+    )));
+
+    evaluate_alerts_now();
+    let second_events = memory_bus.take_all();
+    assert!(second_events
+        .iter()
+        .all(|event| !matches!(
+            event,
+            Event::Strategy(StrategyEvent::MetricAlert { rule_id, .. })
+                if rule_id == "repeat_interval_rule"
+        )));
+}
+
+#[test]
+fn alerts_engine_division_by_zero_skips_rule() {
+    let _guard = aggregate_lock();
+    ensure_alerts_engine_initialized();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+    provider.set(Duration::from_secs(600));
+
+    let fanout = ensure_fanout_bus().expect("fanout bus available");
+    let memory_bus = MemoryEventBus::new();
+    fanout.register(Arc::new(memory_bus.clone()));
+
+    let rule_spec = r#"[
+        {
+            "id": "div_zero_rule",
+            "expr": "ip_pool_refresh_total{reason=div_zero,success=true}/git_tasks_total{kind=div_zero_kind} > 0.5",
+            "severity": "warn",
+            "window": "5m"
+        }
+    ]"#;
+    fs::write(alerts_rules_path(), rule_spec).expect("write div zero rule");
+    memory_bus.take_all();
+    evaluate_alerts_now();
+    memory_bus.take_all();
+
+    publish_global(Event::Strategy(StrategyEvent::IpPoolRefresh {
+        id: "div-zero".into(),
+        domain: "example.com".into(),
+        success: true,
+        candidates_count: 1,
+        min_latency_ms: Some(10),
+        max_latency_ms: Some(15),
+        reason: "div_zero".into(),
+    }));
+
+    let warn_before = global_registry()
+        .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
+        .unwrap_or(0);
+
+    evaluate_alerts_now();
+    let events = memory_bus.take_all();
+    let warn_after = global_registry()
+        .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
+        .unwrap_or(0);
+
+    assert!(events
+        .iter()
+        .all(|event| !matches!(event, Event::Strategy(StrategyEvent::MetricAlert { .. }))));
+    assert_eq!(warn_before, warn_after, "division by zero rule should be skipped");
+}
+
+#[test]
+fn alerts_engine_hot_reload_applies_new_rules() {
+    let _guard = aggregate_lock();
+    ensure_alerts_engine_initialized();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+    provider.set(Duration::from_secs(600));
+
+    let fanout = ensure_fanout_bus().expect("fanout bus available");
+    let memory_bus = MemoryEventBus::new();
+    fanout.register(Arc::new(memory_bus.clone()));
+
+    let initial_spec = r#"[
+        {
+            "id": "hot_reload_rule",
+            "expr": "ip_pool_refresh_total{reason=hot_reload,success=false} > 5",
+            "severity": "warn",
+            "window": "5m"
+        }
+    ]"#;
+    fs::write(alerts_rules_path(), initial_spec).expect("write initial rule");
+    memory_bus.take_all();
+    evaluate_alerts_now();
+    memory_bus.take_all();
+
+    for idx in 0..3 {
+        publish_global(Event::Strategy(StrategyEvent::IpPoolRefresh {
+            id: format!("hot-reload-{idx}"),
+            domain: "example.com".into(),
+            success: false,
+            candidates_count: 0,
+            min_latency_ms: None,
+            max_latency_ms: None,
+            reason: "hot_reload".into(),
+        }));
+    }
+
+    evaluate_alerts_now();
+    let baseline_events = memory_bus.take_all();
+    assert!(baseline_events
+        .iter()
+        .all(|event| !matches!(event, Event::Strategy(StrategyEvent::MetricAlert { .. }))));
+
+    let warn_before = global_registry()
+        .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
+        .unwrap_or(0);
+
+    let updated_spec = r#"[
+        {
+            "id": "hot_reload_rule",
+            "expr": "ip_pool_refresh_total{reason=hot_reload,success=false} > 0",
+            "severity": "warn",
+            "window": "5m"
+        }
+    ]"#;
+    fs::write(alerts_rules_path(), updated_spec).expect("write updated rule");
+    memory_bus.take_all();
+    evaluate_alerts_now();
+    let updated_events = memory_bus.take_all();
+    let warn_after = global_registry()
+        .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
+        .unwrap_or(0);
+
+    assert!(warn_after >= warn_before + 1, "hot reload should trigger alert");
+    assert!(updated_events.iter().any(|event| matches!(
+        event,
+        Event::Strategy(StrategyEvent::MetricAlert {
+            rule_id,
+            state,
+            ..
+        }) if rule_id == "hot_reload_rule"
+            && matches!(state, MetricAlertState::Firing | MetricAlertState::Active)
+    )));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

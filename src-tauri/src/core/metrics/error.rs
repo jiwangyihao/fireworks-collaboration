@@ -36,4 +36,6 @@ pub enum MetricInitError {
     EventBus(&'static str),
     #[error("metrics export initialization failed: {0}")]
     Export(String),
+    #[error("metrics alerts initialization failed: {0}")]
+    Alerts(String),
 }

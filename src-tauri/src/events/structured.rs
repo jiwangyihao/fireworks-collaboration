@@ -34,6 +34,14 @@ pub enum PolicyEvent {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MetricAlertState {
+    Firing,
+    Active,
+    Resolved,
+}
+
 /// 传输/能力相关事件（预留）
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TransportEvent {
@@ -214,6 +222,17 @@ pub enum StrategyEvent {
         success: bool,
         mode: Option<String>,
         url: Option<String>,
+    },
+    /// 指标告警事件
+    MetricAlert {
+        rule_id: String,
+        severity: String,
+        state: MetricAlertState,
+        value: f64,
+        threshold: f64,
+        comparator: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timestamp_ms: Option<u64>,
     },
 }
 

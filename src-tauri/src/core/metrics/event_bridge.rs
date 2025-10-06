@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use dashmap::{mapref::entry::Entry, DashMap};
 
-use crate::events::structured::{Event, EventBus, StrategyEvent, TaskEvent};
+use crate::events::structured::{Event, EventBus, MetricAlertState, StrategyEvent, TaskEvent};
 
 use super::descriptors::*;
 use super::registry::MetricRegistry;
@@ -177,6 +177,14 @@ impl EventMetricsBridge {
                 let reason_label = sanitize_label_value(&reason);
                 self.record_proxy_fallback(&reason_label);
             }
+            StrategyEvent::MetricAlert {
+                severity, state, ..
+            } => {
+                if matches!(state, MetricAlertState::Firing | MetricAlertState::Active) {
+                    let severity_label = sanitize_label_value(&severity);
+                    self.record_alert(&severity_label);
+                }
+            }
             _ => {}
         }
     }
@@ -300,6 +308,13 @@ impl EventMetricsBridge {
                 ?err,
                 "failed to record strategy fallback"
             );
+        }
+    }
+
+    fn record_alert(&self, severity: &str) {
+        let labels = [("severity", severity)];
+        if let Err(err) = self.registry.incr_counter(ALERTS_FIRED_TOTAL, &labels, 1) {
+            tracing::warn!(target = "metrics", ?err, "failed to record alert metric");
         }
     }
 }

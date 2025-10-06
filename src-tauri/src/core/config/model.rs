@@ -153,6 +153,18 @@ fn default_export_bind_address() -> String {
     "127.0.0.1:9688".to_string()
 }
 
+fn default_alert_rules_path() -> String {
+    "config/observability/alert-rules.json".into()
+}
+
+fn default_alert_eval_interval() -> u32 {
+    30
+}
+
+fn default_alert_min_repeat() -> u32 {
+    30
+}
+
 /// 默认的假 SNI 候选列表（中国常见网站域名）
 fn default_fake_sni_hosts() -> Vec<String> {
     vec![
@@ -276,6 +288,8 @@ pub struct ObservabilityConfig {
     pub alerts_enabled: bool,
     #[serde(default)]
     pub export: ObservabilityExportConfig,
+    #[serde(default)]
+    pub alerts: ObservabilityAlertsConfig,
 }
 
 impl Default for ObservabilityConfig {
@@ -288,6 +302,28 @@ impl Default for ObservabilityConfig {
             ui_enabled: default_true(),
             alerts_enabled: default_true(),
             export: ObservabilityExportConfig::default(),
+            alerts: ObservabilityAlertsConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObservabilityAlertsConfig {
+    #[serde(default = "default_alert_rules_path")]
+    pub rules_path: String,
+    #[serde(default = "default_alert_eval_interval")]
+    pub eval_interval_secs: u32,
+    #[serde(default = "default_alert_min_repeat")]
+    pub min_repeat_interval_secs: u32,
+}
+
+impl Default for ObservabilityAlertsConfig {
+    fn default() -> Self {
+        Self {
+            rules_path: default_alert_rules_path(),
+            eval_interval_secs: default_alert_eval_interval(),
+            min_repeat_interval_secs: default_alert_min_repeat(),
         }
     }
 }

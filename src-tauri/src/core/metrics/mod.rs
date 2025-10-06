@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::core::config::model::ObservabilityConfig;
 
 mod aggregate;
+mod alerts;
 mod descriptors;
 mod error;
 mod event_bridge;
@@ -29,6 +30,8 @@ static BRIDGE: OnceCell<Arc<event_bridge::EventMetricsBridge>> = OnceCell::new()
 static AGGREGATE_INIT: OnceCell<()> = OnceCell::new();
 static AGGREGATOR: OnceCell<Arc<aggregate::WindowAggregator>> = OnceCell::new();
 static EXPORT_HANDLE: OnceCell<export::MetricsServerHandle> = OnceCell::new();
+static ALERTS_INIT: OnceCell<()> = OnceCell::new();
+static ALERT_ENGINE: OnceCell<Arc<alerts::AlertEngine>> = OnceCell::new();
 
 pub fn global_registry() -> Arc<MetricRegistry> {
     REGISTRY
@@ -101,4 +104,32 @@ pub fn init_export_observability(cfg: &ObservabilityConfig) -> Result<(), Metric
         .map_err(|err| MetricInitError::Export(err.to_string()))?;
     let _ = EXPORT_HANDLE.set(handle);
     Ok(())
+}
+
+pub fn init_alerts_observability(cfg: &ObservabilityConfig) -> Result<(), MetricInitError> {
+    if !cfg.enabled || !cfg.basic_enabled || !cfg.alerts_enabled {
+        return Ok(());
+    }
+
+    init_aggregate_observability(cfg)?;
+
+    ALERTS_INIT.get_or_try_init(|| -> Result<(), MetricInitError> {
+        let registry = global_registry();
+        let engine = Arc::new(
+            alerts::AlertEngine::new(registry, cfg.alerts.clone())
+                .map_err(|err| MetricInitError::Alerts(err.to_string()))?,
+        );
+        engine.evaluate();
+        engine.spawn();
+        let _ = ALERT_ENGINE.set(engine);
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
+pub fn evaluate_alerts_now() {
+    if let Some(engine) = ALERT_ENGINE.get() {
+        engine.evaluate();
+    }
 }
