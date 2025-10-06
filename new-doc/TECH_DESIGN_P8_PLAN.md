@@ -960,14 +960,36 @@ P8.4 负责把前述指标基础设施转化为可操作的可视化入口，覆
 - `pnpm run test:observability`、`pnpm test --filter observability`、`cargo test --manifest-path src-tauri/Cargo.toml metrics` 均通过，无 lint/类型错误。
 - 文档与内置帮助文本（tooltip、空状态说明）同步更新，确保使用者理解指标含义与数据延迟。
 
-### 3.5 P8.5 阈值告警与 Soak 集成（实现说明占位）
-TODO:
-- [ ] DSL parser （lexer + 简单 Pratt 或前缀）
-- [ ] AST 执行器 & 指标读取抽象层
-- [ ] 状态机与去抖实现
-- [ ] 规则热更新 watch + 校验
-- [ ] Soak 报告扩展字段注入
-- [ ] 测试：表达式、去抖、合并、恢复
+### 3.5 P8.5 阈值告警与 Soak 集成（实现说明）
+
+- **规则解析与内置默认**
+   - `src-tauri/src/core/metrics/alerts.rs` 完成轻量 DSL 解析：支持 `>` `>=` `<` `<=`、百分号与 `ms` 后缀、分位数语法 `metric[p95]`、按标签筛选 `metric{label=value}`、以及除法表达式（自动跳过分母为 0）。
+   - 通过 `builtin_rule_definitions()` 注入默认规则（Git 失败率、TLS P95、IP 池刷新成功率）。用户文件存在时按 rule id 合并，可设置 `enabled=false` 覆盖禁用；缺失文件时仍加载默认集。
+   - `ObservabilityAlertsConfig` 新增字段（rulesPath / evalIntervalSecs / minRepeatIntervalSecs），默认指向 `config/observability/alert-rules.json`。工程提供 `config/observability/alert-rules.json.example` 作为模板。
+
+- **执行引擎与事件**
+   - 引擎依赖 `MetricRegistry` 聚合窗口 API，复用计数器/直方图快照；直方图在请求分位数时要求唯一标签组合，否则发出 warn 并忽略。
+   - `RuleStatus` 去抖：首次触发发 `Firing`，在 `minRepeatIntervalSecs` 内保持 `Active` 而不重复 `Firing`；恢复时发 `Resolved`。
+   - 事件通过 `StrategyEvent::MetricAlert` 广播（含 rule_id、severity、state、value、threshold、comparator、timestamp_ms）。`EventMetricsBridge` 监听并累计 `alerts_fired_total{severity}` 指标，前端 Alerts 面板直接复用。
+   - `init_alerts_observability` 在 basic+aggregate 初始化后启动评估线程（可配置 0 表示手动触发）。重新加载规则时基于文件内容 hash，清理已被删除的 rule state。
+
+- **Soak 报告集成**
+   - `src-tauri/src/soak/aggregator.rs` 捕获告警事件并维护 `AlertTracker`，拆分 history/active；当存在未恢复的 critical 告警时，`ThresholdSummary` 自动附加 `alerts_active` 失败项并阻断 `ready` 标记。
+   - `src-tauri/src/soak/models.rs` 扩展 `SoakReport` 输出 `alerts` 字段，包含活动列表、历史轨迹与 `has_blocking` 标识；`ThresholdSummary` 新增 `alerts_blocking` 状态与 `set_alerts_blocking()`。
+
+- **测试矩阵落地**
+   - `src-tauri/tests/metrics/mod.rs` 覆盖：
+      1. 内置规则在无文件时仍会触发；
+      2. 去抖 `minRepeatInterval` 下不会重复发射；
+      3. 分母为零时安全跳过；
+      4. 热更新同名规则立即生效、旧状态清理；
+      5. Firing → Resolved 生命周期对应事件流及指标自增。
+   - `src-tauri/tests/soak/mod.rs` 新增 `aggregator_records_blocking_alerts` 与 `aggregator_alert_resolution_clears_blocking`：验证 critical 告警让 Soak 阈值失败、告警解除后恢复 `ready`。
+   - 任务依赖 `cargo test -q` 统一执行；前端 Alerts 面板时间序列复用既有 `alerts_fired_total` 指标无需额外 UI 变更。
+
+- **运维指引**
+   - 默认规则可通过复制 example 文件到 `config/observability/alert-rules.json` 并编辑实现本地化；支持 severity 调整、合理阈值与窗口选择。
+   - 运行时可通过 `ObservabilityConfig.alertsEnabled=false` 快速关闭告警引擎；配置热更新无需重启（下一次评估周期自动生效）。
 
 ### 3.6 P8.6 性能与安全硬化（实现说明占位）
 TODO:
