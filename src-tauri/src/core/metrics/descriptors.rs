@@ -109,6 +109,12 @@ pub const METRICS_EXPORT_RATE_LIMITED_TOTAL: MetricDescriptor = MetricDescriptor
     &[],
 );
 
+pub const METRIC_MEMORY_PRESSURE_TOTAL: MetricDescriptor = MetricDescriptor::counter(
+    "metric_memory_pressure_total",
+    "Metric runtime memory pressure events",
+    &[],
+);
+
 pub const BASIC_METRICS: &[MetricDescriptor] = &[
     GIT_TASKS_TOTAL,
     GIT_TASK_DURATION_MS,
@@ -127,6 +133,7 @@ pub const BASIC_METRICS: &[MetricDescriptor] = &[
     METRICS_EXPORT_REQUESTS_TOTAL,
     METRICS_EXPORT_SERIES_TOTAL,
     METRICS_EXPORT_RATE_LIMITED_TOTAL,
+    METRIC_MEMORY_PRESSURE_TOTAL,
 ];
 
 pub fn all_descriptors() -> &'static [MetricDescriptor] {

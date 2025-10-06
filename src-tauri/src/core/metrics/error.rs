@@ -38,4 +38,6 @@ pub enum MetricInitError {
     Export(String),
     #[error("metrics alerts initialization failed: {0}")]
     Alerts(String),
+    #[error("metrics runtime initialization failed: {0}")]
+    Runtime(String),
 }

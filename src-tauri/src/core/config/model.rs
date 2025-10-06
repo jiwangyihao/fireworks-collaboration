@@ -290,6 +290,8 @@ pub struct ObservabilityConfig {
     pub export: ObservabilityExportConfig,
     #[serde(default)]
     pub alerts: ObservabilityAlertsConfig,
+    #[serde(default)]
+    pub performance: ObservabilityPerformanceConfig,
 }
 
 impl Default for ObservabilityConfig {
@@ -303,6 +305,7 @@ impl Default for ObservabilityConfig {
             alerts_enabled: default_true(),
             export: ObservabilityExportConfig::default(),
             alerts: ObservabilityAlertsConfig::default(),
+            performance: ObservabilityPerformanceConfig::default(),
         }
     }
 }
@@ -350,4 +353,77 @@ impl Default for ObservabilityExportConfig {
             bind_address: default_export_bind_address(),
         }
     }
+}
+
+fn default_redact_ip_mode() -> ObservabilityRedactIpMode {
+    ObservabilityRedactIpMode::Mask
+}
+
+fn default_performance_batch_flush_interval_ms() -> u32 {
+    500
+}
+
+fn default_performance_tls_sample_rate() -> u32 {
+    5
+}
+
+fn default_performance_max_memory_bytes() -> u64 {
+    8_000_000
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObservabilityPerformanceConfig {
+    #[serde(default = "default_performance_batch_flush_interval_ms")]
+    pub batch_flush_interval_ms: u32,
+    #[serde(default = "default_performance_tls_sample_rate")]
+    pub tls_sample_rate: u32,
+    #[serde(default = "default_performance_max_memory_bytes")]
+    pub max_memory_bytes: u64,
+    #[serde(default = "default_true")]
+    pub enable_sharding: bool,
+    #[serde(default)]
+    pub redact: ObservabilityRedactConfig,
+    #[serde(default)]
+    pub debug_mode: bool,
+}
+
+impl Default for ObservabilityPerformanceConfig {
+    fn default() -> Self {
+        Self {
+            batch_flush_interval_ms: default_performance_batch_flush_interval_ms(),
+            tls_sample_rate: default_performance_tls_sample_rate(),
+            max_memory_bytes: default_performance_max_memory_bytes(),
+            enable_sharding: default_true(),
+            redact: ObservabilityRedactConfig::default(),
+            debug_mode: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObservabilityRedactConfig {
+    #[serde(default)]
+    pub repo_hash_salt: String,
+    #[serde(default = "default_redact_ip_mode")]
+    pub ip_mode: ObservabilityRedactIpMode,
+}
+
+impl Default for ObservabilityRedactConfig {
+    fn default() -> Self {
+        Self {
+            repo_hash_salt: String::new(),
+            ip_mode: default_redact_ip_mode(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[repr(u8)]
+pub enum ObservabilityRedactIpMode {
+    Mask,
+    Classify,
+    Full,
 }

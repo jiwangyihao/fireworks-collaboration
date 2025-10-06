@@ -276,9 +276,10 @@ impl AlertEngine {
         }
         if let Some(raw) = source {
             if !raw.trim().is_empty() {
-                let user_rules: Vec<AlertRuleDefinition> = serde_json::from_str(raw).map_err(|err| {
-                    AlertError::Parse(format!("failed to parse alert rules json: {err}"))
-                })?;
+                let user_rules: Vec<AlertRuleDefinition> =
+                    serde_json::from_str(raw).map_err(|err| {
+                        AlertError::Parse(format!("failed to parse alert rules json: {err}"))
+                    })?;
                 for rule in user_rules {
                     all.insert(rule.id.clone(), rule);
                 }

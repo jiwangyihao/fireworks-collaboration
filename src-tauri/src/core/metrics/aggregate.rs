@@ -2,6 +2,7 @@ use dashmap::{mapref::entry::Entry, DashMap, DashSet};
 use hdrhistogram::Histogram;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
+use std::mem;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -350,6 +351,29 @@ impl WindowAggregator {
         }
     }
 
+    pub(super) fn estimate_memory_bytes(&self) -> u64 {
+        let mut total = 0u64;
+        for entry in self.histograms.iter() {
+            if let Ok(guard) = entry.value().lock() {
+                total = total.saturating_add(guard.memory_usage_bytes() as u64);
+            }
+        }
+        total
+    }
+
+    pub(super) fn disable_raw_samples(&self) {
+        let entries: Vec<Arc<Mutex<HistogramEntry>>> = self
+            .histograms
+            .iter()
+            .map(|entry| Arc::clone(entry.value()))
+            .collect();
+        for arc in entries {
+            if let Ok(mut guard) = arc.lock() {
+                guard.disable_raw_samples();
+            }
+        }
+    }
+
     pub(super) fn list_counter_series(&self, metric: &'static str) -> Vec<WindowSeriesDescriptor> {
         self.counters
             .iter()
@@ -615,6 +639,12 @@ impl HistogramEntry {
         self.last_minute = Some(minute);
     }
 
+    fn disable_raw_samples(&mut self) {
+        self.options.raw_window_minutes = None;
+        self.options.raw_max_samples = 0;
+        self.raw_samples.clear();
+    }
+
     fn snapshot(
         &self,
         range: WindowRange,
@@ -783,6 +813,10 @@ impl HistogramEntry {
 
     fn last_updated_seconds(&self) -> Option<u64> {
         self.last_minute.map(|minute| minute.saturating_mul(60))
+    }
+
+    fn memory_usage_bytes(&self) -> usize {
+        self.raw_samples.len() * mem::size_of::<RawSamplePoint>()
     }
 }
 

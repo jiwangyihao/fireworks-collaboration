@@ -234,6 +234,12 @@ pub enum StrategyEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         timestamp_ms: Option<u64>,
     },
+    /// 指标运行时内存压力事件
+    MetricMemoryPressure {
+        usage_bytes: u64,
+        threshold_bytes: u64,
+        raw_samples_disabled: bool,
+    },
 }
 
 /// 统一顶层事件枚举

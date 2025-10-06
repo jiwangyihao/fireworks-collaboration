@@ -1,15 +1,24 @@
 use dashmap::{DashMap, DashSet};
 use once_cell::sync::OnceCell;
+use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::thread;
 
 use super::aggregate::{
     CounterWindowSnapshot, HistogramWindowConfig, HistogramWindowSnapshot, WindowAggregator,
     WindowRange, WindowSeriesDescriptor,
 };
 use super::error::MetricError;
+use super::runtime;
+
+static HISTOGRAM_SHARD_COUNT: AtomicUsize = AtomicUsize::new(1);
+
+thread_local! {
+    static HISTOGRAM_SHARD_INDEX: RefCell<Option<usize>> = const { RefCell::new(None) };
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MetricKind {
@@ -102,6 +111,11 @@ impl Default for MetricRegistry {
 impl MetricRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn configure_histogram_sharding(&self, enable: bool) {
+        let target = if enable { num_cpus::get().max(1) } else { 1 };
+        set_histogram_shard_count(target);
     }
 
     pub fn attach_aggregator(&self, aggregator: Arc<WindowAggregator>) {
@@ -232,6 +246,7 @@ impl MetricRegistry {
         desc: MetricDescriptor,
         labels: &[(&'static str, &str)],
     ) -> Option<u64> {
+        runtime::flush_thread();
         let metric = self.counters.get(desc.name)?;
         let key = normalize_labels(desc, labels).ok()?;
         metric
@@ -245,6 +260,7 @@ impl MetricRegistry {
         desc: MetricDescriptor,
         labels: &[(&'static str, &str)],
     ) -> Option<HistogramSnapshot> {
+        runtime::flush_thread();
         let metric = self.histograms.get(desc.name)?;
         let boundaries = desc.buckets?;
         let key = normalize_labels(desc, labels).ok()?;
@@ -260,6 +276,7 @@ impl MetricRegistry {
         labels: &[(&'static str, &str)],
         range: WindowRange,
     ) -> Result<CounterWindowSnapshot, MetricError> {
+        runtime::flush_thread();
         let aggregator = self
             .aggregator
             .get()
@@ -277,6 +294,7 @@ impl MetricRegistry {
         range: WindowRange,
         quantiles: &[f64],
     ) -> Result<HistogramWindowSnapshot, MetricError> {
+        runtime::flush_thread();
         let aggregator = self
             .aggregator
             .get()
@@ -317,6 +335,7 @@ impl MetricRegistry {
     }
 
     pub fn collect_counter_series(&self) -> Vec<CounterSeriesSnapshot> {
+        runtime::flush_thread();
         let mut out = Vec::new();
         for metric_entry in self.counters.iter() {
             let metric = metric_entry.value();
@@ -335,6 +354,7 @@ impl MetricRegistry {
     }
 
     pub fn collect_histogram_series(&self) -> Vec<HistogramSeriesSnapshot> {
+        runtime::flush_thread();
         let mut out = Vec::new();
         for metric_entry in self.histograms.iter() {
             let metric = metric_entry.value();
@@ -354,6 +374,13 @@ impl MetricRegistry {
         }
         out
     }
+
+    pub fn histogram_descriptors(&self) -> Vec<MetricDescriptor> {
+        self.histograms
+            .iter()
+            .map(|entry| entry.value().descriptor)
+            .collect()
+    }
 }
 
 struct CounterMetric {
@@ -368,12 +395,63 @@ struct HistogramMetric {
 }
 
 struct HistogramSeries {
+    shards: Vec<HistogramShard>,
+}
+
+struct HistogramShard {
     buckets: Vec<AtomicU64>,
     sum_bits: AtomicU64,
     count: AtomicU64,
 }
 
 impl HistogramSeries {
+    fn new(bucket_count: usize) -> Self {
+        let shard_count = histogram_shard_count();
+        let shards: Vec<HistogramShard> = (0..shard_count)
+            .map(|_| HistogramShard::new(bucket_count))
+            .collect();
+        Self { shards }
+    }
+
+    fn observe(&self, index: usize, value: f64) {
+        let shard_idx = current_histogram_shard_index();
+        if let Some(shard) = self.shards.get(shard_idx) {
+            shard.observe(index, value);
+        } else if let Some(first) = self.shards.first() {
+            first.observe(index, value);
+        }
+    }
+
+    fn snapshot(&self, boundaries: &[f64]) -> HistogramSnapshot {
+        let mut sum = 0.0;
+        let mut count = 0u64;
+        let bucket_len = boundaries.len() + 1;
+        let mut totals = vec![0u64; bucket_len];
+        for shard in &self.shards {
+            sum += f64::from_bits(shard.sum_bits.load(Ordering::Relaxed));
+            count = count.saturating_add(shard.count.load(Ordering::Relaxed));
+            for (idx, counter) in shard.buckets.iter().enumerate() {
+                totals[idx] = totals[idx].saturating_add(counter.load(Ordering::Relaxed));
+            }
+        }
+        let mut buckets_snapshot = Vec::with_capacity(bucket_len);
+        for idx in 0..bucket_len {
+            let boundary = if idx < boundaries.len() {
+                boundaries[idx]
+            } else {
+                f64::INFINITY
+            };
+            buckets_snapshot.push((boundary, totals[idx]));
+        }
+        HistogramSnapshot {
+            sum,
+            count,
+            buckets: buckets_snapshot,
+        }
+    }
+}
+
+impl HistogramShard {
     fn new(bucket_count: usize) -> Self {
         let mut buckets = Vec::with_capacity(bucket_count);
         for _ in 0..bucket_count {
@@ -392,25 +470,6 @@ impl HistogramSeries {
         }
         self.count.fetch_add(1, Ordering::Relaxed);
         add_f64(&self.sum_bits, value);
-    }
-
-    fn snapshot(&self, boundaries: &[f64]) -> HistogramSnapshot {
-        let sum = f64::from_bits(self.sum_bits.load(Ordering::Relaxed));
-        let count = self.count.load(Ordering::Relaxed);
-        let mut buckets_snapshot = Vec::with_capacity(self.buckets.len());
-        for (idx, counter) in self.buckets.iter().enumerate() {
-            let boundary = if idx < boundaries.len() {
-                boundaries[idx]
-            } else {
-                f64::INFINITY
-            };
-            buckets_snapshot.push((boundary, counter.load(Ordering::Relaxed)));
-        }
-        HistogramSnapshot {
-            sum,
-            count,
-            buckets: buckets_snapshot,
-        }
     }
 }
 
@@ -514,4 +573,32 @@ fn add_f64(target: &AtomicU64, value: f64) {
             Err(observed) => current = observed,
         }
     }
+}
+
+fn set_histogram_shard_count(count: usize) {
+    let sanitized = count.max(1);
+    HISTOGRAM_SHARD_COUNT.store(sanitized, Ordering::Relaxed);
+    HISTOGRAM_SHARD_INDEX.with(|cell| *cell.borrow_mut() = None);
+}
+
+fn histogram_shard_count() -> usize {
+    HISTOGRAM_SHARD_COUNT.load(Ordering::Relaxed).max(1)
+}
+
+fn current_histogram_shard_index() -> usize {
+    let count = histogram_shard_count();
+    HISTOGRAM_SHARD_INDEX.with(|cell| {
+        if let Some(idx) = *cell.borrow() {
+            if idx < count {
+                return idx;
+            }
+        }
+        let thread_id = thread::current().id();
+        let mut hasher = DefaultHasher::new();
+        thread_id.hash(&mut hasher);
+        let raw = hasher.finish();
+        let idx = (raw % count as u64) as usize;
+        *cell.borrow_mut() = Some(idx);
+        idx
+    })
 }

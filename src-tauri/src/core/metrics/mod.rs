@@ -10,6 +10,7 @@ mod error;
 mod event_bridge;
 mod export;
 mod registry;
+mod runtime;
 
 pub use aggregate::{
     CounterWindowSnapshot, HistogramRawSample, HistogramWindowConfig, HistogramWindowSnapshot,
@@ -23,6 +24,7 @@ pub use export::{
     MetricsSnapshotSeries, SnapshotQuery, SnapshotQueryError,
 };
 pub use registry::{HistogramSnapshot, MetricDescriptor, MetricKind, MetricRegistry};
+pub use runtime::SampleKind;
 
 static REGISTRY: OnceCell<Arc<MetricRegistry>> = OnceCell::new();
 static BASIC_INIT: OnceCell<()> = OnceCell::new();
@@ -47,6 +49,7 @@ pub fn init_basic_observability(cfg: &ObservabilityConfig) -> Result<(), MetricI
     BASIC_INIT.get_or_try_init(|| -> Result<(), MetricInitError> {
         let registry = global_registry();
         descriptors::register_basic_metrics(&registry)?;
+        runtime::init(cfg, registry.clone())?;
         let fanout =
             crate::events::structured::ensure_fanout_bus().map_err(MetricInitError::EventBus)?;
         let bridge = Arc::new(event_bridge::EventMetricsBridge::new(registry));
@@ -132,4 +135,45 @@ pub fn evaluate_alerts_now() {
     if let Some(engine) = ALERT_ENGINE.get() {
         engine.evaluate();
     }
+}
+
+pub fn configure_tls_sampling(rate: u32) {
+    runtime::configure_tls_sample_rate(rate);
+}
+
+pub fn set_runtime_debug_mode(enabled: bool) {
+    runtime::configure_debug_mode(enabled);
+}
+
+pub fn set_runtime_ip_mode(mode: crate::core::config::model::ObservabilityRedactIpMode) {
+    runtime::configure_ip_mode(mode);
+}
+
+pub fn set_runtime_memory_limit(bytes: u64) {
+    runtime::configure_memory_limit(bytes);
+}
+
+pub fn force_memory_pressure_check() {
+    runtime::force_memory_pressure_check();
+}
+
+pub fn record_counter_metric(desc: MetricDescriptor, labels: &[(&'static str, &str)], value: u64) {
+    runtime::record_counter(desc, labels, value);
+}
+
+pub fn observe_histogram_metric(
+    desc: MetricDescriptor,
+    labels: &[(&'static str, &str)],
+    value: f64,
+) {
+    runtime::observe_histogram(desc, labels, value, SampleKind::None);
+}
+
+pub fn observe_histogram_with_kind(
+    desc: MetricDescriptor,
+    labels: &[(&'static str, &str)],
+    value: f64,
+    kind: SampleKind,
+) {
+    runtime::observe_histogram(desc, labels, value, kind);
 }

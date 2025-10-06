@@ -7,6 +7,7 @@ use crate::events::structured::{Event, EventBus, MetricAlertState, StrategyEvent
 
 use super::descriptors::*;
 use super::registry::MetricRegistry;
+use super::runtime::{observe_histogram, record_counter, SampleKind};
 
 const STATE_COMPLETED: &str = "completed";
 const STATE_FAILED: &str = "failed";
@@ -15,14 +16,14 @@ const OUTCOME_OK: &str = "ok";
 const OUTCOME_FAIL: &str = "fail";
 
 pub struct EventMetricsBridge {
-    registry: Arc<MetricRegistry>,
+    _registry: Arc<MetricRegistry>,
     tasks: DashMap<String, TaskInfo>,
 }
 
 impl EventMetricsBridge {
     pub fn new(registry: Arc<MetricRegistry>) -> Self {
         Self {
-            registry,
+            _registry: registry,
             tasks: DashMap::new(),
         }
     }
@@ -191,131 +192,66 @@ impl EventMetricsBridge {
 
     fn record_git_task(&self, kind: &str, state: &str) {
         let labels = [("kind", kind), ("state", state)];
-        if let Err(err) = self.registry.incr_counter(GIT_TASKS_TOTAL, &labels, 1) {
-            tracing::warn!(target = "metrics", ?err, "failed to record git task total");
-        }
+        record_counter(GIT_TASKS_TOTAL, &labels, 1);
     }
 
     fn observe_git_duration(&self, kind: &str, value: f64) {
         let labels = [("kind", kind)];
-        if let Err(err) = self
-            .registry
-            .observe_histogram(GIT_TASK_DURATION_MS, &labels, value)
-        {
-            tracing::warn!(
-                target = "metrics",
-                ?err,
-                "failed to record git task duration"
-            );
-        }
+        observe_histogram(GIT_TASK_DURATION_MS, &labels, value, SampleKind::None);
     }
 
     fn record_retry(&self, kind: &str, category: &str) {
         let labels = [("kind", kind), ("category", category)];
-        if let Err(err) = self.registry.incr_counter(GIT_RETRY_TOTAL, &labels, 1) {
-            tracing::warn!(target = "metrics", ?err, "failed to record retry total");
-        }
+        record_counter(GIT_RETRY_TOTAL, &labels, 1);
     }
 
     fn observe_tls_handshake(&self, strategy: &str, outcome: &str, value: f64) {
         let labels = [("sni_strategy", strategy), ("outcome", outcome)];
-        if let Err(err) = self
-            .registry
-            .observe_histogram(TLS_HANDSHAKE_MS, &labels, value)
-        {
-            tracing::warn!(
-                target = "metrics",
-                ?err,
-                "failed to record tls handshake metric"
-            );
-        }
+        observe_histogram(TLS_HANDSHAKE_MS, &labels, value, SampleKind::TlsHandshake);
     }
 
     fn observe_ip_latency(&self, source: &str, value: f64) {
         let labels = [("source", source)];
-        if let Err(err) = self
-            .registry
-            .observe_histogram(IP_POOL_LATENCY_MS, &labels, value)
-        {
-            tracing::warn!(target = "metrics", ?err, "failed to record ip latency");
-        }
+        observe_histogram(IP_POOL_LATENCY_MS, &labels, value, SampleKind::None);
     }
 
     fn record_ip_selection(&self, strategy: &str, outcome: &str) {
         let labels = [("strategy", strategy), ("outcome", outcome)];
-        if let Err(err) = self
-            .registry
-            .incr_counter(IP_POOL_SELECTION_TOTAL, &labels, 1)
-        {
-            tracing::warn!(target = "metrics", ?err, "failed to record ip selection");
-        }
+        record_counter(IP_POOL_SELECTION_TOTAL, &labels, 1);
     }
 
     fn record_ip_refresh(&self, reason: &str, success: &str) {
         let labels = [("reason", reason), ("success", success)];
-        if let Err(err) = self
-            .registry
-            .incr_counter(IP_POOL_REFRESH_TOTAL, &labels, 1)
-        {
-            tracing::warn!(target = "metrics", ?err, "failed to record ip refresh");
-        }
+        record_counter(IP_POOL_REFRESH_TOTAL, &labels, 1);
     }
 
     fn record_ip_auto_disable(&self, reason: &str) {
         let labels = [("reason", reason)];
-        if let Err(err) = self
-            .registry
-            .incr_counter(IP_POOL_AUTO_DISABLE_TOTAL, &labels, 1)
-        {
-            tracing::warn!(target = "metrics", ?err, "failed to record auto disable");
-        }
+        record_counter(IP_POOL_AUTO_DISABLE_TOTAL, &labels, 1);
     }
 
     fn record_circuit_trip(&self, reason: &str) {
         let labels = [("reason", reason)];
-        if let Err(err) = self
-            .registry
-            .incr_counter(CIRCUIT_BREAKER_TRIP_TOTAL, &labels, 1)
-        {
-            tracing::warn!(target = "metrics", ?err, "failed to record circuit trip");
-        }
+        record_counter(CIRCUIT_BREAKER_TRIP_TOTAL, &labels, 1);
     }
 
     fn record_circuit_recover(&self) {
-        if let Err(err) = self
-            .registry
-            .incr_counter(CIRCUIT_BREAKER_RECOVER_TOTAL, &[], 1)
-        {
-            tracing::warn!(target = "metrics", ?err, "failed to record circuit recover");
-        }
+        record_counter(CIRCUIT_BREAKER_RECOVER_TOTAL, &[], 1);
     }
 
     fn record_proxy_fallback(&self, reason: &str) {
         let labels = [("reason", reason)];
-        if let Err(err) = self.registry.incr_counter(PROXY_FALLBACK_TOTAL, &labels, 1) {
-            tracing::warn!(target = "metrics", ?err, "failed to record proxy fallback");
-        }
+        record_counter(PROXY_FALLBACK_TOTAL, &labels, 1);
     }
 
     fn record_http_strategy_fallback(&self, stage: &str, from: &str) {
         let labels = [("stage", stage), ("from", from)];
-        if let Err(err) = self
-            .registry
-            .incr_counter(HTTP_STRATEGY_FALLBACK_TOTAL, &labels, 1)
-        {
-            tracing::warn!(
-                target = "metrics",
-                ?err,
-                "failed to record strategy fallback"
-            );
-        }
+        record_counter(HTTP_STRATEGY_FALLBACK_TOTAL, &labels, 1);
     }
 
     fn record_alert(&self, severity: &str) {
         let labels = [("severity", severity)];
-        if let Err(err) = self.registry.incr_counter(ALERTS_FIRED_TOTAL, &labels, 1) {
-            tracing::warn!(target = "metrics", ?err, "failed to record alert metric");
-        }
+        record_counter(ALERTS_FIRED_TOTAL, &labels, 1);
     }
 }
 
