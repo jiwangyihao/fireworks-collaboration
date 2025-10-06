@@ -39,8 +39,9 @@ mod utils;
 // Re-export public API
 pub use aggregator::{IpPoolStats, ProxyStats, SoakAggregator};
 pub use models::{
-    build_comparison_summary, AutoDisableSummary, ComparisonSummary, FallbackSummary, FieldStats,
-    IpPoolSummary, OperationSummary, ProxySummary, SoakOptions, SoakOptionsSnapshot, SoakReport,
-    SoakThresholds, ThresholdCheck, ThresholdSummary, TimingSummary, TotalsSummary,
+    build_comparison_summary, AlertsSummary, AutoDisableSummary, ComparisonSummary,
+    FallbackSummary, FieldStats, IpPoolSummary, OperationSummary, ProxySummary, SoakOptions,
+    SoakOptionsSnapshot, SoakReport, SoakThresholds, ThresholdCheck, ThresholdSummary,
+    TimingSummary, TotalsSummary,
 };
 pub use runner::{run, run_from_env};

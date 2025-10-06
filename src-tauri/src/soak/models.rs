@@ -1,3 +1,4 @@
+use crate::events::structured::MetricAlertState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -87,6 +88,8 @@ pub struct SoakReport {
     pub proxy: ProxySummary,
     pub totals: TotalsSummary,
     pub thresholds: ThresholdSummary,
+    #[serde(default)]
+    pub alerts: AlertsSummary,
     pub comparison: Option<ComparisonSummary>,
 }
 
@@ -180,6 +183,8 @@ pub struct ThresholdSummary {
     pub ready: bool,
     #[serde(default)]
     pub failing_checks: Vec<String>,
+    #[serde(default)]
+    pub alerts_blocking: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -257,6 +262,7 @@ impl ThresholdSummary {
             latency_improvement,
             ready: false,
             failing_checks: Vec::new(),
+            alerts_blocking: false,
         };
         summary.recompute();
         summary
@@ -264,6 +270,11 @@ impl ThresholdSummary {
 
     pub fn set_latency_improvement(&mut self, check: ThresholdCheck) {
         self.latency_improvement = Some(check);
+        self.recompute();
+    }
+
+    pub fn set_alerts_blocking(&mut self, blocking: bool) {
+        self.alerts_blocking = blocking;
         self.recompute();
     }
 
@@ -290,9 +301,34 @@ impl ThresholdSummary {
                 failing.push("latency_improvement".to_string());
             }
         }
+        if self.alerts_blocking {
+            failing.push("alerts_active".to_string());
+        }
         self.ready = failing.is_empty();
         self.failing_checks = failing;
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AlertsSummary {
+    #[serde(default)]
+    pub history: Vec<MetricAlertSnapshot>,
+    #[serde(default)]
+    pub active: Vec<MetricAlertSnapshot>,
+    #[serde(default)]
+    pub has_blocking: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricAlertSnapshot {
+    pub rule_id: String,
+    pub severity: String,
+    pub state: MetricAlertState,
+    pub value: f64,
+    pub threshold: f64,
+    pub comparator: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp_ms: Option<u64>,
 }
 
 /// Build comparison summary between baseline and current soak reports.

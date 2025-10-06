@@ -1,5 +1,5 @@
 use crate::core::tasks::model::TaskState;
-use crate::events::structured::{Event, StrategyEvent, TaskEvent};
+use crate::events::structured::{Event, MetricAlertState, StrategyEvent, TaskEvent};
 use std::collections::HashMap;
 
 use super::models::*;
@@ -87,6 +87,7 @@ pub struct SoakAggregator {
     pub ip_pool: IpPoolStats,
     pub proxy: ProxyStats,
     pub expected_iterations: u32,
+    alerts: AlertTracker,
 }
 
 impl SoakAggregator {
@@ -169,6 +170,25 @@ impl SoakAggregator {
                 }
                 Event::Strategy(StrategyEvent::SystemProxyDetected { success, .. }) => {
                     self.process_system_proxy_detect(success);
+                }
+                Event::Strategy(StrategyEvent::MetricAlert {
+                    rule_id,
+                    severity,
+                    state,
+                    value,
+                    threshold,
+                    comparator,
+                    timestamp_ms,
+                }) => {
+                    self.alerts.record(MetricAlertSnapshot {
+                        rule_id,
+                        severity,
+                        state,
+                        value,
+                        threshold,
+                        comparator,
+                        timestamp_ms,
+                    });
                 }
                 _ => {}
             }
@@ -283,12 +303,14 @@ impl SoakAggregator {
 
         let ip_pool_summary = self.build_ip_pool_summary();
         let proxy_summary = self.build_proxy_summary();
-        let threshold_summary = self.build_threshold_summary(
+        let mut threshold_summary = self.build_threshold_summary(
             &options.thresholds,
             success_rate,
             fallback_ratio,
             &ip_pool_summary,
         );
+        let alerts_summary = self.alerts.into_summary();
+        threshold_summary.set_alerts_blocking(alerts_summary.has_blocking);
 
         SoakReport {
             started_unix,
@@ -312,6 +334,7 @@ impl SoakAggregator {
             proxy: proxy_summary,
             totals,
             thresholds: threshold_summary,
+            alerts: alerts_summary,
             comparison: None,
         }
     }
@@ -469,5 +492,36 @@ impl SoakAggregator {
             auto_disable_threshold,
             None,
         )
+    }
+}
+
+#[derive(Default)]
+struct AlertTracker {
+    history: Vec<MetricAlertSnapshot>,
+    active: HashMap<String, MetricAlertSnapshot>,
+}
+
+impl AlertTracker {
+    fn record(&mut self, snapshot: MetricAlertSnapshot) {
+        if matches!(snapshot.state, MetricAlertState::Resolved) {
+            self.active.remove(&snapshot.rule_id);
+        } else {
+            self.active
+                .insert(snapshot.rule_id.clone(), snapshot.clone());
+        }
+        self.history.push(snapshot);
+    }
+
+    fn into_summary(self) -> AlertsSummary {
+        let mut active: Vec<MetricAlertSnapshot> = self.active.into_values().collect();
+        active.sort_by(|a, b| a.rule_id.cmp(&b.rule_id));
+        let has_blocking = active
+            .iter()
+            .any(|alert| alert.severity == "critical" && alert.state != MetricAlertState::Resolved);
+        AlertsSummary {
+            history: self.history,
+            active,
+            has_blocking,
+        }
     }
 }

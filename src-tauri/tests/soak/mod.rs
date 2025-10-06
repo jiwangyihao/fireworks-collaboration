@@ -1,9 +1,10 @@
 use fireworks_collaboration_lib::core::tasks::model::TaskState;
-use fireworks_collaboration_lib::events::structured::{Event, StrategyEvent};
+use fireworks_collaboration_lib::events::structured::{Event, MetricAlertState, StrategyEvent};
 use fireworks_collaboration_lib::soak::{
-    build_comparison_summary, run, run_from_env, AutoDisableSummary, FallbackSummary, FieldStats,
-    IpPoolSummary, ProxySummary, SoakAggregator, SoakOptions, SoakOptionsSnapshot, SoakReport,
-    SoakThresholds, ThresholdCheck, ThresholdSummary, TimingSummary, TotalsSummary,
+    build_comparison_summary, run, run_from_env, AlertsSummary, AutoDisableSummary,
+    FallbackSummary, FieldStats, IpPoolSummary, ProxySummary, SoakAggregator, SoakOptions,
+    SoakOptionsSnapshot, SoakReport, SoakThresholds, ThresholdCheck, ThresholdSummary,
+    TimingSummary, TotalsSummary,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -335,6 +336,7 @@ fn soak_report_serialization_includes_ip_pool() {
             Some(ThresholdCheck::at_most(0.0, 0.0)),
             None,
         ),
+        alerts: AlertsSummary::default(),
         comparison: None,
     };
 
@@ -406,6 +408,7 @@ fn comparison_summary_detects_regressions() {
             Some(ThresholdCheck::at_most(0.0, 0.0)),
             None,
         ),
+        alerts: AlertsSummary::default(),
         comparison: None,
     };
 
@@ -485,6 +488,90 @@ fn aggregator_threshold_detects_high_fallback_ratio() {
     assert!(report.thresholds.success_rate.pass);
     assert!(!report.thresholds.fake_fallback_rate.pass);
     assert!((report.thresholds.fake_fallback_rate.actual - 1.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn aggregator_records_blocking_alerts() {
+    let mut agg = SoakAggregator::new(1);
+    agg.process_events(vec![Event::Strategy(StrategyEvent::MetricAlert {
+        rule_id: "critical_rule".into(),
+        severity: "critical".into(),
+        state: MetricAlertState::Firing,
+        value: 0.92,
+        threshold: 0.80,
+        comparator: ">".into(),
+        timestamp_ms: Some(1_700_000_000_000),
+    })]);
+
+    let report = agg.into_report(
+        0,
+        0,
+        0,
+        SoakOptionsSnapshot {
+            iterations: 1,
+            keep_clones: false,
+            report_path: "memory".into(),
+            workspace_dir: "memory".into(),
+            baseline_report: None,
+            thresholds: SoakThresholds::default(),
+        },
+    );
+
+    assert_eq!(report.alerts.active.len(), 1);
+    assert!(report.alerts.has_blocking);
+    assert!(!report.thresholds.ready);
+    assert!(report
+        .thresholds
+        .failing_checks
+        .contains(&"alerts_active".to_string()));
+}
+
+#[test]
+fn aggregator_alert_resolution_clears_blocking() {
+    let mut agg = SoakAggregator::new(1);
+    agg.process_events(vec![
+        Event::Strategy(StrategyEvent::MetricAlert {
+            rule_id: "critical_rule".into(),
+            severity: "critical".into(),
+            state: MetricAlertState::Firing,
+            value: 1.2,
+            threshold: 1.0,
+            comparator: ">".into(),
+            timestamp_ms: Some(1_700_000_100_000),
+        }),
+        Event::Strategy(StrategyEvent::MetricAlert {
+            rule_id: "critical_rule".into(),
+            severity: "critical".into(),
+            state: MetricAlertState::Resolved,
+            value: 0.8,
+            threshold: 1.0,
+            comparator: ">".into(),
+            timestamp_ms: Some(1_700_000_200_000),
+        }),
+    ]);
+
+    let report = agg.into_report(
+        0,
+        0,
+        0,
+        SoakOptionsSnapshot {
+            iterations: 1,
+            keep_clones: false,
+            report_path: "memory".into(),
+            workspace_dir: "memory".into(),
+            baseline_report: None,
+            thresholds: SoakThresholds::default(),
+        },
+    );
+
+    assert!(report.alerts.active.is_empty());
+    assert!(!report.alerts.has_blocking);
+    assert!(report.thresholds.ready);
+    assert!(!report
+        .thresholds
+        .failing_checks
+        .contains(&"alerts_active".to_string()));
+    assert_eq!(report.alerts.history.len(), 2);
 }
 
 #[test]
@@ -593,6 +680,7 @@ fn comparison_summary_computes_latency_improvement() {
             Some(ThresholdCheck::at_most(0.0, 0.0)),
             None,
         ),
+        alerts: AlertsSummary::default(),
         comparison: None,
     };
 
@@ -676,6 +764,7 @@ fn comparison_summary_computes_latency_improvement() {
             Some(ThresholdCheck::at_most(0.0, 0.0)),
             None,
         ),
+        alerts: AlertsSummary::default(),
         comparison: None,
     };
 
