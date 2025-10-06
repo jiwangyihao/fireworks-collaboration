@@ -2,7 +2,75 @@
 
 > 目的：以统一视角梳理 MP0、MP1、P2、P3、P4、P5、P6 七个阶段以及测试重构后的现状，面向后续演进的研发、运维与质量成员，提供完整的实现细节、配置指引、事件契约、测试矩阵与回退策略。
 >
-> 版本：v1.5（2025-10-06） 维护者：Core Team
+> 版本：v1.6（2025-10-07） 维护者：Core Team
+
+---
+
+### 2025-10-07 增量更新摘要（v1.6）
+
+本次版本未引入新的里程碑功能，聚焦以下维护性与稳定性改进：
+
+1. 前端样式体系（Tailwind v4 全量迁移）
+  - 移除所有组件级 `<style scoped>` 中的 `@apply`，统一改为模板内联 utility classes；
+  - 新增全局样式入口 `src/style.css`（集中 `@import "tailwindcss"`、`@plugin "daisyui"/@tailwindcss/typography` 以及 dark variant 与通用 utilities），`App.vue` 中原先的 @plugin/@custom-variant/@utility 声明已删除；
+  - 仅保留极少量必要的自定义 CSS（例如 `MetricChart.vue` 中 SVG 轴线），其余均使用原子类；
+  - 解决 Tailwind v4 下“Unknown utility / variant” 报错（原因：组件内独立 `@apply` + 无集中入口导致扫描缺失）；
+  - 约定：新增组件禁止再引入局部 `@apply` 聚合样式；若必须写自定义选择器，放入全局 `style.css` 并加注释；
+  - 选择器兼容：保留原 BEM-like 类名（如 `git-panel__cards`）以兼容潜在测试/自动化定位；不再依赖其进行视觉呈现，可逐步内联精简。
+
+2. 后端命令与初始化修复
+  - `setup.rs`：改用全量显式 `crate::app::commands::<module>::<fn>` 注册，移除过往通过 re-export 聚合导致的 `__cmd__*` 宏展开不稳定风险；
+  - 暂停 metrics export HTTP server 的启动（避免早期 Tokio runtime 未就绪触发 panic）。后续将引入“延迟至首个 snapshot 请求”或“插件 on_ready” 方案；
+  - `core/http/client.rs`：IP 池选择逻辑改为在锁内克隆结果后立即释放，修复 `Future not Send` / MutexGuard 跨 await 的潜在问题；
+  - `commands/http.rs`：`validate_url` 返回值 clone 语义修正；redirect 最终日志先缓存 `redirect_count` 再输出，避免临时借用冲突；
+  - `commands/metrics.rs`：分位去重条件由 `(a - b)` 改为 `(*a - *b)`，修正编译/语义一致性；
+  - `commands/oauth.rs`：移除未使用的 `Mutex` 引入；
+  - `core/git/http_transport/fallback.rs`：测试辅助在启用 `tauri-app` 特性时正确回退到内部分类函数；
+  - `commands/git.rs`：凭证结构字段访问从 getter 改为直接字段（结构体当前公开）；
+  - `commands/workspace.rs` & `WorkspaceStorage`：接口改造（`validate/backup/restore_from_backup` 不再接受外部路径参数，构造时绑定路径），路径序列化统一使用 `to_string_lossy()`；
+  - `commands/credential.rs`：`CredentialConfig` 不再持有 `master_password` 字段；`set_master_password` 现仅记录警告（占位实现），避免误导已成功启用加密；字段访问统一为结构体公开字段（`cred.host`）；
+  - `core/credential/audit.rs`：新增 `OperationType::Unlock`，审计可区分“存储解锁”操作；
+  - Cargo：新增 `default-run = "fireworks-collaboration"` 解决多 [[bin]] 目标二义性；
+  - 其它：若干 `unused_mut` / 未使用参数将在后续清理（不影响功能）。
+
+3. Observability / P8 运行差异记录
+  - 当前构建中 metrics export server **未启动**（参见 `setup.rs` 中 NOTE），文档的导出/告警层级行为以设计为准；运行期仅 basic/aggregate 注册逻辑执行；
+  - 前端指标面板代码已完成 Tailwind v4 适配（所有 `observability/*Panel.vue` & `Metric*` 组件）；
+  - 若需手动验证导出/告警，请暂时在本地分支恢复 `init_export_observability` 调用或实现延迟启动逻辑（建议：在首次 `metrics_snapshot` 命令时 `spawn`）；
+  - 追加开发指引：当导出层暂不可用时，前端不应假定 `/metrics` 存在，须对 404 / 网络错误做优雅降级（当前 UI 已容错）。
+  - 与 §4.10 “设计 vs 当前运行态” 表保持同步（表中列出每个子能力当前状态）。
+  - 统一“占位/未实现”列表见“已知占位与待办”章节，避免散落信息遗漏。
+
+4. 工作区 / 子模块
+  - 序列化字段 `root_path` / 仓库 `path` 改为字符串（lossy UTF-8），避免 Windows 非 UTF-8 路径 panic；
+  - 相关文档中关于 `WorkspaceStorage::validate(&path)` 的旧调用示例已过期，现应写作：`let storage = WorkspaceStorage::new(path.clone()); storage.validate()?;`；
+  - 备份与恢复 API 同理：`storage.backup()?` / `storage.restore_from_backup(&backup_path)?`。
+
+5. 凭证与安全
+  - 主密码设置尚处“占位”阶段：调用 `set_master_password` 仅完成存储重建 + 警告日志，不持久保存密码，也未对后续加密流程生效；
+  - 审计事件新增 `unlock` 操作类型后，前端在展示审计表格时需兼容该枚举（如未适配，显示原始字符串即可）。
+
+6. 迁移风险 & 回滚
+  - 样式迁移全部为静态模板改写，不改变脚本逻辑，风险集中在视觉回归；
+  - 回退策略：若出现布局异常，可在本地 revert `src/style.css` 与受影响组件，恢复到 v1.5（2025-10-06）标签或该提交之前的快照；
+  - Metrics export 缺失导致的观测空洞：临时需求可快速本地添加一行恢复调用（`init_export_observability`），*不建议*在未分析 Tokio 上下文的情况下提前合入主干。
+
+7. 开发规范补充
+  - 新增组件请：优先内联 utility，最多一行自定义 CSS（非 Tailwind 所能表达）保留在局部 `<style scoped>`；
+  - 需要复用的“语义组合”使用可读的 class 别名（例如 `git-panel__meta`），同时仍保留核心原子类；
+  - 不再使用 `@apply` / `@plugin` / `@custom-variant` 于单文件组件；统一放置 `src/style.css`；
+  - 若前端测试依赖旧 `.xxx__y` 选择器，当前保留，不建议再新增无语义的多层 BEM 套嵌。
+
+影响评估：
+| 方面 | 结果 |
+|------|------|
+| 二进制行为 | 与 v1.5 对比，无命令签名破坏；初始化流程更安全（少启动 export） |
+| 样式构建 | 构建无 “Unknown utility” 报错；构建时间轻微下降（无多文件 @apply 扫描） |
+| 运行稳定性 | 解决 IP 池锁跨 await 潜在 Send 问题；减少宏注册歧义 |
+| 安全/审计 | 新增 Unlock 操作；主密码逻辑暂未启用（标注清晰） |
+| 回滚成本 | 仅需 revert 前端样式与 `setup.rs` 中 handler 列表即可恢复上一稳定版本 |
+
+（后续计划：A) 延迟 metrics export 启动；B) 实现真正的加密主密码流；C) 清理 credential 命令中占位/unused 警告；D) 增补 Tailwind 组件层测试快照。）
 
 ---
 
@@ -36,7 +104,7 @@
 | P3 | 自适应 TLS rollout + 可观测性、Real Host 校验、SPKI Pin、自动禁用、Soak | `AdaptiveTls*` 结构化事件、指纹变化事件 | `http.fakeSniRolloutPercent`、`tls.metricsEnabled`、`tls.certFpLogEnabled`、`tls.spkiPins` 等 | 配置层关闭 Fake/metrics/pin；自动禁用冷却 | Soak 测试 + 指标契约测试 |
 | P4 | IP 池采样与握手优选、传输集成、异常治理、观测扩展、Soak 阈值 | `IpPoolSelection`、`IpPoolRefresh`、`IpPoolAutoDisable`、`IpPoolCidrFilter` 等 | `ip_pool.*` 运行期与文件配置（缓存、熔断、TTL、黑白名单）| 配置禁用 IP 池/熔断/预热；自动禁用冷却 | Rust 单测/集测、IP 池集成测试、Soak 报告 |
 | P5 | 代理支持（HTTP/SOCKS5/System）、自动降级与恢复、前端集成 | `ProxyStateEvent`、`ProxyFallbackEvent`、`ProxyRecoveredEvent`、`ProxyHealthCheckEvent` 等 | `proxy.*` 配置（mode/url/auth/超时/降级/恢复/健康检查/调试日志）| 配置禁用代理/手动降级恢复/调整阈值 | 276个测试（243 Rust + 33 TypeScript），跨平台系统检测，状态机转换验证 |
-| P6 | 凭证存储（三层：系统钥匙串/加密文件/内存）、加密安全（AES-256-GCM + Argon2id）、审计日志、访问控制、Git自动填充 | `CredentialEvent`（Add/Get/Update/Delete/List/Cleanup）、`AuditEvent`（操作审计）、`AccessControlEvent`（失败锁定） | `credential.*` 配置（mode/masterPassword/auditMode/accessControl/keyCache/过期管理）| 配置逐层禁用存储/关闭审计/调整锁定阈值 | 1286个测试（991 Rust + 295 前端），99.9%通过率，88.5%覆盖率，批准生产环境上线 |
+| P6 | 凭证存储（三层：系统钥匙串/加密文件/内存）、加密安全（AES-256-GCM + Argon2id）、审计日志、访问控制、Git自动填充 | `CredentialEvent`（Add/Get/Update/Delete/List/Cleanup）、`AuditEvent`（操作审计 Unlock 含）、`AccessControlEvent`（失败锁定） | `credential.*` 配置（storage/auditMode/accessControl/keyCache/TTL 等，已移除 masterPassword 字段）| 配置逐层禁用存储/关闭审计/调整锁定阈值 | 1286个测试（991 Rust + 295 前端），99.9%通过率，88.5%覆盖率，批准生产环境上线 |
 | 测试重构 | 主题聚合、事件 DSL、属性测试集中管理 | DSL 输出 Tag 子序列 | N/A | N/A | `src-tauri/tests` 结构稳定，CI 使用共享 helper |
 | P7 | 工作区模型、子模块支持、批量并发 clone/fetch/push、团队配置模板、跨仓库状态监控、前端一体化视图 | 无新增事件类型（复用 task/state/progress/error），批量任务 progress phase 含聚合文本 | `workspace.*`、`submodule.*`、`teamTemplate`、`workspace.status*` | 配置禁用 workspace 或降并发；子模块/模板/状态可单项停用 | 新增 24 子模块测试 + 12 批量调度测试 + 状态缓存测试 + 前端 store 17 测试 + 性能基准 |
 | P8 | 可观测性体系（统一指标注册/事件桥接/窗口聚合/导出/前端面板/告警+Soak/灰度层级/性能降级） | `MetricAlert`、`ObservabilityLayerChanged`、`MetricDrift` 新增；复用 TLS/IP/代理/Soak 事件 | `observability.*`（enabled/layer/*Enabled/performance/export/alerts/...） | 层级裁剪 + autoDowngrade；逐项关闭 export/ui/alerts | 指标/导出/告警/层级/降级/前端缓存测试（详见 P8 handoff §13） |
@@ -86,22 +154,23 @@ git_task_debug?(internal)
 http_fake_request(input: HttpRequestInput): Promise<HttpResponseOutput>
 ```
 
-所有命令返回 `taskId`，前端通过事件流追踪生命周期。
+并非所有命令都会返回 `taskId`：
 
-命令返回值约定补充（P7 扩展）：
-- 直接返回字符串：通常为生成的 `taskId` 或导出文件路径（如 `export_team_config_template`、`backup_workspace`）。
-- 返回布尔：表示快速成功/失败（如 `save_workspace`、`restore_workspace`）。
-- 返回结构化对象：配置/状态查询或模板导入报告（`get_workspace_statuses`、`import_team_config_template`）。
-- 返回列表：子模块名称集合或仓库集合操作结果（`init_all_submodules` 等）。
-前端应根据类型决定是否进入任务事件订阅路径（有 taskId）或直接更新本地 store（无 taskId 的同步命令）。
+返回模式分类（含 P7 扩展）：
+- 返回任务ID (string)：触发异步 Git / 批量 / 长时工作（如 `git_clone`、`workspace_batch_clone` 等），前端需订阅事件流。
+- 直接结构化对象：同步查询或立即构造结果（例如 `create_workspace` / `load_workspace` 返回 `WorkspaceInfo`，`get_workspace_statuses` 返回状态结果，`import_team_config_template` 返回导入报告）。
+- 直接 void / boolean：快速成功/失败或无附加数据（`save_workspace` -> void，`restore_workspace` -> void，`validate_workspace_file` -> boolean）。
+- 字符串（非任务ID）：导出/备份生成的文件路径（如 `export_team_config_template`、`backup_workspace`、`export_audit_log`）。
+- 列表：同步枚举结果（`list_submodules`、`init_all_submodules` 等）。
+前端策略：仅当返回值形态为“看起来像任务ID”且调用约定属于异步任务类命令时进入事件订阅；其余直接更新本地 store。必要时可通过附加前缀/长度规则区分（当前 taskId 为 UUID 形式）。
 
 P7 新增的工作区/子模块/批量与团队配置相关命令（命名保持 camelCase，可与上表并列理解）：
 
 ```ts
 // 工作区管理
-create_workspace(opts: { name: string; rootPath: string }): Promise<string>
-load_workspace(path?: string): Promise<string>
-save_workspace(): Promise<boolean>
+create_workspace(opts: { name: string; rootPath: string }): Promise<WorkspaceInfo>
+load_workspace(path: string): Promise<WorkspaceInfo>
+save_workspace(path: string): Promise<void>
 add_repository(opts: { workspaceId: string; repo: RepositorySpec }): Promise<string>
 remove_repository(opts: { workspaceId: string; repoId: string }): Promise<boolean>
 update_repository_tags(opts: { workspaceId: string; repoId: string; tags: string[] }): Promise<boolean>
@@ -679,15 +748,18 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
     - `InMemoryStore` 进程级临时存储（回退兜底、测试隔离）；
     - `AuditLogger` 双模式审计（标准模式不记录哈希、审计模式记录SHA-256哈希）+ 持久化（JSON文件、自动加载、容错设计）；
     - `AccessControl`（内嵌于AuditLogger）失败锁定机制（默认5次失败 → 默认1800秒即30分钟锁定 → 自动过期或管理员重置）；
+  - **补充要点**：
     - Git集成：`git_credential_autofill` 三级智能降级（存储凭证 → 未找到提示 → 错误继续）。
+    - 审计新增 `OperationType::Unlock`：解锁加密文件存储（或尝试解锁）时记录 `unlock` 事件。
+    - 主密码占位实现：`set_master_password` 当前仅记录警告，不持久化密码，也不触发加密；真实密钥派生在 `unlock_store` 路径中执行。
   - **配置与默认值**：
-    - 运行期（`config.json`）：`credential.storage=system`（system/file/memory）、`default_ttl_seconds=7776000`（90天）、`debug_logging=false`、`audit_mode=false`、`require_confirmation=false`、`file_path=null`（加密文件路径，可选）、`key_cache_ttl_seconds=3600`（1小时）；
+    - 运行期（`config.json`）：`credential.storage=system`（system/file/memory）、`default_ttl_seconds=7776000`（90天）、`debug_logging=false`、`audit_mode=false`、`require_confirmation=false`、`file_path=null`（加密文件路径，可选）、`key_cache_ttl_seconds=3600`（1小时）。已移除：`master_password` 字段（防止误认为可直配持久化）。
     - 访问控制（内部硬编码，不可配置）：`max_failures=5`、`lockout_duration_secs=1800`（30分钟）；
     - 环境变量：`FWC_CREDENTIAL_STORE`（覆盖storage）、`FWC_MASTER_PASSWORD`（测试/CI场景，加密文件模式使用）；
     - 所有字段支持热更新，修改后下一次操作生效。
   - **运行生命周期**：
     1. 应用启动 → `CredentialStoreFactory::create()` 根据配置尝试三层存储，失败则自动降级；
-    2. 加密文件模式需用户调用 `unlock_store(masterPassword)` 解锁 → Argon2id密钥派生（1-2秒）→ 缓存密钥（TTL 300秒）；
+    2. 加密文件模式需用户调用 `unlock_store(masterPassword)` 解锁（触发审计 `unlock`）→ Argon2id密钥派生（1-2秒）→ 缓存密钥（TTL 300秒）；
     3. 凭证操作（add/get/update/delete/list）→ 路由到对应存储实现 → 自动记录审计日志；
     4. Git操作调用 `git_credential_autofill(host, username)` → 自动填充存储的凭证 → 未找到则返回None继续原有流程；
     5. 访问控制检测连续失败，达阈值触发 `AccessControlLocked` 事件并拒绝后续操作；
@@ -705,7 +777,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
     - 密钥缓存：首次派生1-2秒，缓存后<10ms，性能提升200倍；缓存密钥使用 `Arc<RwLock<Option<EncryptionKey>>>` 保护，TTL默认3600秒（1小时）；
     - Display/Debug trait：密码字段使用 `masked_password()` 脱敏（前2字符+***+后2字符），防止日志泄露。
   - **审计与访问控制**：
-    - 审计日志包含：操作类型（Add/Get/Update/Delete）、时间戳（Unix秒）、主机名、用户名、结果（Success/Failure/AccessDenied）、可选SHA-256哈希（审计模式）；
+    - 审计日志包含：操作类型（Add/Get/Update/Delete/Unlock）、时间戳（Unix秒）、主机名、用户名、结果（Success/Failure/AccessDenied）、可选SHA-256哈希（审计模式）。
     - 持久化：`audit-log.json` JSON Lines格式，应用启动自动加载，损坏时优雅降级创建新文件；
     - 访问控制：连续5次失败 → 锁定30分钟 → 自动过期或管理员调用 `reset_credential_lock()` 重置；锁定期间返回 `remaining_attempts()` 供前端显示剩余尝试次数；
     - 容错设计：审计日志写入失败不影响凭证操作（降级为内存日志），文件损坏时自动重建。
@@ -773,9 +845,10 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
     - 访问控制锁定：连续5次失败后锁定30分钟，查看 `AccessControlLocked` 事件中的 `locked_until` 时间戳，管理员可调用 `reset_credential_lock()` 立即解锁；
     - 审计日志损坏：删除 `audit-log.json` 会自动重建，日志含 "failed to load audit log" 警告；
     - Git自动填充不工作：检查URL格式是否支持（HTTPS/SSH/git@），确认凭证已存储且未过期，查看 `git_credential_autofill` 返回值；
-    - 密钥缓存过期：默认TTL 3600秒（1小时），过期后下次操作重新派生（1-2秒），可通过 `key_cache_ttl_seconds` 调整。
+  - 密钥缓存过期：默认TTL 3600秒（1小时），过期后下次操作重新派生（1-2秒），可通过 `key_cache_ttl_seconds` 调整。
+  - 看到 `set_master_password` 日志但加密未生效：属预期，占位实现；需调用 `unlock_store`。
   - **交接要点**：
-    - 凭证当前明文存储在系统钥匙串/加密文件，P7可考虑HSM集成或硬件密钥；
+  - 凭证当前明文存储在系统钥匙串/加密文件，P7可考虑HSM集成或硬件密钥；`set_master_password` 正式实现（持久化+旋转）列入“已知占位”待办。
     - macOS/Linux系统钥匙串代码已实现但未实机验证，建议添加CI/CD跨平台测试；
     - 审计日志暂无自动滚动策略，需手动清理或在后续版本实现（短期优化）；
     - 性能基准测试框架已完成（295行，8个测试组），建议运行 `cargo bench --bench credential_benchmark` 获取实际数据；
@@ -824,10 +897,10 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - `SharedSubmoduleManager = Arc<Mutex<SubmoduleManager>>` 与 workspace/status service 并行,拥有独立 `SubmoduleConfig`(默认 autoRecurse=true, maxDepth=5, autoInitOnClone=true, recursiveUpdate=true);
   - 命令返回 `SubmoduleCommandResult { success: bool, message: String, data?: string[] }`:前端必须检查 `success` 字段判断成功/失败,而非直接依赖 Promise resolve/reject。`data` 字段包含受影响子模块名称列表。
 
-- **运维命令扩展**:
-  - `validate_workspace_file(path)`: 校验 workspace.json 结构合法性,返回布尔值;
-  - `backup_workspace(path)`: 创建带时间戳的备份文件(`workspace.json.bak-YYYYMMDDHHMMSS`),返回完整路径字符串;
-  - `restore_workspace(backupPath, workspacePath)`: 从备份恢复,直接覆盖目标文件(原子操作);
+ - **运维命令扩展**:
+  - `validate_workspace_file(path)`: 校验 workspace.json 结构合法性,返回布尔值（内部通过 `WorkspaceStorage::new(path).validate()`）；
+  - `backup_workspace(path)`: 创建带时间戳的备份文件(`workspace.json.backup.YYYYMMDD_HHMMSS`)，返回完整路径（`WorkspaceStorage::backup()`）；
+  - `restore_workspace(backupPath, workspacePath)`: 从备份恢复,覆盖目标文件（`WorkspaceStorage::restore_from_backup`）。
   - 备份策略建议:每次批量操作前手动备份或配置自动备份钩子(未实现)。
 
 - **测试覆盖**:
@@ -901,6 +974,20 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - **回退**：全局 `enabled=false`；层级 basic 保留最小计数集；逐项关闭 export/ui/alerts；删除规则文件快速静默。
   - **测试**：注册/桥接去重/窗口/导出/限流/告警状态机/热更新/内存压力/层级/前端缓存 & 降采样；性能 smoke；详见 P8 handoff §13。
   - **后续增强**：自适应采样、CKMS 分位、HTTPS 导出、规则分组+抑制、Trace、诊断 CLI、指标预算。
+  
+  #### 设计 vs 当前运行态（v1.6）
+  | 子能力 | 设计目标 | 当前状态 | 说明 / 后续动作 |
+  |--------|----------|----------|----------------|
+  | basic 注册 | 采集核心计数/时延 | 已启用 | 正常运行 |
+  | aggregate 窗口 | 1m/5m/1h/24h 聚合 | 已启用 | 正常运行 |
+  | export 导出 | HTTP `/metrics` + snapshot | 未启动 | 计划改为惰性首次访问启动 |
+  | ui 面板 | 范围&下采样可视化 | 前端存在,后端接口缺失时降级 | 对 404 容错已实现 |
+  | alerts 告警 | 规则评估/去抖 | 未启动 | 依赖 export 底座 |
+  | optimize 层 | 分片/批量/标签脱敏 | 部分生效 | 高层未启用不影响基础统计 |
+  | 自动降级 | 资源/内存触发层级回退 | 逻辑已接入 | export 未启用减少触发面 |
+  | 自检/漂移 | 指标一致性校验 | 未实现 | 后续版本排期 |
+  | 规则热更新 | 文件变更即生效 | 未启动 | 等 alerts 启用后接入 |
+  | Snapshot 鉴权 | Token/限流 | 未启动 | 与 export 一并启用 |
 
 ## 5. 交接与发布 checklist 概览
 
@@ -918,6 +1005,26 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
 
 ---
 
+## 已知占位与待办（v1.6）
+
+| 类别 | 项目 | 当前状态 | 计划/动作 | 影响与临时处理 |
+|------|------|----------|-----------|----------------|
+| 可观测性 | metrics export server | 未启动 | 改为首次 snapshot 请求时惰性启动 | 前端对 404 优雅降级；手动验证需临时启用调用 |
+| 可观测性 | alerts 告警引擎 | 未启动 | 待 export 启用后接入规则加载/状态机 | 无告警；不影响 basic/aggregate 指标采集 |
+| 可观测性 | 规则热更新 | 未实现 | 随 alerts 一起实现文件监听或轮询 | 修改规则需重启（未来优化） |
+| 可观测性 | 自检/漂移检测 | 未实现 | 规划加入内部一致性校验周期 | 可能延迟发现指标缺失，需要人工 Smoke |
+| 凭证 | set_master_password 真正持久化 | 占位（忽略密码） | 实现密钥写入/旋转 & 验证流程 | 用户需用 unlock_store 解锁实际加密存储 |
+| 凭证 | last_used 字段 | 未实现 | 需要调整不可变模型/写路径 | 前端暂用 created/expired 近似提醒 |
+| 凭证 | 审计日志滚动策略 | 未实现 | 加入大小/日期轮换 + 保留策略 | 日志过大需人工清理 |
+| 工作区 | 子模块并行参数 parallel/maxParallel | 预留未实现 | 视规模需求引入并发执行 | 大量子模块时耗时偏长（可手动拆分） |
+| 工作区 | 状态事件推送 | 未实现 | 后续通过事件总线广播增量 | 目前需轮询；高频降 TTL/自动刷新开销 |
+| 观测/性能 | Snapshot 鉴权/限流 | 未启动 | 与 export 同批实现 Token + 令牌桶 | 暂无；当前 404 不触发安全风险 |
+| 安全 | HSM/生物识别解锁 | 未实现 | 规划长期路线 | 现有加密仍满足基础安全要求 |
+
+说明：上表集中维护所有“占位/未启动”状态，相关章节（P6、P7、P8、增量摘要）只做指向引用，更新时请同时修改本表与对应段落。
+
+---
+
 ## 附录A. 核心功能 & 可观测性 Smoke 命令速查
 
 > 目标：最短路径验证核心 Git/策略/网络/可观测性/回退链路健康。建议在预生产 & 灰度每层级提升前执行。
@@ -929,13 +1036,13 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
 3. 自适应 TLS：设置 `http.fakeSniRolloutPercent=25` 触发一次 clone；检查 `/metrics` 中 `tls_handshake_ms_bucket` 与事件 `AdaptiveTlsRollout`
 4. IP 池：打开 `ip_pool.enabled=true` & 添加一个 `preheatDomains`；等待 1 个预热周期后确认 `ip_pool_refresh_total` 有 `reason=preheat`
 5. 代理降级/恢复（可选）：配置无效代理，触发失败直至 `ProxyFallbackEvent`，改为有效代理验证 `ProxyRecoveredEvent`
-6. 可观测性导出：访问 `/metrics` 与 `/metrics/snapshot?window=5m&quantiles=p50,p95`，确认：
+6. 可观测性导出（当前 v1.6 未启动可能返回 404 属正常）：访问 `/metrics` 与 `/metrics/snapshot?window=5m&quantiles=p50,p95`，目标（启用后）：
   - HTTP 200；`metrics_export_requests_total{status="ok"}` 递增
-  - 若多次快速访问，`metrics_export_rate_limited_total` 在高 QPS 下增长
-7. 告警引擎：临时创建规则（例如 `git_task_duration_ms[p95] > 1` 确保必触发），观察：`alerts_fired_total{severity="critical"}` 增量，移除规则后状态 resolved
+  - 多次快速访问时在开启限流下 `metrics_export_rate_limited_total` 递增
+7. 告警引擎（当前未启用，跳过）：导出启用后可临时创建规则（如 `git_task_duration_ms[p95] > 1`）验证 `alerts_fired_total` 增量 → 移除规则后 resolved
 8. 层级降级：手动 `observability.layer` 从 optimize 改为 basic，观察 `observability_layer` Gauge 数值下降且导出样本数减少
 9. 内存压力模拟（可选）：调低 `observability.performance.maxMemoryBytes`，构造大量短时任务，观察 `metric_memory_pressure_total` 增量并层级回退
-10. 前端面板：切换时间范围（1m → 1h），验证 LTTB 下采样 & 缓存：第二次同窗访问请求数不增长（从网络面板或日志确认）
+10. 前端面板：切换时间范围（1m → 1h），若导出未启用会降级（占位/空状态），启用后再验证 LTTB 下采样 & 缓存命中（第二次同窗访问不再发请求）
 
 快速判定：全部成功且无异常错误事件 => 放行下一阶段；若某一步异常，优先参考附录C 回退序列。
 
@@ -978,6 +1085,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
 |------|------|------|------------|---------------|
 | 1 | 下调 observability.layer (optimize→basic) | 降低监控/聚合开销 | `observability_layer`=0 | metric_memory_pressure_total, export_requests_total |
 | 2 | 关闭导出/告警 (`export.enabled=false` / `alerts.enabled=false`) | 减少 I/O + 规则评估 | export 404 / 告警停止 | metrics_export_requests_total{status="error"}=0 |
+| (当前 v1.6) | （export/alerts 默认未启动） | —— | 视同步骤2已生效 | —— |
 | 3 | 禁用工作区 (`workspace.enabled=false`) | 移除批量/子模块调度压力 | 单仓任务成功率回升 | git_tasks_total{kind="workspace_batch"} 停止增长 |
 | 4 | 禁用代理 (`proxy.mode=off`) 或强制直连 | 排除代理链路不稳定 | 连接错误下降 | proxy_fallback_total 不再增长 |
 | 5 | 禁用 IP 池 (`ip_pool.enabled=false`) | 移除预热/熔断干扰 | TLS/连接成功率恢复 | ip_pool_refresh_total 停止增长 |
