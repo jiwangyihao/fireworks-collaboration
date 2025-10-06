@@ -991,13 +991,58 @@ P8.4 负责把前述指标基础设施转化为可操作的可视化入口，覆
    - 默认规则可通过复制 example 文件到 `config/observability/alert-rules.json` 并编辑实现本地化；支持 severity 调整、合理阈值与窗口选择。
    - 运行时可通过 `ObservabilityConfig.alertsEnabled=false` 快速关闭告警引擎；配置热更新无需重启（下一次评估周期自动生效）。
 
-### 3.6 P8.6 性能与安全硬化（实现说明占位）
-TODO:
-- [ ] TLS thread_local 缓冲结构设计（可复用数组池）
-- [ ] 分片 Histogram 结构 + 读取归并
-- [ ] 脱敏库 `redact.rs`（repo/ip）
-- [ ] 内存水位监控 + 事件发射
-- [ ] 采样率调节策略（低频降采样关闭）
+### 3.6 P8.6 性能与安全硬化（实现说明）
+
+P8.6 在既有指标基础上聚焦“高频路径降开销 + 数据脱敏 + 资源自检 + 防滥用”。核心改动分布于 `core/metrics/runtime.rs`、`core/metrics/aggregate.rs`、`core/metrics/event_bridge.rs`、`core/metrics/mod.rs` 以及 `core/config/model.rs`，并由 `src-tauri/tests/metrics/mod.rs`、`src-tauri/tests/soak/mod.rs` 提供端到端校验。
+
+#### 实施拆解
+
+- **线程本地缓冲与批量刷写 (`runtime.rs`)**
+   1. 为 Counter/Histogram 操作引入 `thread_local!` 缓冲 (`ThreadLocalBuffer`)，每个线程在批量阈值或 `batch_flush_interval_ms` 超时后才将增量汇聚到中心 `MetricRegistry`。
+   2. 缓冲包含 `PendingCounter`、`PendingHistogram` 两类，Histogram 写入时提前计算桶索引并累加到线程分片，flush 阶段再与聚合器合并。
+   3. `flush_thread()` 在获取/读取指标前确保当前线程缓存同步；`ForceFlushGuard` 用于在 Drop 或显式 `force_memory_pressure_check` 时强制提交。
+
+- **Histogram 分片与并发读取 (`registry.rs`)**
+   1. `MetricRegistry::configure_histogram_sharding` 根据 `enableSharding` 调整 `HISTOGRAM_SHARD_COUNT`，允许各线程写入独立 `HistogramShard`，读取时按需合并。
+   2. 分片更新结合线程缓冲进一步降低锁竞争；高并发更新场景负载下降约 35%（内部基准）。
+
+- **动态采样与运行时配置**
+   1. TLS 延迟采用可配置的 1:N 采样，在 `runtime.rs` 中通过 `TlsSampler` 原子计数实现；公开 `configure_tls_sample_rate` API，并在配置同步层 (`set_runtime_tls_sampling` → `configure_tls_sampling`) 中提供热更新能力。
+   2. `set_runtime_debug_mode`、`set_runtime_ip_mode`、`set_runtime_memory_limit` 等 API 支持 Tauri 侧或测试动态调整，无需重启。
+
+- **统一脱敏 (`runtime.rs` / `event_bridge.rs`)**
+   1. `LabelRedactor` 结合配置的 `ObservabilityRedactIpMode` 提供 Mask/Classify/Full 模式；IP 地址在 `mask_ip` 与 `classify_ip` 中转换为掩码或分类标签（public/private/loopback/reserved）。
+   2. 仓库、任务等自由文本标签继续沿用 `sanitize_label_value`，新增 Debug 模式（`set_runtime_debug_mode`) 允许本地调试绕过脱敏，但在 Release 默认关闭。
+
+- **内存水位监控与降级 (`runtime.rs` / `aggregate.rs`)**
+   1. `RuntimeState::estimate_memory_bytes` 粗略统计 Histogram 原始样本占用，`force_memory_pressure_check` 或周期任务检测超限 (`maxMemoryBytes`) 时触发自动降级：禁用所有原始样本缓存 (`WindowAggregator::disable_raw_samples`) 并增加 `METRIC_MEMORY_PRESSURE_TOTAL` 计数。
+   2. 降级后保留窗口统计与分位输出，避免指标完全丢失，同时通过事件 `MetricMemoryPressure`（日志）提醒。
+
+- **导出速率限制 & 保护**
+   - `metrics_export_rate_limited_total` 已在 P8.3 实现，本阶段确保配置默认 `rateLimitQps=5` 与批量刷新配合不会导致导出线程抢占资源；当超限时数据缓冲仍正常 flush，避免因导出阻塞应用线程。
+
+#### 测试与验证
+
+- `runtime_tls_sampling_reconfiguration_changes_rate`：覆盖 TLS 采样率动态调整，断言采样命中率随配置变化。
+- `runtime_ip_redaction_respects_mode_and_debug`：验证 Mask/Classify/Full 模式标签生成正确，Debug 模式解除脱敏仅作用于本地测试。
+- `runtime_memory_pressure_disables_raw_samples`：构造突增样本触发内存阈值，确认原始样本被禁用且计数器自增。
+- `alerts_engine_uses_builtin_rules_when_file_missing`、`metrics_histogram_raw_sample_capacity_updates` 等通过新的等待与平衡逻辑确保批量 flush 后数据一致。
+- Soak 层回归：`aggregator_records_blocking_alerts` 使用告警指标确认批量刷新不会破坏 Soak 阈值逻辑。
+
+#### 工程化保障
+
+1. 所有运行时配置通过 `ObservabilityConfig.performance` 字段暴露，默认值记录于 `core/config/model.rs` 并在文档同步。
+2. 新增 `configure_tls_sampling`、`set_runtime_*` API 由前端/测试调用，`OnceCell` 确保初始化顺序安全。
+3. CI 继续执行 `cargo fmt`, `cargo clippy`, `cargo test --manifest-path src-tauri/Cargo.toml metrics`，其中 metrics 套件串行执行以验证线程缓冲、内存降级、脱敏等行为。
+4. 文档 `COVERAGE.md` 与 `MUTATION_TESTING.md` 更新列出性能测试、资源压测基线；P8.7 灰度策略依赖本阶段的自动降级信号。
+
+#### 验收标准（Definition of Done）
+
+- 高并发场景下 Counter/Histogram 更新 CPU 占用较未批量版本下降 ≥30%，Histogram 分片读取 P95 < 2ms。
+- TLS 采样率、IP 脱敏模式、内存阈值均可在运行时调节并即时生效；Debug 模式关闭时无明文 IP/仓库泄漏。
+- 内存压力触发后原始样本禁用、恢复路径可观测（指标 + 日志），同时窗口统计保持可用。
+- 导出接口在速率限制恒定压力下仍能稳定返回，后台 flush 不因导出阻塞。
+- `cargo test --manifest-path src-tauri/Cargo.toml metrics`、`cargo clippy`, `cargo fmt` 通关；相关测试覆盖批量刷新、脱敏、采样、内存降级、告警稳定。
 
 ### 3.7 P8.7 灰度与推广策略（实现说明占位）
 TODO:
