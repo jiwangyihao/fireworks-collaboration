@@ -47,7 +47,7 @@
           </label>
           <label class="form-control md:col-span-2">
             <span class="label-text">元数据（可选，JSON 对象）</span>
-            <textarea v-model="createForm.metadata" class="textarea textarea-bordered textarea-sm" rows="3" placeholder="{ \"owner\": \"team\" }"></textarea>
+            <textarea v-model="createForm.metadata" class="textarea textarea-bordered textarea-sm" rows="3" placeholder='{"owner": "team"}'></textarea>
           </label>
           <div class="flex gap-2 md:col-span-2">
             <button class="btn btn-sm btn-primary" type="submit" :disabled="loadingWorkspace">

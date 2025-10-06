@@ -69,16 +69,16 @@ const selectionDisplay = computed(() => formatNumber(selectionAttempts.value));
 </script>
 
 <template>
-  <div class="ip-panel">
+  <div class="ip-panel flex flex-col gap-4">
     <LoadingState v-if="loading && !snapshot" />
-    <div v-else-if="error && !snapshot" class="ip-panel__error">加载 IP 池指标失败：{{ error }}</div>
+    <div v-else-if="error && !snapshot" class="ip-panel__error rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error">加载 IP 池指标失败：{{ error }}</div>
     <EmptyState v-else-if="showEmpty" message="暂无 IP 池指标" />
-    <div v-else class="ip-panel__content">
-      <div class="ip-panel__meta" v-if="snapshot">
+    <div v-else class="ip-panel__content flex flex-col gap-6">
+      <div class="ip-panel__meta flex items-center gap-3 text-xs text-base-content/60" v-if="snapshot">
         <span>刷新总次数：{{ formatNumber(refreshTotal) }}</span>
-        <span v-if="stale" class="ip-panel__badge">数据为缓存</span>
+        <span v-if="stale" class="ip-panel__badge rounded-full bg-warning/10 px-2 py-0.5 text-warning">数据为缓存</span>
       </div>
-      <div class="ip-panel__cards">
+      <div class="ip-panel__cards grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           title="刷新成功率"
           :value="refreshRateDisplay"
@@ -108,27 +108,27 @@ const selectionDisplay = computed(() => formatNumber(selectionAttempts.value));
           :muted="selectionAttempts === 0"
         />
       </div>
-      <section class="ip-panel__chart">
+      <section class="ip-panel__chart flex flex-col gap-2">
         <header>
-          <h4>各来源延迟趋势</h4>
+          <h4 class="text-sm font-semibold text-base-content/80">各来源延迟趋势</h4>
         </header>
-  <MetricChart :series="latencyChart" empty-message="暂无延迟样本" :value-formatter="latencyFormatter" />
+        <MetricChart :series="latencyChart" empty-message="暂无延迟样本" :value-formatter="latencyFormatter" />
       </section>
-      <section class="ip-panel__table" v-if="failureReasons.length">
+      <section class="ip-panel__table flex flex-col gap-2" v-if="failureReasons.length">
         <header>
-          <h4>刷新失败原因</h4>
+          <h4 class="text-sm font-semibold text-base-content/80">刷新失败原因</h4>
         </header>
-        <table>
-          <thead>
+        <table class="w-full table-auto overflow-hidden rounded-xl border border-base-200 text-sm">
+          <thead class="bg-base-200/60 text-left text-xs uppercase tracking-wide text-base-content/60">
             <tr>
-              <th>原因</th>
-              <th>次数</th>
+              <th class="px-3 py-2">原因</th>
+              <th class="px-3 py-2">次数</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in failureReasons" :key="item.reason">
-              <td>{{ item.reason }}</td>
-              <td>{{ formatNumber(item.total) }}</td>
+            <tr v-for="item in failureReasons" :key="item.reason" class="even:bg-base-200/20">
+              <td class="px-3 py-2">{{ item.reason }}</td>
+              <td class="px-3 py-2">{{ formatNumber(item.total) }}</td>
             </tr>
           </tbody>
         </table>
@@ -137,55 +137,3 @@ const selectionDisplay = computed(() => formatNumber(selectionAttempts.value));
   </div>
 </template>
 
-<style scoped>
-.ip-panel {
-  @apply flex flex-col gap-4;
-}
-
-.ip-panel__error {
-  @apply rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error;
-}
-
-.ip-panel__content {
-  @apply flex flex-col gap-6;
-}
-
-.ip-panel__meta {
-  @apply flex items-center gap-3 text-xs text-base-content/60;
-}
-
-.ip-panel__badge {
-  @apply rounded-full bg-warning/10 px-2 py-0.5 text-warning;
-}
-
-.ip-panel__cards {
-  @apply grid gap-4 md:grid-cols-2 xl:grid-cols-4;
-}
-
-.ip-panel__chart,
-.ip-panel__table {
-  @apply flex flex-col gap-2;
-}
-
-.ip-panel__chart h4,
-.ip-panel__table h4 {
-  @apply text-sm font-semibold text-base-content/80;
-}
-
-.ip-panel__table table {
-  @apply w-full table-auto overflow-hidden rounded-xl border border-base-200 text-sm;
-}
-
-.ip-panel__table thead {
-  @apply bg-base-200/60 text-left text-xs uppercase tracking-wide text-base-content/60;
-}
-
-.ip-panel__table th,
-.ip-panel__table td {
-  @apply px-3 py-2;
-}
-
-.ip-panel__table tbody tr:nth-child(even) {
-  @apply bg-base-200/20;
-}
-</style>

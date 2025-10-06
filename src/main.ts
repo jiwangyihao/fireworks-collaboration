@@ -4,6 +4,7 @@ import App from "./App.vue";
 import router from "./router";
 import { useConfigStore } from "./stores/config";
 import { initTaskEvents } from "./api/tasks";
+import "./style.css";
 // + dev 调试句柄（方案 B）
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";

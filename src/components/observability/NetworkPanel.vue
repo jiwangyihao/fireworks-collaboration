@@ -73,18 +73,18 @@ const showEmpty = computed(() => !props.snapshot && !props.loading && !props.err
 </script>
 
 <template>
-  <div class="network-panel">
+  <div class="network-panel flex flex-col gap-4">
     <LoadingState v-if="loading && !snapshot" />
-    <div v-else-if="error && !snapshot" class="network-panel__error">
+    <div v-else-if="error && !snapshot" class="network-panel__error rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error">
       加载网络指标失败：{{ error }}
     </div>
     <EmptyState v-else-if="showEmpty" message="暂无网络指标" />
-    <div v-else class="network-panel__content">
-      <div class="network-panel__meta" v-if="snapshot">
+    <div v-else class="network-panel__content flex flex-col gap-6">
+      <div class="network-panel__meta flex items-center gap-3 text-xs text-base-content/60" v-if="snapshot">
         <span>回退总次数：{{ fallbackDisplay }}</span>
-        <span v-if="stale" class="network-panel__badge">数据为缓存</span>
+        <span v-if="stale" class="network-panel__badge rounded-full bg-warning/10 px-2 py-0.5 text-warning">数据为缓存</span>
       </div>
-      <div class="network-panel__cards">
+      <div class="network-panel__cards grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <MetricCard
           title="回退触发"
           :value="fallbackDisplay"
@@ -106,29 +106,29 @@ const showEmpty = computed(() => !props.snapshot && !props.loading && !props.err
           description="失败占握手总数比例"
         />
       </div>
-      <section class="network-panel__chart">
+      <section class="network-panel__chart flex flex-col gap-2">
         <header>
-          <h4>回退阶段分布</h4>
+          <h4 class="text-sm font-semibold text-base-content/80">回退阶段分布</h4>
         </header>
         <MetricChart :series="networkChart" empty-message="暂无回退事件" :value-formatter="formatNumber" />
       </section>
-      <section class="network-panel__table" v-if="tlsP95ByStrategy.length">
+      <section class="network-panel__table flex flex-col gap-2" v-if="tlsP95ByStrategy.length">
         <header>
-          <h4>SNI 策略握手耗时</h4>
+          <h4 class="text-sm font-semibold text-base-content/80">SNI 策略握手耗时</h4>
         </header>
-        <table>
-          <thead>
+        <table class="w-full table-auto overflow-hidden rounded-xl border border-base-200 text-sm">
+          <thead class="bg-base-200/60 text-left text-xs uppercase tracking-wide text-base-content/60">
             <tr>
-              <th>策略</th>
-              <th>成功次数</th>
-              <th>平均耗时</th>
+              <th class="px-3 py-2">策略</th>
+              <th class="px-3 py-2">成功次数</th>
+              <th class="px-3 py-2">平均耗时</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in tlsP95ByStrategy" :key="item.strategy">
-              <td>{{ item.strategy }}</td>
-              <td>{{ formatNumber(item.count) }}</td>
-              <td>{{ formatDurationMs(item.average, 1) }}</td>
+            <tr v-for="item in tlsP95ByStrategy" :key="item.strategy" class="even:bg-base-200/20">
+              <td class="px-3 py-2">{{ item.strategy }}</td>
+              <td class="px-3 py-2">{{ formatNumber(item.count) }}</td>
+              <td class="px-3 py-2">{{ formatDurationMs(item.average, 1) }}</td>
             </tr>
           </tbody>
         </table>
@@ -137,55 +137,3 @@ const showEmpty = computed(() => !props.snapshot && !props.loading && !props.err
   </div>
 </template>
 
-<style scoped>
-.network-panel {
-  @apply flex flex-col gap-4;
-}
-
-.network-panel__error {
-  @apply rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error;
-}
-
-.network-panel__content {
-  @apply flex flex-col gap-6;
-}
-
-.network-panel__meta {
-  @apply flex items-center gap-3 text-xs text-base-content/60;
-}
-
-.network-panel__badge {
-  @apply rounded-full bg-warning/10 px-2 py-0.5 text-warning;
-}
-
-.network-panel__cards {
-  @apply grid gap-4 md:grid-cols-2 xl:grid-cols-3;
-}
-
-.network-panel__chart,
-.network-panel__table {
-  @apply flex flex-col gap-2;
-}
-
-.network-panel__chart h4,
-.network-panel__table h4 {
-  @apply text-sm font-semibold text-base-content/80;
-}
-
-.network-panel__table table {
-  @apply w-full table-auto overflow-hidden rounded-xl border border-base-200 text-sm;
-}
-
-.network-panel__table thead {
-  @apply bg-base-200/60 text-left text-xs uppercase tracking-wide text-base-content/60;
-}
-
-.network-panel__table th,
-.network-panel__table td {
-  @apply px-3 py-2;
-}
-
-.network-panel__table tbody tr:nth-child(even) {
-  @apply bg-base-200/20;
-}
-</style>

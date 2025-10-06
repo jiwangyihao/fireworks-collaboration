@@ -23,34 +23,20 @@ function select(option: RangeOption) {
 </script>
 
 <template>
-  <div class="time-range-selector">
+  <div class="time-range-selector inline-flex items-center gap-2 rounded-lg border border-base-200 bg-base-100/70 p-1">
     <button
       v-for="option in options"
       :key="option.value"
       type="button"
-      class="time-range-selector__option"
-      :class="{ 'time-range-selector__option--active': option.value === modelValue }"
       @click="select(option)"
+      :class="[
+        'rounded-md px-3 py-1 text-sm font-medium transition-colors',
+        option.value === modelValue
+          ? 'bg-primary text-primary-content shadow-sm'
+          : 'text-base-content/70 hover:bg-base-200/60 hover:text-base-content'
+      ]"
     >
       {{ option.label }}
     </button>
   </div>
 </template>
-
-<style scoped>
-.time-range-selector {
-  @apply inline-flex items-center gap-2 rounded-lg border border-base-200 bg-base-100/70 p-1;
-}
-
-.time-range-selector__option {
-  @apply rounded-md px-3 py-1 text-sm font-medium text-base-content/70 transition-colors;
-}
-
-.time-range-selector__option:hover {
-  @apply bg-base-200/60 text-base-content;
-}
-
-.time-range-selector__option--active {
-  @apply bg-primary text-primary-content shadow-sm;
-}
-</style>

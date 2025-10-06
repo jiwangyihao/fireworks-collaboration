@@ -111,18 +111,18 @@ const retriesDisplay = computed(() => formatNumber(retries.value));
 </script>
 
 <template>
-  <div class="git-panel">
+  <div class="git-panel flex flex-col gap-4">
     <LoadingState v-if="loading && !snapshot" />
-    <div v-else-if="error && !snapshot" class="git-panel__error">
+    <div v-else-if="error && !snapshot" class="git-panel__error rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error">
       加载 Git 指标失败：{{ error }}
     </div>
     <EmptyState v-else-if="showEmpty" message="暂无 Git 指标" />
-    <div v-else class="git-panel__content">
-      <div class="git-panel__meta" v-if="snapshot">
+    <div v-else class="git-panel__content flex flex-col gap-6">
+      <div class="git-panel__meta flex items-center gap-3 text-xs text-base-content/60" v-if="snapshot">
         <span>总任务：{{ totalTasksDisplay }}</span>
-        <span v-if="stale" class="git-panel__badge">数据为缓存</span>
+        <span v-if="stale" class="git-panel__badge rounded-full bg-warning/10 px-2 py-0.5 text-warning">数据为缓存</span>
       </div>
-      <div class="git-panel__cards">
+      <div class="git-panel__cards grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <MetricCard
           title="任务失败率"
           :value="failureRateDisplay"
@@ -144,41 +144,41 @@ const retriesDisplay = computed(() => formatNumber(retries.value));
           :muted="retries === 0"
           description="Retryable 错误触发的重试总次数"
         >
-          <ul v-if="retryByCategory.length" class="git-panel__retry-list">
+          <ul v-if="retryByCategory.length" class="git-panel__retry-list mt-2 divide-y divide-base-200/60 text-xs">
             <li v-for="item in retryByCategory" :key="item.category">
-              <span class="git-panel__retry-category">{{ item.category }}</span>
-              <span class="git-panel__retry-count">{{ formatNumber(item.total) }}</span>
+              <span class="git-panel__retry-category truncate font-medium text-base-content/70">{{ item.category }}</span>
+              <span class="git-panel__retry-count font-mono text-base-content">{{ formatNumber(item.total) }}</span>
             </li>
           </ul>
         </MetricCard>
       </div>
-      <section class="git-panel__chart">
+      <section class="git-panel__chart flex flex-col gap-2">
         <header>
-          <h4>各任务类型吞吐</h4>
+          <h4 class="text-sm font-semibold text-base-content/80">各任务类型吞吐</h4>
         </header>
         <MetricChart :series="chartSeries" empty-message="暂无任务事件" :value-formatter="formatNumber" />
       </section>
-      <section class="git-panel__table" v-if="kindStats.length">
+      <section class="git-panel__table flex flex-col gap-2" v-if="kindStats.length">
         <header>
-          <h4>任务类型明细</h4>
+          <h4 class="text-sm font-semibold text-base-content/80">任务类型明细</h4>
         </header>
-        <table>
-          <thead>
+        <table class="w-full table-auto overflow-hidden rounded-xl border border-base-200 text-sm">
+          <thead class="bg-base-200/60 text-left text-xs uppercase tracking-wide text-base-content/60">
             <tr>
-              <th>类型</th>
-              <th>完成</th>
-              <th>失败/取消</th>
-              <th>总计</th>
-              <th>失败率</th>
+              <th class="px-3 py-2">类型</th>
+              <th class="px-3 py-2">完成</th>
+              <th class="px-3 py-2">失败/取消</th>
+              <th class="px-3 py-2">总计</th>
+              <th class="px-3 py-2">失败率</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="stat in kindStats" :key="stat.kind">
-              <td>{{ stat.label }}</td>
-              <td>{{ formatNumber(stat.completed) }}</td>
-              <td>{{ formatNumber(stat.failed) }}</td>
-              <td>{{ formatNumber(stat.total) }}</td>
-              <td>{{ formatPercent(stat.failureRate) }}</td>
+            <tr v-for="stat in kindStats" :key="stat.kind" class="even:bg-base-200/20">
+              <td class="px-3 py-2">{{ stat.label }}</td>
+              <td class="px-3 py-2">{{ formatNumber(stat.completed) }}</td>
+              <td class="px-3 py-2">{{ formatNumber(stat.failed) }}</td>
+              <td class="px-3 py-2">{{ formatNumber(stat.total) }}</td>
+              <td class="px-3 py-2">{{ formatPercent(stat.failureRate) }}</td>
             </tr>
           </tbody>
         </table>
@@ -186,72 +186,3 @@ const retriesDisplay = computed(() => formatNumber(retries.value));
     </div>
   </div>
 </template>
-
-<style scoped>
-.git-panel {
-  @apply flex flex-col gap-4;
-}
-
-.git-panel__error {
-  @apply rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error;
-}
-
-.git-panel__content {
-  @apply flex flex-col gap-6;
-}
-
-.git-panel__meta {
-  @apply flex items-center gap-3 text-xs text-base-content/60;
-}
-
-.git-panel__badge {
-  @apply rounded-full bg-warning/10 px-2 py-0.5 text-warning;
-}
-
-.git-panel__cards {
-  @apply grid gap-4 md:grid-cols-2 xl:grid-cols-3;
-}
-
-.git-panel__chart,
-.git-panel__table {
-  @apply flex flex-col gap-2;
-}
-
-.git-panel__chart h4,
-.git-panel__table h4 {
-  @apply text-sm font-semibold text-base-content/80;
-}
-
-.git-panel__table table {
-  @apply w-full table-auto overflow-hidden rounded-xl border border-base-200 text-sm;
-}
-
-.git-panel__table thead {
-  @apply bg-base-200/60 text-left text-xs uppercase tracking-wide text-base-content/60;
-}
-
-.git-panel__table th,
-.git-panel__table td {
-  @apply px-3 py-2;
-}
-
-.git-panel__table tbody tr:nth-child(even) {
-  @apply bg-base-200/20;
-}
-
-.git-panel__retry-list {
-  @apply mt-2 divide-y divide-base-200/60 text-xs;
-}
-
-.git-panel__retry-list li {
-  @apply flex items-center justify-between py-1;
-}
-
-.git-panel__retry-category {
-  @apply truncate font-medium text-base-content/70;
-}
-
-.git-panel__retry-count {
-  @apply font-mono text-base-content;
-}
-</style>

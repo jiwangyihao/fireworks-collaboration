@@ -6,10 +6,8 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vitejs.dev/config/
 export default defineConfig(() => {
-  const isTest = process.env.VITEST === "true";
-
   return {
-    plugins: isTest ? [vue()] : [vue(), tailwindcss()],
+    plugins: [vue(), tailwindcss()],
 
     // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
     //

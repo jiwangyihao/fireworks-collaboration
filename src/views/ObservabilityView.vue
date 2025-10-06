@@ -217,6 +217,7 @@ async function refresh() {
 </template>
 
 <style scoped>
+@reference "../style.css";
 .observability-view__header {
   @apply flex flex-col gap-4 border-b border-base-200 pb-4 md:flex-row md:items-center md:justify-between;
 }

@@ -249,95 +249,9 @@ const observabilityNavVisible = computed(() => {
   <GlobalErrors />
 </template>
 
-<!--suppress CssUnusedSymbol -->
 <style>
-@import "tailwindcss";
-@plugin "daisyui" {
-  themes: all;
-}
-@plugin "@tailwindcss/typography";
-
-/*noinspection CssInvalidPropertyValue*/
-@plugin "daisyui/theme" {
-  name: "light";
-  --radius-selector: 0.5rem;
-  --radius-field: 0.5rem;
-  --radius-box: 1rem;
-  --size-selector: 0.25rem;
-  --size-field: 0.25rem;
-  --border: 2px;
-  --noise: 1;
-}
-
-/*noinspection CssInvalidPropertyValue*/
-@plugin "daisyui/theme" {
-  name: "dark";
-  --radius-selector: 0.5rem;
-  --radius-field: 0.5rem;
-  --radius-box: 1rem;
-  --size-selector: 0.25rem;
-  --size-field: 0.25rem;
-  --border: 2px;
-  --noise: 1;
-}
-
-@custom-variant dark (&:where(
-  [data-theme=dark],
-  [data-theme=dark] *,
-  [data-theme=synthwave],
-  [data-theme=synthwave] *,
-  [data-theme=halloween],
-  [data-theme=halloween] *,
-  [data-theme=forest],
-  [data-theme=forest] *,
-  [data-theme=black],
-  [data-theme=black] *,
-  [data-theme=luxury],
-  [data-theme=luxury] *,
-  [data-theme=dracula],
-  [data-theme=dracula] *,
-  [data-theme=business],
-  [data-theme=business] *,
-  [data-theme=night],
-  [data-theme=night] *,
-  [data-theme=coffee],
-  [data-theme=coffee] *
-  [data-theme=dim],
-  [data-theme=dim] *,
-  [data-theme=sunset],
-  [data-theme=sunset] *,
-  [data-theme=abyss],
-  [data-theme=abyss] *,
-));
-
-@utility page {
-  @apply w-full min-w-full h-full prose flex flex-col p-4;
-}
-
-@utility vertical-lr {
-  writing-mode: vertical-lr;
-}
-
-#app {
-  width: 100%;
-  height: 100vh;
-}
-
-.list-move, /* 对移动中的元素应用的过渡 */
-.list-enter-active,
-.list-leave-active {
-  transition: all 0.5s ease;
-}
-
-.list-enter-from,
-.list-leave-to {
-  opacity: 0;
-  transform: translateX(30px);
-}
-
-/* 确保将离开的元素从布局流中删除
-  以便能够正确地计算移动的动画。 */
-.list-leave-active {
-  position: absolute;
-}
+#app { width:100%; height:100vh; }
+.list-move,.list-enter-active,.list-leave-active { transition: all .5s ease; }
+.list-enter-from,.list-leave-to { opacity:0; transform:translateX(30px); }
+.list-leave-active { position:absolute; }
 </style>

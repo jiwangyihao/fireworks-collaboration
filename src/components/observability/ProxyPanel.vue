@@ -46,16 +46,16 @@ const tableRows = computed(() =>
 </script>
 
 <template>
-  <div class="proxy-panel">
+  <div class="proxy-panel flex flex-col gap-4">
     <LoadingState v-if="loading && !snapshot" />
-    <div v-else-if="error && !snapshot" class="proxy-panel__error">加载代理指标失败：{{ error }}</div>
+    <div v-else-if="error && !snapshot" class="proxy-panel__error rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error">加载代理指标失败：{{ error }}</div>
     <EmptyState v-else-if="showEmpty" message="暂无代理指标" />
-    <div v-else class="proxy-panel__content">
-      <div class="proxy-panel__meta" v-if="snapshot">
+    <div v-else class="proxy-panel__content flex flex-col gap-6">
+      <div class="proxy-panel__meta flex items-center gap-3 text-xs text-base-content/60" v-if="snapshot">
         <span>代理降级总次数：{{ formatNumber(fallbackTotal) }}</span>
-        <span v-if="stale" class="proxy-panel__badge">数据为缓存</span>
+        <span v-if="stale" class="proxy-panel__badge rounded-full bg-warning/10 px-2 py-0.5 text-warning">数据为缓存</span>
       </div>
-      <div class="proxy-panel__cards">
+      <div class="proxy-panel__cards grid gap-4 md:grid-cols-2">
         <MetricCard
           title="代理降级"
           :value="formatNumber(fallbackTotal)"
@@ -63,27 +63,27 @@ const tableRows = computed(() =>
           :muted="fallbackTotal === 0"
         />
       </div>
-      <section class="proxy-panel__chart">
+      <section class="proxy-panel__chart flex flex-col gap-2">
         <header>
-          <h4>按模式统计降级</h4>
+          <h4 class="text-sm font-semibold text-base-content/80">按模式统计降级</h4>
         </header>
         <MetricChart :series="chartSeries" empty-message="暂无降级事件" :value-formatter="formatNumber" />
       </section>
-      <section class="proxy-panel__table" v-if="tableRows.length">
+      <section class="proxy-panel__table flex flex-col gap-2" v-if="tableRows.length">
         <header>
-          <h4>模式明细</h4>
+          <h4 class="text-sm font-semibold text-base-content/80">模式明细</h4>
         </header>
-        <table>
-          <thead>
+        <table class="w-full table-auto overflow-hidden rounded-xl border border-base-200 text-sm">
+          <thead class="bg-base-200/60 text-left text-xs uppercase tracking-wide text-base-content/60">
             <tr>
-              <th>模式</th>
-              <th>降级次数</th>
+              <th class="px-3 py-2">模式</th>
+              <th class="px-3 py-2">降级次数</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in tableRows" :key="row.mode">
-              <td>{{ row.mode }}</td>
-              <td>{{ formatNumber(row.total) }}</td>
+            <tr v-for="row in tableRows" :key="row.mode" class="even:bg-base-200/20">
+              <td class="px-3 py-2">{{ row.mode }}</td>
+              <td class="px-3 py-2">{{ formatNumber(row.total) }}</td>
             </tr>
           </tbody>
         </table>
@@ -92,55 +92,3 @@ const tableRows = computed(() =>
   </div>
 </template>
 
-<style scoped>
-.proxy-panel {
-  @apply flex flex-col gap-4;
-}
-
-.proxy-panel__error {
-  @apply rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error;
-}
-
-.proxy-panel__content {
-  @apply flex flex-col gap-6;
-}
-
-.proxy-panel__meta {
-  @apply flex items-center gap-3 text-xs text-base-content/60;
-}
-
-.proxy-panel__badge {
-  @apply rounded-full bg-warning/10 px-2 py-0.5 text-warning;
-}
-
-.proxy-panel__cards {
-  @apply grid gap-4 md:grid-cols-2;
-}
-
-.proxy-panel__chart,
-.proxy-panel__table {
-  @apply flex flex-col gap-2;
-}
-
-.proxy-panel__chart h4,
-.proxy-panel__table h4 {
-  @apply text-sm font-semibold text-base-content/80;
-}
-
-.proxy-panel__table table {
-  @apply w-full table-auto overflow-hidden rounded-xl border border-base-200 text-sm;
-}
-
-.proxy-panel__table thead {
-  @apply bg-base-200/60 text-left text-xs uppercase tracking-wide text-base-content/60;
-}
-
-.proxy-panel__table th,
-.proxy-panel__table td {
-  @apply px-3 py-2;
-}
-
-.proxy-panel__table tbody tr:nth-child(even) {
-  @apply bg-base-200/20;
-}
-</style>

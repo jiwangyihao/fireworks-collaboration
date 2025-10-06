@@ -81,16 +81,16 @@ const failAverageDisplay = computed(() => formatDurationMs(failAverage.value, 1)
 </script>
 
 <template>
-  <div class="tls-panel">
+  <div class="tls-panel flex flex-col gap-4">
     <LoadingState v-if="loading && !snapshot" />
-    <div v-else-if="error && !snapshot" class="tls-panel__error">加载 TLS 指标失败：{{ error }}</div>
+    <div v-else-if="error && !snapshot" class="tls-panel__error rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error">加载 TLS 指标失败：{{ error }}</div>
     <EmptyState v-else-if="showEmpty" message="暂无 TLS 指标" />
-    <div v-else class="tls-panel__content">
-      <div class="tls-panel__meta" v-if="snapshot">
+    <div v-else class="tls-panel__content flex flex-col gap-6">
+      <div class="tls-panel__meta flex items-center gap-3 text-xs text-base-content/60" v-if="snapshot">
         <span>总握手：{{ formatNumber(totalCount) }}</span>
-        <span v-if="stale" class="tls-panel__badge">数据为缓存</span>
+        <span v-if="stale" class="tls-panel__badge rounded-full bg-warning/10 px-2 py-0.5 text-warning">数据为缓存</span>
       </div>
-      <div class="tls-panel__cards">
+      <div class="tls-panel__cards grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <MetricCard
           title="握手成功"
           :value="successCountDisplay"
@@ -111,27 +111,27 @@ const failAverageDisplay = computed(() => formatDurationMs(failAverage.value, 1)
           description="握手失败样本的平均耗时"
         />
       </div>
-      <section class="tls-panel__table" v-if="strategyStats.length">
+      <section class="tls-panel__table flex flex-col gap-2" v-if="strategyStats.length">
         <header>
-          <h4>SNI 策略分布</h4>
+          <h4 class="text-sm font-semibold text-base-content/80">SNI 策略分布</h4>
         </header>
-        <table>
-          <thead>
+        <table class="w-full table-auto overflow-hidden rounded-xl border border-base-200 text-sm">
+          <thead class="bg-base-200/60 text-left text-xs uppercase tracking-wide text-base-content/60">
             <tr>
-              <th>策略</th>
-              <th>成功次数</th>
-              <th>P50</th>
-              <th>P95</th>
-              <th>P99</th>
+              <th class="px-3 py-2">策略</th>
+              <th class="px-3 py-2">成功次数</th>
+              <th class="px-3 py-2">P50</th>
+              <th class="px-3 py-2">P95</th>
+              <th class="px-3 py-2">P99</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="stat in strategyStats" :key="stat.strategy">
-              <td>{{ stat.strategy }}</td>
-              <td>{{ formatNumber(stat.count) }}</td>
-              <td>{{ formatDurationMs(stat.p50, 1) }}</td>
-              <td>{{ formatDurationMs(stat.p95, 1) }}</td>
-              <td>{{ formatDurationMs(stat.p99, 1) }}</td>
+            <tr v-for="stat in strategyStats" :key="stat.strategy" class="even:bg-base-200/20">
+              <td class="px-3 py-2">{{ stat.strategy }}</td>
+              <td class="px-3 py-2">{{ formatNumber(stat.count) }}</td>
+              <td class="px-3 py-2">{{ formatDurationMs(stat.p50, 1) }}</td>
+              <td class="px-3 py-2">{{ formatDurationMs(stat.p95, 1) }}</td>
+              <td class="px-3 py-2">{{ formatDurationMs(stat.p99, 1) }}</td>
             </tr>
           </tbody>
         </table>
@@ -140,53 +140,3 @@ const failAverageDisplay = computed(() => formatDurationMs(failAverage.value, 1)
   </div>
 </template>
 
-<style scoped>
-.tls-panel {
-  @apply flex flex-col gap-4;
-}
-
-.tls-panel__error {
-  @apply rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error;
-}
-
-.tls-panel__content {
-  @apply flex flex-col gap-6;
-}
-
-.tls-panel__meta {
-  @apply flex items-center gap-3 text-xs text-base-content/60;
-}
-
-.tls-panel__badge {
-  @apply rounded-full bg-warning/10 px-2 py-0.5 text-warning;
-}
-
-.tls-panel__cards {
-  @apply grid gap-4 md:grid-cols-2 xl:grid-cols-3;
-}
-
-.tls-panel__table {
-  @apply flex flex-col gap-2;
-}
-
-.tls-panel__table h4 {
-  @apply text-sm font-semibold text-base-content/80;
-}
-
-.tls-panel__table table {
-  @apply w-full table-auto overflow-hidden rounded-xl border border-base-200 text-sm;
-}
-
-.tls-panel__table thead {
-  @apply bg-base-200/60 text-left text-xs uppercase tracking-wide text-base-content/60;
-}
-
-.tls-panel__table th,
-.tls-panel__table td {
-  @apply px-3 py-2;
-}
-
-.tls-panel__table tbody tr:nth-child(even) {
-  @apply bg-base-200/20;
-}
-</style>

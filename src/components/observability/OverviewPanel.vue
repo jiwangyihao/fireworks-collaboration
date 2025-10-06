@@ -91,18 +91,18 @@ const alertsDisplay = computed(() => formatNumber(alertsTotal.value));
 </script>
 
 <template>
-  <div class="overview-panel">
+  <div class="overview-panel flex flex-col gap-4">
     <LoadingState v-if="loading && !snapshot" />
-    <div v-else-if="error && !snapshot" class="overview-panel__error">
+    <div v-else-if="error && !snapshot" class="overview-panel__error rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error">
       <span>加载指标失败：{{ error }}</span>
     </div>
     <EmptyState v-else-if="showEmpty" message="暂无指标数据" />
-    <div v-else class="overview-panel__content">
-      <div class="overview-panel__meta" v-if="snapshot">
+    <div v-else class="overview-panel__content flex flex-col gap-6">
+      <div class="overview-panel__meta flex items-center gap-3 text-xs text-base-content/60" v-if="snapshot">
         <span>生成时间：{{ new Date(snapshot.generatedAtMs).toLocaleTimeString() }}</span>
-        <span v-if="stale" class="overview-panel__badge">数据为缓存</span>
+        <span v-if="stale" class="overview-panel__badge rounded-full bg-warning/10 px-2 py-0.5 text-warning">数据为缓存</span>
       </div>
-      <div class="overview-panel__cards">
+      <div class="overview-panel__cards grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <MetricCard
           title="任务成功率"
           :value="successRateDisplay"
@@ -141,50 +141,12 @@ const alertsDisplay = computed(() => formatNumber(alertsTotal.value));
           :muted="alertsTotal === 0"
         />
       </div>
-      <section class="overview-panel__chart">
-        <header>
-          <h4>任务吞吐趋势</h4>
+      <section class="overview-panel__chart flex flex-col gap-2">
+        <header class="flex items-center justify-between">
+          <h4 class="text-sm font-semibold text-base-content/80">任务吞吐趋势</h4>
         </header>
         <MetricChart :series="throughputSeries" :value-formatter="formatNumber" empty-message="暂无任务事件" />
       </section>
     </div>
   </div>
 </template>
-
-<style scoped>
-.overview-panel {
-  @apply flex flex-col gap-4;
-}
-
-.overview-panel__error {
-  @apply rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error;
-}
-
-.overview-panel__content {
-  @apply flex flex-col gap-6;
-}
-
-.overview-panel__meta {
-  @apply flex items-center gap-3 text-xs text-base-content/60;
-}
-
-.overview-panel__badge {
-  @apply rounded-full bg-warning/10 px-2 py-0.5 text-warning;
-}
-
-.overview-panel__cards {
-  @apply grid gap-4 md:grid-cols-2 xl:grid-cols-3;
-}
-
-.overview-panel__chart {
-  @apply flex flex-col gap-2;
-}
-
-.overview-panel__chart > header {
-  @apply flex items-center justify-between;
-}
-
-.overview-panel__chart h4 {
-  @apply text-sm font-semibold text-base-content/80;
-}
-</style>

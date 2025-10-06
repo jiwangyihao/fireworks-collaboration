@@ -97,11 +97,11 @@ function defaultFormatter(value: number): string {
 </script>
 
 <template>
-  <div class="metric-chart">
-    <div v-if="!hasAnyData" class="metric-chart__empty">
+  <div class="metric-chart flex flex-col gap-2 rounded-xl border border-base-200 bg-base-100/60 p-3 shadow-sm">
+    <div v-if="!hasAnyData" class="metric-chart__empty flex min-h-24 items-center justify-center text-sm text-base-content/50">
       {{ emptyMessage ?? "暂无数据" }}
     </div>
-    <div v-else class="metric-chart__canvas">
+    <div v-else class="metric-chart__canvas flex flex-col gap-2">
       <svg viewBox="0 0 100 40" preserveAspectRatio="none">
         <line x1="0" y1="35" x2="100" y2="35" class="metric-chart__axis" />
         <template v-for="line in lines" :key="line.id">
@@ -116,11 +116,11 @@ function defaultFormatter(value: number): string {
           />
         </template>
       </svg>
-      <div class="metric-chart__legend">
-        <div v-for="line in lines" :key="`${line.id}-legend`" class="metric-chart__legend-item">
-          <span class="metric-chart__swatch" :style="{ backgroundColor: line.color }" />
-          <span class="metric-chart__label">{{ line.label }}</span>
-          <span class="metric-chart__value">{{ formatter(line.latest) }}</span>
+      <div class="metric-chart__legend flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-base-content/70">
+        <div v-for="line in lines" :key="`${line.id}-legend`" class="metric-chart__legend-item flex items-center gap-1">
+          <span class="metric-chart__swatch h-2 w-2 rounded-full" :style="{ backgroundColor: line.color }" />
+          <span class="metric-chart__label font-medium">{{ line.label }}</span>
+          <span class="metric-chart__value font-mono text-xs text-base-content">{{ formatter(line.latest) }}</span>
         </div>
       </div>
     </div>
@@ -128,41 +128,5 @@ function defaultFormatter(value: number): string {
 </template>
 
 <style scoped>
-.metric-chart {
-  @apply flex flex-col gap-2 rounded-xl border border-base-200 bg-base-100/60 p-3 shadow-sm;
-}
-
-.metric-chart__canvas {
-  @apply flex flex-col gap-2;
-}
-
-.metric-chart__axis {
-  stroke: var(--fallback-bc, rgba(148, 163, 184, 0.6));
-  stroke-width: 0.75;
-  stroke-dasharray: 2 2;
-}
-
-.metric-chart__legend {
-  @apply flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-base-content/70;
-}
-
-.metric-chart__legend-item {
-  @apply flex items-center gap-1;
-}
-
-.metric-chart__swatch {
-  @apply h-2 w-2 rounded-full;
-}
-
-.metric-chart__label {
-  @apply font-medium;
-}
-
-.metric-chart__value {
-  @apply font-mono text-xs text-base-content;
-}
-
-.metric-chart__empty {
-  @apply flex min-h-24 items-center justify-center text-sm text-base-content/50;
-}
+.metric-chart__axis { stroke: var(--fallback-bc, rgba(148, 163, 184, 0.6)); stroke-width: 0.75; stroke-dasharray: 2 2; }
 </style>
