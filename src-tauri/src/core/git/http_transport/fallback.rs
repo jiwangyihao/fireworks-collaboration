@@ -173,5 +173,13 @@ pub mod testing {
 
 #[cfg(test)]
 pub(crate) fn test_classify_and_count_fallback(err: &str) -> &'static str {
-    testing::classify_and_count_fallback(err)
+    // 当启用 tauri-app 特性时，testing 模块不会被编译；直接调用内部函数即可。
+    #[cfg(not(feature = "tauri-app"))]
+    {
+        return testing::classify_and_count_fallback(err);
+    }
+    #[cfg(feature = "tauri-app")]
+    {
+        return crate::core::git::http_transport::fallback::classify_and_count_fallback(err);
+    }
 }

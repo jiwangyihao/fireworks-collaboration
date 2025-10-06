@@ -53,6 +53,8 @@ pub enum OperationType {
     Validate,
     /// 凭证过期
     Expired,
+    /// 解锁凭证存储
+    Unlock,
 }
 
 impl fmt::Display for OperationType {
@@ -65,6 +67,7 @@ impl fmt::Display for OperationType {
             OperationType::List => write!(f, "list"),
             OperationType::Validate => write!(f, "validate"),
             OperationType::Expired => write!(f, "expired"),
+            OperationType::Unlock => write!(f, "unlock"),
         }
     }
 }

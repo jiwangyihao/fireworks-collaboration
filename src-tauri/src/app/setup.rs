@@ -11,7 +11,7 @@ use tauri::Manager;
 use crate::{
     core::{
         config::{loader as cfg_loader, model::AppConfig},
-        credential::{audit::AuditLogger, config::CredentialConfig},
+    credential::{audit::AuditLogger},
         ip_pool,
         tasks::TaskRegistry,
         workspace::WorkspaceStatusService,
@@ -48,84 +48,81 @@ pub fn run() {
         .manage(ip_pool::global::obtain_global_pool())
         // Register command handlers
         .invoke_handler(tauri::generate_handler![
-            super::commands::greet,
-            super::commands::start_oauth_server,
-            super::commands::get_oauth_callback_data,
-            super::commands::clear_oauth_state,
-            super::commands::get_system_proxy,
-            super::commands::get_config,
-            super::commands::set_config,
-            super::commands::export_team_config_template,
-            super::commands::import_team_config_template,
-            super::commands::task_list,
-            super::commands::task_cancel,
-            super::commands::task_start_sleep,
-            super::commands::task_snapshot,
-            super::commands::git_clone,
-            super::commands::git_fetch,
-            super::commands::git_push,
-            super::commands::git_init,
-            super::commands::git_add,
-            super::commands::git_commit,
-            super::commands::git_branch,
-            super::commands::git_checkout,
-            super::commands::git_tag,
-            super::commands::git_remote_set,
-            super::commands::git_remote_add,
-            super::commands::git_remote_remove,
-            super::commands::http_fake_request,
-            super::commands::metrics_snapshot,
-            super::commands::detect_system_proxy,
-            super::commands::force_proxy_fallback,
-            super::commands::force_proxy_recovery,
-            // Credential management commands
-            super::commands::add_credential,
-            super::commands::get_credential,
-            super::commands::update_credential,
-            super::commands::delete_credential,
-            super::commands::list_credentials,
-            super::commands::set_master_password,
-            super::commands::unlock_store,
-            super::commands::export_audit_log,
-            super::commands::cleanup_expired_credentials,
-            super::commands::cleanup_audit_logs,
-            super::commands::is_credential_locked,
-            super::commands::reset_credential_lock,
-            super::commands::remaining_auth_attempts,
-            // Workspace management commands
-            super::commands::create_workspace,
-            super::commands::load_workspace,
-            super::commands::save_workspace,
-            super::commands::get_workspace,
-            super::commands::close_workspace,
-            super::commands::add_repository,
-            super::commands::remove_repository,
-            super::commands::get_repository,
-            super::commands::list_repositories,
-            super::commands::list_enabled_repositories,
-            super::commands::reorder_repositories,
-            super::commands::get_workspace_statuses,
-            super::commands::clear_workspace_status_cache,
-            super::commands::invalidate_workspace_status_entry,
-            super::commands::update_repository_tags,
-            super::commands::toggle_repository_enabled,
-            super::commands::get_workspace_config,
-            super::commands::validate_workspace_file,
-            super::commands::backup_workspace,
-            super::commands::restore_workspace,
-            super::commands::workspace_batch_clone,
-            super::commands::workspace_batch_fetch,
-            super::commands::workspace_batch_push,
-            // Submodule management commands
-            super::commands::list_submodules,
-            super::commands::has_submodules,
-            super::commands::init_all_submodules,
-            super::commands::init_submodule,
-            super::commands::update_all_submodules,
-            super::commands::update_submodule,
-            super::commands::sync_all_submodules,
-            super::commands::sync_submodule,
-            super::commands::get_submodule_config
+            crate::app::commands::config::greet,
+            crate::app::commands::oauth::start_oauth_server,
+            crate::app::commands::oauth::get_oauth_callback_data,
+            crate::app::commands::oauth::clear_oauth_state,
+            crate::app::commands::proxy::get_system_proxy,
+            crate::app::commands::config::get_config,
+            crate::app::commands::config::set_config,
+            crate::app::commands::config::export_team_config_template,
+            crate::app::commands::config::import_team_config_template,
+            crate::app::commands::tasks::task_list,
+            crate::app::commands::tasks::task_cancel,
+            crate::app::commands::tasks::task_start_sleep,
+            crate::app::commands::tasks::task_snapshot,
+            crate::app::commands::git::git_clone,
+            crate::app::commands::git::git_fetch,
+            crate::app::commands::git::git_push,
+            crate::app::commands::git::git_init,
+            crate::app::commands::git::git_add,
+            crate::app::commands::git::git_commit,
+            crate::app::commands::git::git_branch,
+            crate::app::commands::git::git_checkout,
+            crate::app::commands::git::git_tag,
+            crate::app::commands::git::git_remote_set,
+            crate::app::commands::git::git_remote_add,
+            crate::app::commands::git::git_remote_remove,
+            crate::app::commands::http::http_fake_request,
+            crate::app::commands::metrics::metrics_snapshot,
+            crate::app::commands::proxy::detect_system_proxy,
+            crate::app::commands::proxy::force_proxy_fallback,
+            crate::app::commands::proxy::force_proxy_recovery,
+            crate::app::commands::credential::add_credential,
+            crate::app::commands::credential::get_credential,
+            crate::app::commands::credential::update_credential,
+            crate::app::commands::credential::delete_credential,
+            crate::app::commands::credential::list_credentials,
+            crate::app::commands::credential::set_master_password,
+            crate::app::commands::credential::unlock_store,
+            crate::app::commands::credential::export_audit_log,
+            crate::app::commands::credential::cleanup_expired_credentials,
+            crate::app::commands::credential::cleanup_audit_logs,
+            crate::app::commands::credential::is_credential_locked,
+            crate::app::commands::credential::reset_credential_lock,
+            crate::app::commands::credential::remaining_auth_attempts,
+            crate::app::commands::workspace::create_workspace,
+            crate::app::commands::workspace::load_workspace,
+            crate::app::commands::workspace::save_workspace,
+            crate::app::commands::workspace::get_workspace,
+            crate::app::commands::workspace::close_workspace,
+            crate::app::commands::workspace::add_repository,
+            crate::app::commands::workspace::remove_repository,
+            crate::app::commands::workspace::get_repository,
+            crate::app::commands::workspace::list_repositories,
+            crate::app::commands::workspace::list_enabled_repositories,
+            crate::app::commands::workspace::reorder_repositories,
+            crate::app::commands::workspace::get_workspace_statuses,
+            crate::app::commands::workspace::clear_workspace_status_cache,
+            crate::app::commands::workspace::invalidate_workspace_status_entry,
+            crate::app::commands::workspace::update_repository_tags,
+            crate::app::commands::workspace::toggle_repository_enabled,
+            crate::app::commands::workspace::get_workspace_config,
+            crate::app::commands::workspace::validate_workspace_file,
+            crate::app::commands::workspace::backup_workspace,
+            crate::app::commands::workspace::restore_workspace,
+            crate::app::commands::workspace::workspace_batch_clone,
+            crate::app::commands::workspace::workspace_batch_fetch,
+            crate::app::commands::workspace::workspace_batch_push,
+            crate::app::commands::submodule::list_submodules,
+            crate::app::commands::submodule::has_submodules,
+            crate::app::commands::submodule::init_all_submodules,
+            crate::app::commands::submodule::init_submodule,
+            crate::app::commands::submodule::update_all_submodules,
+            crate::app::commands::submodule::update_submodule,
+            crate::app::commands::submodule::sync_all_submodules,
+            crate::app::commands::submodule::sync_submodule,
+            crate::app::commands::submodule::get_submodule_config
         ]);
 
     // Setup application state and configuration
@@ -173,9 +170,7 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
     if let Err(err) = crate::core::metrics::init_aggregate_observability(&cfg.observability) {
         tracing::warn!(target = "metrics", error = %err, "failed to initialize aggregate observability metrics");
     }
-    if let Err(err) = crate::core::metrics::init_export_observability(&cfg.observability) {
-        tracing::warn!(target = "metrics", error = %err, "failed to initialize metrics export server");
-    }
+    // NOTE: 暂时跳过 metrics export HTTP server 初始化（需要 Tokio runtime 环境），后续可在首个相关命令调用时延迟启动。
 
     // Manage configuration state
     app.manage(Arc::new(Mutex::new(cfg.clone())) as SharedConfig);
@@ -218,7 +213,7 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
     }
 
     // Initialize credential store
-    let cred_config = cfg.credential.clone().unwrap_or_default();
+    let cred_config = cfg.credential.clone();
     let cred_store = match initialize_credential_store(&cred_config) {
         Ok(store) => {
             tracing::info!(
@@ -265,7 +260,7 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
     tracing::info!(target = "workspace", "Workspace status service initialized");
 
     // Initialize submodule manager with default config
-    let submodule_config = cfg.submodule.clone().unwrap_or_default();
+    let submodule_config = cfg.submodule.clone();
     let submodule_manager = crate::core::submodule::SubmoduleManager::new(submodule_config);
     app.manage(Arc::new(Mutex::new(submodule_manager)) as SharedSubmoduleManager);
     tracing::info!(

@@ -3,7 +3,7 @@
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
-    sync::{Arc, Mutex},
+    sync::Arc,
     thread,
 };
 use tauri::State;

@@ -388,12 +388,14 @@ pub async fn set_master_password(
     config: CredentialConfig,
     factory: State<'_, SharedCredentialFactory>,
 ) -> Result<(), String> {
-    let config_with_password = CredentialConfig {
-        master_password: Some(password),
-        ..config
-    };
+    // NOTE: 当前 CredentialConfig 不再包含 master_password 字段。
+    // 如果使用文件存储，需要后续在 EncryptedFileStore 上单独设置主密码；暂未暴露 trait 接口。
+    // 这里先创建存储并忽略密码（后续实现真正的密码设置逻辑）。
+    if config.storage == crate::core::credential::config::StorageType::File {
+        tracing::warn!(target = "credential", "File storage master password is currently ignored (not yet implemented)");
+    }
 
-    let store = CredentialStoreFactory::create(&config_with_password)
+    let store = CredentialStoreFactory::create(&config)
         .map_err(|e| format!("Failed to create credential store: {}", e))?;
 
     let mut factory_guard = factory
@@ -471,7 +473,7 @@ pub async fn unlock_store(
                 "master",
                 Some(&password),
                 false,
-                Some("Invalid master password"),
+                Some("Invalid master password".to_string()),
             );
         }
     }
@@ -534,25 +536,25 @@ pub async fn cleanup_expired_credentials(
         if cred.is_expired() {
             // Remove expired credential
             store
-                .remove(cred.host(), cred.username())
+                .remove(&cred.host, &cred.username)
                 .map_err(|e| format!("Failed to remove expired credential: {}", e))?;
 
             // Log audit event
             if let Ok(mut logger) = audit.lock() {
                 logger.log_operation(
                     crate::core::credential::audit::OperationType::Remove,
-                    cred.host(),
-                    cred.username(),
+                    &cred.host,
+                    &cred.username,
                     None,
                     true,
-                    Some("Expired credential auto-cleanup"),
+                    Some("Expired credential auto-cleanup".to_string()),
                 );
             }
 
             tracing::info!(
                 target = "credential",
-                host = %cred.host(),
-                username = %cred.username(),
+                host = %cred.host,
+                username = %cred.username,
                 "Removed expired credential"
             );
 

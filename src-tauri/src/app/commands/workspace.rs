@@ -48,7 +48,7 @@ impl From<&Workspace> for WorkspaceInfo {
     fn from(ws: &Workspace) -> Self {
         Self {
             name: ws.name.clone(),
-            root_path: ws.root_path.clone(),
+            root_path: ws.root_path.to_string_lossy().to_string(),
             repositories: ws.repositories.iter().map(RepositoryInfo::from).collect(),
             created_at: ws.created_at.clone(),
             updated_at: ws.updated_at.clone(),
@@ -74,7 +74,7 @@ impl From<&RepositoryEntry> for RepositoryInfo {
         Self {
             id: repo.id.clone(),
             name: repo.name.clone(),
-            path: repo.path.clone(),
+            path: repo.path.to_string_lossy().to_string(),
             remote_url: repo.remote_url.clone(),
             tags: repo.tags.clone(),
             enabled: repo.enabled,
@@ -1055,9 +1055,9 @@ pub async fn validate_workspace_file(path: String) -> Result<bool, String> {
     info!("Validating workspace file: {}", path);
 
     let workspace_path = PathBuf::from(&path);
-    let storage = WorkspaceStorage::new();
+    let storage = WorkspaceStorage::new(workspace_path.clone());
 
-    match storage.validate(&workspace_path) {
+    match storage.validate() {
         Ok(_) => {
             info!("Workspace file validation passed: {}", path);
             Ok(true)
@@ -1075,9 +1075,9 @@ pub async fn backup_workspace(path: String) -> Result<String, String> {
     info!("Creating backup of workspace file: {}", path);
 
     let workspace_path = PathBuf::from(&path);
-    let storage = WorkspaceStorage::new();
+    let storage = WorkspaceStorage::new(workspace_path.clone());
 
-    let backup_path = storage.backup(&workspace_path).map_err(|e| {
+    let backup_path = storage.backup().map_err(|e| {
         error!("Failed to backup workspace {}: {}", path, e);
         format!("Failed to create backup: {}", e)
     })?;
@@ -1094,11 +1094,9 @@ pub async fn restore_workspace(backup_path: String, workspace_path: String) -> R
 
     let backup = PathBuf::from(&backup_path);
     let workspace = PathBuf::from(&workspace_path);
-    let storage = WorkspaceStorage::new();
+    let storage = WorkspaceStorage::new(workspace.clone());
 
-    storage
-        .restore_from_backup(&backup, &workspace)
-        .map_err(|e| {
+    storage.restore_from_backup(&backup).map_err(|e| {
             error!("Failed to restore workspace from {}: {}", backup_path, e);
             format!("Failed to restore from backup: {}", e)
         })?;

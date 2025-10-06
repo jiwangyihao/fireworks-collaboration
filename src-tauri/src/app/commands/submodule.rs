@@ -4,7 +4,6 @@
 
 use crate::core::submodule::{SubmoduleConfig, SubmoduleInfo, SubmoduleManager};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::State;
 use tracing::{error, info};

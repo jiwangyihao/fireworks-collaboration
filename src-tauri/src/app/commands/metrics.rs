@@ -62,6 +62,6 @@ fn parse_range_token(value: &str) -> Result<WindowRange, String> {
 fn sanitize_quantiles(mut values: Vec<f64>) -> Vec<f64> {
     values.retain(|q| q.is_finite() && *q > 0.0 && *q < 1.0);
     values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-    values.dedup_by(|a, b| (a - b).abs() < f64::EPSILON);
+    values.dedup_by(|a, b| (*a - *b).abs() < f64::EPSILON);
     values
 }

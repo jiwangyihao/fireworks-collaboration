@@ -86,7 +86,7 @@ fn validate_url(url: &str, cfg: &AppConfig) -> Result<(hyper::Uri, String), Stri
         return Err("Verify: SAN whitelist mismatch (precheck)".into());
     }
 
-    Ok((parsed, host.to_string()))
+    Ok((parsed.clone(), host.to_string()))
 }
 
 /// Process redirect response.
@@ -194,11 +194,12 @@ pub async fn http_fake_request(
 
                 // If not a redirect or not following redirects, return
                 if !is_redirect || !follow {
+                    let redirect_count = redirects.len();
                     out.redirects = redirects;
                     tracing::info!(
                         target = "http",
                         status = status,
-                        redirects = redirects.len(),
+                        redirects = redirect_count,
                         "HTTP request completed"
                     );
                     return Ok(out);

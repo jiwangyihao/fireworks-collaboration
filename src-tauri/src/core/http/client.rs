@@ -69,11 +69,15 @@ impl HttpClient {
             .to_string();
         let port = url.port_u16().unwrap_or(443);
 
-        // 集成全局IP池，优先用pick_best选出的IP建立连接
+        // 集成全局IP池，优先用 pick_best 选出的 IP 建立连接。
+        // 注意：不能在 await 期间持有互斥锁，否则命令 Future 不满足 Send 约束。
         let start_total = Instant::now();
-        let pool = obtain_global_pool();
-        let pool = pool.lock().expect("ip pool lock");
-        let sel = pool.pick_best_blocking(&host, port);
+        let sel = {
+            let pool_arc = obtain_global_pool();
+            let guard = pool_arc.lock().expect("ip pool lock");
+            guard.pick_best_blocking(&host, port).clone()
+        }; // 锁在此处释放
+
         let (connect_addr, sni_host, used_ip_pool, connect_ms) = match sel.strategy() {
             IpSelectionStrategy::SystemDefault => {
                 // 走原逻辑
