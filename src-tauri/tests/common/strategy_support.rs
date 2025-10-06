@@ -319,6 +319,50 @@ mod tests {
     use tempfile::tempdir;
     use uuid::Uuid;
 
+    const FORCE_DISABLE_ENV: &str = "FWC_PROXY_FORCE_DISABLE";
+
+    struct ProxyEnvGuard {
+        restored: Vec<(&'static str, String)>,
+        force_disable_original: Option<String>,
+    }
+
+    impl ProxyEnvGuard {
+        fn new() -> Self {
+            let mut restored = Vec::new();
+            for key in [
+                "HTTPS_PROXY",
+                "https_proxy",
+                "HTTP_PROXY",
+                "http_proxy",
+                "ALL_PROXY",
+                "all_proxy",
+            ] {
+                if let Ok(value) = std::env::var(key) {
+                    restored.push((key, value));
+                    std::env::remove_var(key);
+                }
+            }
+            let force_disable_original = std::env::var(FORCE_DISABLE_ENV).ok();
+            std::env::set_var(FORCE_DISABLE_ENV, "1");
+            Self {
+                restored,
+                force_disable_original,
+            }
+        }
+    }
+
+    impl Drop for ProxyEnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in &self.restored {
+                std::env::set_var(*key, value);
+            }
+            match &self.force_disable_original {
+                Some(value) => std::env::set_var(FORCE_DISABLE_ENV, value),
+                None => std::env::remove_var(FORCE_DISABLE_ENV),
+            }
+        }
+    }
+
     fn config_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
@@ -335,6 +379,7 @@ mod tests {
     }
 
     fn collect_rollout(percent: u8) -> bool {
+        let _proxy_guard = ProxyEnvGuard::new();
         // 清理可能由其他并行测试留下的事件总线状态
         clear_test_event_bus();
 
