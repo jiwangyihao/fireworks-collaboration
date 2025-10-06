@@ -27,6 +27,7 @@ pub async fn metrics_snapshot(
     let options = options.unwrap_or_default();
 
     let mut query = SnapshotQuery::default();
+    let requested_max = options.max_series;
     if !options.names.is_empty() {
         query.names = options.names;
     }
@@ -36,17 +37,15 @@ pub async fn metrics_snapshot(
     if !options.quantiles.is_empty() {
         query.quantiles = sanitize_quantiles(options.quantiles);
     }
+    query.max_series = requested_max;
 
-    let max_series = match options.max_series {
-        Some(max) => max,
-        None => cfg
-            .lock()
-            .map(|guard| guard.observability.export.max_series_per_snapshot as usize)
-            .unwrap_or(1_000),
-    };
+    let default_limit = cfg
+        .lock()
+        .map(|guard| guard.observability.export.max_series_per_snapshot as usize)
+        .unwrap_or(1_000);
 
     let registry = global_registry();
-    let snapshot = build_snapshot(&registry, &query, max_series);
+    let snapshot = build_snapshot(&registry, &query, default_limit);
     Ok(snapshot)
 }
 

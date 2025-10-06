@@ -1,22 +1,21 @@
-use std::fs;
 use std::convert::TryFrom;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
 use std::thread;
+use std::time::Duration;
 
 use fireworks_collaboration_lib::core::config::model::{
-    ObservabilityConfig, ObservabilityExportConfig, ObservabilityLayer,
-    ObservabilityRedactIpMode,
+    ObservabilityConfig, ObservabilityExportConfig, ObservabilityLayer, ObservabilityRedactIpMode,
 };
 use fireworks_collaboration_lib::core::metrics::{
     aggregate_enabled, auto_downgrade, build_snapshot, current_layer, encode_prometheus,
     evaluate_alerts_now, force_memory_pressure_check, global_registry,
-    init_aggregate_observability_with_provider, init_alerts_observability, init_basic_observability,
-    observe_histogram_metric, observe_histogram_with_kind, override_layer_guards,
-    parse_snapshot_query, record_counter_metric, resolve_config, set_layer, HistogramWindowConfig,
-    ManualTimeProvider, MetricDescriptor, MetricError, SampleKind, MetricRegistry, SnapshotQuery,
-    SnapshotQueryError, TimeProvider, WindowRange, ALERTS_FIRED_TOTAL,
+    init_aggregate_observability_with_provider, init_alerts_observability,
+    init_basic_observability, observe_histogram_metric, observe_histogram_with_kind,
+    override_layer_guards, parse_snapshot_query, record_counter_metric, resolve_config, set_layer,
+    HistogramWindowConfig, ManualTimeProvider, MetricDescriptor, MetricError, MetricRegistry,
+    SampleKind, SnapshotQuery, SnapshotQueryError, TimeProvider, WindowRange, ALERTS_FIRED_TOTAL,
     CIRCUIT_BREAKER_RECOVER_TOTAL, CIRCUIT_BREAKER_TRIP_TOTAL, GIT_RETRY_TOTAL, GIT_TASKS_TOTAL,
     GIT_TASK_DURATION_MS, HTTP_STRATEGY_FALLBACK_TOTAL, IP_POOL_AUTO_DISABLE_TOTAL,
     IP_POOL_LATENCY_MS, IP_POOL_REFRESH_TOTAL, IP_POOL_SELECTION_TOTAL,
@@ -1170,14 +1169,20 @@ fn observability_auto_downgrade_respects_residency_and_cooldown() {
     let _ = set_layer(ObservabilityLayer::Basic, Some("prep-basic"));
     let _ = set_layer(ObservabilityLayer::Optimize, Some("prep-optimize"));
 
-    assert!(auto_downgrade("guard-check").is_none(), "min residency should block downgrade");
+    assert!(
+        auto_downgrade("guard-check").is_none(),
+        "min residency should block downgrade"
+    );
 
     std::thread::sleep(Duration::from_millis(120));
     let first = auto_downgrade("guard-check");
     assert_eq!(first, Some(ObservabilityLayer::Alerts));
     assert_eq!(current_layer(), ObservabilityLayer::Alerts);
 
-    assert!(auto_downgrade("guard-check").is_none(), "cooldown should block immediate downgrade");
+    assert!(
+        auto_downgrade("guard-check").is_none(),
+        "cooldown should block immediate downgrade"
+    );
 
     std::thread::sleep(Duration::from_millis(220));
     let second = auto_downgrade("guard-check");
@@ -1396,6 +1401,7 @@ fn snapshot_builder_filters_metrics() {
         names: vec!["git_tasks_total".into(), "tls_handshake_ms".into()],
         range: Some(WindowRange::LastFiveMinutes),
         quantiles: vec![0.5],
+        max_series: None,
     };
 
     let snapshot = build_snapshot(&registry, &query, 0);
@@ -1427,6 +1433,12 @@ fn snapshot_query_rejects_invalid_params() {
         .unwrap();
     let err = parse_snapshot_query(&uri).expect_err("invalid quantile should error");
     assert!(matches!(err, SnapshotQueryError::InvalidQuantile(_)));
+
+    let uri: Uri = "http://localhost/metrics/snapshot?maxSeries=abc"
+        .parse()
+        .unwrap();
+    let err = parse_snapshot_query(&uri).expect_err("invalid maxSeries should error");
+    assert!(matches!(err, SnapshotQueryError::InvalidMaxSeries(_)));
 }
 
 #[test]
@@ -1583,13 +1595,11 @@ fn alerts_engine_uses_builtin_rules_when_file_missing() {
     let (mut window_fail_before, mut window_total_before) = current_git_totals(&registry);
     let mut balance_completions: u64 = 0;
     if window_fail_before > 0 {
-        let required_total = window_fail_before
-            .saturating_mul(20)
-            .saturating_add(1);
+        let required_total = window_fail_before.saturating_mul(20).saturating_add(1);
         if window_total_before < required_total {
             balance_completions = required_total - window_total_before;
-            let needed = usize::try_from(balance_completions)
-                .expect("balance completions should fit usize");
+            let needed =
+                usize::try_from(balance_completions).expect("balance completions should fit usize");
             for idx in 0..needed {
                 let id = format!("{kind}-balance-{idx}");
                 publish_global(Event::Task(TaskEvent::Started {
@@ -1668,7 +1678,11 @@ fn alerts_engine_uses_builtin_rules_when_file_missing() {
         &[("kind", kind.as_str()), ("state", "completed")],
         completed_before + 20,
     );
-    assert_eq!(failed, failed_before + 180, "expected failed count to match workload");
+    assert_eq!(
+        failed,
+        failed_before + 180,
+        "expected failed count to match workload"
+    );
     assert_eq!(
         completed,
         completed_before + 20,

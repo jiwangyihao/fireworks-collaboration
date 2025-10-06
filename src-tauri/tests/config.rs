@@ -145,7 +145,10 @@ fn test_deserialize_with_defaults() {
     // P5.0: proxy defaults to off mode
     assert!(!cfg.proxy.is_enabled(), "proxy defaults to disabled");
     assert_eq!(cfg.observability.layer, ObservabilityLayer::Optimize);
-    assert!(cfg.observability.auto_downgrade, "autoDowngrade default true");
+    assert!(
+        cfg.observability.auto_downgrade,
+        "autoDowngrade default true"
+    );
     assert_eq!(cfg.observability.min_layer_residency_secs, 300);
     assert_eq!(cfg.observability.downgrade_cooldown_secs, 120);
 }

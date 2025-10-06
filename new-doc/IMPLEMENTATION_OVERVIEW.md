@@ -1,8 +1,8 @@
-# Fireworks Collaboration 实现总览（MP0 -> P7 & 测试重构）
+# Fireworks Collaboration 实现总览（MP0 -> P8 & 测试重构）
 
 > 目的：以统一视角梳理 MP0、MP1、P2、P3、P4、P5、P6 七个阶段以及测试重构后的现状，面向后续演进的研发、运维与质量成员，提供完整的实现细节、配置指引、事件契约、测试矩阵与回退策略。
 >
-> 版本：v1.4（2025-10-05） 维护者：Core Team
+> 版本：v1.5（2025-10-06） 维护者：Core Team
 
 ---
 
@@ -39,6 +39,7 @@
 | P6 | 凭证存储（三层：系统钥匙串/加密文件/内存）、加密安全（AES-256-GCM + Argon2id）、审计日志、访问控制、Git自动填充 | `CredentialEvent`（Add/Get/Update/Delete/List/Cleanup）、`AuditEvent`（操作审计）、`AccessControlEvent`（失败锁定） | `credential.*` 配置（mode/masterPassword/auditMode/accessControl/keyCache/过期管理）| 配置逐层禁用存储/关闭审计/调整锁定阈值 | 1286个测试（991 Rust + 295 前端），99.9%通过率，88.5%覆盖率，批准生产环境上线 |
 | 测试重构 | 主题聚合、事件 DSL、属性测试集中管理 | DSL 输出 Tag 子序列 | N/A | N/A | `src-tauri/tests` 结构稳定，CI 使用共享 helper |
 | P7 | 工作区模型、子模块支持、批量并发 clone/fetch/push、团队配置模板、跨仓库状态监控、前端一体化视图 | 无新增事件类型（复用 task/state/progress/error），批量任务 progress phase 含聚合文本 | `workspace.*`、`submodule.*`、`teamTemplate`、`workspace.status*` | 配置禁用 workspace 或降并发；子模块/模板/状态可单项停用 | 新增 24 子模块测试 + 12 批量调度测试 + 状态缓存测试 + 前端 store 17 测试 + 性能基准 |
+| P8 | 可观测性体系（统一指标注册/事件桥接/窗口聚合/导出/前端面板/告警+Soak/灰度层级/性能降级） | `MetricAlert`、`ObservabilityLayerChanged`、`MetricDrift` 新增；复用 TLS/IP/代理/Soak 事件 | `observability.*`（enabled/layer/*Enabled/performance/export/alerts/...） | 层级裁剪 + autoDowngrade；逐项关闭 export/ui/alerts | 指标/导出/告警/层级/降级/前端缓存测试（详见 P8 handoff §13） |
 
 ---
 
@@ -119,6 +120,10 @@ sync_all_submodules(opts: { repoPath: string }): Promise<string[]>
 workspace_batch_clone(req: WorkspaceBatchCloneRequest): Promise<string>
 workspace_batch_fetch(req: WorkspaceBatchFetchRequest): Promise<string>
 workspace_batch_push(req: WorkspaceBatchPushRequest): Promise<string>
+
+### 3.6 可观测性运行时（P8 速览）
+
+拓扑：事件 → Bridge → Registry(缓冲+分片) → Aggregator(1m/5m/1h/24h) → 导出/告警/前端面板/一致性自检/Soak；层级 basic→optimize，资源异常自动降级；详述见 §4.10 与 `P8_IMPLEMENTATION_HANDOFF.md`。
 
 // 团队配置模板
 export_team_config_template(opts?: { path?: string; sections?: string[] }): Promise<string> // 返回生成文件路径
@@ -358,7 +363,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
 - **前端改动**：
   - GitPanel 支持 Push 表单（凭证、TLS/SNI 策略编辑）；
   - 全局错误列显示分类 Badge + 重试次数；
-- **回退策略**：配置禁用 Push/方式A/Retry；方式A 失败自动回退 Real/libgit2；
+- **回退策略**：参考附录C 步骤9（Push/Retry 回退）与步骤10（最终关闭可观测性）。阶段特有：方式A 自带 Fake→Real→libgit2 链，无需人工；仅需配置禁用 Push/方式A/Retry 即可回落 MP0 基线。
 - **测试**：Push 集成测试、事件 casing 测试（snake/camel 兼容），Retry 指数退避测试。
 - **后端细节**：
   - Push 使用 `RemoteCallbacks::credentials` 结合 Tauri 命令提供的用户名/密码，回调在每次授权失败时重试；
@@ -494,7 +499,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - 新增 SPKI pin 前需先通过 `cert-fp.log` 获取现有指纹，避免误配置导致 Verify 失败；
   - Auto disable 阈值或冷却时间变化后请执行短程 soak，确认不会反复触发；
   - 指纹日志与 soak 报告包含敏感信息，导出前确保 `logging.authHeaderMasked` 与脱敏策略开启。
-- **回退策略**：配置层可关闭 Fake SNI（`fakeSniEnabled=false` 或 rollout=0）、关闭指标采集（`metricsEnabled=false`）、清空 `tls.spkiPins` 或调高 auto disable 阈值，必要时可回退到 `src-tauri/src/core/git/transport/_archive` 中的 legacy 实现。
+- **回退策略**：参考附录C 步骤7（Fake SNI / 指纹相关降级）与步骤10（完全关闭观测）。阶段特有：若需 legacy 传输实现可使用 `transport/_archive`，仅在指纹/验证逻辑持续异常时采用（临时）。
 
 ### 4.5 P4 - IP 池与握手优选
 
@@ -652,7 +657,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
     - 热更新代理配置需要重新创建 `ProxyManager` 实例，通过传输层注册检查 `should_skip_custom_transport()` 生效；
     - 手动降级/恢复立即切换状态，下一个任务立即使用新配置；
     - 探测URL必须是 `host:port` 格式（如 `www.github.com:443`），不支持完整URL格式。
-  - **回退策略**：
+  - **回退策略**：参考附录C 步骤6（禁用策略覆盖）与步骤9（Push/Retry 回退）。阶段特有：可直接关闭 `strategyOverride` gating 变量，逐项移除 TaskKind 回退到仅 Clone/Fetch。
     - 配置层：设置 `proxy.mode=off` 立即禁用代理，下一个任务生效；
     - 手动控制：前端点击"手动降级"或调用 `force_proxy_fallback(reason?)` Tauri命令强制切换直连，发送 `ProxyFallbackEvent` (is_automatic=false)；
     - 调整阈值：修改 `fallbackThreshold`（0.0-1.0）/`recoveryConsecutiveThreshold`（1-10）/`recoveryCooldownSeconds`（≥10）并保存配置文件，应用重启或重新加载配置后生效；
@@ -776,7 +781,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
     - 性能基准测试框架已完成（295行，8个测试组），建议运行 `cargo bench --bench credential_benchmark` 获取实际数据；
     - 最后使用时间（`last_used`）字段因Rust不可变模型限制未实现，需重构为可变结构（技术债务）；
     - 凭证导出功能暂无额外加密保护，用户自行管理导出文件安全（延后增强）。
-  - **回退策略**：
+  - **回退策略**：参考附录C 步骤1~2（层级降级/关闭告警导出）。阶段特有：优先 set_layer 降级；导出/告警关闭后仍保留事件桥接以便最小诊断。
     - 配置层：逐层禁用存储（system → file → memory），或完全禁用凭证功能；
     - 审计日志：关闭审计模式（`auditMode=standard`）或禁用持久化；
     - 访问控制：调整阈值（`maxFailures`、`lockoutDurationMinutes`）或完全禁用（`enabled=false`）；
@@ -882,10 +887,151 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - 在 PR 模板中勾选“更新测试 DSL/矩阵”项，避免忘记同步；
   - 发布前运行 `cargo test -q` 与 `pnpm test -s`，若属性测试时间 >5s 需调查生成器是否退化。
 
+  ### 4.10 P8 - 可观测性体系摘要
+
+  - **范围**：指标注册、事件桥接、窗口聚合、导出、前端面板、告警引擎、Soak 集成、灰度层级、性能与资源降级、自检与运维。
+  - **模块映射**：`core/metrics/{descriptors,registry,aggregate,event_bridge,export,alerts,runtime,layer}.rs`；前端 `api/metrics.ts`、`stores/metrics.ts`、`components/observability/*`、`views/ObservabilityView.vue`。
+  - **配置**：`observability.enabled|basicEnabled|aggregateEnabled|exportEnabled|uiEnabled|alertsEnabled`、`observability.layer`、`autoDowngrade`、层级驻留/冷却(`minLayerResidencySecs`/`downgradeCooldownSecs`)、性能(`performance.batchFlushIntervalMs|tlsSampleRate|maxMemoryBytes|enableSharding|debugMode|redact.repoHashSalt|redact.ipMode`)、导出(`export.authToken|rateLimitQps|maxSeriesPerSnapshot|bindAddress`)、告警(`alerts.rulesPath|evalIntervalSecs|minRepeatIntervalSecs`)。注：此前文档的 `internalConsistencyCheckIntervalSecs` 实现中不存在，已移除（若未来加入请同步附录D）。
+  - **层级**：0 basic → 1 aggregate → 2 export → 3 ui → 4 alerts → 5 optimize；低层不依赖高层；自动降级按资源反压逐级回退，手动 `set_layer` 可回升（冷却约束）。
+  - **数据流**：事件→Bridge→Runtime 缓冲→Registry→(窗口)Aggregator→导出/告警/面板/自检→Soak；失败或资源事件→LayerManager 调整层级→裁剪下游链路。
+  - **指标命名**：`snake_case`，counter `_total`，延迟 `_ms`，Histogram 桶统一；内部导出指标：`metrics_export_requests_total{status}`、`metrics_export_rate_limited_total` 等。
+  - **告警 DSL**：分位 `metric[p95]>800`，比值 `a/b>0.05`，标签 `{label=value}`，窗口 `window:5m`；状态机 firing→active→resolved + 去抖；Soak 阻断未恢复 critical。
+  - **性能**：线程本地批量、分片、可调采样、raw 样本可选、标签脱敏、内存水位禁用 raw + 降级；保持 Git 主流程热点最小额外锁争用。
+  - **运维**：健康检查清单（导出/核心指标/层级/内存压力/告警抖动）；日志关键字（metrics_export/metric_alert/metric_memory_pressure/observability_layer/metric_drift）；常用操作（调采样/停告警/重建导出/层级切换）。
+  - **回退**：全局 `enabled=false`；层级 basic 保留最小计数集；逐项关闭 export/ui/alerts；删除规则文件快速静默。
+  - **测试**：注册/桥接去重/窗口/导出/限流/告警状态机/热更新/内存压力/层级/前端缓存 & 降采样；性能 smoke；详见 P8 handoff §13。
+  - **后续增强**：自适应采样、CKMS 分位、HTTPS 导出、规则分组+抑制、Trace、诊断 CLI、指标预算。
+
 ## 5. 交接与发布 checklist 概览
 
-- **文档同步**：合并前核对 `new-doc/MP*_IMPLEMENTATION_HANDOFF.md`、`new-doc/P*_IMPLEMENTATION_HANDOFF.md` 与本文、`doc/TESTS_REFACTOR_HANDOFF.md` 的版本号与变更记录，一并更新 `CHANGELOG.md`。
-- **配置审计**：按阶段确认环境变量与 AppConfig 值：MP1（Fake SNI 白名单、Retry 阈值）、P2（`FWC_PARTIAL_FILTER_SUPPORTED`、`FWC_STRATEGY_APPLIED_EVENTS`）、P3（rollout 百分比、auto disable 阈值、SPKI pin 列表）、P4（`ip_pool.enabled`、`cachePruneIntervalSecs`、`maxCacheEntries`、`singleflightTimeoutMs`、熔断阈值与 `cooldownSeconds`、`preheatDomains`、`probeTimeoutMs`、黑白名单）、P5（`proxy.mode`、`proxy.url`、凭证、`disableCustomTransport`、降级阈值 `fallbackThreshold`（0.2）、恢复阈值 `recoveryConsecutiveThreshold`（3）、健康检查间隔 `healthCheckIntervalSeconds`（60）、探测URL `probeUrl`（host:port格式如"www.github.com:443"）、探测超时 `probeTimeoutSeconds`（10）、冷却窗口 `recoveryCooldownSeconds`（300）、恢复策略 `recoveryStrategy`（immediate/consecutive/exponential-backoff）、调试日志 `debugProxyLogging`（false））、P6（`credential.storage`（system/file/memory）、`default_ttl_seconds`（7776000即90天）、`debug_logging`（false）、`audit_mode`（false）、`require_confirmation`（false）、`file_path`（可选）、`key_cache_ttl_seconds`（3600即1小时））。
-- **灰度计划**：在发布计划中记录灰度顺序与回退手段（参考 §3.5），确保 SRE 获得监控告警阈值与事件观察面。P6 推荐三阶段灰度：10-20用户（1周，系统钥匙串验证）→ 100用户（2周，审计日志监控）→ 全量发布。
-- **测试执行**：要求在主干合并前执行 `cargo test -q`、`pnpm test -s`，必要时附加 soak 报告；若涉及传输层改动，附上目标域指纹快照。P6 需额外验证：1286个测试全部通过、安全审计报告、准入评审文档。
-- **运维交接**：提供最新 `cert-fp.log` 样例、策略 Summary 截图与 `task_list` 正常输出，帮助运维确认运行状态；新事件字段需同步到监控解析脚本。
+- **文档同步**：核对最新阶段 handoff（MP*/P*）与本文版本号、设计稿、`CHANGELOG.md`；P8 专项：`P8_IMPLEMENTATION_HANDOFF.md` 是否与实现一致（指标/配置/层级表/告警规则样例）。
+- **Smoke 速查**：见附录A；上线前按顺序执行 1~6 步确认核心链路与降级/告警可控。
+- **配置审计**：阶段配置核对：MP1（Fake SNI/Retry）、P2（`FWC_PARTIAL_FILTER_SUPPORTED`、`FWC_STRATEGY_APPLIED_EVENTS`）、P3（rollout/auto disable/SPKI pin/tls.metricsEnabled）、P4（`ip_pool.*` 缓存/熔断/并发/黑白名单）、P5（`proxy.*` 阈值/探测URL/禁用自定义传输）、P6（`credential.*` 存储/审计/缓存）、P7（`workspace.*`、`submodule.*`、`teamTemplate.*`）、P8（`observability.*` 见附录D：层级/驻留与冷却/性能(batchFlushIntervalMs,tlsSampleRate,maxMemoryBytes,enableSharding,debugMode,redact.repoHashSalt,redact.ipMode)/导出(authToken,rateLimitQps,maxSeriesPerSnapshot,bindAddress)/告警(rulesPath,evalIntervalSecs,minRepeatIntervalSecs)/降级(autoDowngrade)）。
+- **灰度计划**：记录阶段/层级推进与回退：P6（三步钥匙串→扩大→全量）；P8 层级 basic→aggregate→export→ui→alerts→optimize（每层 ≥24h 观察：导出延迟 <50ms、memory_pressure=0 或低频、告警噪声可控）。
+- **测试执行**：合并前运行 `cargo test -q`、`pnpm test -s`；附必要 soak 报告。P6：1286 测试 + 安全审计；P8：聚合窗口/导出/限流/告警状态机/规则热更新/内存压力降级/层级状态机/前端缓存降采样；保存 `/metrics` 与 `/metrics/snapshot` 样例输出（含内部指标与分位）。
+- **运维交接**：交付包包含：`cert-fp.log` 示例、策略 Summary 截图、最新配置快照、P8 健康清单（/metrics OK、核心指标非空、layer 预期、无连续 memory_pressure、告警稳定）、告警规则文件样例、导出内部指标说明及含义、层级降级/回升操作说明。
+- **回退路径**：列出配置级开关与顺序：Push/Fake SNI/策略覆盖/IP 池/代理/凭证/工作区/可观测性（层级降级→disabled）。确认回退不会破坏事件总线及核心 Git 任务链路。
+- **监控接入**：Prometheus 采集 `/metrics`；针对内部指标添加告警（rate_limited_total 激增、export_requests_total{status="error"}、observability_layer 非期望值、alerts_fired_total 抖动）；创建面板：Git 成功率、TLS p95、IP 刷新成功率、代理降级次数、内存压力次数。
+- **安全校验**：确认导出未暴露敏感标签（repo/IP 明文），Token 访问策略测试（401/429/200）、审计日志不含密码、凭证存储审计模式符合策略；可观测性 UI 在导出关闭时 fallback 正常。
+- **发布前 Smoke**：执行：1) `/metrics` 拉取 2) Snapshot 指定窗口+分位 3) 修改阈值触发告警 firing→resolved 4) 人工 set_layer 降级 & 回升 5) 调低 memory limit 触发 raw 样本禁用 6) 前端面板范围切换与缓存命中日志。
+- **速查附录**：指标→代码映射见附录B；统一回退执行序列见附录C。
+
+---
+
+## 附录A. 核心功能 & 可观测性 Smoke 命令速查
+
+> 目标：最短路径验证核心 Git/策略/网络/可观测性/回退链路健康。建议在预生产 & 灰度每层级提升前执行。
+
+1. Git 基本任务：
+  - Clone: `git_clone` 任意公开仓库（确认产生 `task://state running→completed` 与 `git_tasks_total{kind="clone",state="completed"}` 增量）
+  - Push: `git_push`（使用测试分支，小修改）观察 `git_retry_total` 是否为0 或可控
+2. 策略覆盖：Clone 指定 shallow+partial+retry 覆盖，确认事件序列：`*_override_applied` → `strategy_override_summary`
+3. 自适应 TLS：设置 `http.fakeSniRolloutPercent=25` 触发一次 clone；检查 `/metrics` 中 `tls_handshake_ms_bucket` 与事件 `AdaptiveTlsRollout`
+4. IP 池：打开 `ip_pool.enabled=true` & 添加一个 `preheatDomains`；等待 1 个预热周期后确认 `ip_pool_refresh_total` 有 `reason=preheat`
+5. 代理降级/恢复（可选）：配置无效代理，触发失败直至 `ProxyFallbackEvent`，改为有效代理验证 `ProxyRecoveredEvent`
+6. 可观测性导出：访问 `/metrics` 与 `/metrics/snapshot?window=5m&quantiles=p50,p95`，确认：
+  - HTTP 200；`metrics_export_requests_total{status="ok"}` 递增
+  - 若多次快速访问，`metrics_export_rate_limited_total` 在高 QPS 下增长
+7. 告警引擎：临时创建规则（例如 `git_task_duration_ms[p95] > 1` 确保必触发），观察：`alerts_fired_total{severity="critical"}` 增量，移除规则后状态 resolved
+8. 层级降级：手动 `observability.layer` 从 optimize 改为 basic，观察 `observability_layer` Gauge 数值下降且导出样本数减少
+9. 内存压力模拟（可选）：调低 `observability.performance.maxMemoryBytes`，构造大量短时任务，观察 `metric_memory_pressure_total` 增量并层级回退
+10. 前端面板：切换时间范围（1m → 1h），验证 LTTB 下采样 & 缓存：第二次同窗访问请求数不增长（从网络面板或日志确认）
+
+快速判定：全部成功且无异常错误事件 => 放行下一阶段；若某一步异常，优先参考附录C 回退序列。
+
+## 附录B. 指标描述符速查 (导出名 → 常量 → 文件)
+
+| 指标 | 常量 | 文件 | 标签 |
+|------|------|------|------|
+| git_tasks_total | GIT_TASKS_TOTAL | core/metrics/descriptors.rs | kind,state |
+| git_task_duration_ms | GIT_TASK_DURATION_MS | core/metrics/descriptors.rs | kind |
+| git_retry_total | GIT_RETRY_TOTAL | core/metrics/descriptors.rs | kind,category |
+| tls_handshake_ms | TLS_HANDSHAKE_MS | core/metrics/descriptors.rs | sni_strategy,outcome |
+| ip_pool_selection_total | IP_POOL_SELECTION_TOTAL | core/metrics/descriptors.rs | strategy,outcome |
+| ip_pool_refresh_total | IP_POOL_REFRESH_TOTAL | core/metrics/descriptors.rs | reason,success |
+| ip_pool_latency_ms | IP_POOL_LATENCY_MS | core/metrics/descriptors.rs | source |
+| ip_pool_auto_disable_total | IP_POOL_AUTO_DISABLE_TOTAL | core/metrics/descriptors.rs | reason |
+| circuit_breaker_trip_total | CIRCUIT_BREAKER_TRIP_TOTAL | core/metrics/descriptors.rs | reason |
+| circuit_breaker_recover_total | CIRCUIT_BREAKER_RECOVER_TOTAL | core/metrics/descriptors.rs | (none) |
+| proxy_fallback_total | PROXY_FALLBACK_TOTAL | core/metrics/descriptors.rs | reason |
+| http_strategy_fallback_total | HTTP_STRATEGY_FALLBACK_TOTAL | core/metrics/descriptors.rs | stage,from |
+| soak_threshold_violation_total | SOAK_THRESHOLD_VIOLATION_TOTAL | core/metrics/descriptors.rs | name |
+| alerts_fired_total | ALERTS_FIRED_TOTAL | core/metrics/descriptors.rs | severity |
+| metrics_export_requests_total | METRICS_EXPORT_REQUESTS_TOTAL | core/metrics/descriptors.rs | status |
+| metrics_export_series_total | METRICS_EXPORT_SERIES_TOTAL | core/metrics/descriptors.rs | endpoint |
+| metrics_export_rate_limited_total | METRICS_EXPORT_RATE_LIMITED_TOTAL | core/metrics/descriptors.rs | (none) |
+| metric_memory_pressure_total | METRIC_MEMORY_PRESSURE_TOTAL | core/metrics/descriptors.rs | (none) |
+| observability_layer | OBSERVABILITY_LAYER | core/metrics/descriptors.rs | (none) |
+
+使用指引：
+1. 新增指标：在 `descriptors.rs` 定义常量并加入 `BASIC_METRICS`；必要时更新 P8 handoff 与本附录表。
+2. 标签变更：严格禁止破坏性重命名；新增标签需支持缺省值或版本兼容；提交前执行 `/metrics` 手动快照对比。
+3. 排查：通过常量名称 `ripgrep` 定位引用，确认注册/聚合/导出链路是否完整。
+
+## 附录C. 统一快速回退执行序列
+
+> 原则：最小化影响、保持核心 Clone/Fetch 基线可用，逐层裁剪新增能力；适用于突发性能/稳定性/安全事件。
+
+优先级自上而下执行（遇到指标恢复即可停止）：
+
+| 步骤 | 动作 | 目标 | 预期恢复点 | 相关指标/事件 |
+|------|------|------|------------|---------------|
+| 1 | 下调 observability.layer (optimize→basic) | 降低监控/聚合开销 | `observability_layer`=0 | metric_memory_pressure_total, export_requests_total |
+| 2 | 关闭导出/告警 (`export.enabled=false` / `alerts.enabled=false`) | 减少 I/O + 规则评估 | export 404 / 告警停止 | metrics_export_requests_total{status="error"}=0 |
+| 3 | 禁用工作区 (`workspace.enabled=false`) | 移除批量/子模块调度压力 | 单仓任务成功率回升 | git_tasks_total{kind="workspace_batch"} 停止增长 |
+| 4 | 禁用代理 (`proxy.mode=off`) 或强制直连 | 排除代理链路不稳定 | 连接错误下降 | proxy_fallback_total 不再增长 |
+| 5 | 禁用 IP 池 (`ip_pool.enabled=false`) | 移除预热/熔断干扰 | TLS/连接成功率恢复 | ip_pool_refresh_total 停止增长 |
+| 6 | 停用策略覆盖 (设置 gating 变量关闭) | 统一传输策略 | override/summary 事件消失 | http_strategy_fallback_total 稳定 |
+| 7 | Fake SNI rollout=0 且 autoDisableFakeThresholdPct=1 | 排除 SNI 采样影响 | `AdaptiveTlsFallback` 降低 | tls_handshake_ms p95 稳定 |
+| 8 | 禁用凭证高级特性（审计/访问控制） | 降低加密/IO | add/get 时延恢复 | 审计事件减少 |
+| 9 | 回退 Push/Retry（关闭配置） | 保留克隆/拉取基线 | Clone/Fetch 成功率正常 | git_retry_total 降低 |
+| 10 | 最终：`observability.enabled=false` | 仅保留最小事件流 | 基线维持 | git_task_duration_ms 仍可用（若已导出关闭则仅内部统计） |
+
+执行 SOP：
+1. 每步修改配置后 reload 或重启；
+2. 观察 2 个窗口（1m/5m）指标变化与关键事件；
+3. 记录采取的最小回退步数供事后复盘；
+4. 恢复顺序与回退逆序（自底向上），每步 ≥30min 观察。
+
+注意：步骤 1/2 之间可根据风险直接跳 10（彻底关闭观测）用于隔离性能雪崩；完成后务必捕获事故前后配置 diff。
+
+---
+
+## 附录D. Observability 配置字段速查（含默认值与语义）
+
+| 路径 | 默认值 | 语义 / 约束 | 备注 |
+|------|--------|-------------|------|
+| observability.enabled | true | 顶层开关；false 时仅保留最小 basic 占位（不初始化 runtime） | 与 basicEnabled 组合决定实际激活 |
+| observability.basicEnabled | true | 允许 basic 层；若 false 强制退化为 Basic 占位 | 需与 enabled 同时 true 才有效 |
+| observability.aggregateEnabled | true | 允许窗口聚合初始化 | 依赖 basicEnabled |
+| observability.exportEnabled | true | 允许启动 HTTP 导出服务器 | 依赖 aggregateEnabled |
+| observability.uiEnabled | true | 允许前端面板使用快照/范围接口 | 依赖 exportEnabled |
+| observability.alertsEnabled | true | 允许告警引擎加载/评估规则 | 依赖 uiEnabled |
+| observability.layer | Optimize | 目标层级；受 flag 链与 max_allowed 限制 | 详见 §4.10 层级描述 |
+| observability.autoDowngrade | true | 允许内存/资源事件触发自动降级 | 与 minLayerResidency/cooldown 共同限制频率 |
+| observability.minLayerResidencySecs | 60 | 同一层级最短驻留时间 | 防止频繁震荡 |
+| observability.downgradeCooldownSecs | 300 | 连续自动降级冷却窗口 | 冷却内忽略再次触发 |
+| observability.export.authToken | null | Bearer Token；null 表示无鉴权 | 生产建议开启 |
+| observability.export.rateLimitQps | 10 | 导出端点 QPS 令牌桶补充速率 | 0 表示不启用限流 |
+| observability.export.maxSeriesPerSnapshot | 5000 | 单次 snapshot series 上限 | 超出被截断并计数 |
+| observability.export.bindAddress | 127.0.0.1:18080 | 导出监听地址 | 只支持单地址（当前实现） |
+| observability.alerts.rulesPath | observability/alert-rules.json | 告警规则文件路径 | 相对应用工作目录 |
+| observability.alerts.evalIntervalSecs | 30 | 告警评估周期 | 过小增加 CPU/抖动风险 |
+| observability.alerts.minRepeatIntervalSecs | 300 | Firing->Active 重复通知最小间隔 | 去抖/降噪 |
+| observability.performance.batchFlushIntervalMs | 500 | 线程缓冲批量刷入间隔 | 降低锁争用；过大增加数据延迟 |
+| observability.performance.tlsSampleRate | 5 | TLS Histogram 采样率（1/N） | 1=全采；增大降低精度 |
+| observability.performance.maxMemoryBytes | 8000000 | 触发内存压力阈值；超过尝试降级 | 约 8MB 指标内存预算 |
+| observability.performance.enableSharding | true | Histogram 分片以降低热点竞争 | 单核低并发可关闭 |
+| observability.performance.debugMode | false | 额外内部调试日志（metrics target） | 仅临时排障启用 |
+| observability.performance.redact.repoHashSalt | "" | 仓库名哈希盐；为空使用随机盐（进程级） | 变更会导致哈希重生成 |
+| observability.performance.redact.ipMode | Mask | IP 脱敏模式（Mask/Hash/None） | Hash 利于聚合；None 谨慎使用 |
+| (移除) internalConsistencyCheckIntervalSecs | (无) | 代码未实现；原文档残留 | 未来若实现需补充 |
+
+使用守则：
+1. 修改高频字段（rateLimitQps / batchFlushIntervalMs）前先在预生产压测；
+2. 调低 maxMemoryBytes 仅用于压测或故障演练；
+3. 生产导出必须配置 authToken（配合反向代理 TLS）；
+4. 变更 repoHashSalt 会使前端缓存命中率短暂下降；
+5. 观察自动降级：若 24h 内发生 >3 次，评估是否调高 minLayerResidencySecs 或优化指标写入；
+6. 新增字段前：同时更新本附录、§4.10、附录B（若新增指标）。
+

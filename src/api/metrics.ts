@@ -78,6 +78,9 @@ async function fetchViaHttp(request: MetricsSnapshotRequest): Promise<MetricsSna
   if (quantiles.length > 0) {
     url.searchParams.set("quantiles", quantiles.join(","));
   }
+  if (typeof request.maxSeries === "number") {
+    url.searchParams.set("maxSeries", String(request.maxSeries));
+  }
   const response = await tauriFetch(url.toString(), { method: "GET" });
   if (!response.ok) {
     const reason = await safeText(response);

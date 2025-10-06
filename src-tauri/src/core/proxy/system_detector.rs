@@ -3,6 +3,7 @@
 //! This module provides cross-platform detection of system proxy settings.
 
 use super::{ProxyConfig, ProxyMode};
+use crate::core::tls::util::proxy_force_disabled;
 
 /// System proxy detector
 pub struct SystemProxyDetector;
@@ -13,6 +14,10 @@ impl SystemProxyDetector {
     /// Returns `Some(ProxyConfig)` if a system proxy is detected and can be parsed,
     /// `None` if no proxy is configured or detection fails.
     pub fn detect() -> Option<ProxyConfig> {
+        if proxy_force_disabled() {
+            tracing::debug!("Proxy detection skipped due to FWC_PROXY_FORCE_DISABLE override");
+            return None;
+        }
         // Try platform-specific detection first
         #[cfg(target_os = "windows")]
         {

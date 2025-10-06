@@ -107,6 +107,56 @@ describe("ObservabilityView", () => {
     expect(wrapper.text()).toContain("可观测性功能已关闭");
   });
 
+  it("shows the disabled reason when UI is turned off", async () => {
+    configureObservability({ uiEnabled: false });
+    const metricsStore = useMetricsStore();
+    const ensureSpy = vi.spyOn(metricsStore, "ensure").mockResolvedValue(MOCK_SNAPSHOT);
+
+    const wrapper = mount(ObservabilityView, {
+      global: { stubs: STUBS },
+    });
+
+    await flushPromises();
+
+    expect(ensureSpy).not.toHaveBeenCalled();
+    const disabled = wrapper.find(".observability-view__disabled");
+    expect(disabled.exists()).toBe(true);
+    expect(disabled.text()).toContain("可观测性面板已关闭");
+  });
+
+  it("resets the active tab when configuration hides it", async () => {
+    configureObservability();
+    const metricsStore = useMetricsStore();
+    const ensureSpy = vi.spyOn(metricsStore, "ensure").mockResolvedValue(MOCK_SNAPSHOT);
+
+    const wrapper = mount(ObservabilityView, {
+      global: { stubs: STUBS },
+    });
+
+    await flushPromises();
+    expect(ensureSpy).toHaveBeenCalledTimes(1);
+
+    await wrapper.get('[data-testid="observability-tab-alerts"]').trigger("click");
+    await flushPromises();
+
+    const alertsTab = wrapper.get('[data-testid="observability-tab-alerts"]');
+    expect(alertsTab.classes()).toContain("observability-view__tab--active");
+
+    const configStore = useConfigStore();
+    configStore.cfg = {
+      observability: {
+        ...(configStore.cfg?.observability as ObservabilityConfig),
+        alertsEnabled: false,
+      },
+    } as AppConfig;
+
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="observability-tab-alerts"]').exists()).toBe(false);
+    const overviewTab = wrapper.get('[data-testid="observability-tab-overview"]');
+    expect(overviewTab.classes()).toContain("observability-view__tab--active");
+  });
+
   it("forces a refresh when the manual button is clicked", async () => {
     configureObservability();
     const metricsStore = useMetricsStore();

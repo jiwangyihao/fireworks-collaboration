@@ -4,6 +4,14 @@ use std::collections::HashMap;
 use std::env;
 use std::sync::{Mutex, OnceLock};
 
+pub fn proxy_force_disabled() -> bool {
+    if let Ok(force) = env::var("FWC_PROXY_FORCE_DISABLE") {
+        let normalized = force.trim().to_ascii_lowercase();
+        return matches!(normalized.as_str(), "1" | "true" | "yes" | "on");
+    }
+    false
+}
+
 /// 判断是否应启用伪 SNI
 /// - `cfg.http.fake_sni_enabled` 为真 且 未强制 real 时，返回 true
 pub fn should_use_fake(cfg: &AppConfig, force_real: bool) -> bool {
@@ -33,6 +41,9 @@ pub fn match_domain(pattern: &str, host: &str) -> bool {
 
 /// `检测是否存在系统/环境代理（HTTP/HTTPS/ALL_PROXY），Windows` 将在上层通过 `get_system_proxy` 注入，此处先检查常见环境变量。
 pub fn proxy_present() -> bool {
+    if proxy_force_disabled() {
+        return false;
+    }
     let keys = [
         "HTTPS_PROXY",
         "https_proxy",

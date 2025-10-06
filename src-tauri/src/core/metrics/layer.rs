@@ -175,12 +175,18 @@ impl LayerManager {
             .store(resolved.target_layer.as_u8(), Ordering::Relaxed);
         self.max_allowed
             .store(resolved.max_allowed_layer.as_u8(), Ordering::Relaxed);
-        self.auto_downgrade
-            .store(cfg.auto_downgrade && resolved.basic_enabled, Ordering::Relaxed);
-        self.min_residency_ms
-            .store((cfg.min_layer_residency_secs as u64) * 1_000, Ordering::Relaxed);
-        self.cooldown_ms
-            .store((cfg.downgrade_cooldown_secs as u64) * 1_000, Ordering::Relaxed);
+        self.auto_downgrade.store(
+            cfg.auto_downgrade && resolved.basic_enabled,
+            Ordering::Relaxed,
+        );
+        self.min_residency_ms.store(
+            (cfg.min_layer_residency_secs as u64) * 1_000,
+            Ordering::Relaxed,
+        );
+        self.cooldown_ms.store(
+            (cfg.downgrade_cooldown_secs as u64) * 1_000,
+            Ordering::Relaxed,
+        );
 
         let current = ObservabilityLayer::from_u8(self.current.load(Ordering::Relaxed));
         let clamped = self.clamp_layer(current);
@@ -234,7 +240,8 @@ impl LayerManager {
         }
         let now = Instant::now();
         if let Ok(last_transition) = self.last_transition.lock() {
-            let min_residency = Duration::from_millis(self.min_residency_ms.load(Ordering::Relaxed));
+            let min_residency =
+                Duration::from_millis(self.min_residency_ms.load(Ordering::Relaxed));
             if now.saturating_duration_since(*last_transition) < min_residency {
                 return None;
             }

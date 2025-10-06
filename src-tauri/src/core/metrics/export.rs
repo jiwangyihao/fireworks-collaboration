@@ -35,6 +35,7 @@ pub struct SnapshotQuery {
     pub names: Vec<String>,
     pub range: Option<WindowRange>,
     pub quantiles: Vec<f64>,
+    pub max_series: Option<usize>,
 }
 
 #[derive(Debug, Error)]
@@ -43,6 +44,8 @@ pub enum SnapshotQueryError {
     InvalidRange(String),
     #[error("invalid quantile value '{0}'")]
     InvalidQuantile(String),
+    #[error("invalid maxSeries value '{0}'")]
+    InvalidMaxSeries(String),
 }
 
 #[derive(Debug, Error)]
@@ -273,7 +276,7 @@ impl MetricsExporter {
     }
 
     fn handle_snapshot(&self, query: &SnapshotQuery) -> MetricsSnapshot {
-        build_snapshot_internal(&self.registry, query, self.settings.max_series)
+        build_snapshot(&self.registry, query, self.settings.max_series)
     }
 
     async fn serve(&self, req: Request<Body>) -> ServeResponse {
@@ -353,6 +356,7 @@ pub fn parse_snapshot_query(uri: &Uri) -> Result<SnapshotQuery, SnapshotQueryErr
     let mut names = Vec::new();
     let mut range = None;
     let mut quantiles = Vec::new();
+    let mut max_series = None;
 
     if let Some(query) = uri.query() {
         for (key, value) in form_urlencoded::parse(query.as_bytes()) {
@@ -377,6 +381,12 @@ pub fn parse_snapshot_query(uri: &Uri) -> Result<SnapshotQuery, SnapshotQueryErr
                             .collect::<Result<Vec<f64>, _>>()?,
                     );
                 }
+                "maxSeries" => {
+                    let parsed = value
+                        .parse::<usize>()
+                        .map_err(|_| SnapshotQueryError::InvalidMaxSeries(value.to_string()))?;
+                    max_series = Some(parsed);
+                }
                 _ => {}
             }
         }
@@ -386,6 +396,7 @@ pub fn parse_snapshot_query(uri: &Uri) -> Result<SnapshotQuery, SnapshotQueryErr
         names,
         range,
         quantiles,
+        max_series,
     })
 }
 
@@ -510,7 +521,26 @@ pub fn build_snapshot(
     query: &SnapshotQuery,
     max_series: usize,
 ) -> MetricsSnapshot {
-    build_snapshot_internal(registry, query, max_series)
+    let default_limit = if max_series == 0 {
+        usize::MAX
+    } else {
+        max_series
+    };
+    let requested_limit = query
+        .max_series
+        .map(|value| if value == 0 { usize::MAX } else { value })
+        .unwrap_or(default_limit);
+    let effective_limit = if default_limit == usize::MAX {
+        requested_limit
+    } else {
+        requested_limit.min(default_limit)
+    };
+    let normalized = if effective_limit == usize::MAX {
+        0
+    } else {
+        effective_limit
+    };
+    build_snapshot_internal(registry, query, normalized)
 }
 
 pub fn start_http_server(

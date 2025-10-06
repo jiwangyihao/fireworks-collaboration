@@ -24,10 +24,9 @@ pub use export::{
     build_snapshot, encode_prometheus, parse_snapshot_query, start_http_server, MetricsSnapshot,
     MetricsSnapshotSeries, SnapshotQuery, SnapshotQueryError,
 };
-pub use registry::{HistogramSnapshot, MetricDescriptor, MetricKind, MetricRegistry};
-pub use layer::{current_layer, override_layer_guards, resolve_config, resolved_state, set_layer};
-#[cfg(test)]
 pub use layer::auto_downgrade;
+pub use layer::{current_layer, override_layer_guards, resolve_config, resolved_state, set_layer};
+pub use registry::{HistogramSnapshot, MetricDescriptor, MetricKind, MetricRegistry};
 pub use runtime::SampleKind;
 
 static REGISTRY: OnceCell<Arc<MetricRegistry>> = OnceCell::new();
@@ -168,6 +167,7 @@ pub fn set_runtime_memory_limit(bytes: u64) {
 }
 
 pub fn force_memory_pressure_check() {
+    runtime::flush_thread();
     runtime::force_memory_pressure_check();
 }
 
