@@ -240,6 +240,14 @@ pub enum StrategyEvent {
         threshold_bytes: u64,
         raw_samples_disabled: bool,
     },
+    /// 可观测性层级变化
+    ObservabilityLayerChanged {
+        from: String,
+        to: String,
+        initiator: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
 }
 
 /// 统一顶层事件枚举

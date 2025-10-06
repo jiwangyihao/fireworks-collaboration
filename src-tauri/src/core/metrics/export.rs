@@ -23,8 +23,8 @@ use super::descriptors::{
     METRICS_EXPORT_RATE_LIMITED_TOTAL, METRICS_EXPORT_REQUESTS_TOTAL, METRICS_EXPORT_SERIES_TOTAL,
 };
 use super::registry::{
-    CounterSeriesSnapshot, HistogramSeriesSnapshot, HistogramSnapshot, MetricDescriptor,
-    MetricKind, MetricRegistry,
+    CounterSeriesSnapshot, GaugeSeriesSnapshot, HistogramSeriesSnapshot, HistogramSnapshot,
+    MetricDescriptor, MetricKind, MetricRegistry,
 };
 use super::{global_registry, MetricError};
 
@@ -265,9 +265,10 @@ impl MetricsExporter {
 
     fn handle_prometheus(&self) -> (String, usize) {
         let counters = self.registry.collect_counter_series();
+        let gauges = self.registry.collect_gauge_series();
         let histograms = self.registry.collect_histogram_series();
-        let text = encode_prometheus_internal(&counters, &histograms);
-        let total_series = counters.len() + histograms.len();
+        let text = encode_prometheus_internal(&counters, &gauges, &histograms);
+        let total_series = counters.len() + gauges.len() + histograms.len();
         (text, total_series)
     }
 
@@ -499,8 +500,9 @@ pub struct HistogramSampleDto {
 
 pub fn encode_prometheus(registry: &MetricRegistry) -> String {
     let counters = registry.collect_counter_series();
+    let gauges = registry.collect_gauge_series();
     let histograms = registry.collect_histogram_series();
-    encode_prometheus_internal(&counters, &histograms)
+    encode_prometheus_internal(&counters, &gauges, &histograms)
 }
 
 pub fn build_snapshot(
@@ -573,6 +575,7 @@ pub fn start_http_server(
 
 fn encode_prometheus_internal(
     counters: &[CounterSeriesSnapshot],
+    gauges: &[GaugeSeriesSnapshot],
     histograms: &[HistogramSeriesSnapshot],
 ) -> String {
     let mut out = String::new();
@@ -584,6 +587,15 @@ fn encode_prometheus_internal(
         out.push_str(&format!(
             "{}{} {}\n",
             counter.descriptor.name, labels, counter.value
+        ));
+    }
+
+    for gauge in gauges {
+        emit_descriptor(&mut out, &mut emitted, gauge.descriptor);
+        let labels = format_labels(gauge.descriptor, &gauge.label_values);
+        out.push_str(&format!(
+            "{}{} {}\n",
+            gauge.descriptor.name, labels, gauge.value
         ));
     }
 
@@ -673,6 +685,40 @@ fn build_snapshot_internal(
             points,
             histogram_points: None,
             range: window_snapshot.as_ref().map(|_| range_str.clone()),
+            raw_samples: None,
+        };
+        output.push(series);
+        if remaining != usize::MAX {
+            remaining = remaining.saturating_sub(1);
+            if remaining == 0 {
+                return MetricsSnapshot {
+                    generated_at_ms: now,
+                    series: output,
+                };
+            }
+        }
+    }
+
+    for gauge in registry.collect_gauge_series() {
+        if remaining == 0 {
+            break;
+        }
+        if !include_metric(&filter, gauge.descriptor.name) {
+            continue;
+        }
+        let labels = labels_map(gauge.descriptor, &gauge.label_values);
+        let series = MetricsSnapshotSeries {
+            name: gauge.descriptor.name.to_string(),
+            series_type: "gauge",
+            labels,
+            value: Some(gauge.value),
+            sum: None,
+            count: None,
+            buckets: None,
+            quantiles: None,
+            points: None,
+            histogram_points: None,
+            range: None,
             raw_samples: None,
         };
         output.push(series);

@@ -51,6 +51,20 @@ impl MetricDescriptor {
         }
     }
 
+    pub const fn gauge(
+        name: &'static str,
+        help: &'static str,
+        labels: &'static [&'static str],
+    ) -> Self {
+        Self {
+            name,
+            help,
+            kind: MetricKind::Gauge,
+            labels,
+            buckets: None,
+        }
+    }
+
     pub const fn histogram(
         name: &'static str,
         help: &'static str,
@@ -82,6 +96,13 @@ pub struct CounterSeriesSnapshot {
 }
 
 #[derive(Debug, Clone)]
+pub struct GaugeSeriesSnapshot {
+    pub descriptor: MetricDescriptor,
+    pub label_values: Vec<String>,
+    pub value: u64,
+}
+
+#[derive(Debug, Clone)]
 pub struct HistogramSeriesSnapshot {
     pub descriptor: MetricDescriptor,
     pub label_values: Vec<String>,
@@ -90,6 +111,7 @@ pub struct HistogramSeriesSnapshot {
 
 pub struct MetricRegistry {
     counters: DashMap<&'static str, CounterMetric>,
+    gauges: DashMap<&'static str, GaugeMetric>,
     histograms: DashMap<&'static str, HistogramMetric>,
     aggregator: OnceCell<Arc<WindowAggregator>>,
     counter_windows: DashSet<&'static str>,
@@ -100,6 +122,7 @@ impl Default for MetricRegistry {
     fn default() -> Self {
         Self {
             counters: DashMap::new(),
+            gauges: DashMap::new(),
             histograms: DashMap::new(),
             aggregator: OnceCell::new(),
             counter_windows: DashSet::new(),
@@ -165,6 +188,19 @@ impl MetricRegistry {
                 );
                 Ok(())
             }
+            MetricKind::Gauge => {
+                if self.gauges.contains_key(desc.name) {
+                    return Err(MetricError::AlreadyRegistered(desc.name));
+                }
+                self.gauges.insert(
+                    desc.name,
+                    GaugeMetric {
+                        descriptor: desc,
+                        series: DashMap::new(),
+                    },
+                );
+                Ok(())
+            }
             MetricKind::Histogram => {
                 if self.histograms.contains_key(desc.name) {
                     return Err(MetricError::AlreadyRegistered(desc.name));
@@ -187,7 +223,6 @@ impl MetricRegistry {
                 );
                 Ok(())
             }
-            MetricKind::Gauge => Err(MetricError::UnsupportedKind(desc.name)),
         }
     }
 
@@ -248,6 +283,39 @@ impl MetricRegistry {
     ) -> Option<u64> {
         runtime::flush_thread();
         let metric = self.counters.get(desc.name)?;
+        let key = normalize_labels(desc, labels).ok()?;
+        metric
+            .series
+            .get(&key)
+            .map(|entry| entry.load(Ordering::Relaxed))
+    }
+
+    pub fn set_gauge(
+        &self,
+        desc: MetricDescriptor,
+        labels: &[(&'static str, &str)],
+        value: u64,
+    ) -> Result<(), MetricError> {
+        let metric = self
+            .gauges
+            .get(desc.name)
+            .ok_or(MetricError::NotRegistered(desc.name))?;
+        let key = normalize_labels(desc, labels)?;
+        let entry = metric
+            .series
+            .entry(key)
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)));
+        entry.store(value, Ordering::Relaxed);
+        Ok(())
+    }
+
+    pub fn get_gauge(
+        &self,
+        desc: MetricDescriptor,
+        labels: &[(&'static str, &str)],
+    ) -> Option<u64> {
+        runtime::flush_thread();
+        let metric = self.gauges.get(desc.name)?;
         let key = normalize_labels(desc, labels).ok()?;
         metric
             .series
@@ -353,6 +421,24 @@ impl MetricRegistry {
         out
     }
 
+    pub fn collect_gauge_series(&self) -> Vec<GaugeSeriesSnapshot> {
+        runtime::flush_thread();
+        let mut out = Vec::new();
+        for metric_entry in self.gauges.iter() {
+            let metric = metric_entry.value();
+            for series_entry in metric.series.iter() {
+                let labels = series_entry.key().values().to_vec();
+                let value = series_entry.value().load(Ordering::Relaxed);
+                out.push(GaugeSeriesSnapshot {
+                    descriptor: metric.descriptor,
+                    label_values: labels,
+                    value,
+                });
+            }
+        }
+        out
+    }
+
     pub fn collect_histogram_series(&self) -> Vec<HistogramSeriesSnapshot> {
         runtime::flush_thread();
         let mut out = Vec::new();
@@ -384,6 +470,11 @@ impl MetricRegistry {
 }
 
 struct CounterMetric {
+    descriptor: MetricDescriptor,
+    series: DashMap<LabelKey, Arc<AtomicU64>>,
+}
+
+struct GaugeMetric {
     descriptor: MetricDescriptor,
     series: DashMap<LabelKey, Arc<AtomicU64>>,
 }

@@ -115,6 +115,12 @@ pub const METRIC_MEMORY_PRESSURE_TOTAL: MetricDescriptor = MetricDescriptor::cou
     &[],
 );
 
+pub const OBSERVABILITY_LAYER: MetricDescriptor = MetricDescriptor::gauge(
+    "observability_layer",
+    "Current observability layer status",
+    &[],
+);
+
 pub const BASIC_METRICS: &[MetricDescriptor] = &[
     GIT_TASKS_TOTAL,
     GIT_TASK_DURATION_MS,
@@ -134,6 +140,7 @@ pub const BASIC_METRICS: &[MetricDescriptor] = &[
     METRICS_EXPORT_SERIES_TOTAL,
     METRICS_EXPORT_RATE_LIMITED_TOTAL,
     METRIC_MEMORY_PRESSURE_TOTAL,
+    OBSERVABILITY_LAYER,
 ];
 
 pub fn all_descriptors() -> &'static [MetricDescriptor] {

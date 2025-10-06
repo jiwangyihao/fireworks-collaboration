@@ -9,6 +9,7 @@ mod descriptors;
 mod error;
 mod event_bridge;
 mod export;
+mod layer;
 mod registry;
 mod runtime;
 
@@ -24,6 +25,9 @@ pub use export::{
     MetricsSnapshotSeries, SnapshotQuery, SnapshotQueryError,
 };
 pub use registry::{HistogramSnapshot, MetricDescriptor, MetricKind, MetricRegistry};
+pub use layer::{current_layer, override_layer_guards, resolve_config, resolved_state, set_layer};
+#[cfg(test)]
+pub use layer::auto_downgrade;
 pub use runtime::SampleKind;
 
 static REGISTRY: OnceCell<Arc<MetricRegistry>> = OnceCell::new();
@@ -42,7 +46,8 @@ pub fn global_registry() -> Arc<MetricRegistry> {
 }
 
 pub fn init_basic_observability(cfg: &ObservabilityConfig) -> Result<(), MetricInitError> {
-    if !cfg.enabled || !cfg.basic_enabled {
+    let resolved = layer::resolve_config(cfg);
+    if !resolved.basic_enabled {
         return Ok(());
     }
 
@@ -58,10 +63,16 @@ pub fn init_basic_observability(cfg: &ObservabilityConfig) -> Result<(), MetricI
         Ok(())
     })?;
 
+    let registry = global_registry();
+    layer::initialize(cfg, registry)?;
     Ok(())
 }
 
 pub fn init_aggregate_observability(cfg: &ObservabilityConfig) -> Result<(), MetricInitError> {
+    let resolved = layer::resolve_config(cfg);
+    if !resolved.aggregate_enabled {
+        return Ok(());
+    }
     let provider: Arc<dyn TimeProvider> = Arc::new(SystemTimeProvider::default());
     init_aggregate_observability_with_provider(cfg, provider)
 }
@@ -70,7 +81,8 @@ pub fn init_aggregate_observability_with_provider(
     cfg: &ObservabilityConfig,
     provider: Arc<dyn TimeProvider>,
 ) -> Result<(), MetricInitError> {
-    if !cfg.enabled || !cfg.basic_enabled || !cfg.aggregate_enabled {
+    let resolved = layer::resolve_config(cfg);
+    if !resolved.aggregate_enabled {
         return Ok(());
     }
 
@@ -93,7 +105,8 @@ pub fn aggregate_enabled() -> bool {
 }
 
 pub fn init_export_observability(cfg: &ObservabilityConfig) -> Result<(), MetricInitError> {
-    if !cfg.enabled || !cfg.basic_enabled || !cfg.export_enabled {
+    let resolved = layer::resolve_config(cfg);
+    if !resolved.export_enabled {
         return Ok(());
     }
 
@@ -110,7 +123,8 @@ pub fn init_export_observability(cfg: &ObservabilityConfig) -> Result<(), Metric
 }
 
 pub fn init_alerts_observability(cfg: &ObservabilityConfig) -> Result<(), MetricInitError> {
-    if !cfg.enabled || !cfg.basic_enabled || !cfg.alerts_enabled {
+    let resolved = layer::resolve_config(cfg);
+    if !resolved.alerts_enabled {
         return Ok(());
     }
 

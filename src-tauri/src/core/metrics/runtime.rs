@@ -15,7 +15,7 @@ use crate::events::structured::{publish_global, Event, StrategyEvent};
 
 use super::aggregate::HistogramWindowConfig;
 use super::descriptors::METRIC_MEMORY_PRESSURE_TOTAL;
-use super::{MetricDescriptor, MetricInitError, MetricRegistry};
+use super::{layer, MetricDescriptor, MetricInitError, MetricRegistry};
 use super::{AGGREGATOR, REGISTRY};
 
 static RUNTIME: OnceCell<Arc<MetricRuntime>> = OnceCell::new();
@@ -316,6 +316,7 @@ impl MetricRuntime {
             threshold_bytes: limit,
             raw_samples_disabled: true,
         }));
+        let _ = layer::handle_memory_pressure();
     }
 
     fn set_tls_sample_rate(&self, rate: u32) {

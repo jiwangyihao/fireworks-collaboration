@@ -260,6 +260,80 @@ fn default_retry_factor() -> f64 {
     1.5
 }
 
+fn default_observability_layer() -> ObservabilityLayer {
+    ObservabilityLayer::Optimize
+}
+
+fn default_min_layer_residency_secs() -> u32 {
+    300
+}
+
+fn default_downgrade_cooldown_secs() -> u32 {
+    120
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "lowercase")]
+#[repr(u8)]
+pub enum ObservabilityLayer {
+    Basic = 0,
+    Aggregate = 1,
+    Export = 2,
+    Ui = 3,
+    Alerts = 4,
+    Optimize = 5,
+}
+
+impl ObservabilityLayer {
+    pub const fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ObservabilityLayer::Basic => "basic",
+            ObservabilityLayer::Aggregate => "aggregate",
+            ObservabilityLayer::Export => "export",
+            ObservabilityLayer::Ui => "ui",
+            ObservabilityLayer::Alerts => "alerts",
+            ObservabilityLayer::Optimize => "optimize",
+        }
+    }
+
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            0 => ObservabilityLayer::Basic,
+            1 => ObservabilityLayer::Aggregate,
+            2 => ObservabilityLayer::Export,
+            3 => ObservabilityLayer::Ui,
+            4 => ObservabilityLayer::Alerts,
+            _ => ObservabilityLayer::Optimize,
+        }
+    }
+
+    pub fn next_lower(self) -> Option<Self> {
+        match self {
+            ObservabilityLayer::Basic => None,
+            ObservabilityLayer::Aggregate => Some(ObservabilityLayer::Basic),
+            ObservabilityLayer::Export => Some(ObservabilityLayer::Aggregate),
+            ObservabilityLayer::Ui => Some(ObservabilityLayer::Export),
+            ObservabilityLayer::Alerts => Some(ObservabilityLayer::Ui),
+            ObservabilityLayer::Optimize => Some(ObservabilityLayer::Alerts),
+        }
+    }
+
+    pub fn next_higher(self) -> Option<Self> {
+        match self {
+            ObservabilityLayer::Basic => Some(ObservabilityLayer::Aggregate),
+            ObservabilityLayer::Aggregate => Some(ObservabilityLayer::Export),
+            ObservabilityLayer::Export => Some(ObservabilityLayer::Ui),
+            ObservabilityLayer::Ui => Some(ObservabilityLayer::Alerts),
+            ObservabilityLayer::Alerts => Some(ObservabilityLayer::Optimize),
+            ObservabilityLayer::Optimize => None,
+        }
+    }
+}
+
 impl Default for RetryCfg {
     fn default() -> Self {
         Self {
@@ -286,6 +360,14 @@ pub struct ObservabilityConfig {
     pub ui_enabled: bool,
     #[serde(default = "default_true")]
     pub alerts_enabled: bool,
+    #[serde(default = "default_observability_layer")]
+    pub layer: ObservabilityLayer,
+    #[serde(default = "default_true")]
+    pub auto_downgrade: bool,
+    #[serde(default = "default_min_layer_residency_secs")]
+    pub min_layer_residency_secs: u32,
+    #[serde(default = "default_downgrade_cooldown_secs")]
+    pub downgrade_cooldown_secs: u32,
     #[serde(default)]
     pub export: ObservabilityExportConfig,
     #[serde(default)]
@@ -303,6 +385,10 @@ impl Default for ObservabilityConfig {
             export_enabled: default_true(),
             ui_enabled: default_true(),
             alerts_enabled: default_true(),
+            layer: default_observability_layer(),
+            auto_downgrade: default_true(),
+            min_layer_residency_secs: default_min_layer_residency_secs(),
+            downgrade_cooldown_secs: default_downgrade_cooldown_secs(),
             export: ObservabilityExportConfig::default(),
             alerts: ObservabilityAlertsConfig::default(),
             performance: ObservabilityPerformanceConfig::default(),
