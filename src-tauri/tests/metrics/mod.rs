@@ -6,20 +6,22 @@ use std::time::Duration;
 use std::thread;
 
 use fireworks_collaboration_lib::core::config::model::{
-    ObservabilityConfig, ObservabilityExportConfig, ObservabilityRedactIpMode,
+    ObservabilityConfig, ObservabilityExportConfig, ObservabilityLayer,
+    ObservabilityRedactIpMode,
 };
 use fireworks_collaboration_lib::core::metrics::{
-    aggregate_enabled, build_snapshot, encode_prometheus, evaluate_alerts_now,
-    force_memory_pressure_check, global_registry, init_aggregate_observability_with_provider,
-    init_alerts_observability, init_basic_observability, observe_histogram_metric,
-    observe_histogram_with_kind, parse_snapshot_query, record_counter_metric,
-    HistogramWindowConfig, ManualTimeProvider, MetricDescriptor, MetricError, SampleKind,
-    MetricRegistry, SnapshotQuery, SnapshotQueryError, TimeProvider, WindowRange, ALERTS_FIRED_TOTAL,
+    aggregate_enabled, auto_downgrade, build_snapshot, current_layer, encode_prometheus,
+    evaluate_alerts_now, force_memory_pressure_check, global_registry,
+    init_aggregate_observability_with_provider, init_alerts_observability, init_basic_observability,
+    observe_histogram_metric, observe_histogram_with_kind, override_layer_guards,
+    parse_snapshot_query, record_counter_metric, resolve_config, set_layer, HistogramWindowConfig,
+    ManualTimeProvider, MetricDescriptor, MetricError, SampleKind, MetricRegistry, SnapshotQuery,
+    SnapshotQueryError, TimeProvider, WindowRange, ALERTS_FIRED_TOTAL,
     CIRCUIT_BREAKER_RECOVER_TOTAL, CIRCUIT_BREAKER_TRIP_TOTAL, GIT_RETRY_TOTAL, GIT_TASKS_TOTAL,
     GIT_TASK_DURATION_MS, HTTP_STRATEGY_FALLBACK_TOTAL, IP_POOL_AUTO_DISABLE_TOTAL,
     IP_POOL_LATENCY_MS, IP_POOL_REFRESH_TOTAL, IP_POOL_SELECTION_TOTAL,
     METRICS_EXPORT_RATE_LIMITED_TOTAL, METRICS_EXPORT_REQUESTS_TOTAL, METRICS_EXPORT_SERIES_TOTAL,
-    METRIC_MEMORY_PRESSURE_TOTAL, PROXY_FALLBACK_TOTAL, TLS_HANDSHAKE_MS,
+    METRIC_MEMORY_PRESSURE_TOTAL, OBSERVABILITY_LAYER, PROXY_FALLBACK_TOTAL, TLS_HANDSHAKE_MS,
 };
 use fireworks_collaboration_lib::core::metrics::{
     configure_tls_sampling, set_runtime_debug_mode, set_runtime_ip_mode, set_runtime_memory_limit,
@@ -1011,6 +1013,182 @@ fn runtime_memory_pressure_disables_raw_samples() {
 }
 
 #[test]
+fn observability_layer_manual_transition_updates_gauge() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    override_layer_guards(Duration::from_secs(0), Duration::from_secs(0));
+
+    let fanout = ensure_fanout_bus().expect("fanout bus available");
+    let memory_bus = MemoryEventBus::new();
+    fanout.register(Arc::new(memory_bus.clone()));
+    memory_bus.take_all();
+
+    let initial = current_layer();
+    let target = if initial == ObservabilityLayer::Basic {
+        ObservabilityLayer::Aggregate
+    } else {
+        ObservabilityLayer::Basic
+    };
+
+    let changed = set_layer(target, Some("manual-test"));
+    assert!(changed, "expected layer change to occur");
+
+    std::thread::sleep(Duration::from_millis(10));
+    let events = memory_bus.take_all();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::Strategy(StrategyEvent::ObservabilityLayerChanged {
+            to,
+            initiator,
+            reason,
+            ..
+        }) if to == target.as_str()
+            && initiator == "manual"
+            && reason.as_deref() == Some("manual-test")
+    )));
+
+    let layer_value = global_registry()
+        .get_gauge(OBSERVABILITY_LAYER, &[])
+        .expect("layer gauge should exist");
+    assert_eq!(layer_value, target.as_u8() as u64);
+
+    let _ = set_layer(initial, Some("restore"));
+    memory_bus.take_all();
+}
+
+#[test]
+fn observability_layer_auto_downgrade_on_memory_pressure() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+    override_layer_guards(Duration::from_secs(0), Duration::from_secs(0));
+
+    let fanout = ensure_fanout_bus().expect("fanout bus available");
+    let memory_bus = MemoryEventBus::new();
+    fanout.register(Arc::new(memory_bus.clone()));
+    memory_bus.take_all();
+
+    let _ = set_layer(ObservabilityLayer::Optimize, Some("prepare"));
+    memory_bus.take_all();
+
+    let registry = global_registry();
+    registry.enable_histogram_window(
+        TLS_HANDSHAKE_MS,
+        HistogramWindowConfig::enable_raw_samples(Duration::from_secs(120), 8),
+    );
+
+    set_runtime_memory_limit(1);
+    let labels = [("sni_strategy", "layer-auto"), ("outcome", "ok")];
+    for sample in [12.0, 18.0, 24.0, 30.0] {
+        observe_histogram_metric(TLS_HANDSHAKE_MS, &labels, sample);
+    }
+    force_memory_pressure_check();
+    set_runtime_memory_limit(8_000_000);
+
+    let downgraded = current_layer();
+    assert!(
+        downgraded < ObservabilityLayer::Optimize,
+        "layer should downgrade after memory pressure"
+    );
+
+    let gauge_value = global_registry()
+        .get_gauge(OBSERVABILITY_LAYER, &[])
+        .expect("layer gauge present");
+    assert_eq!(gauge_value, downgraded.as_u8() as u64);
+
+    let events = memory_bus.take_all();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::Strategy(StrategyEvent::ObservabilityLayerChanged {
+            initiator,
+            reason,
+            ..
+        }) if initiator == "auto-downgrade"
+            && reason.as_deref() == Some("memory_pressure")
+    )));
+
+    registry.enable_histogram_window(TLS_HANDSHAKE_MS, HistogramWindowConfig::default());
+    let _ = set_layer(ObservabilityLayer::Optimize, Some("restore"));
+    memory_bus.take_all();
+}
+
+#[test]
+fn observability_resolve_config_limits_component_flags() {
+    let mut cfg = ObservabilityConfig::default();
+    cfg.layer = ObservabilityLayer::Optimize;
+    let resolved = resolve_config(&cfg);
+    assert_eq!(resolved.effective_layer, ObservabilityLayer::Optimize);
+    assert!(resolved.optimize_enabled);
+
+    cfg.aggregate_enabled = false;
+    let resolved = resolve_config(&cfg);
+    assert_eq!(resolved.effective_layer, ObservabilityLayer::Basic);
+    assert!(!resolved.aggregate_enabled);
+    assert_eq!(resolved.max_allowed_layer, ObservabilityLayer::Basic);
+
+    cfg.aggregate_enabled = true;
+    cfg.export_enabled = false;
+    let resolved = resolve_config(&cfg);
+    assert_eq!(resolved.effective_layer, ObservabilityLayer::Aggregate);
+    assert!(!resolved.export_enabled);
+    assert_eq!(resolved.max_allowed_layer, ObservabilityLayer::Aggregate);
+}
+
+#[test]
+fn observability_reinitialize_clamps_layer_to_config() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    override_layer_guards(Duration::from_secs(0), Duration::from_secs(0));
+
+    let registry = global_registry();
+    let _ = set_layer(ObservabilityLayer::Optimize, Some("prep"));
+    let mut cfg = ObservabilityConfig::default();
+    cfg.layer = ObservabilityLayer::Optimize;
+    cfg.export_enabled = false;
+
+    init_basic_observability(&cfg).expect("reinitialize with constrained config");
+
+    let current = current_layer();
+    assert_eq!(current, ObservabilityLayer::Aggregate);
+    let gauge = registry
+        .get_gauge(OBSERVABILITY_LAYER, &[])
+        .expect("layer gauge present");
+    assert_eq!(gauge, ObservabilityLayer::Aggregate.as_u8() as u64);
+
+    init_basic_observability(&ObservabilityConfig::default())
+        .expect("restore full observability config");
+    let _ = set_layer(ObservabilityLayer::Optimize, Some("restore"));
+}
+
+#[test]
+fn observability_auto_downgrade_respects_residency_and_cooldown() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    override_layer_guards(Duration::from_millis(100), Duration::from_millis(200));
+
+    let _ = set_layer(ObservabilityLayer::Basic, Some("prep-basic"));
+    let _ = set_layer(ObservabilityLayer::Optimize, Some("prep-optimize"));
+
+    assert!(auto_downgrade("guard-check").is_none(), "min residency should block downgrade");
+
+    std::thread::sleep(Duration::from_millis(120));
+    let first = auto_downgrade("guard-check");
+    assert_eq!(first, Some(ObservabilityLayer::Alerts));
+    assert_eq!(current_layer(), ObservabilityLayer::Alerts);
+
+    assert!(auto_downgrade("guard-check").is_none(), "cooldown should block immediate downgrade");
+
+    std::thread::sleep(Duration::from_millis(220));
+    let second = auto_downgrade("guard-check");
+    assert_eq!(second, Some(ObservabilityLayer::Ui));
+    assert_eq!(current_layer(), ObservabilityLayer::Ui);
+
+    override_layer_guards(Duration::from_secs(0), Duration::from_secs(0));
+    let _ = set_layer(ObservabilityLayer::Optimize, Some("restore"));
+}
+
+#[test]
 fn metrics_counter_window_returns_error_when_series_missing() {
     let _guard = aggregate_lock();
     ensure_metrics_init();
@@ -1161,8 +1339,10 @@ fn metrics_series_listing_reports_last_update() {
 
 #[test]
 fn prometheus_encoder_outputs_metrics() {
+    let _guard = aggregate_lock();
     ensure_metrics_init();
     let registry = global_registry();
+    let layer_value = current_layer().as_u8();
     let kind = format!("PrometheusTest_{}", Uuid::new_v4());
     let labels = [("kind", kind.as_str()), ("state", "completed")];
 
@@ -1185,6 +1365,7 @@ fn prometheus_encoder_outputs_metrics() {
     )));
     assert!(output.contains("tls_handshake_ms_bucket"));
     assert!(output.contains("tls_handshake_ms_sum"));
+    assert!(output.contains(&format!("observability_layer {}", layer_value)));
 }
 
 #[test]

@@ -64,7 +64,7 @@ fn test_save_and_reload_roundtrip_at_base() {
 // ============================================================================
 
 use fireworks_collaboration_lib::core::config::model::{
-    default_auto_disable_cooldown_sec, default_auto_disable_threshold_pct,
+    default_auto_disable_cooldown_sec, default_auto_disable_threshold_pct, ObservabilityLayer,
 };
 
 #[test]
@@ -93,6 +93,11 @@ fn test_serialize_camel_case_keys() {
     assert!(s.contains("\"spkiPins\""));
     assert!(s.contains("\"ipPool\""));
     assert!(s.contains("\"proxy\""));
+    assert!(s.contains("\"observability\""));
+    assert!(s.contains("\"layer\""));
+    assert!(s.contains("\"autoDowngrade\""));
+    assert!(s.contains("\"minLayerResidencySecs\""));
+    assert!(s.contains("\"downgradeCooldownSecs\""));
 }
 
 #[test]
@@ -139,6 +144,10 @@ fn test_deserialize_with_defaults() {
     assert!(!cfg.ip_pool.enabled, "ipPool defaults to disabled");
     // P5.0: proxy defaults to off mode
     assert!(!cfg.proxy.is_enabled(), "proxy defaults to disabled");
+    assert_eq!(cfg.observability.layer, ObservabilityLayer::Optimize);
+    assert!(cfg.observability.auto_downgrade, "autoDowngrade default true");
+    assert_eq!(cfg.observability.min_layer_residency_secs, 300);
+    assert_eq!(cfg.observability.downgrade_cooldown_secs, 120);
 }
 
 // ============================================================================
