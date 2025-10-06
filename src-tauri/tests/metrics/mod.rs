@@ -1,21 +1,28 @@
 use std::fs;
+use std::convert::TryFrom;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
+use std::thread;
 
 use fireworks_collaboration_lib::core::config::model::{
-    ObservabilityConfig, ObservabilityExportConfig,
+    ObservabilityConfig, ObservabilityExportConfig, ObservabilityRedactIpMode,
 };
 use fireworks_collaboration_lib::core::metrics::{
-    aggregate_enabled, build_snapshot, encode_prometheus, evaluate_alerts_now, global_registry,
-    init_aggregate_observability_with_provider, init_alerts_observability,
-    init_basic_observability, parse_snapshot_query, HistogramWindowConfig, ManualTimeProvider,
-    MetricError, SnapshotQuery, SnapshotQueryError, TimeProvider, WindowRange, ALERTS_FIRED_TOTAL,
+    aggregate_enabled, build_snapshot, encode_prometheus, evaluate_alerts_now,
+    force_memory_pressure_check, global_registry, init_aggregate_observability_with_provider,
+    init_alerts_observability, init_basic_observability, observe_histogram_metric,
+    observe_histogram_with_kind, parse_snapshot_query, record_counter_metric,
+    HistogramWindowConfig, ManualTimeProvider, MetricDescriptor, MetricError, SampleKind,
+    MetricRegistry, SnapshotQuery, SnapshotQueryError, TimeProvider, WindowRange, ALERTS_FIRED_TOTAL,
     CIRCUIT_BREAKER_RECOVER_TOTAL, CIRCUIT_BREAKER_TRIP_TOTAL, GIT_RETRY_TOTAL, GIT_TASKS_TOTAL,
     GIT_TASK_DURATION_MS, HTTP_STRATEGY_FALLBACK_TOTAL, IP_POOL_AUTO_DISABLE_TOTAL,
     IP_POOL_LATENCY_MS, IP_POOL_REFRESH_TOTAL, IP_POOL_SELECTION_TOTAL,
     METRICS_EXPORT_RATE_LIMITED_TOTAL, METRICS_EXPORT_REQUESTS_TOTAL, METRICS_EXPORT_SERIES_TOTAL,
-    PROXY_FALLBACK_TOTAL, TLS_HANDSHAKE_MS,
+    METRIC_MEMORY_PRESSURE_TOTAL, PROXY_FALLBACK_TOTAL, TLS_HANDSHAKE_MS,
+};
+use fireworks_collaboration_lib::core::metrics::{
+    configure_tls_sampling, set_runtime_debug_mode, set_runtime_ip_mode, set_runtime_memory_limit,
 };
 use fireworks_collaboration_lib::events::structured::{
     ensure_fanout_bus, publish_global, Event, MemoryEventBus, MetricAlertState, StrategyEvent,
@@ -65,6 +72,82 @@ static ALERTS_ENGINE_INIT: OnceCell<()> = OnceCell::new();
 
 fn alerts_rules_path() -> &'static PathBuf {
     &ALERT_RULES_PATH
+}
+
+const TEST_RUNTIME_IP_METRIC: MetricDescriptor = MetricDescriptor::counter(
+    "test_runtime_ip_redaction_total",
+    "Runtime IP redaction test metric",
+    &["client_ip"],
+);
+
+const WAIT_RETRIES: usize = 50;
+const WAIT_DELAY_MS: u64 = 10;
+
+fn wait_for_counter(
+    registry: &MetricRegistry,
+    desc: MetricDescriptor,
+    labels: &[(&'static str, &str)],
+    target: u64,
+) -> u64 {
+    let mut value = 0;
+    for _ in 0..WAIT_RETRIES {
+        value = registry.get_counter(desc, labels).unwrap_or(0);
+        if value >= target {
+            break;
+        }
+        thread::sleep(Duration::from_millis(WAIT_DELAY_MS));
+    }
+    value
+}
+
+fn wait_for_histogram(
+    registry: &MetricRegistry,
+    desc: MetricDescriptor,
+    labels: &[(&'static str, &str)],
+    target_count: u64,
+) -> Option<(u64, f64)> {
+    let mut snapshot = None;
+    for _ in 0..WAIT_RETRIES {
+        snapshot = registry
+            .get_histogram(desc, labels)
+            .map(|h| (h.count, h.sum));
+        match snapshot {
+            Some((count, _)) if count >= target_count => break,
+            Some(_) | None => {
+                thread::sleep(Duration::from_millis(WAIT_DELAY_MS));
+            }
+        }
+    }
+    snapshot
+}
+
+fn current_git_totals(registry: &MetricRegistry) -> (u64, u64) {
+    let mut failed = 0;
+    let mut total = 0;
+    if let Ok(series) = registry.list_counter_series(GIT_TASKS_TOTAL) {
+        for entry in series {
+            if entry.labels.len() != 2 {
+                continue;
+            }
+            let kind_label = entry.labels[0].clone();
+            let state_label = entry.labels[1].clone();
+            let pairs = [
+                ("kind", kind_label.as_str()),
+                ("state", state_label.as_str()),
+            ];
+            if let Ok(snapshot) = registry.snapshot_counter_window(
+                GIT_TASKS_TOTAL,
+                &pairs,
+                WindowRange::LastFiveMinutes,
+            ) {
+                total += snapshot.total;
+                if state_label == "failed" {
+                    failed += snapshot.total;
+                }
+            }
+        }
+    }
+    (failed, total)
 }
 
 fn ensure_alerts_engine_initialized() {
@@ -395,6 +478,7 @@ fn duplicate_completion_events_do_not_double_count() {
 #[test]
 fn tls_timing_failure_records_fail_outcome() {
     ensure_metrics_init();
+    configure_tls_sampling(1);
     let registry = global_registry();
     let task_id = Uuid::new_v4().to_string();
 
@@ -421,16 +505,18 @@ fn tls_timing_failure_records_fail_outcome() {
         ip_selection_stage: None,
     }));
 
-    let after = registry
-        .get_histogram(
-            TLS_HANDSHAKE_MS,
-            &[("sni_strategy", "real"), ("outcome", "fail")],
-        )
-        .map(|h| (h.count, h.sum))
-        .unwrap();
+    let target = before.0 + 1;
+    let after = wait_for_histogram(
+        &registry,
+        TLS_HANDSHAKE_MS,
+        &[("sni_strategy", "real"), ("outcome", "fail")],
+        target,
+    )
+    .expect("tls latency histogram should exist");
 
-    assert_eq!(after.0, before.0 + 1);
+    assert_eq!(after.0, target);
     assert!(after.1 >= before.1 + 42.0);
+    configure_tls_sampling(5);
 }
 
 #[test]
@@ -552,6 +638,106 @@ fn ip_refresh_failure_records_false_outcome() {
         .unwrap();
 
     assert_eq!(after, before + 1);
+}
+
+#[test]
+fn runtime_tls_sampling_reconfiguration_changes_rate() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    configure_tls_sampling(1);
+    let registry = global_registry();
+    let strategy = format!("runtime_sample_{}", Uuid::new_v4().simple());
+    let labels = [("sni_strategy", strategy.as_str()), ("outcome", "ok")];
+
+    let baseline = registry
+        .get_histogram(TLS_HANDSHAKE_MS, &labels)
+        .map(|snapshot| snapshot.count)
+        .unwrap_or(0);
+
+    for _ in 0..5 {
+        observe_histogram_with_kind(TLS_HANDSHAKE_MS, &labels, 25.0, SampleKind::TlsHandshake);
+    }
+
+    let after_low_rate = registry
+        .get_histogram(TLS_HANDSHAKE_MS, &labels)
+        .map(|snapshot| snapshot.count)
+        .unwrap_or(0);
+    assert_eq!(after_low_rate, baseline + 5);
+
+    configure_tls_sampling(10);
+    for _ in 0..30 {
+        observe_histogram_with_kind(TLS_HANDSHAKE_MS, &labels, 30.0, SampleKind::TlsHandshake);
+    }
+
+    let after_high_rate = registry
+        .get_histogram(TLS_HANDSHAKE_MS, &labels)
+        .map(|snapshot| snapshot.count)
+        .unwrap();
+    let recorded = after_high_rate.saturating_sub(after_low_rate);
+    assert_eq!(recorded, 3, "expected exactly three samples at rate 10");
+
+    configure_tls_sampling(5);
+}
+
+#[test]
+fn runtime_ip_redaction_respects_mode_and_debug() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    let registry = global_registry();
+    if let Err(err) = registry.register(TEST_RUNTIME_IP_METRIC) {
+        assert!(
+            matches!(err, MetricError::AlreadyRegistered(_)),
+            "register test metric failed: {}",
+            err
+        );
+    }
+
+    set_runtime_debug_mode(false);
+    set_runtime_ip_mode(ObservabilityRedactIpMode::Mask);
+
+    let masked_before = registry
+        .get_counter(TEST_RUNTIME_IP_METRIC, &[("client_ip", "203.0.*.*")])
+        .unwrap_or(0);
+
+    record_counter_metric(TEST_RUNTIME_IP_METRIC, &[("client_ip", "203.0.113.42")], 1);
+
+    let masked_after = registry
+        .get_counter(TEST_RUNTIME_IP_METRIC, &[("client_ip", "203.0.*.*")])
+        .unwrap();
+    assert_eq!(masked_after, masked_before + 1);
+
+    set_runtime_ip_mode(ObservabilityRedactIpMode::Full);
+    let full_before = registry
+        .get_counter(TEST_RUNTIME_IP_METRIC, &[("client_ip", "203.0.113.99")])
+        .unwrap_or(0);
+
+    record_counter_metric(TEST_RUNTIME_IP_METRIC, &[("client_ip", "203.0.113.99")], 1);
+
+    let full_after = registry
+        .get_counter(TEST_RUNTIME_IP_METRIC, &[("client_ip", "203.0.113.99")])
+        .unwrap();
+    assert_eq!(full_after, full_before + 1);
+
+    let masked_series = registry
+        .get_counter(TEST_RUNTIME_IP_METRIC, &[("client_ip", "203.0.*.*")])
+        .unwrap();
+    assert_eq!(masked_series, masked_after);
+
+    set_runtime_debug_mode(true);
+    set_runtime_ip_mode(ObservabilityRedactIpMode::Mask);
+    let debug_before = registry
+        .get_counter(TEST_RUNTIME_IP_METRIC, &[("client_ip", "198.51.100.7")])
+        .unwrap_or(0);
+
+    record_counter_metric(TEST_RUNTIME_IP_METRIC, &[("client_ip", "198.51.100.7")], 1);
+
+    let debug_after = registry
+        .get_counter(TEST_RUNTIME_IP_METRIC, &[("client_ip", "198.51.100.7")])
+        .unwrap();
+    assert_eq!(debug_after, debug_before + 1);
+
+    set_runtime_debug_mode(false);
+    set_runtime_ip_mode(ObservabilityRedactIpMode::Mask);
 }
 
 #[test]
@@ -777,6 +963,51 @@ fn metrics_histogram_raw_sample_capacity_updates() {
     let window_total: u64 = snapshot.points.iter().map(|p| p.count).sum();
     assert_eq!(snapshot.count, window_total);
     assert_eq!(snapshot.count, 4);
+}
+
+#[test]
+fn runtime_memory_pressure_disables_raw_samples() {
+    let _guard = aggregate_lock();
+    ensure_metrics_init();
+    let provider = ensure_aggregate_init();
+    provider.reset();
+    provider.set(Duration::from_secs(600));
+
+    let registry = global_registry();
+    registry.enable_histogram_window(
+        TLS_HANDSHAKE_MS,
+        HistogramWindowConfig::enable_raw_samples(Duration::from_secs(300), 16),
+    );
+
+    let labels = [("sni_strategy", "memory-pressure"), ("outcome", "ok")];
+    let baseline = registry
+        .get_counter(METRIC_MEMORY_PRESSURE_TOTAL, &[])
+        .unwrap_or(0);
+
+    set_runtime_memory_limit(1);
+    for value in [12.0, 24.0, 48.0, 96.0] {
+        observe_histogram_metric(TLS_HANDSHAKE_MS, &labels, value);
+    }
+    force_memory_pressure_check();
+
+    let after = registry
+        .get_counter(METRIC_MEMORY_PRESSURE_TOTAL, &[])
+        .unwrap_or(0);
+    assert!(
+        after >= baseline + 1,
+        "memory pressure counter should advance"
+    );
+
+    let snapshot = registry
+        .snapshot_histogram_window(TLS_HANDSHAKE_MS, &labels, WindowRange::LastFiveMinutes, &[])
+        .expect("histogram snapshot");
+    assert!(
+        snapshot.raw_samples.is_empty(),
+        "raw samples should be disabled after memory pressure"
+    );
+
+    set_runtime_memory_limit(8_000_000);
+    registry.enable_histogram_window(TLS_HANDSHAKE_MS, HistogramWindowConfig::default());
 }
 
 #[test]
@@ -1044,6 +1275,18 @@ fn alerts_engine_triggers_and_resolves() {
 
     let registry = global_registry();
     let kind = format!("GitAlert_{}", Uuid::new_v4());
+    let failed_before = registry
+        .get_counter(
+            GIT_TASKS_TOTAL,
+            &[("kind", kind.as_str()), ("state", "failed")],
+        )
+        .unwrap_or(0);
+    let completed_before = registry
+        .get_counter(
+            GIT_TASKS_TOTAL,
+            &[("kind", kind.as_str()), ("state", "completed")],
+        )
+        .unwrap_or(0);
     for idx in 0..6 {
         let id = format!("{kind}-{idx}");
         publish_global(Event::Task(TaskEvent::Started {
@@ -1065,13 +1308,29 @@ fn alerts_engine_triggers_and_resolves() {
     let warn_before = registry
         .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
         .unwrap_or(0);
+    wait_for_counter(
+        &registry,
+        GIT_TASKS_TOTAL,
+        &[("kind", kind.as_str()), ("state", "failed")],
+        failed_before + 4,
+    );
+    wait_for_counter(
+        &registry,
+        GIT_TASKS_TOTAL,
+        &[("kind", kind.as_str()), ("state", "completed")],
+        completed_before + 2,
+    );
+
     evaluate_alerts_now();
 
     let events_first = memory_bus.take_all();
     let warn_after = registry
         .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
         .unwrap_or(0);
-    assert!(warn_after >= warn_before + 1, "expected at least one firing alert");
+    assert!(
+        warn_after >= warn_before + 1,
+        "expected at least one firing alert"
+    );
 
     let firing_states: Vec<MetricAlertState> = events_first
         .into_iter()
@@ -1092,6 +1351,13 @@ fn alerts_engine_triggers_and_resolves() {
         }));
         publish_global(Event::Task(TaskEvent::Completed { id }));
     }
+
+    wait_for_counter(
+        &registry,
+        GIT_TASKS_TOTAL,
+        &[("kind", kind.as_str()), ("state", "completed")],
+        completed_before + 12,
+    );
 
     evaluate_alerts_now();
 
@@ -1132,14 +1398,72 @@ fn alerts_engine_uses_builtin_rules_when_file_missing() {
         .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
         .unwrap_or(0);
 
-    let kind = format!("BuiltinAlert_{}", Uuid::new_v4());
-    for idx in 0..60 {
+    let kind = format!("GitClone_{}", Uuid::new_v4());
+    let (mut window_fail_before, mut window_total_before) = current_git_totals(&registry);
+    let mut balance_completions: u64 = 0;
+    if window_fail_before > 0 {
+        let required_total = window_fail_before
+            .saturating_mul(20)
+            .saturating_add(1);
+        if window_total_before < required_total {
+            balance_completions = required_total - window_total_before;
+            let needed = usize::try_from(balance_completions)
+                .expect("balance completions should fit usize");
+            for idx in 0..needed {
+                let id = format!("{kind}-balance-{idx}");
+                publish_global(Event::Task(TaskEvent::Started {
+                    id: id.clone(),
+                    kind: kind.clone(),
+                }));
+                publish_global(Event::Task(TaskEvent::Completed { id }));
+            }
+            provider.advance(Duration::from_secs(60));
+            evaluate_alerts_now();
+            memory_bus.take_all();
+            let (fail_after_balance, total_after_balance) = current_git_totals(&registry);
+            window_fail_before = fail_after_balance;
+            window_total_before = total_after_balance;
+        }
+    }
+    let balanced_completed = wait_for_counter(
+        &registry,
+        GIT_TASKS_TOTAL,
+        &[("kind", kind.as_str()), ("state", "completed")],
+        balance_completions,
+    );
+    let failed_before = registry
+        .get_counter(
+            GIT_TASKS_TOTAL,
+            &[("kind", kind.as_str()), ("state", "failed")],
+        )
+        .unwrap_or(0);
+    for idx in 0..10 {
+        let id = format!("{kind}-warmup-{idx}");
+        publish_global(Event::Task(TaskEvent::Started {
+            id: id.clone(),
+            kind: kind.clone(),
+        }));
+        publish_global(Event::Task(TaskEvent::Completed { id }));
+    }
+
+    let completed_before = wait_for_counter(
+        &registry,
+        GIT_TASKS_TOTAL,
+        &[("kind", kind.as_str()), ("state", "completed")],
+        balanced_completed + 10,
+    );
+
+    provider.advance(Duration::from_secs(60));
+    evaluate_alerts_now();
+    memory_bus.take_all();
+
+    for idx in 0..200 {
         let id = format!("{kind}-{idx}");
         publish_global(Event::Task(TaskEvent::Started {
             id: id.clone(),
             kind: kind.clone(),
         }));
-        if idx < 54 {
+        if idx < 180 {
             publish_global(Event::Task(TaskEvent::Failed {
                 id,
                 category: "Network".into(),
@@ -1151,13 +1475,37 @@ fn alerts_engine_uses_builtin_rules_when_file_missing() {
         }
     }
 
+    let failed = wait_for_counter(
+        &registry,
+        GIT_TASKS_TOTAL,
+        &[("kind", kind.as_str()), ("state", "failed")],
+        failed_before + 180,
+    );
+    let completed = wait_for_counter(
+        &registry,
+        GIT_TASKS_TOTAL,
+        &[("kind", kind.as_str()), ("state", "completed")],
+        completed_before + 20,
+    );
+    assert_eq!(failed, failed_before + 180, "expected failed count to match workload");
+    assert_eq!(
+        completed,
+        completed_before + 20,
+        "expected completed count to match workload",
+    );
+
+    provider.advance(Duration::from_secs(60));
     evaluate_alerts_now();
 
     let events = memory_bus.take_all();
     let warn_after = registry
         .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
         .unwrap_or(0);
-    assert!(warn_after >= warn_before + 1, "expected builtin rule to fire");
+    let (window_fail_after, window_total_after) = current_git_totals(&registry);
+    assert!(
+        warn_after >= warn_before + 1,
+        "expected builtin rule to fire; warn_before={warn_before} warn_after={warn_after} fail_before={window_fail_before} total_before={window_total_before} fail_after={window_fail_after} total_after={window_total_after} balance_completions={balance_completions} events={events:?}"
+    );
 
     assert!(events.iter().any(|event| matches!(
         event,
@@ -1215,13 +1563,11 @@ fn alerts_engine_respects_min_repeat_interval() {
 
     evaluate_alerts_now();
     let second_events = memory_bus.take_all();
-    assert!(second_events
-        .iter()
-        .all(|event| !matches!(
-            event,
-            Event::Strategy(StrategyEvent::MetricAlert { rule_id, .. })
-                if rule_id == "repeat_interval_rule"
-        )));
+    assert!(second_events.iter().all(|event| !matches!(
+        event,
+        Event::Strategy(StrategyEvent::MetricAlert { rule_id, .. })
+            if rule_id == "repeat_interval_rule"
+    )));
 }
 
 #[test]
@@ -1269,10 +1615,18 @@ fn alerts_engine_division_by_zero_skips_rule() {
         .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
         .unwrap_or(0);
 
-    assert!(events
-        .iter()
-        .all(|event| !matches!(event, Event::Strategy(StrategyEvent::MetricAlert { .. }))));
-    assert_eq!(warn_before, warn_after, "division by zero rule should be skipped");
+    let unexpected_alert = events.iter().find(|event| {
+        matches!(
+            event,
+            Event::Strategy(StrategyEvent::MetricAlert { rule_id, .. })
+                if rule_id == "div_zero_rule"
+        )
+    });
+    assert!(unexpected_alert.is_none(), "div_zero_rule should not fire");
+    assert_eq!(
+        warn_before, warn_after,
+        "division by zero rule should be skipped"
+    );
 }
 
 #[test]
@@ -1314,9 +1668,17 @@ fn alerts_engine_hot_reload_applies_new_rules() {
 
     evaluate_alerts_now();
     let baseline_events = memory_bus.take_all();
-    assert!(baseline_events
-        .iter()
-        .all(|event| !matches!(event, Event::Strategy(StrategyEvent::MetricAlert { .. }))));
+    let baseline_alert = baseline_events.iter().find(|event| {
+        matches!(
+            event,
+            Event::Strategy(StrategyEvent::MetricAlert { rule_id, .. })
+                if rule_id == "hot_reload_rule"
+        )
+    });
+    assert!(
+        baseline_alert.is_none(),
+        "hot_reload_rule should not fire before reload"
+    );
 
     let warn_before = global_registry()
         .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
@@ -1338,7 +1700,10 @@ fn alerts_engine_hot_reload_applies_new_rules() {
         .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
         .unwrap_or(0);
 
-    assert!(warn_after >= warn_before + 1, "hot reload should trigger alert");
+    assert!(
+        warn_after >= warn_before + 1,
+        "hot reload should trigger alert"
+    );
     assert!(updated_events.iter().any(|event| matches!(
         event,
         Event::Strategy(StrategyEvent::MetricAlert {
@@ -1348,6 +1713,20 @@ fn alerts_engine_hot_reload_applies_new_rules() {
         }) if rule_id == "hot_reload_rule"
             && matches!(state, MetricAlertState::Firing | MetricAlertState::Active)
     )));
+
+    for idx in 0..6 {
+        publish_global(Event::Strategy(StrategyEvent::IpPoolRefresh {
+            id: format!("hot-reload-resolve-{idx}"),
+            domain: "example.com".into(),
+            success: true,
+            candidates_count: 1,
+            min_latency_ms: Some(15),
+            max_latency_ms: Some(20),
+            reason: "hot_reload".into(),
+        }));
+    }
+    evaluate_alerts_now();
+    memory_bus.take_all();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
