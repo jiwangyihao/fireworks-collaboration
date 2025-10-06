@@ -1044,10 +1044,56 @@ P8.6 在既有指标基础上聚焦“高频路径降开销 + 数据脱敏 + 资
 - 导出接口在速率限制恒定压力下仍能稳定返回，后台 flush 不因导出阻塞。
 - `cargo test --manifest-path src-tauri/Cargo.toml metrics`、`cargo clippy`, `cargo fmt` 通关；相关测试覆盖批量刷新、脱敏、采样、内存降级、告警稳定。
 
-### 3.7 P8.7 灰度与推广策略（实现说明占位）
-TODO:
-- [ ] 层级枚举 + promote/downgrade API
-- [ ] 资源评估任务（CPU/内存采样）
-- [ ] 自动降级判定 & 事件
-- [ ] 评估报告生成脚本（导出 JSON）
-- [ ] 集成测试：多层切换、异常注入
+### 3.7 P8.7 灰度与推广策略（实现说明）
+
+P8.7 将“分层放量”的策略真正落地到运行时：所有可观测性子模块在初始化前都会根据 `ObservabilityConfig.layer` 与动态状态机判定是否启用；同时，当资源受限时会自动降级并发出事件/指标，便于灰度回滚。
+
+#### 实施拆解
+
+- **层级定义与配置扩展**
+   1. `core/config/model.rs` 中新增 `ObservabilityLayer`（`basic → aggregate → export → ui → alerts → optimize`）枚举，以及 `ObservabilityConfig` 字段：`layer`（默认 `optimize`）、`auto_downgrade`、`min_layer_residency_secs`、`downgrade_cooldown_secs`。默认行为是启用自动降级，最短驻留 5 分钟、降级冷却 2 分钟。
+   2. `ObservabilityConfig::default()` 预设所有开关为 true，`layer=Optimize`，并通过 `serde` camelCase 序列化/反序列化，与 `config.json` 兼容。配置测试 `src-tauri/tests/config.rs` 新增断言覆盖新字段默认值与 JSON 键名称。
+
+- **层级解析与状态机管理**
+   1. `core/metrics/layer.rs` 新建 `LayerManager`：计算配置派生结果 (`resolve_config`) 时，会综合总开关、子模块开关与目标层级，得出有效层级 (`effective_layer`) 及最大允许层级 (`max_allowed_layer`)。例如 `aggregate_enabled=false` 将把目标层 clamp 到 `Basic` 并关闭聚合。
+   2. `LayerManager::initialize` 在首次调用 `init_basic_observability` 时注入全局单例。随后每次 `init_*_observability` 调用都会重新 `resolve_config` 并执行 `update_from_resolved`，确保配置热更新、重复初始化或降级时状态一致。
+   3. 当前层级存入 `AtomicU8`，暴露 `current_layer()`、`set_layer()`（手动灰度切换）、`auto_downgrade(reason)` 以及 `resolved_state()`。`set_layer` 会 clamp 到 `target/max_allowed` 并更新指标；`auto_downgrade` 在满足时间守卫后将层级降一档。
+
+- **指标与事件曝光**
+   1. 在 `descriptors.rs` 注册 `OBSERVABILITY_LAYER` Gauge，`LayerManager::write_gauge` 将当前层级（`0..=5`）写入注册表，导出层与 Prometheus 均可读取。《Prometheus 编码》测试已断言文本输出包含该 Gauge。
+   2. 每次层级变更通过 `StrategyEvent::ObservabilityLayerChanged`（新增枚举值）广播，包含 `from/to/initiator/reason`。自动降级时 `initiator=auto-downgrade`，手工调用 `set_layer` 时 `initiator=manual`。
+   3. `resolve_config` 结果提供 `aggregate_enabled/export_enabled/ui_enabled/alerts_enabled/optimize_enabled` 标记，供各初始化函数判断是否继续装载子系统。
+
+- **资源感知自动降级**
+   1. `core/metrics/runtime.rs` 的内存水位检查（P8.6）在触发时会调用 `layer::handle_memory_pressure()`，继而走 `auto_downgrade("memory_pressure")`，确保高负载场景自动回退。
+   2. `auto_downgrade` 受 `min_layer_residency_secs`（最短驻留）与 `downgrade_cooldown_secs`（降级冷却）双守卫控制；同一层级降级后，在冷却期内不会再次降级，避免 oscillation。
+
+- **再初始化与层级约束**
+   1. 当配置修改降低层级（例如 `export_enabled=false`），`init_basic_observability` 重新调用 `layer::initialize` 并自动将当前层 clamp 至 `Aggregate`，同时更新 Gauge 与事件，保证运行中动态回退安全。
+   2. 反之，恢复默认配置后，手工 `set_layer(Optimize, ...)` 即可回到最高层。
+
+#### 测试矩阵与验证
+
+- `src-tauri/tests/metrics/mod.rs` 新增多组端到端测试：
+   - `observability_layer_manual_transition_updates_gauge`：验证手动切换层级时事件推送与 Gauge 数值。
+   - `observability_layer_auto_downgrade_on_memory_pressure`：模拟内存压力触发降级，断言层级下降、Gauge 更新、事件 `initiator=auto-downgrade`。
+   - `observability_resolve_config_limits_component_flags`：覆盖 `resolve_config` 对 flags/clamp 的推导逻辑。
+   - `observability_reinitialize_clamps_layer_to_config`：重复初始化时确认当前层自动收敛到新配置允许的最大层级。
+   - `observability_auto_downgrade_respects_residency_and_cooldown`：校验最短驻留与冷却间隔生效，防止过度降级。
+- Prometheus 编码测试 (`prometheus_encoder_outputs_metrics`) 增补断言，确保导出文本内含 `observability_layer` Gauge。
+- 所有测试通过 `cargo test -q --manifest-path src-tauri/Cargo.toml metrics` 执行；内存守卫测试使用 `aggregate_lock()` 串行化避免时间竞争。
+
+#### 运行期运维指引
+
+- 手工灰度：调用 `set_layer(<target>, Some("reason"))` 可即时切换，或在配置中设置 `observability.layer` 并重载。`LayerManager` 会记录事件方便追踪。
+- 自动回退：保持 `auto_downgrade=true`，配置合适的驻留/冷却时间；发生降级时，`observability_layer` Gauge 与事件总线都会提示根因，可结合日志定位。
+- 重新拉升：在资源稳定后将配置恢复并手工 `set_layer`，即可逐层放量。
+- 监控：Prometheus/面板可直接读取 Gauge 判断当前层级；事件总线可订阅 `StrategyEvent::ObservabilityLayerChanged` 做审计。
+
+#### 验收标准（Definition of Done）
+
+- 配置字段、默认值与序列化格式均在测试覆盖下校验；`ObservabilityConfig` JSON round-trip 保留层级参数。
+- 若配置禁用某子层级（如 `export_enabled=false`），对应初始化入口不再创建资源；恢复配置后重新加载无需重启。
+- 自动降级在检测到内存压力后 1 次评估内完成，且最短驻留/冷却保护生效；相关事件和指标可供观察。
+- 手动与自动切换均会更新 Gauge 与事件，不会出现层级与实际初始化状态不一致的情况。
+- `cargo test -q --manifest-path src-tauri/Cargo.toml metrics`、`cargo fmt`、`cargo clippy` 均通过，新测试将层级状态机的主要分支全部覆盖。
