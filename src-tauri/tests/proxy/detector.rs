@@ -554,12 +554,25 @@ fn test_detect_socks5_proxy() {
     let original = env::var("ALL_PROXY").ok();
     let original_http = env::var("HTTP_PROXY").ok();
     let original_https = env::var("HTTPS_PROXY").ok();
+    // 也记录并清理可能残留的小写变量（其他测试可能设置）
+    let original_lower_http = env::var("http_proxy").ok();
+    let original_lower_https = env::var("https_proxy").ok();
+    let original_lower_all = env::var("all_proxy").ok();
 
     env::remove_var("HTTP_PROXY");
     env::remove_var("HTTPS_PROXY");
+    env::remove_var("http_proxy");
+    env::remove_var("https_proxy");
+    env::remove_var("all_proxy");
     env::set_var("ALL_PROXY", "socks5://socks-proxy.example.com:1080");
 
+    // 使用 ALL_PROXY 以便在 detect_from_env 遍历顺序中优先匹配（HTTPS_PROXY/HTTP_PROXY 已被删除）
     let result = SystemProxyDetector::detect_from_env();
+    if let Some(cfg) = &result {
+        eprintln!("detected proxy mode={:?} url={} (expected Socks5)", cfg.mode, cfg.url);
+    } else {
+        eprintln!("no proxy detected for socks5 test");
+    }
 
     match original {
         Some(val) => env::set_var("ALL_PROXY", val),
@@ -573,10 +586,22 @@ fn test_detect_socks5_proxy() {
         Some(val) => env::set_var("HTTPS_PROXY", val),
         None => env::remove_var("HTTPS_PROXY"),
     }
+    match original_lower_http {
+        Some(val) => env::set_var("http_proxy", val),
+        None => env::remove_var("http_proxy"),
+    }
+    match original_lower_https {
+        Some(val) => env::set_var("https_proxy", val),
+        None => env::remove_var("https_proxy"),
+    }
+    match original_lower_all {
+        Some(val) => env::set_var("all_proxy", val),
+        None => env::remove_var("all_proxy"),
+    }
 
     assert!(result.is_some());
     let config = result.unwrap();
-    assert_eq!(config.mode, ProxyMode::Socks5);
+    assert_eq!(config.mode, ProxyMode::Socks5, "expected Socks5 but got {:?} with url {}", config.mode, config.url);
     assert!(config.url.contains("socks-proxy.example.com"));
 }
 

@@ -23,6 +23,17 @@ fn init_empty_repo(path: &Path) {
             let _ = cfg.set_bool("core.autocrlf", false);
             let _ = cfg.set_bool("core.safecrlf", false);
             let _ = cfg.set_str("core.eol", "lf");
+            // CI 环境下常缺失 user.name/user.email，导致后续 git_commit 失败：
+            // error: signature: config value 'user.name' was not found
+            // 仅在未显式配置时注入测试默认值，避免影响本地已有个性化设置。
+            let name_missing = cfg.get_entry("user.name").is_err();
+            if name_missing {
+                let _ = cfg.set_str("user.name", "Test User");
+            }
+            let email_missing = cfg.get_entry("user.email").is_err();
+            if email_missing {
+                let _ = cfg.set_str("user.email", "test@example.com");
+            }
         }
     }
 }
