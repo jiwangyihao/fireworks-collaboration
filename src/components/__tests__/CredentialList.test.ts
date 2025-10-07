@@ -17,7 +17,20 @@ vi.mock('../ConfirmDialog.vue', () => ({
 
 // Mock credential API
 vi.mock('../../api/credential', () => ({
-  formatTimestamp: (timestamp: number) => new Date(timestamp * 1000).toLocaleString(),
+  // Return a stable, locale-independent format starting with YYYY/M/D so tests
+  // that assert against a YYYY/MM/DD-like pattern are not affected by the
+  // runner's locale (which may produce MM/DD/YYYY in some environments).
+  formatTimestamp: (timestamp: number | undefined) => {
+    if (!timestamp) return 'N/A';
+    const d = new Date(timestamp * 1000);
+    const y = d.getFullYear();
+    const m = d.getMonth() + 1; // 1-12
+    const day = d.getDate(); // 1-31
+    const hh = d.getHours();
+    const mm = d.getMinutes();
+    const ss = d.getSeconds();
+    return `${y}/${m}/${day}, ${hh}:${mm}:${ss}`;
+  },
   isExpiringSoon: (expiresAt?: number) => {
     if (!expiresAt) return false;
     const now = Math.floor(Date.now() / 1000);
