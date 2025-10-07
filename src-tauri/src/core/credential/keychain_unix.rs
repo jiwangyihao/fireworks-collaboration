@@ -157,7 +157,6 @@ impl CredentialStore for UnixCredentialStore {
 impl CredentialStore for UnixCredentialStore {
     fn get(&self, host: &str, username: Option<&str>) -> CredentialStoreResult<Option<Credential>> {
         use std::collections::HashMap;
-        use secret_service::EncryptionType; // keep for clarity (may help future enhancement)
 
         // Build attribute map. We always include host; optionally username.
         let mut query: HashMap<&str, String> = HashMap::new();
@@ -170,21 +169,20 @@ impl CredentialStore for UnixCredentialStore {
         let result = self.runtime.block_on(self.connection.search_items(attr))
             .map_err(|e| CredentialStoreError::AccessError(format!("Secret Service search error: {e}")))?;
 
-        // Prefer unlocked items; unlock first locked if needed
-        let item_opt = if let Some(item) = result.unlocked.first() { Some(item.clone()) } else {
+        // Prefer unlocked items; if first locked exists attempt unlock (operate on references, no clone needed)
+        let mut item_ref: Option<&secret_service::Item<'_>> = result.unlocked.first();
+        if item_ref.is_none() {
             if let Some(locked) = result.locked.first() {
                 let _ = self.runtime.block_on(locked.unlock());
-                Some(locked.clone())
-            } else { None }
-        };
+                // After unlock we still hold reference
+                item_ref = Some(locked);
+            }
+        }
 
-        if let Some(item) = item_opt {
+        if let Some(item) = item_ref {
             let secret = self.runtime.block_on(item.get_secret())
                 .map_err(|e| CredentialStoreError::AccessError(format!("Secret retrieval failed: {e}")))?;
-            // Need to reconstruct attributes for host/username; we stored them as attributes when creating.
-            let label = self.runtime.block_on(item.get_label())
-                .unwrap_or_else(|_| "".into());
-            // We rely on search attributes rather than label parsing.
+            // Reconstruct username if not provided, via attributes
             let username_val = username.map(|s| s.to_string()).or_else(|| {
                 // Attempt to fetch attributes if username was not specified.
                 self.runtime.block_on(item.get_attributes())
@@ -229,10 +227,15 @@ impl CredentialStore for UnixCredentialStore {
         ]);
         let result = self.runtime.block_on(self.connection.search_items(attrs))
             .map_err(|e| CredentialStoreError::AccessError(format!("Secret Service search error: {e}")))?;
-        let target = if let Some(item) = result.unlocked.first() { Some(item.clone()) } else { result.locked.first().cloned() };
-        if let Some(item) = target {
-            // Try unlock if locked
-            let _ = self.runtime.block_on(item.unlock());
+        // Work with references; unlock locked item if chosen
+        let mut item_ref: Option<&secret_service::Item<'_>> = result.unlocked.first();
+        if item_ref.is_none() {
+            if let Some(locked) = result.locked.first() {
+                let _ = self.runtime.block_on(locked.unlock());
+                item_ref = Some(locked);
+            }
+        }
+        if let Some(item) = item_ref {
             self.runtime.block_on(item.delete())
                 .map_err(|e| CredentialStoreError::AccessError(format!("Delete failed: {e}")))?;
             Ok(())
