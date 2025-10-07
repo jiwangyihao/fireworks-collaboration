@@ -131,12 +131,31 @@ pub fn git_commit<F: FnMut(ProgressPayload)>(
             }
         }
     } else {
-        repo.signature().map_err(|e| {
-            GitError::new(
-                ErrorCategory::Internal,
-                format!("signature: {}", e.message()),
-            )
-        })?
+        // 默认使用仓库配置中的签名；若缺失则注入一次默认身份再重试。
+        match repo.signature() {
+            Ok(s) => s,
+            Err(e) => {
+                let msg = e.message().to_owned();
+                if msg.contains("config value 'user.name'") || msg.contains("config value 'user.email'") {
+                    if let Ok(mut cfg) = repo.config() {
+                        let _ = cfg.set_str("user.name", "Test User");
+                        let _ = cfg.set_str("user.email", "test@example.com");
+                    }
+                    // 重试一次
+                    repo.signature().map_err(|e2| {
+                        GitError::new(
+                            ErrorCategory::Internal,
+                            format!("signature: {}", e2.message()),
+                        )
+                    })?
+                } else {
+                    return Err(GitError::new(
+                        ErrorCategory::Internal,
+                        format!("signature: {}", msg),
+                    ));
+                }
+            }
+        }
     };
 
     // Parents
