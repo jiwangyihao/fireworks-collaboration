@@ -22,12 +22,21 @@ fn cleanup_test_file(path: &PathBuf) {
 
 #[test]
 fn test_factory_fallback_from_invalid_file_path() {
-    // 配置一个无效的文件路径（无权限或不存在的目录）
-    let invalid_path = if cfg!(windows) {
-        "C:\\Windows\\System32\\invalid_location\\creds.enc"
-    } else {
-        "/root/invalid_location/creds.enc"
-    };
+    // 构造一个“确定”无效的文件路径：让父路径是一个普通文件。
+    // 这样在 EncryptedFileStore::new 中调用 create_dir_all 时一定失败，触发回退。
+    // 这样避免依赖诸如 System32 或 /root 等目录权限在 CI Runner 上的差异。
+
+    let temp_dir = std::env::temp_dir();
+    let marker_file = temp_dir.join("fireworks_factory_invalid_parent_marker");
+    // 写入或覆盖一个普通文件
+    std::fs::write(&marker_file, b"marker").expect("写入临时文件失败");
+
+    // 将该文件当作“目录”再追加子路径，保证后续 create_dir_all 出错
+    let invalid_path = marker_file
+        .join("subdir")
+        .join("creds.enc")
+        .to_string_lossy()
+        .to_string();
 
     let config = CredentialConfig::new()
         .with_storage(StorageType::File)
