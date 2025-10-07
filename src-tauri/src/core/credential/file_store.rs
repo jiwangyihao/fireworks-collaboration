@@ -300,6 +300,33 @@ impl EncryptedFileStore {
                 .map_err(|e| format!("Failed to create credential file directory: {e}"))?;
         }
 
+        // 可写性探测：尝试创建/打开文件以确认当前进程具备写权限。
+        // 设计原因：避免在构造阶段“看似成功”，但后续第一次写入(add)时才因为权限错误失败，
+        // 使上层工厂无法触发回退逻辑（导致测试在 Windows 上失败）。
+        // 实现策略：
+        // 1. 记录文件是否已存在 (existed)
+        // 2. 使用 OpenOptions::new().create(true).write(true) 打开文件
+        // 3. 如果打开失败 -> 立即返回 Err 让工厂回退到内存存储
+        // 4. 如果文件原本不存在，则删除之，避免留下空文件（否则后续 load 会尝试解析空内容并报错）
+        // 5. 若删除失败，仅记录日志（不视为致命错误），因为后续第一次保存会覆盖。
+        use std::fs::OpenOptions;
+        let existed_already = file_path.exists();
+        match OpenOptions::new().create(true).write(true).append(false).open(&file_path) {
+            Ok(_) => {
+                if !existed_already {
+                    if let Err(e) = fs::remove_file(&file_path) {
+                        // 仅警告，不阻断；后续 save_credentials 会覆盖写入
+                        tracing::warn!("Temporary probe file removal failed: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(format!(
+                    "Failed to open credential file for write (permission probe): {e}"
+                ));
+            }
+        }
+
         let key_cache_ttl = Duration::from_secs(config.key_cache_ttl_seconds);
 
         Ok(EncryptedFileStore {
