@@ -820,6 +820,11 @@ mod section_tls_mixed_scenarios {
             // origin
             let src = tempfile::tempdir().unwrap();
             let repo = git2::Repository::init(src.path()).unwrap();
+            // 注入本地测试身份（避免 CI 缺省 global config 时 repo.signature() 失败）
+            if let Ok(mut cfg) = repo.config() {
+                if cfg.get_entry("user.name").is_err() { let _ = cfg.set_str("user.name", "Test User"); }
+                if cfg.get_entry("user.email").is_err() { let _ = cfg.set_str("user.email", "test@example.com"); }
+            }
             std::fs::write(src.path().join("f.txt"), "x").unwrap();
             let mut idx = repo.index().unwrap();
             idx.add_path(std::path::Path::new("f.txt")).unwrap();
