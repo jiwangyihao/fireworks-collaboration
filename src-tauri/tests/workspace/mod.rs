@@ -1628,12 +1628,22 @@ async fn test_workspace_status_performance_targets() {
     for &(count, concurrency) in &[(10usize, 4usize), (50, 10), (100, 16)] {
         let per_repo = measure_status_query(count, concurrency).await;
         let total = per_repo * count as f64;
+        // 动态阈值策略：
+        // - 基础：baseline * 2 + 10ms（原逻辑）
+        // - Windows 下文件 IO/进程调度抖动更大，增加 5ms 固定缓冲，并确保至少 baseline * 2 + 15ms
+        // - 同时对较大批次按 log2(count) 给予额外缓冲（最多 ~7ms），避免规模线性放大时偶发抖动
+        let mut threshold = baseline * 2.0 + 10.0;
+        #[cfg(windows)]
+        {
+            let scale_buf = (count as f64).log2();
+            threshold = (baseline * 2.0 + 15.0).max(threshold + 5.0 + scale_buf);
+        }
         eprintln!(
-            "workspace_status: count={count} concurrency={concurrency} per_repo={per_repo:.2}ms total={total:.2}ms baseline={baseline:.2}ms"
+            "workspace_status: count={count} concurrency={concurrency} per_repo={per_repo:.2}ms total={total:.2}ms baseline={baseline:.2}ms threshold={threshold:.2}ms"
         );
         assert!(
-            per_repo <= baseline * 2.0 + 10.0,
-            "status per-repo latency {per_repo:.2}ms exceeded threshold (baseline {baseline:.2}ms)"
+            per_repo <= threshold,
+            "status per-repo latency {per_repo:.2}ms exceeded threshold {threshold:.2}ms (baseline {baseline:.2}ms)"
         );
         assert!(
             total <= 3_000.0,
