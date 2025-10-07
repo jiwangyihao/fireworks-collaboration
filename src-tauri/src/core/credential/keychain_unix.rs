@@ -56,13 +56,18 @@ impl UnixCredentialStore {
         Err("Unix keychain not supported on this platform".to_string())
     }
 
-    /// Makes an account name from host and username.
-    fn make_account(host: &str, username: &str) -> String {
+    /// 构造账户标识 (host + username) 的内部辅助函数。
+    ///
+    /// 注意: 仅因集成测试 (`tests/credential/unit_tests.rs`) 需要验证格式/解析而暴露。
+    /// 这不是稳定公共 API，后续实现中可能随时调整；业务代码请勿依赖。
+    pub fn make_account(host: &str, username: &str) -> String {
         format!("{}:{}:{}", ACCOUNT_PREFIX, host, username)
     }
 
-    /// Parses host and username from account name.
-    fn parse_account(account: &str) -> Option<(String, String)> {
+    /// 解析 `make_account` 生成的账户标识，返回 (host, username)。
+    /// 仅测试使用，非稳定公共 API。
+    #[doc(hidden)]
+    pub fn parse_account(account: &str) -> Option<(String, String)> {
         let parts: Vec<&str> = account.split(':').collect();
         if parts.len() == 3 && parts[0] == ACCOUNT_PREFIX {
             Some((parts[1].to_string(), parts[2].to_string()))
