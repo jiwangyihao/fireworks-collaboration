@@ -1454,10 +1454,16 @@ fn alerts_engine_triggers_and_resolves() {
     let memory_bus = MemoryEventBus::new();
     fanout.register(Arc::new(memory_bus.clone()));
 
-    // 使用唯一 kind 标签限制统计范围，避免其他测试残留指标干扰导致触发比率被稀释
+    // 使用唯一 kind 标签限制统计范围
     let kind = format!("GitAlert_{}", Uuid::new_v4());
+    // 规则表达式需符合 Prometheus 语法: label value 必须使用双引号
     let rule_spec = format!(
-        "[{{\n  \"id\": \"git_fail_rate\",\n  \"expr\": \"git_tasks_total{{kind={kind},state=failed}}/git_tasks_total{{kind={kind}}} > 0.3\",\n  \"severity\": \"warn\",\n  \"window\": \"5m\"\n}}]"
+        r#"[{{
+  "id": "git_fail_rate",
+  "expr": "git_tasks_total{{kind=\"{kind}\",state=\"failed\"}}/git_tasks_total{{kind=\"{kind}\"}} > 0.3",
+  "severity": "warn",
+  "window": "5m"
+}}]"#
     );
     fs::write(alerts_rules_path(), rule_spec).expect("write rule file");
     memory_bus.take_all();
@@ -1465,8 +1471,7 @@ fn alerts_engine_triggers_and_resolves() {
     memory_bus.take_all();
 
     let registry = global_registry();
-    // kind 已在上方定义并写入规则
-    // 读取当前（全局可能已存在的）该 kind 的初始计数（通常为 0）
+    // 记录本测试专属 kind 初始值（初次应为 0）
     let failed_before = registry
         .get_counter(GIT_TASKS_TOTAL, &[("kind", kind.as_str()), ("state", "failed")])
         .unwrap_or(0);
@@ -1474,21 +1479,10 @@ fn alerts_engine_triggers_and_resolves() {
         .get_counter(GIT_TASKS_TOTAL, &[("kind", kind.as_str()), ("state", "completed")])
         .unwrap_or(0);
 
-    // 全局所有 git_tasks_total 计数（无 kind 过滤）可能已被其它测试累积，导致简单固定 4/6 无法越过 0.3 比例
-    // 利用 current_git_totals 读出当前窗口失败与总数，动态计算需要注入的失败次数 f，使得
-    // (global_failed_before + f) / (global_total_before + f + s) > 0.3  (s 为我们计划添加的成功次数)
-    let (global_failed_before, global_total_before) = current_git_totals(&registry);
-    let s: u64 = 2; // 固定添加 2 个成功事件（保持最小扰动）
-    let mut f: u64 = 1;
-    while f < 10_000 {
-        let new_failed = global_failed_before + f;
-        let new_total = global_total_before + f + s;
-        if (new_failed as f64) / (new_total as f64) > 0.31 { // 略高于阈值增加安全余量
-            break;
-        }
-        f += 1;
-    }
-    // 生成 f 个失败、s 个成功事件（均使用唯一 kind，避免与其他测试混淆）
+    // 简化策略：直接注入失败 3、成功 2，形成 3/(3+2)=0.6 > 0.3，避免全局指标干扰复杂计算
+    let f: u64 = 3; // failures
+    let s: u64 = 2; // successes
+
     for idx in 0..f {
         let id = format!("{kind}-fail-{idx}");
         publish_global(Event::Task(TaskEvent::Started { id: id.clone(), kind: kind.clone() }));
