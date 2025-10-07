@@ -8,7 +8,12 @@ on:
 
 jobs:
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
+    # 使用 bash 以复用现有 Linux shell 脚本逻辑（grep/awk 等）
+    # 放弃当前阶段的 Linux 覆盖率执行，专注 Windows 运行稳定性
+    defaults:
+      run:
+        shell: bash
     permissions:
       contents: read
       actions: read
