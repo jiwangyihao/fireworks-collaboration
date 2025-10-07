@@ -1473,6 +1473,7 @@ dependencies = [
  "winapi",
  "winreg 0.52.0",
  "x509-parser",
+ "zbus 3.15.2",
  "zbus 5.8.0",
  "zeroize",
 ]
@@ -7039,6 +7040,7 @@ dependencies = [
  "serde_repr",
  "sha1",
  "static_assertions",
+ "tokio",
  "tracing",
  "uds_windows",
  "winapi",
