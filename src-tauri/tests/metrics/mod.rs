@@ -1038,15 +1038,20 @@ fn observability_layer_manual_transition_updates_gauge() {
     let changed = set_layer(target, Some("manual-test"));
     assert!(changed, "expected layer change to occur");
 
-    // Windows 下事件与 gauge 更新可能 >10ms，改为轮询最多 500ms。
+    // Windows 下事件与 gauge 更新可能 >10ms，因此轮询；同时其它测试可能在我们断言前再次切换层级
+    //（例如提升到 Optimize=5），导致最终 gauge 不等于目标值而产生误报。这里记录在轮询窗口内是否
+    // 曾经达到目标值，只要达到过即可视为本次手动切换成功，其后漂移由其他测试引起不再失败。
     let mut poll_attempts = 0;
-    loop {
+    let mut matched_once = false;
+    let mut last_gauge = u64::MAX;
+    while poll_attempts <= 25 {
         std::thread::sleep(Duration::from_millis(20));
-        let gauge_now = global_registry()
+        last_gauge = global_registry()
             .get_gauge(OBSERVABILITY_LAYER, &[])
             .unwrap_or(u64::MAX);
-        if gauge_now == target.as_u8() as u64 || poll_attempts >= 25 {
-            break;
+        if last_gauge == target.as_u8() as u64 {
+            matched_once = true;
+            break; // 已经确认写入成功，避免被后续并发修改影响
         }
         poll_attempts += 1;
     }
@@ -1063,15 +1068,20 @@ fn observability_layer_manual_transition_updates_gauge() {
             && reason.as_deref() == Some("manual-test")
     )));
 
-    let layer_value = global_registry()
-        .get_gauge(OBSERVABILITY_LAYER, &[])
-        .expect("layer gauge should exist");
-    assert_eq!(
-        layer_value,
-        target.as_u8() as u64,
-        "layer gauge mismatch after transition (polled {poll_attempts} times; got {layer_value} expected {} )",
+    assert!(
+        matched_once,
+        "layer gauge never reached target value within polling window (last_gauge={last_gauge} expected={} attempts={poll_attempts})",
         target.as_u8()
     );
+
+    // 如果最终值不同，仅发出调试日志（通过事件已验证过一次成功写入）。
+    if last_gauge != target.as_u8() as u64 {
+        eprintln!(
+            "info: gauge drifted after confirming target transition (final={} target={})",
+            last_gauge,
+            target.as_u8()
+        );
+    }
 
     let _ = set_layer(initial, Some("restore"));
     memory_bus.take_all();
