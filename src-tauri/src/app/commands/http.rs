@@ -24,9 +24,8 @@ pub(crate) fn redact_auth_in_headers(
     }
 
     // Case-insensitive matching for Authorization header
-    for (k, v) in headers.clone().iter() {
+    for (k, _v) in headers.clone().iter() {
         if k.eq_ignore_ascii_case("authorization") {
-            let _ = v; // silence unused warning
             headers.insert(k.clone(), "REDACTED".into());
         }
     }

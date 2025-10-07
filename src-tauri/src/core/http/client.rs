@@ -13,8 +13,16 @@ use tokio_rustls::rustls::ClientConfig;
 use tokio_rustls::TlsConnector;
 
 use crate::core::config::model::AppConfig;
-use crate::core::ip_pool::global::obtain_global_pool;
+use crate::core::ip_pool::global::pick_best_async;
 use crate::core::ip_pool::IpSelectionStrategy;
+use crate::core::ip_pool::IpOutcome;
+use crate::core::ip_pool::global::report_outcome_async;
+// Metrics / events instrumentation
+use crate::core::ip_pool::events::emit_ip_pool_selection;
+use crate::events::structured::{publish_global, Event as StructuredEvent, StrategyEvent as StructuredStrategyEvent};
+use uuid::Uuid;
+// Reuse existing metrics enabled flag (resides in git transport metrics module) to keep gating consistent
+use crate::core::git::transport::metrics::metrics_enabled;
 use crate::core::tls::util::{decide_sni_host_with_proxy, proxy_present};
 use crate::core::tls::verifier::create_client_config;
 
@@ -72,11 +80,59 @@ impl HttpClient {
         // 集成全局IP池，优先用 pick_best 选出的 IP 建立连接。
         // 注意：不能在 await 期间持有互斥锁，否则命令 Future 不满足 Send 约束。
         let start_total = Instant::now();
-        let sel = {
-            let pool_arc = obtain_global_pool();
-            let guard = pool_arc.lock().expect("ip pool lock");
-            guard.pick_best_blocking(&host, port).clone()
-        }; // 锁在此处释放
+        // 使用异步桥接进行选择，避免在当前 runtime 中阻塞
+        let sel = pick_best_async(&host, port).await;
+
+        // If we used ip pool selection, create a small guard that will report outcome back to the pool
+        // via the async bridge. By default the guard reports Failure; call .report_success() to mark success.
+        struct OutcomeReporter {
+            sel: Option<crate::core::ip_pool::IpSelection>,
+        }
+        impl OutcomeReporter {
+            fn report_success(mut self) {
+                if let Some(selection) = self.sel.take() {
+                    report_outcome_async(selection, IpOutcome::Success);
+                }
+            }
+        }
+        impl Drop for OutcomeReporter {
+            fn drop(&mut self) {
+                if let Some(selection) = self.sel.take() {
+                    report_outcome_async(selection, IpOutcome::Failure);
+                }
+            }
+        }
+
+        // Only keep reporter when selection used cached ip
+        let mut outcome_reporter = if sel.strategy() == IpSelectionStrategy::Cached {
+            Some(OutcomeReporter { sel: Some(sel.clone()) })
+        } else {
+            None
+        };
+
+        // Prepare observability context (shared id for selection + timing events)
+        let metrics_on = metrics_enabled();
+        let request_id = Uuid::new_v4();
+        if metrics_on {
+            // Emit IP pool selection structured event (mirrors git transport emission)
+            let candidates_count = sel.iter_candidates().count().min(255) as u8;
+            tracing::info!(
+                target = "http",
+                host = %host,
+                port = port,
+                strategy = ?sel.strategy(),
+                candidates = candidates_count,
+                "emitting IpPoolSelection event"
+            );
+            emit_ip_pool_selection(
+                request_id,
+                &host,
+                port,
+                sel.strategy(),
+                sel.selected(),
+                candidates_count,
+            );
+        }
 
         let (connect_addr, sni_host, used_ip_pool, connect_ms) = match sel.strategy() {
             IpSelectionStrategy::SystemDefault => {
@@ -183,7 +239,7 @@ impl HttpClient {
             let chunk = next.context("read body")?;
             buf.extend_from_slice(&chunk);
         }
-        let total_ms = start_total.elapsed().as_millis() as u32;
+    let total_ms = start_total.elapsed().as_millis() as u32;
 
         let body_size = buf.len();
         if self.should_warn_large_body(body_size) {
@@ -211,6 +267,45 @@ impl HttpClient {
             redirects: vec![],
             body_size,
         };
+
+        if metrics_on {
+            // Map strategy enum to label (consistent with IpPoolSelection emission helper)
+            let strategy_label = match sel.strategy() {
+                IpSelectionStrategy::Cached => "Cached",
+                IpSelectionStrategy::SystemDefault => "SystemDefault",
+            };
+            let ip_source = if used_ip_pool {
+                sel.selected().map(|stat| {
+                    stat
+                        .sources
+                        .iter()
+                        .map(|s| format!("{:?}", s))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+            } else {
+                None
+            };
+            let ip_latency_ms = if used_ip_pool { sel.selected().and_then(|s| s.latency_ms) } else { None };
+            publish_global(StructuredEvent::Strategy(StructuredStrategyEvent::AdaptiveTlsTiming {
+                id: request_id.to_string(),
+                kind: "HttpSingle".to_string(),
+                used_fake_sni: fake,
+                fallback_stage: "Direct".to_string(),
+                connect_ms: Some(connect_ms),
+                tls_ms: Some(tls_ms),
+                first_byte_ms: Some(first_byte_ms),
+                total_ms: Some(total_ms),
+                cert_fp_changed: false,
+                ip_source,
+                ip_latency_ms,
+                ip_selection_stage: Some(strategy_label.to_string()),
+            }));
+        }
+        // Mark success if we used ip pool and reached here
+        if let Some(r) = outcome_reporter.take() {
+            r.report_success();
+        }
         Ok(out)
     }
 }

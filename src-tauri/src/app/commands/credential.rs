@@ -134,7 +134,7 @@ pub async fn add_credential(
         .map_err(|e| format!("Failed to add credential: {}", e))?;
 
     // Log audit event
-    if let Ok(mut logger) = audit.lock() {
+    if let Ok(logger) = audit.lock() {
         logger.log_operation(
             crate::core::credential::audit::OperationType::Add,
             &request.host,
@@ -186,7 +186,7 @@ pub async fn get_credential(
         .map_err(|e| format!("Failed to get credential: {}", e))?;
 
     // Log audit event
-    if let Ok(mut logger) = audit.lock() {
+    if let Ok(logger) = audit.lock() {
         let username_str = username.as_deref().unwrap_or("");
         logger.log_operation(
             crate::core::credential::audit::OperationType::Get,
@@ -254,7 +254,7 @@ pub async fn update_credential(
         .map_err(|e| format!("Failed to add updated credential: {}", e))?;
 
     // Log audit event
-    if let Ok(mut logger) = audit.lock() {
+    if let Ok(logger) = audit.lock() {
         logger.log_operation(
             crate::core::credential::audit::OperationType::Update,
             &request.host,
@@ -306,7 +306,7 @@ pub async fn delete_credential(
         .map_err(|e| format!("Failed to delete credential: {}", e))?;
 
     // Log audit event
-    if let Ok(mut logger) = audit.lock() {
+        if let Ok(logger) = audit.lock() {
         logger.log_operation(
             crate::core::credential::audit::OperationType::Remove,
             &host,
@@ -354,7 +354,7 @@ pub async fn list_credentials(
         .map_err(|e| format!("Failed to list credentials: {}", e))?;
 
     // Log audit event
-    if let Ok(mut logger) = audit.lock() {
+        if let Ok(logger) = audit.lock() {
         logger.log_operation(
             crate::core::credential::audit::OperationType::List,
             "",
@@ -384,7 +384,7 @@ pub async fn list_credentials(
 /// Returns Ok(()) on success, or an error message on failure.
 #[tauri::command]
 pub async fn set_master_password(
-    password: String,
+    _password: String,
     config: CredentialConfig,
     factory: State<'_, SharedCredentialFactory>,
 ) -> Result<(), String> {
@@ -452,7 +452,7 @@ pub async fn unlock_store(
 
     // Log the result
     {
-        let mut logger = audit
+        let logger = audit
             .lock()
             .map_err(|e| format!("Failed to lock audit logger: {}", e))?;
 
@@ -540,7 +540,7 @@ pub async fn cleanup_expired_credentials(
                 .map_err(|e| format!("Failed to remove expired credential: {}", e))?;
 
             // Log audit event
-            if let Ok(mut logger) = audit.lock() {
+            if let Ok(logger) = audit.lock() {
                 logger.log_operation(
                     crate::core::credential::audit::OperationType::Remove,
                     &cred.host,
