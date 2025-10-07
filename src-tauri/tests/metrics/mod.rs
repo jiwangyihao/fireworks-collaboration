@@ -65,7 +65,8 @@ fn aggregate_lock() -> MutexGuard<'static, ()> {
 
 static ALERT_RULES_PATH: Lazy<PathBuf> = Lazy::new(|| {
     let dir = tempdir().expect("alert rules dir");
-    let path = dir.into_path();
+    // Persist the temp dir and take ownership of the path so it remains for the test lifetime.
+    let path = dir.keep();
     path.join("alert-rules.json")
 });
 
