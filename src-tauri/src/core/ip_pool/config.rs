@@ -110,6 +110,7 @@ pub fn default_cooldown_seconds() -> u32 {
 impl Default for IpPoolRuntimeConfig {
     fn default() -> Self {
         Self {
+            // 默认状态：IP 池禁用（兼容历史行为，测试依赖）
             enabled: false,
             sources: IpPoolSourceToggle::default(),
             max_parallel_probes: default_max_parallel_probes(),

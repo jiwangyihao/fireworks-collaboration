@@ -142,6 +142,13 @@ impl EventMetricsBridge {
                 latency_ms,
                 ..
             } => {
+                tracing::info!(
+                    target = "metrics",
+                    strategy = %strategy,
+                    source = ?source,
+                    latency_ms = ?latency_ms,
+                    "processing IpPoolSelection event"
+                );
                 let strategy_label = sanitize_label_value(&strategy);
                 let outcome_label = if source.as_ref().and_then(|s| s.split(',').next()).is_some() {
                     "success"
@@ -162,6 +169,13 @@ impl EventMetricsBridge {
                 let reason_label = sanitize_label_value(&reason);
                 let success_label = if success { "true" } else { "false" };
                 self.record_ip_refresh(&reason_label, success_label);
+                // Log and expose current counter for quick verification
+                if let Some(val) = self._registry.get_counter(
+                    IP_POOL_REFRESH_TOTAL,
+                    &[("reason", reason_label.as_str()), ("success", success_label)],
+                ) {
+                    tracing::info!(target = "metrics", reason = %reason_label, success = %success_label, count = val, "ip_pool_refresh_total incremented");
+                }
             }
             StrategyEvent::IpPoolAutoDisable { reason, .. } => {
                 let reason_label = sanitize_label_value(&reason);

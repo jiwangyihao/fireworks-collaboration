@@ -402,8 +402,15 @@ impl IpPool {
     }
 
     pub fn pick_best_blocking(&self, host: &str, port: u16) -> IpSelection {
-        if let Ok(handle) = Handle::try_current() {
-            return handle.block_on(self.pick_best(host, port));
+        // 若当前线程已在 Tokio runtime 中，避免任何形式的 block_on（包括独立 runtime）以规避 panic；回退为系统默认。
+        if Handle::try_current().is_ok() {
+            tracing::debug!(
+                target = "ip_pool",
+                host,
+                port,
+                "pick_best_blocking invoked inside runtime; falling back to system DNS"
+            );
+            return IpSelection::system_default(host.to_string(), port);
         }
         match blocking_runtime() {
             Some(rt) => rt.block_on(self.pick_best(host, port)),

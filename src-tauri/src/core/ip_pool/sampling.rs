@@ -9,6 +9,8 @@ use super::{
     manager::IpPool,
     preheat,
 };
+use crate::core::ip_pool::events::emit_ip_pool_refresh;
+use uuid::Uuid;
 
 pub(super) fn get_fresh_cached(
     pool: &IpPool,
@@ -103,6 +105,8 @@ async fn sample_once(pool: &IpPool, host: &str, port: u16) -> Result<Option<IpCa
             "no candidates collected for on-demand sampling"
         );
         maintenance::expire_entry(pool, host, port);
+        // Emit failure refresh event for observability (on-demand path)
+        emit_ip_pool_refresh(Uuid::new_v4(), host, false, &[], "no_candidates".to_string());
         return Ok(None);
     }
 
@@ -123,6 +127,8 @@ async fn sample_once(pool: &IpPool, host: &str, port: u16) -> Result<Option<IpCa
             "all candidates failed probing"
         );
         maintenance::expire_entry(pool, host, port);
+        // Emit failure refresh event for observability (on-demand path)
+        emit_ip_pool_refresh(Uuid::new_v4(), host, false, &[], "all_probes_failed".to_string());
         return Ok(None);
     }
 
@@ -131,7 +137,18 @@ async fn sample_once(pool: &IpPool, host: &str, port: u16) -> Result<Option<IpCa
     if stats.len() > 1 {
         alternatives = stats.iter().skip(1).cloned().collect();
     }
+    // Clone for event emission before moving into cache/history
+    let stats_for_event = stats.clone();
     preheat::update_cache_and_history(host, port, stats, cache, history)?;
+    if best.is_some() {
+        emit_ip_pool_refresh(
+            Uuid::new_v4(),
+            host,
+            true,
+            &stats_for_event,
+            "on_demand".to_string(),
+        );
+    }
     Ok(best.map(|stat| IpCacheSlot {
         best: Some(stat),
         alternatives,
