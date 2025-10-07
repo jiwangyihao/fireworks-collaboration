@@ -18,6 +18,8 @@ pub struct UnixCredentialStore {
     _phantom: std::marker::PhantomData<()>,
     #[cfg(target_os = "linux")]
     connection: secret_service::SecretService<'static>,
+    #[cfg(target_os = "linux")]
+    runtime: std::sync::Arc<tokio::runtime::Runtime>,
 }
 
 impl UnixCredentialStore {
@@ -40,11 +42,12 @@ impl UnixCredentialStore {
     #[cfg(target_os = "linux")]
     pub fn new() -> Result<Self, String> {
         use secret_service::SecretService;
-
-        match SecretService::connect(secret_service::EncryptionType::Dh) {
-            Ok(connection) => Ok(UnixCredentialStore { connection }),
-            Err(e) => Err(format!("Linux Secret Service unavailable: {}", e)),
-        }
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| format!("Failed to create tokio runtime for Secret Service: {e}"))?;
+        let connection = runtime
+            .block_on(SecretService::connect(secret_service::EncryptionType::Dh))
+            .map_err(|e| format!("Linux Secret Service unavailable: {e}"))?;
+        Ok(UnixCredentialStore { connection, runtime: std::sync::Arc::new(runtime) })
     }
 
     /// Creates a new Unix credential store (other Unix).
@@ -83,25 +86,20 @@ impl CredentialStore for UnixCredentialStore {
         match find_generic_password(None, SERVICE_NAME, &account) {
             Ok((password_bytes, _)) => {
                 let password = String::from_utf8_lossy(&password_bytes).to_string();
-                Ok(Some(Credential::new(
-                    host.to_string(),
-                    username.to_string(),
-                    password,
-                    None,
-                )))
+                Ok(Some(Credential::new(host.to_string(), username.to_string(), password)))
             }
             Err(e) => {
-                // Check if error is "item not found"
                 if e.to_string().contains("errSecItemNotFound") {
                     Ok(None)
                 } else {
-                    Err(format!("Failed to read from macOS keychain: {}", e))
+                    Err(CredentialStoreError::AccessError(format!(
+                        "Failed to read from macOS keychain: {e}"
+                    )))
                 }
             }
         }
     }
-
-    fn add(&self, credential: &Credential) -> Result<(), String> {
+    fn add(&self, credential: Credential) -> CredentialStoreResult<()> {
         use security_framework::os::macos::passwords::{
             delete_generic_password, set_generic_password,
         };
@@ -118,10 +116,11 @@ impl CredentialStore for UnixCredentialStore {
             &account,
             credential.password_or_token.as_bytes(),
         )
-        .map_err(|e| format!("Failed to write to macOS keychain: {}", e))
+        .map_err(|e| CredentialStoreError::AccessError(format!(
+            "Failed to write to macOS keychain: {e}"
+        )))
     }
-
-    fn remove(&self, host: &str, username: &str) -> Result<(), String> {
+    fn remove(&self, host: &str, username: &str) -> CredentialStoreResult<()> {
         use security_framework::os::macos::passwords::delete_generic_password;
 
         let account = Self::make_account(host, username);
@@ -133,156 +132,147 @@ impl CredentialStore for UnixCredentialStore {
                 if e.to_string().contains("errSecItemNotFound") {
                     Ok(())
                 } else {
-                    Err(format!("Failed to delete from macOS keychain: {}", e))
+                    Err(CredentialStoreError::AccessError(format!(
+                        "Failed to delete from macOS keychain: {e}"
+                    )))
                 }
             }
         }
     }
-
-    fn list(&self) -> Result<Vec<Credential>, String> {
+    fn list(&self) -> CredentialStoreResult<Vec<Credential>> {
         // macOS Security Framework doesn't provide a direct way to enumerate all generic passwords
         // This is a limitation of the API - we return empty list for now
         // In a real implementation, we might maintain a separate index
         tracing::warn!("list() not fully supported on macOS keychain - returning empty list");
         Ok(Vec::new())
     }
+
+    fn update_last_used(&self, _host: &str, _username: &str) -> CredentialStoreResult<()> {
+        // Keychain 不提供 last_used_at 元数据，这里直接返回 Ok
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "linux")]
 impl CredentialStore for UnixCredentialStore {
-    fn get(&self, host: &str, username: Option<&str>) -> Result<Option<Credential>, String> {
-        use secret_service::Collection;
+    fn get(&self, host: &str, username: Option<&str>) -> CredentialStoreResult<Option<Credential>> {
+        use std::collections::HashMap;
+        use secret_service::EncryptionType; // keep for clarity (may help future enhancement)
 
-        let username =
-            username.ok_or_else(|| "Username required for Linux Secret Service".to_string())?;
-        let account = Self::make_account(host, username);
+        // Build attribute map. We always include host; optionally username.
+        let mut query: HashMap<&str, String> = HashMap::new();
+        query.insert("host", host.to_string());
+        if let Some(u) = username { query.insert("username", u.to_string()); }
 
-        let collection = Collection::default(&self.connection)
-            .map_err(|e| format!("Failed to access default collection: {}", e))?;
+        // Convert to HashMap<&str, &str> for API call (collect references lifetime limited to this scope)
+        let attr: HashMap<&str, &str> = query.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-        let search_items = collection
-            .search_items(vec![("service", SERVICE_NAME), ("account", &account)])
-            .map_err(|e| format!("Failed to search items: {}", e))?;
+        let result = self.runtime.block_on(self.connection.search_items(attr))
+            .map_err(|e| CredentialStoreError::AccessError(format!("Secret Service search error: {e}")))?;
 
-        if search_items.is_empty() {
-            return Ok(None);
+        // Prefer unlocked items; unlock first locked if needed
+        let item_opt = if let Some(item) = result.unlocked.first() { Some(item.clone()) } else {
+            if let Some(locked) = result.locked.first() {
+                let _ = self.runtime.block_on(locked.unlock());
+                Some(locked.clone())
+            } else { None }
+        };
+
+        if let Some(item) = item_opt {
+            let secret = self.runtime.block_on(item.get_secret())
+                .map_err(|e| CredentialStoreError::AccessError(format!("Secret retrieval failed: {e}")))?;
+            // Need to reconstruct attributes for host/username; we stored them as attributes when creating.
+            let label = self.runtime.block_on(item.get_label())
+                .unwrap_or_else(|_| "".into());
+            // We rely on search attributes rather than label parsing.
+            let username_val = username.map(|s| s.to_string()).or_else(|| {
+                // Attempt to fetch attributes if username was not specified.
+                self.runtime.block_on(item.get_attributes())
+                    .ok()
+                    .and_then(|attrs| attrs.get("username").map(|s| s.to_string()))
+            }).unwrap_or_default();
+            let cred = Credential::new(host.to_string(), username_val, String::from_utf8_lossy(&secret).to_string());
+            Ok(Some(cred))
+        } else {
+            Ok(None)
         }
-
-        let item = &search_items[0];
-        let secret = item
-            .get_secret()
-            .map_err(|e| format!("Failed to get secret: {}", e))?;
-
-        let password = String::from_utf8_lossy(&secret).to_string();
-
-        Ok(Some(Credential::new(
-            host.to_string(),
-            username.to_string(),
-            password,
-            None,
-        )))
     }
 
-    fn add(&self, credential: &Credential) -> Result<(), String> {
-        use secret_service::Collection;
-
-        let account = Self::make_account(&credential.host, &credential.username);
-        let collection = Collection::default(&self.connection)
-            .map_err(|e| format!("Failed to access default collection: {}", e))?;
-
-        // Delete existing item if any
-        let _ = self.remove(&credential.host, &credential.username);
-
-        // Create new item
-        collection
-            .create_item(
-                &format!(
-                    "Git credential for {}@{}",
-                    credential.username, credential.host
-                ),
-                vec![("service", SERVICE_NAME), ("account", &account)],
-                credential.password_or_token.as_bytes(),
-                true, // replace existing
-                "text/plain",
-            )
-            .map_err(|e| format!("Failed to create item: {}", e))?;
-
+    fn add(&self, credential: Credential) -> CredentialStoreResult<()> {
+        use std::collections::HashMap;
+        // First check existence to mimic AlreadyExists semantics
+        if self.get(&credential.host, Some(&credential.username))?.is_some() {
+            return Err(CredentialStoreError::AlreadyExists(format!("{}:{}", credential.host, credential.username)));
+        }
+        let collection = self.runtime.block_on(self.connection.get_default_collection())
+            .map_err(|e| CredentialStoreError::AccessError(format!("Secret Service collection error: {e}")))?;
+        let mut props: HashMap<&str, &str> = HashMap::new();
+        props.insert("service", SERVICE_NAME);
+        props.insert("host", &credential.host);
+        props.insert("username", &credential.username);
+        let label = format!("{SERVICE_NAME}:{}:{}", credential.host, credential.username);
+        self.runtime.block_on(collection.create_item(
+            &label,
+            props,
+            credential.password_or_token.as_bytes(),
+            false, // do not replace
+            "text/plain",
+        )).map_err(|e| CredentialStoreError::AccessError(format!("Create item failed: {e}")))?;
         Ok(())
     }
 
-    fn remove(&self, host: &str, username: &str) -> Result<(), String> {
-        use secret_service::Collection;
-
-        let account = Self::make_account(host, username);
-        let collection = Collection::default(&self.connection)
-            .map_err(|e| format!("Failed to access default collection: {}", e))?;
-
-        let search_items = collection
-            .search_items(vec![("service", SERVICE_NAME), ("account", &account)])
-            .map_err(|e| format!("Failed to search items: {}", e))?;
-
-        for item in search_items {
-            item.delete()
-                .map_err(|e| format!("Failed to delete item: {}", e))?;
+    fn remove(&self, host: &str, username: &str) -> CredentialStoreResult<()> {
+        use std::collections::HashMap;
+        let attrs: HashMap<&str, &str> = HashMap::from([
+            ("host", host),
+            ("username", username),
+        ]);
+        let result = self.runtime.block_on(self.connection.search_items(attrs))
+            .map_err(|e| CredentialStoreError::AccessError(format!("Secret Service search error: {e}")))?;
+        let target = if let Some(item) = result.unlocked.first() { Some(item.clone()) } else { result.locked.first().cloned() };
+        if let Some(item) = target {
+            // Try unlock if locked
+            let _ = self.runtime.block_on(item.unlock());
+            self.runtime.block_on(item.delete())
+                .map_err(|e| CredentialStoreError::AccessError(format!("Delete failed: {e}")))?;
+            Ok(())
+        } else {
+            Err(CredentialStoreError::NotFound(format!("{}:{}", host, username)))
         }
-
-        Ok(())
     }
 
-    fn list(&self) -> Result<Vec<Credential>, String> {
-        use secret_service::Collection;
+    fn list(&self) -> CredentialStoreResult<Vec<Credential>> {
+        // Secret Service API doesn't provide a direct "list all" without knowing attributes.
+        // Returning empty list keeps semantics consistent with macOS implementation.
+        tracing::warn!("list() not implemented for Secret Service - returning empty list");
+        Ok(Vec::new())
+    }
 
-        let collection = Collection::default(&self.connection)
-            .map_err(|e| format!("Failed to access default collection: {}", e))?;
-
-        let all_items = collection
-            .get_all_items()
-            .map_err(|e| format!("Failed to get all items: {}", e))?;
-
-        let mut credentials = Vec::new();
-
-        for item in all_items {
-            let attributes = item
-                .get_attributes()
-                .map_err(|e| format!("Failed to get attributes: {}", e))?;
-
-            // Check if this is our item
-            if let Some(service) = attributes.get("service") {
-                if service == SERVICE_NAME {
-                    if let Some(account) = attributes.get("account") {
-                        if let Some((host, username)) = Self::parse_account(account) {
-                            let secret = item
-                                .get_secret()
-                                .map_err(|e| format!("Failed to get secret: {}", e))?;
-
-                            let password = String::from_utf8_lossy(&secret).to_string();
-
-                            credentials.push(Credential::new(host, username, password, None));
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(credentials)
+    fn update_last_used(&self, _host: &str, _username: &str) -> CredentialStoreResult<()> {
+        // No last-used metadata maintained; noop
+        Ok(())
     }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 impl CredentialStore for UnixCredentialStore {
-    fn get(&self, _host: &str, _username: Option<&str>) -> Result<Option<Credential>, String> {
-        Err("Unix keychain not supported on this platform".to_string())
+    fn get(&self, _host: &str, _username: Option<&str>) -> CredentialStoreResult<Option<Credential>> {
+        Err(CredentialStoreError::Other("Unix keychain not supported on this platform".to_string()))
     }
 
-    fn add(&self, _credential: &Credential) -> Result<(), String> {
-        Err("Unix keychain not supported on this platform".to_string())
+    fn add(&self, _credential: Credential) -> CredentialStoreResult<()> {
+        Err(CredentialStoreError::Other("Unix keychain not supported on this platform".to_string()))
     }
 
-    fn remove(&self, _host: &str, _username: &str) -> Result<(), String> {
-        Err("Unix keychain not supported on this platform".to_string())
+    fn remove(&self, _host: &str, _username: &str) -> CredentialStoreResult<()> {
+        Err(CredentialStoreError::Other("Unix keychain not supported on this platform".to_string()))
     }
 
-    fn list(&self) -> Result<Vec<Credential>, String> {
-        Err("Unix keychain not supported on this platform".to_string())
+    fn list(&self) -> CredentialStoreResult<Vec<Credential>> {
+        Err(CredentialStoreError::Other("Unix keychain not supported on this platform".to_string()))
+    }
+
+    fn update_last_used(&self, _host: &str, _username: &str) -> CredentialStoreResult<()> {
+        Ok(())
     }
 }
