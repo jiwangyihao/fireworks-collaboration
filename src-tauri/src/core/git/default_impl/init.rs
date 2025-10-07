@@ -72,5 +72,19 @@ pub fn git_init<F: FnMut(ProgressPayload)>(
         bytes: None,
         total_hint: None,
     });
+
+    // 注入测试/最小默认身份：仅当当前仓库未配置 user.name / user.email
+    // 目的：在 CI / 临时环境中避免后续 commit 失败 (signature: config value 'user.name' was not found)
+    // 不覆盖已有配置，也不写入全局，只写本地仓库 .git/config
+    if let Ok(mut cfg) = repo.config() {
+        let name_missing = cfg.get_entry("user.name").is_err();
+        if name_missing {
+            let _ = cfg.set_str("user.name", "Test User");
+        }
+        let email_missing = cfg.get_entry("user.email").is_err();
+        if email_missing {
+            let _ = cfg.set_str("user.email", "test@example.com");
+        }
+    }
     Ok(())
 }
