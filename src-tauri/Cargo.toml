@@ -52,6 +52,7 @@ x509-parser = { version = "0.15", default-features = false }
 # 新增异步运行时依赖（修复 tokio / tokio_util 未解析错误）
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "sync", "net"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }
 # TLS & Certs (P0.3)
 rustls = { version = "0.21", features = ["dangerous_configuration"] }
 webpki-roots = "0.25"
