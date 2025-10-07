@@ -107,7 +107,7 @@ security-framework = "2"
 
 # Linux specific dependencies for secret service
 [target.'cfg(target_os = "linux")'.dependencies]
-secret-service = "3"
+secret-service = { version = "3", features = ["rt-tokio-crypto-rust"], default-features = false }
 ## CI 修复: secret-service 依赖 zbus 3.x (default-features=false) 未启用运行时，导致编译错误
 ## 显式为 zbus 3 版本开启 tokio 特性；与主线 zbus 5 (已启用 tokio) 并存
 ## 通过重命名依赖 (zbus3) 不影响现有使用；特性会统一到 zbus 3.* 包上
