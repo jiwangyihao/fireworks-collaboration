@@ -2,9 +2,18 @@
 
 > 目的：以统一视角梳理 MP0、MP1、P2、P3、P4、P5、P6 七个阶段以及测试重构后的现状，面向后续演进的研发、运维与质量成员，提供完整的实现细节、配置指引、事件契约、测试矩阵与回退策略。
 >
-> 版本：v1.6（2025-10-07） 维护者：Core Team
+> 版本：v1.7（2025-10-09） 维护者：Core Team
 
 ---
+
+### 2025-10-09 增量更新摘要（v1.7）
+
+本次版本围绕 IP 池与预热链路做了一轮集中迭代，重点如下：
+
+1. 运行期默认启用 IP 池，并引入全新的 DNS 运行时配置：支持系统解析器开关、自定义 DoH/DoT/UDP 解析器、内置预设目录与启用列表；团队模板合并逻辑同步下发 `enabled` 与 `dns` 字段，确保分发环境与模板保持一致。
+2. 新增 Tauri `ip_pool_*` 命令面向配置管理、快照查询、预热刷新与候选调试；前端提供 `src/api/ip-pool.ts`、全新 `IpPoolLab.vue` 实验室视图以及导航入口，可实时编辑运行期/文件配置、管理 DNS 解析器、禁用内置预热域、查看候选缓存。
+3. 预热管线重写：缓存快照新增预热目标覆盖率统计，Check View 新增“IP 池预热”步骤并复用 `waitForIpPoolWarmup` 辅助检测后台预热进度，失败/跳过场景给出清晰提示；可通过 `ip_pool_start_preheater` 显式拉起一次预热并观测状态。
+4. 测试与文档同步：Rust 侧更新 config/commands/git/adaptive_tls/transport 多处用例适配新默认值，并新增 `tests/commands/ip_pool_commands.rs` 覆盖完整命令路径；前端补充 `ip-pool.api.test.ts`、`utils/__tests__/check-preheat.test.ts` 验证 API/预热逻辑；文档新增 DNS 运行时、禁用内置预热域、命令列表与 UI 说明，现有回退/Smoke 清单全部检视过默认启用场景。
 
 ### 2025-10-07 增量更新摘要（v1.6）
 
@@ -54,7 +63,7 @@
 - 运行时验证：在 `pnpm tauri dev` / 本地手工触发 HTTP fake request 场景时，日志中可观察到：ip_pool 预热/刷新事件、选择事件（IpPoolSelection）与 TLS timing (AdaptiveTlsTiming) 的发射，且不再出现 nested runtime panic；
 
 注意事项与后续建议：
-- 保持 `ip_pool.enabled` 默认值与现有测试期望一致（当前为 false），若在本地调试观测面板请显式开启并运行预热；
+- `ip_pool.enabled` 默认值现为 `true`（测试与模板已同步）；如需停用请在配置或命令中显式关闭后再观察相关指标；
 - 若需在 CI 中断言 metrics 注册项（非 N/A），建议添加 deterministic helper 测试或 mock 探针，避免网络抖动造成的测试不稳定；
 - 文档中变更点已写入本文件，后续若有更多小幅回溯/修复请在变更摘要中追加一行时间与简述，便于审计。
 
@@ -120,7 +129,7 @@ pnpm tauri dev
    - 建议在 `src-tauri/src/core/metrics` 增加一个测试-only API（feature-gated）返回 registry 的 counter 值，或在测试使用日志断言来避免对内部类型的直接依赖。
 
 注意事项与小技巧：
-- `ip_pool.enabled` 默认在 config 中为 `false` —— 保持与现有测试兼容；在本地启用后会触发预热线程（若配置中包含 `preheat_domains`）并产生日志及 refresh 事件；
+- `ip_pool.enabled` 默认在 config 中为 `true` —— 新实例会自动拉起预热线程；若想暂时回退到系统 DNS，可通过配置禁用或调用 `ip_pool_clear_auto_disabled`/`ip_pool_update_config` 明确关闭；
 - 观测链路依赖 `metrics_enabled()` gating（HTTP 客户端使用相同 gating 以减少噪声），必要时可在 `core/git/transport/metrics` 中临时开关该 flag 以便调试；
 - 若需要模拟候选失败/成功做 circuit-breaker 场景，请在 `preheat::measure_candidates` 或 probe 函数中注入可控的测试钩子（推荐通过 #[cfg(test)] helpers），以避免网络抖动造成的不可重复测试。
 
@@ -299,6 +308,14 @@ remaining_auth_attempts(): Promise<number>
 task_cancel(id: string): Promise<boolean>
 task_list(): Promise<TaskSnapshot[]>
 
+// IP 池
+ip_pool_get_snapshot(): Promise<IpPoolSnapshot>
+ip_pool_update_config(runtime: IpPoolRuntimeConfig, file: IpPoolFileConfig): Promise<IpPoolSnapshot>
+ip_pool_request_refresh(): Promise<boolean>
+ip_pool_start_preheater(): Promise<IpPoolPreheatActivation>
+ip_pool_clear_auto_disabled(): Promise<boolean>
+ip_pool_pick_best(host: string, port: number): Promise<IpSelectionResult>
+
 // 调试
 git_task_debug?(internal)
 http_fake_request(input: HttpRequestInput): Promise<HttpResponseOutput>
@@ -416,6 +433,7 @@ Transport Stack
  IP Pool Service (core/ip_pool/*)
  ├─ `IpPool` 统一入口（pick/report/maintenance/config）
  ├─ `PreheatService` 调度多来源采样（builtin/history/userStatic/DNS/fallback）
+ ├─ `dns` 模块管理系统解析器开关、自定义 DoH/DoT/UDP 解析器与预设启用列表
  ├─ `IpScoreCache` + `IpHistoryStore` 缓存与持久化（TTL、容量、降级）
  ├─ 异步桥接（新）：`global.rs` 提供 `pick_best_async(host,port)`，在后台单线程 Tokio runtime 中安全执行 `IpPool::pick_best`，避免在任意 Tokio 运行时内部构建/阻塞新的 runtime 导致 panic；该桥也支持 `report_outcome_async(selection,outcome)` 的 fire-and-forget 上报。
  ├─ 传输层集成：`custom_https_subtransport` 仍直接消费候选、尝试 candidate 连接并在本地线程路径上调用 `report_candidate_outcome`；HTTP 客户端（`core/http/client.rs`）也已集成候选消费路径并通过异步桥上报 outcome，从而保证所有传输路径都能为熔断与观测供样本。
@@ -519,7 +537,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
 - **灰度策略**：MP1 的方式A 与 Retry、P3 的 fake SNI rollout 都支持按域或百分比分级，推荐每级灰度至少运行一次 soak 或回归脚本；
   - Rollout 0% -> 25% -> 50% -> 100%，期间监控 `AdaptiveTlsRollout` 与 `AdaptiveTlsFallback` 事件；
   - Push/策略相关配置调整需同步更新前端提示与文档，避免用户误解重试次数或凭证要求。
-  - P4 的 IP 池推荐域名单独启用：先在预热域上验证 TTL 刷新/候选延迟，再逐步扩大 `preheatDomains`；按需域名可通过 `ip_pool.enabled`/`maxCacheEntries`/`singleflightTimeoutMs` 跨阶段放量，并搭配 Soak 报告监控 `selection_by_strategy` 与 `refresh_success_rate`。
+  - P4 的 IP 池默认已启用：可先通过 `preheatDomains` 控制范围，再逐步扩容；如需灰度或回退，可在 `ip_pool.enabled`/`maxCacheEntries`/`singleflightTimeoutMs` 上做分环境调节，并搭配 Soak 报告监控 `selection_by_strategy` 与 `refresh_success_rate`。
 - **跨阶段依赖**：
   - P2 的策略覆盖与 P3 的 adaptive TLS 共享 HTTP/TLS 配置，只在任务级做差异化；
   - P3 的指纹日志与自动禁用依赖 MP1 方式A 的传输框架，如需临时关闭 Fake SNI，应评估 P3 指标链路的可见性。
@@ -731,13 +749,13 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - **核心模块**：
     - `IpPool` 统一封装 pick/report/maintenance/config 接口；
     - `IpScoreCache`（内存缓存）+ `IpHistoryStore`（磁盘 `ip-history.json`）负责 TTL、容量、降级处理；
-    - `PreheatService` 独立 tokio runtime 调度多来源采样（Builtin/UserStatic/History/DNS/Fallback），指数退避与手动刷新并存；
+    - `PreheatService` 独立 tokio runtime 调度多来源采样（Builtin/UserStatic/History/DNS/Fallback），指数退避与手动刷新并存；`dns` 子模块负责解析器池、DoH/DoT/UDP 预设与系统 DNS 协调；
     - `custom_https_subtransport` 以延迟优先顺序尝试候选，失败后回退系统 DNS，并记录 `IpPoolSelection` 事件及线程本地埋点；
     - `circuit_breaker` + 黑白名单 + 全局 `auto_disabled_until` 联合管理熔断与禁用，事件 `IpPoolIpTripped/Recovered`、`IpPoolAutoDisable/Enable` 反映状态；
     - `core/ip_pool/events.rs` 集中封装所有新事件、保证测试可注入总线。
   - **配置与默认值**：
-    - 运行期（`config.json`）：`ip_pool.enabled=false`、`cachePruneIntervalSecs=60`、`maxCacheEntries=256`、`singleflightTimeoutMs=10000`、熔断阈值 (`failureThreshold=5`、`failureRateThreshold=0.6`、`failureWindowSeconds=120`、`cooldownSeconds=300`、`circuitBreakerEnabled=true`)；
-    - 文件（`ip-config.json`）：`preheatDomains=[]`、`scoreTtlSeconds=300`、`maxParallelProbes=4`、`probeTimeoutMs=3000`、`userStatic=[]`、`blacklist/whitelist=[]`、`historyPath="ip-history.json"`；所有字段热更新后立即重建预热计划与熔断状态。
+  - 运行期（`config.json`）：`ip_pool.enabled=true`、`dns`（`useSystem=true`、`resolvers=[]`、`presetCatalog` 内置 Cloudflare/Google/Aliyun/Quad9 等 DoH/DoT/UDP 预设、`enabledPresets` 自动筛除 `desc="不可用"` 项）、`maxParallelProbes=4`、`probeTimeoutMs=1500`、`cachePruneIntervalSecs=60`、`maxCacheEntries=256`、`singleflightTimeoutMs=10000`、熔断窗口 (`failureThreshold=3`、`failureRateThreshold=0.5`、`failureWindowSeconds=60`、`minSamplesInWindow=5`、`cooldownSeconds=300`、`circuitBreakerEnabled=true`)；
+    - 文件（`ip-config.json`）：`preheatDomains=[]`、`scoreTtlSeconds=300`、`maxParallelProbes=4`、`probeTimeoutMs=3000`、`userStatic=[]`、`blacklist/whitelist=[]`、`disabledBuiltinPreheat=[]`、`historyPath="ip-history.json"`；所有字段热更新后立即重建预热计划与熔断状态。
   - **运行生命周期**：
     1. 应用启动加载配置 -> 构建 `IpPool` -> `PreheatService::spawn` 若启用则拉起后台 runtime；
     2. 预热循环按域调度采样，写入缓存与历史，并发 `IpPoolRefresh`；
@@ -749,6 +767,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - **预热调度细节**：
     - `DomainSchedule` 维护 `next_due`、`failure_streak` 与指数退避（封顶 6×TTL），热更新与 `request_refresh` 会立即重置；
     - 候选收集 `collect_candidates` 合并五类来源，白名单优先保留、黑名单直接剔除并发 `IpPoolCidrFilter`；
+    - 内置预热域可通过 `disabledBuiltinPreheat` 精确禁用；DNS 预设与自定义解析器按 `dns.enabledPresets` 与 `dns.resolvers` 合并，支持 DoH/DoT/UDP；
     - `measure_candidates` 受信号量限制并发数，`probe_latency` 根据配置截断超时，成功/失败均写 `ip_pool` target 日志；
     - 当所有域达到失败阈值时执行 `set_auto_disabled("preheat consecutive failures", cooldown)` 并进入冷却；
     - 预热成功/失败均会发 `IpPoolRefresh` 事件（`reason=preheat/no_candidates/all_probes_failed`）。
@@ -761,7 +780,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - **传输层集成**：
   - `acquire_ip_or_block` 返回按延迟排序的候选 snapshot，逐一尝试并通过 `report_candidate_outcome` 记录；
   - 成功/失败均通过 `IpPoolSelection`、线程局部 `ip_source`/`ip_latency_ms` 反馈给 `AdaptiveTlsTiming/Fallback`；
-  - 阻塞接口 `pick_best_blocking` 复用全局 tokio runtime `OnceLock` 以适配同步调用场景。为避免在已有 Tokio 运行时中再次创建 runtime（从而触发 "Cannot start a runtime from within a runtime" panic），`pick_best_blocking` 会先尝试检测当前线程上是否已有 runtime（`tokio::runtime::Handle::try_current()`）；若检测到存在运行时，则函数不会创建新的 runtime 也不会调用 `block_on`，而是退回到 `SystemDefault` 或使用共享的 blocking runtime fallback（视实现和调用约定而定）。该实现保证同步调用路径在存在异步上下文时不会触发 nested runtime 的 panic。
+  - 阻塞接口 `pick_best_blocking` 通过 `OnceLock` 懒初始化一个名为 `ip-pool-blocking` 的两线程 Tokio runtime，并在该 runtime 上 `block_on(self.pick_best(...))`；初始化失败时退回 `IpSelection::system_default`。该路径不再试图探测外部 runtime，只依赖内部共享 runtime，避免在调用方线程重复创建多线程 runtime。
     具体实现：代码先调用 `Handle::try_current()`，若成功则记录 debug 日志并返回 `IpSelection::system_default(...)`；否则尝试从内部 `blocking_runtime()`（OnceLock 保存的 multi-thread runtime）中取出 runtime 并使用 `rt.block_on(self.pick_best(...))`，若该 runtime 初始化失败也回退为 system default。
   - IP 池禁用或候选耗尽时事件中的 `strategy=SystemDefault`，前端可据此回退展示。
   - **异常治理**：
@@ -772,6 +791,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - **观测与数据**：
     - 事件：`IpPoolSelection`（strategy/source/latency/candidates）、`IpPoolRefresh`（success/min/max/原因）、`IpPoolConfigUpdate`、熔断/禁用/CIDR；
     - `AdaptiveTlsTiming/Fallback` 新增 ip 字段，与 P3 事件共享线程局部；
+    - 快照新增 `preheatTargets/preheatedTargets` 统计，Check View 通过 `waitForIpPoolWarmup` 展示预热覆盖率；
     - `ip-history.json` 超过 1 MiB 记录警告；`prune_and_enforce` 在维护周期内统一清理；
     - Soak 报告新增 `ip_pool` 统计（selection_total/by_strategy、refresh_success/failure、success_rate）。
   - **Soak 与阈值**：
@@ -780,11 +800,18 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
     - 无基线时自动标记 `not_applicable` 并写入原因。
   - **测试矩阵**：
     - 单元：`preheat.rs`、`history.rs`、`mod.rs`（缓存/单飞/TTL）、`circuit_breaker.rs`、`events.rs`；
-    - 集成：`tests/tasks/ip_pool_manager.rs`、`ip_pool_preheat_events.rs`、`ip_pool_event_emit.rs`、`ip_pool_event_edge.rs`、`events_backward_compat.rs`；
+    - 集成：`tests/commands/ip_pool_commands.rs`、`tests/tasks/ip_pool_manager.rs`、`ip_pool_preheat_events.rs`、`ip_pool_event_emit.rs`、`ip_pool_event_edge.rs`、`events_backward_compat.rs`；
+    - 前端：`src/api/__tests__/ip-pool.api.test.ts`、`src/utils/__tests__/check-preheat.test.ts`、`src/views/__tests__/check-view.test.ts` 验证 API、预热助手与 UI 交互；
     - Soak：`src-tauri/src/soak/mod.rs` 对阈值、报告、基线比较和环境变量覆盖提供测试；
     - 全量回归：`cargo test -q --manifest-path src-tauri/Cargo.toml`、前端 `pnpm test -s`。
+  - **命令与前端**：
+    - 新增 Tauri 命令 `ip_pool_get_snapshot`/`ip_pool_update_config`/`ip_pool_request_refresh`/`ip_pool_start_preheater`/`ip_pool_clear_auto_disabled`/`ip_pool_pick_best`，`setup.rs` 默认注册；
+    - 前端新增 `src/api/ip-pool.ts` 封装上述命令、`IpPoolLab.vue` 提供运行期/文件配置编辑、DNS 解析器管理与候选调试界面，导航栏增加“IP 池实验室”入口；
+    - 配套类型定义补充至 `src/api/config.ts`（`DnsRuntimeConfig`/`DnsResolverConfig` 等）并在 `IpPoolLab` 及配置表单中使用；
+    - `CheckView.vue` 在环境预热流程中调用 `startIpPoolPreheater`+`waitForIpPoolWarmup`，向用户展示预热进度与跳过原因；
   - **运维要点与故障排查**：
     - 快速禁用：`ip_pool.enabled=false` 或停用预热线程，新任务立即回退系统 DNS；
+    - 手动预热：通过 `ip_pool_start_preheater` 或 `ip_pool_request_refresh` 触发即时采样，结合前端实验室/Check View 观察覆盖率；
     - 黑白名单：更新 `ip-config.json` 后调用 `request_refresh` 即时生效，事件中保留被过滤 IP 与 CIDR；
     - 自动禁用：观察 `IpPoolAutoDisable`/`IpPoolAutoEnable` 与日志，必要时手动调用 `clear_auto_disabled` 或调整 `cooldownSeconds`；
     - 历史异常：删除损坏的 `ip-history.json` 会自动重建，日志含 `failed to load ip history`；
@@ -1074,7 +1101,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - `src-tauri/src/core/workspace/`: model.rs(核心结构), config.rs(配置管理), storage.rs(序列化/验证/备份), status.rs(状态服务);
   - `src-tauri/src/core/submodule/`: model.rs, manager.rs(init/update/sync 操作), config.rs(子模块配置);
   - `src-tauri/src/core/tasks/workspace_batch.rs`: Semaphore 调度、父子任务关联、进度聚合;
-  - `src-tauri/src/core/config/team_template.rs`: 模板导出/导入、安全化清理、备份机制;
+  - `src-tauri/src/core/config/team_template.rs`: 模板导出/导入、安全化清理、备份机制；当模板与本地配置不一致时会同步写入 `ip_pool.enabled` 与 `ip_pool.dns` 字段，避免分发后出现默认值回退;
   - `src-tauri/src/app/commands/workspace.rs`: 18 个 Tauri 命令(CRUD/批量/状态/备份);
   - `src-tauri/src/app/commands/submodule.rs`: 9 个 Tauri 命令(list/has/init/update/sync + 配置);
   - `src/views/WorkspaceView.vue`: 工作区视图(仓库列表、批量操作、状态监控);
@@ -1187,7 +1214,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - Push: `git_push`（使用测试分支，小修改）观察 `git_retry_total` 是否为0 或可控
 2. 策略覆盖：Clone 指定 shallow+partial+retry 覆盖，确认事件序列：`*_override_applied` → `strategy_override_summary`
 3. 自适应 TLS：设置 `http.fakeSniRolloutPercent=25` 触发一次 clone；检查 `/metrics` 中 `tls_handshake_ms_bucket` 与事件 `AdaptiveTlsRollout`
-4. IP 池：打开 `ip_pool.enabled=true` & 添加一个 `preheatDomains`；等待 1 个预热周期后确认 `ip_pool_refresh_total` 有 `reason=preheat`
+4. IP 池：确认 `ip_pool.enabled=true`（默认状态）并至少配置一个 `preheatDomains`；等待 1 个预热周期后确认 `ip_pool_refresh_total` 有 `reason=preheat`
 5. 代理降级/恢复（可选）：配置无效代理，触发失败直至 `ProxyFallbackEvent`，改为有效代理验证 `ProxyRecoveredEvent`
 6. 可观测性导出（当前 v1.6 未启动可能返回 404 属正常）：访问 `/metrics` 与 `/metrics/snapshot?window=5m&quantiles=p50,p95`，目标（启用后）：
   - HTTP 200；`metrics_export_requests_total{status="ok"}` 递增
@@ -1270,15 +1297,15 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
 | observability.alertsEnabled | true | 允许告警引擎加载/评估规则 | 依赖 uiEnabled |
 | observability.layer | Optimize | 目标层级；受 flag 链与 max_allowed 限制 | 详见 §4.10 层级描述 |
 | observability.autoDowngrade | true | 允许内存/资源事件触发自动降级 | 与 minLayerResidency/cooldown 共同限制频率 |
-| observability.minLayerResidencySecs | 60 | 同一层级最短驻留时间 | 防止频繁震荡 |
-| observability.downgradeCooldownSecs | 300 | 连续自动降级冷却窗口 | 冷却内忽略再次触发 |
+| observability.minLayerResidencySecs | 300 | 同一层级最短驻留时间 | 防止频繁震荡 |
+| observability.downgradeCooldownSecs | 120 | 连续自动降级冷却窗口 | 冷却内忽略再次触发 |
 | observability.export.authToken | null | Bearer Token；null 表示无鉴权 | 生产建议开启 |
-| observability.export.rateLimitQps | 10 | 导出端点 QPS 令牌桶补充速率 | 0 表示不启用限流 |
-| observability.export.maxSeriesPerSnapshot | 5000 | 单次 snapshot series 上限 | 超出被截断并计数 |
-| observability.export.bindAddress | 127.0.0.1:18080 | 导出监听地址 | 只支持单地址（当前实现） |
-| observability.alerts.rulesPath | observability/alert-rules.json | 告警规则文件路径 | 相对应用工作目录 |
+| observability.export.rateLimitQps | 5 | 导出端点 QPS 令牌桶补充速率 | 0 表示不启用限流 |
+| observability.export.maxSeriesPerSnapshot | 1000 | 单次 snapshot series 上限 | 超出被截断并计数 |
+| observability.export.bindAddress | 127.0.0.1:9688 | 导出监听地址 | 只支持单地址（当前实现） |
+| observability.alerts.rulesPath | config/observability/alert-rules.json | 告警规则文件路径 | 相对应用工作目录 |
 | observability.alerts.evalIntervalSecs | 30 | 告警评估周期 | 过小增加 CPU/抖动风险 |
-| observability.alerts.minRepeatIntervalSecs | 300 | Firing->Active 重复通知最小间隔 | 去抖/降噪 |
+| observability.alerts.minRepeatIntervalSecs | 30 | Firing->Active 重复通知最小间隔 | 去抖/降噪 |
 | observability.performance.batchFlushIntervalMs | 500 | 线程缓冲批量刷入间隔 | 降低锁争用；过大增加数据延迟 |
 | observability.performance.tlsSampleRate | 5 | TLS Histogram 采样率（1/N） | 1=全采；增大降低精度 |
 | observability.performance.maxMemoryBytes | 8000000 | 触发内存压力阈值；超过尝试降级 | 约 8MB 指标内存预算 |
