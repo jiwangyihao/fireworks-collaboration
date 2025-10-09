@@ -18,6 +18,8 @@ import {
   Status,
 } from "../utils/environ-check.ts";
 import { useRouter } from "vue-router";
+import { startIpPoolPreheater } from "../api/ip-pool";
+import { waitForIpPoolWarmup } from "../utils/check-preheat";
 
 const router = useRouter();
 
@@ -133,6 +135,85 @@ onMounted(async () => {
     message: "正在检查 pnpm 版本",
   });
   await updateStatus(checkPnpm());
+
+  statusList.value.push({
+    id: statusList.value.length + 1,
+    type: "warning",
+    message: "正在启动代理 IP 池预热",
+  });
+
+  try {
+    const activation = await startIpPoolPreheater();
+    const idx = statusList.value.length - 1;
+
+    if (!activation.enabled) {
+      statusList.value[idx] = {
+        ...statusList.value[idx],
+        type: "success",
+        message: "IP 池功能未启用，已跳过预热",
+      };
+    } else if (activation.preheatTargets === 0) {
+      statusList.value[idx] = {
+        ...statusList.value[idx],
+        type: "success",
+        message: "未配置预热域名，跳过 IP 池预热",
+      };
+    } else if (!activation.activationChanged && activation.preheaterActive) {
+      statusList.value[idx] = {
+        ...statusList.value[idx],
+        type: "success",
+        message: "IP 池预热已在后台运行",
+      };
+    } else {
+      statusList.value[idx] = {
+        ...statusList.value[idx],
+        message: "正在预热域名解析 IP 池，等待加载候选 DNS...",
+      };
+
+      const warmup = await waitForIpPoolWarmup(activation.preheatTargets);
+      if (warmup.state === "ready") {
+        const { completedTargets, totalTargets } = warmup;
+        const summary = totalTargets > 0
+          ? `已覆盖 ${completedTargets}/${totalTargets} 个预热目标`
+          : "无需加载预热目标";
+        statusList.value[idx] = {
+          ...statusList.value[idx],
+          type: "success",
+          message: `IP 池预热完成，${summary}`,
+        };
+      } else if (warmup.state === "disabled") {
+        statusList.value[idx] = {
+          ...statusList.value[idx],
+          type: "success",
+          message: "IP 池已禁用，跳过预热",
+        };
+      } else if (warmup.state === "inactive") {
+        const { completedTargets, totalTargets } = warmup;
+        const summary = totalTargets > 0
+          ? `当前已加载 ${completedTargets}/${totalTargets} 个预热目标`
+          : "当前无预热目标";
+        statusList.value[idx] = {
+          ...statusList.value[idx],
+          type: "success",
+          message: `IP 池预热未启动，${summary}`,
+        };
+      } else {
+        const { completedTargets, totalTargets } = warmup;
+        statusList.value[idx] = {
+          ...statusList.value[idx],
+          type: "success",
+          message: `IP 池预热正在后台继续（已加载 ${completedTargets}/${totalTargets} 个预热目标）`,
+        };
+      }
+    }
+  } catch (error) {
+    const idx = statusList.value.length - 1;
+    statusList.value[idx] = {
+      ...statusList.value[idx],
+      type: "error",
+      message: `IP 池预热失败：${String(error)}`,
+    };
+  }
 
   loginLoading.value = true;
   loginLabel.value = "正在检查登录状态...";

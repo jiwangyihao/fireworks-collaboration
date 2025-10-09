@@ -27,6 +27,76 @@ export interface LoggingCfg {
   authHeaderMasked: boolean;
   logLevel: string;
 }
+export interface IpPoolSourceToggle {
+  builtin: boolean;
+  dns: boolean;
+  history: boolean;
+  userStatic: boolean;
+  fallback: boolean;
+}
+export type DnsResolverProtocol = "udp" | "doh" | "dot";
+
+export interface DnsResolverConfig {
+  label: string;
+  protocol: DnsResolverProtocol;
+  endpoint: string;
+  port?: number | null;
+  bootstrapIps: string[];
+  sni?: string | null;
+  cacheSize?: number | null;
+  desc?: string | null;
+  presetKey?: string | null;
+}
+
+export interface DnsRuntimeConfig {
+  useSystem: boolean;
+  resolvers: DnsResolverConfig[];
+  presetCatalog: Record<string, DnsResolverPreset>;
+  enabledPresets: string[];
+}
+
+export interface DnsResolverPreset {
+  server: string;
+  type?: string;
+  sni?: string;
+  cacheSize?: number;
+  desc?: string;
+  forSNI?: boolean;
+}
+export interface IpPoolRuntimeConfig {
+  enabled: boolean;
+  sources: IpPoolSourceToggle;
+  dns: DnsRuntimeConfig;
+  maxParallelProbes: number;
+  probeTimeoutMs: number;
+  historyPath?: string | null;
+  cachePruneIntervalSecs: number;
+  maxCacheEntries: number;
+  singleflightTimeoutMs: number;
+  failureThreshold: number;
+  failureRateThreshold: number;
+  failureWindowSeconds: number;
+  minSamplesInWindow: number;
+  cooldownSeconds: number;
+  circuitBreakerEnabled: boolean;
+}
+export interface PreheatDomain {
+  host: string;
+  ports: number[];
+}
+export interface UserStaticIp {
+  host: string;
+  ip: string;
+  ports: number[];
+}
+export interface IpPoolFileConfig {
+  preheatDomains: PreheatDomain[];
+  scoreTtlSeconds: number;
+  userStatic: UserStaticIp[];
+  blacklist: string[];
+  whitelist: string[];
+  disabledBuiltinPreheat: string[];
+}
 export interface ProxyCfg {
   mode: 'off' | 'http' | 'socks5' | 'system';
   url: string;
@@ -63,6 +133,7 @@ export interface AppConfig {
   http: HttpCfg;
   tls: TlsCfg;
   logging: LoggingCfg;
+  ipPool: IpPoolRuntimeConfig;
   proxy: ProxyCfg;
   observability?: ObservabilityConfig;
 }

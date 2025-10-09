@@ -7,7 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 import { invoke } from "@tauri-apps/api/core";
 import { getConfig, setConfig, type AppConfig } from "../config";
 
-const fakeCfg: AppConfig = {
+const fakeCfg = {
   http: {
     fakeSniEnabled: true,
     followRedirects: true,
@@ -16,7 +16,7 @@ const fakeCfg: AppConfig = {
   },
   tls: { sanWhitelist: ["github.com", "*.github.com"] },
   logging: { authHeaderMasked: true, logLevel: "info" },
-};
+} as unknown as AppConfig;
 
 describe("api/config", () => {
   beforeEach(() => {

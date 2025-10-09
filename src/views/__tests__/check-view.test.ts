@@ -31,6 +31,15 @@ vi.mock("../../utils/oauth-server", () => ({
     getCallbackData: vi.fn(),
   }),
 }));
+vi.mock("../../api/ip-pool", () => ({
+  startIpPoolPreheater: vi.fn().mockResolvedValue({
+    enabled: false,
+    preheatEnabled: false,
+    preheaterActive: false,
+    activationChanged: false,
+    preheatTargets: 0,
+  }),
+}));
 
 import CheckView from "../CheckView.vue";
 

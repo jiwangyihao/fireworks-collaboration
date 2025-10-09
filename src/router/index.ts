@@ -42,6 +42,11 @@ const router = createRouter({
       component: GitPanel,
     },
     {
+      path: "/ip-pool",
+      name: "ipPool",
+      component: () => import("../views/IpPoolLab.vue"),
+    },
+    {
       path: "/credentials",
       name: "credentials",
       component: CredentialView,

@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ProxyConfig from '../ProxyConfig.vue'
-import { useConfigStore } from '../../stores/config'
 
 // Mock Tauri API
 vi.mock('@tauri-apps/api/core', () => ({
@@ -129,7 +128,6 @@ describe('ProxyConfig.vue', () => {
   })
 
   it('saves configuration to store', async () => {
-    const configStore = useConfigStore()
     const wrapper = mount(ProxyConfig)
     const modeSelect = wrapper.find('#proxy-mode')
     
@@ -139,7 +137,8 @@ describe('ProxyConfig.vue', () => {
     await urlInput.setValue('http://proxy.example.com:8080')
     
     // Component updates local config
-    expect(wrapper.vm.localConfig?.mode).toBe('http')
+    const vm = wrapper.vm as any
+    expect(vm.localConfig?.mode).toBe('http')
   })
 
   it('resets form to default values', async () => {
