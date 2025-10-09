@@ -172,7 +172,10 @@ impl EventMetricsBridge {
                 // Log and expose current counter for quick verification
                 if let Some(val) = self._registry.get_counter(
                     IP_POOL_REFRESH_TOTAL,
-                    &[("reason", reason_label.as_str()), ("success", success_label)],
+                    &[
+                        ("reason", reason_label.as_str()),
+                        ("success", success_label),
+                    ],
                 ) {
                     tracing::info!(target = "metrics", reason = %reason_label, success = %success_label, count = val, "ip_pool_refresh_total incremented");
                 }

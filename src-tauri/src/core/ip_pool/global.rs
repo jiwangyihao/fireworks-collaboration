@@ -1,12 +1,12 @@
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use tokio::runtime::Builder as RuntimeBuilder;
 use tokio::sync::oneshot;
-use std::sync::mpsc::{self, Sender, Receiver};
 
 use crate::core::config::{loader, model::AppConfig};
 
-use super::{builder, EffectiveIpPoolConfig, IpPool, IpSelection, IpOutcome};
+use super::{builder, EffectiveIpPoolConfig, IpOutcome, IpPool, IpSelection};
 
 fn storage() -> &'static Mutex<Option<Arc<Mutex<IpPool>>>> {
     static STORAGE: OnceLock<Mutex<Option<Arc<Mutex<IpPool>>>>> = OnceLock::new();
@@ -63,7 +63,9 @@ fn async_bridge_sender() -> &'static Mutex<Option<Sender<AsyncRequest>>> {
 
 fn spawn_async_bridge_if_needed() {
     let mut guard = async_bridge_sender().lock().expect("async bridge mutex");
-    if guard.is_some() { return; }
+    if guard.is_some() {
+        return;
+    }
     let (tx, rx): (Sender<AsyncRequest>, Receiver<AsyncRequest>) = mpsc::channel();
     *guard = Some(tx);
 
@@ -129,20 +131,39 @@ pub async fn pick_best_async(host: &str, port: u16) -> IpSelection {
     let sender_opt = async_bridge_sender().lock().ok().and_then(|g| g.clone());
     if let Some(sender) = sender_opt {
         let (tx, rx) = oneshot::channel();
-        let req = AsyncRequest::Pick { host: host.to_string(), port, respond: tx };
+        let req = AsyncRequest::Pick {
+            host: host.to_string(),
+            port,
+            respond: tx,
+        };
         if sender.send(req).is_err() {
-            tracing::warn!(target="ip_pool", host, port, "async bridge send failed; fallback system");
+            tracing::warn!(
+                target = "ip_pool",
+                host,
+                port,
+                "async bridge send failed; fallback system"
+            );
             return IpSelection::system_default(host.to_string(), port);
         }
         match rx.await {
             Ok(sel) => sel,
             Err(_) => {
-                tracing::warn!(target="ip_pool", host, port, "async bridge recv failed; fallback system");
+                tracing::warn!(
+                    target = "ip_pool",
+                    host,
+                    port,
+                    "async bridge recv failed; fallback system"
+                );
                 IpSelection::system_default(host.to_string(), port)
             }
         }
     } else {
-        tracing::warn!(target="ip_pool", host, port, "async bridge unavailable; fallback system");
+        tracing::warn!(
+            target = "ip_pool",
+            host,
+            port,
+            "async bridge unavailable; fallback system"
+        );
         IpSelection::system_default(host.to_string(), port)
     }
 }

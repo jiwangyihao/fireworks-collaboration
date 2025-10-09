@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt,
     net::IpAddr,
     sync::{
@@ -11,7 +11,7 @@ use std::{
 use super::events::{emit_ip_pool_auto_disable, emit_ip_pool_auto_enable};
 use anyhow::Result;
 use tokio::{
-    runtime::{Builder as RuntimeBuilder, Handle, Runtime},
+    runtime::{Builder as RuntimeBuilder, Runtime},
     sync::{Mutex as AsyncMutex, Notify},
 };
 
@@ -186,6 +186,7 @@ pub struct IpPool {
     circuit_breaker: Arc<CircuitBreaker>,
     /// 全局自动禁用截止时间戳（毫秒），None 表示未禁用
     auto_disabled_until: Arc<AtomicI64>,
+    preheat_enabled: bool,
 }
 
 impl fmt::Debug for IpPool {
@@ -224,6 +225,7 @@ impl IpPool {
             outcomes: Arc::new(Mutex::new(HashMap::new())),
             circuit_breaker: Arc::new(CircuitBreaker::new(breaker_config)),
             auto_disabled_until: Arc::new(AtomicI64::new(0)),
+            preheat_enabled: false,
         };
         pool.rebuild_preheater();
         pool
@@ -246,6 +248,7 @@ impl IpPool {
             outcomes: Arc::new(Mutex::new(HashMap::new())),
             circuit_breaker: Arc::new(CircuitBreaker::new(breaker_config)),
             auto_disabled_until: Arc::new(AtomicI64::new(0)),
+            preheat_enabled: false,
         };
         pool.rebuild_preheater();
         pool
@@ -340,6 +343,61 @@ impl IpPool {
         }
     }
 
+    /// Request the background preheater to refresh immediately.
+    /// Returns `true` when a preheater is running and accepted the request.
+    pub fn request_preheat_refresh(&self) -> bool {
+        if let Some(preheater) = &self.preheater {
+            preheater.request_refresh();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns `true` when a background preheater thread is active.
+    pub fn has_preheater(&self) -> bool {
+        self.preheater.is_some()
+    }
+
+    /// Returns `true` if preheater activation has been requested by the user.
+    pub fn preheat_enabled(&self) -> bool {
+        self.preheat_enabled
+    }
+
+    /// Returns the number of configured preheat targets.
+    pub fn preheat_target_count(&self) -> usize {
+        let mut targets: HashSet<(String, u16)> = HashSet::new();
+        for domain in preheat::resolve_preheat_domains(&self.config.file) {
+            let host = domain.host.to_ascii_lowercase();
+            let ports = if domain.ports.is_empty() {
+                vec![443]
+            } else {
+                domain.ports.clone()
+            };
+            for port in ports {
+                targets.insert((host.clone(), port));
+            }
+        }
+        targets.len()
+    }
+
+    /// Enable background preheating when it has been opted-in by the user.
+    /// Returns a tuple `(changed, spawned)` indicating whether the enabled flag
+    /// changed from the previous state and whether a preheater thread is now active.
+    pub fn enable_preheater(&mut self) -> (bool, bool) {
+        let previously_enabled = self.preheat_enabled;
+        self.preheat_enabled = true;
+
+        if self.preheater.is_none() {
+            self.rebuild_preheater();
+        } else if let Some(preheater) = &self.preheater {
+            preheater.request_refresh();
+        }
+
+        let spawned = self.preheater.is_some();
+        (!previously_enabled, spawned)
+    }
+
     /// 获取当前 `auto_disabled_until`
     pub fn auto_disabled_until(&self) -> Option<i64> {
         let until = self.auto_disabled_until.load(Ordering::Relaxed);
@@ -402,19 +460,17 @@ impl IpPool {
     }
 
     pub fn pick_best_blocking(&self, host: &str, port: u16) -> IpSelection {
-        // 若当前线程已在 Tokio runtime 中，避免任何形式的 block_on（包括独立 runtime）以规避 panic；回退为系统默认。
-        if Handle::try_current().is_ok() {
-            tracing::debug!(
-                target = "ip_pool",
-                host,
-                port,
-                "pick_best_blocking invoked inside runtime; falling back to system DNS"
-            );
-            return IpSelection::system_default(host.to_string(), port);
-        }
         match blocking_runtime() {
             Some(rt) => rt.block_on(self.pick_best(host, port)),
-            None => IpSelection::system_default(host.to_string(), port),
+            None => {
+                tracing::warn!(
+                    target = "ip_pool",
+                    host,
+                    port,
+                    "blocking runtime unavailable; falling back to system DNS"
+                );
+                IpSelection::system_default(host.to_string(), port)
+            }
         }
     }
 
@@ -524,13 +580,19 @@ impl IpPool {
     }
 
     fn rebuild_preheater(&mut self) {
-        self.preheater = None;
+        if !self.preheat_enabled {
+            self.preheater = None;
+            return;
+        }
         if !self.is_enabled() {
+            self.preheater = None;
             return;
         }
-        if self.config.file.preheat_domains.is_empty() {
+        if preheat::resolve_preheat_domains(&self.config.file).is_empty() {
+            self.preheater = None;
             return;
         }
+        self.preheater = None;
         match PreheatService::spawn(
             self.config.clone(),
             self.cache.clone(),
@@ -578,9 +640,7 @@ impl IpPool {
     }
 
     pub(super) fn is_preheat_target(&self, host: &str, port: u16) -> bool {
-        self.config
-            .file
-            .preheat_domains
+        preheat::resolve_preheat_domains(&self.config.file)
             .iter()
             .any(|domain| domain.host.eq_ignore_ascii_case(host) && domain.ports.contains(&port))
     }

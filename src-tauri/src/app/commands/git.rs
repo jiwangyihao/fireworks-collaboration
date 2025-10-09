@@ -206,7 +206,10 @@ async fn try_get_git_credentials(
 
     // Try to get credential for this host (any username)
     match store.get(&host, None).map_err(|e| e.to_string())? {
-        Some(cred) => Ok(Some((cred.username.to_string(), cred.password_or_token.to_string()))),
+        Some(cred) => Ok(Some((
+            cred.username.to_string(),
+            cred.password_or_token.to_string(),
+        ))),
         None => Ok(None),
     }
 }

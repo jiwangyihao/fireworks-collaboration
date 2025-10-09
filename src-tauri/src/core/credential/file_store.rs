@@ -311,7 +311,12 @@ impl EncryptedFileStore {
         // 5. 若删除失败，仅记录日志（不视为致命错误），因为后续第一次保存会覆盖。
         use std::fs::OpenOptions;
         let existed_already = file_path.exists();
-        match OpenOptions::new().create(true).write(true).append(false).open(&file_path) {
+        match OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(false)
+            .open(&file_path)
+        {
             Ok(_) => {
                 if !existed_already {
                     if let Err(e) = fs::remove_file(&file_path) {

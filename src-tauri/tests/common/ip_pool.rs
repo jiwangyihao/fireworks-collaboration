@@ -30,7 +30,9 @@ pub fn enabled_pool() -> fireworks_collaboration_lib::core::ip_pool::IpPool {
 }
 
 /// 构造一个带可选自定义缓存的启用池，便于合并测试内快速复用。
-pub fn enabled_pool_with_cache(cache: IpScoreCache) -> fireworks_collaboration_lib::core::ip_pool::IpPool {
+pub fn enabled_pool_with_cache(
+    cache: IpScoreCache,
+) -> fireworks_collaboration_lib::core::ip_pool::IpPool {
     use fireworks_collaboration_lib::core::ip_pool::IpPool;
     IpPool::with_cache(enabled_config(), cache)
 }
@@ -116,6 +118,7 @@ pub fn history_record(host: &str, port: u16, stat: &IpStat) -> IpHistoryRecord {
         latency_ms: stat.latency_ms.unwrap_or_default(),
         measured_at_epoch_ms: stat.measured_at_epoch_ms.unwrap_or_default(),
         expires_at_epoch_ms: stat.expires_at_epoch_ms.unwrap_or_default(),
+        resolver_metadata: stat.resolver_metadata.clone(),
     }
 }
 
@@ -123,7 +126,7 @@ pub fn history_record(host: &str, port: u16, stat: &IpStat) -> IpHistoryRecord {
 pub fn make_history_record(
     host: &str,
     port: u16,
-    ip: [u8;4],
+    ip: [u8; 4],
     sources: Vec<IpSource>,
     latency_ms: u32,
     measured_at_ms: i64,
@@ -142,6 +145,7 @@ pub fn make_history_record(
         latency_ms,
         measured_at_epoch_ms: measured_at_ms,
         expires_at_epoch_ms: expires_at_ms,
+        resolver_metadata: Vec::new(),
     }
 }
 
@@ -149,12 +153,20 @@ pub fn make_history_record(
 pub fn make_history_record_builtin(
     host: &str,
     port: u16,
-    ip: [u8;4],
+    ip: [u8; 4],
     latency_ms: u32,
     measured_at_ms: i64,
     expires_at_ms: i64,
 ) -> IpHistoryRecord {
-    make_history_record(host, port, ip, vec![IpSource::Builtin], latency_ms, measured_at_ms, expires_at_ms)
+    make_history_record(
+        host,
+        port,
+        ip,
+        vec![IpSource::Builtin],
+        latency_ms,
+        measured_at_ms,
+        expires_at_ms,
+    )
 }
 
 /// 同时写入缓存与历史（若历史可用），减少测试中重复样板。
@@ -233,7 +245,12 @@ pub fn expect_single_strategy_event<F>(events: Vec<StrategyEvent>, assert_fn: F)
 where
     F: FnOnce(&StrategyEvent),
 {
-    assert_eq!(events.len(), 1, "expected a single strategy event, got {}", events.len());
+    assert_eq!(
+        events.len(),
+        1,
+        "expected a single strategy event, got {}",
+        events.len()
+    );
     assert_fn(&events[0]);
 }
 
@@ -243,12 +260,15 @@ where
     F: Fn(&StrategyEvent) -> bool,
 {
     let count = events.iter().filter(|e| matcher(e)).count();
-    assert_eq!(count, expected, "strategy event count mismatch: expected {expected}, got {count}");
+    assert_eq!(
+        count, expected,
+        "strategy event count mismatch: expected {expected}, got {count}"
+    );
 }
 
 // ================= TCP Listener 测试辅助 =================
-use tokio::net::TcpListener;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
 /// 绑定一个本地临时端口并返回 (listener, local_addr)。
@@ -279,8 +299,8 @@ pub async fn make_user_static_pool_with_listener(
     Arc<AtomicUsize>,
     JoinHandle<()>,
 ) {
-    use fireworks_collaboration_lib::core::ip_pool::{IpPool, IpScoreCache};
     use fireworks_collaboration_lib::core::ip_pool::config::EffectiveIpPoolConfig;
+    use fireworks_collaboration_lib::core::ip_pool::{IpPool, IpScoreCache};
     let (listener, addr) = bind_ephemeral().await;
     let counter = Arc::new(AtomicUsize::new(0));
     let accept = spawn_single_accept(listener, counter.clone());
@@ -290,11 +310,13 @@ pub async fn make_user_static_pool_with_listener(
     cfg.runtime.sources.history = false;
     cfg.runtime.sources.user_static = true;
     cfg.runtime.sources.fallback = false;
-    cfg.file.user_static.push(fireworks_collaboration_lib::core::ip_pool::config::UserStaticIp {
-        host: host.to_string(),
-        ip: addr.ip().to_string(),
-        ports: vec![addr.port()],
-    });
+    cfg.file.user_static.push(
+        fireworks_collaboration_lib::core::ip_pool::config::UserStaticIp {
+            host: host.to_string(),
+            ip: addr.ip().to_string(),
+            ports: vec![addr.port()],
+        },
+    );
     let pool = IpPool::with_cache(cfg, IpScoreCache::new());
     (pool, addr, counter, accept)
 }

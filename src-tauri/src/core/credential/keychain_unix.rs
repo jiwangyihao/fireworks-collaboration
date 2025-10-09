@@ -47,7 +47,10 @@ impl UnixCredentialStore {
         let connection = runtime
             .block_on(SecretService::connect(secret_service::EncryptionType::Dh))
             .map_err(|e| format!("Linux Secret Service unavailable: {e}"))?;
-        Ok(UnixCredentialStore { connection, runtime: std::sync::Arc::new(runtime) })
+        Ok(UnixCredentialStore {
+            connection,
+            runtime: std::sync::Arc::new(runtime),
+        })
     }
 
     /// Creates a new Unix credential store (other Unix).
@@ -91,7 +94,11 @@ impl CredentialStore for UnixCredentialStore {
         match find_generic_password(None, SERVICE_NAME, &account) {
             Ok((password_bytes, _)) => {
                 let password = String::from_utf8_lossy(&password_bytes).to_string();
-                Ok(Some(Credential::new(host.to_string(), username.to_string(), password)))
+                Ok(Some(Credential::new(
+                    host.to_string(),
+                    username.to_string(),
+                    password,
+                )))
             }
             Err(e) => {
                 if e.to_string().contains("errSecItemNotFound") {
@@ -121,9 +128,9 @@ impl CredentialStore for UnixCredentialStore {
             &account,
             credential.password_or_token.as_bytes(),
         )
-        .map_err(|e| CredentialStoreError::AccessError(format!(
-            "Failed to write to macOS keychain: {e}"
-        )))
+        .map_err(|e| {
+            CredentialStoreError::AccessError(format!("Failed to write to macOS keychain: {e}"))
+        })
     }
     fn remove(&self, host: &str, username: &str) -> CredentialStoreResult<()> {
         use security_framework::os::macos::passwords::delete_generic_password;
@@ -166,13 +173,19 @@ impl CredentialStore for UnixCredentialStore {
         // Build attribute map. We always include host; optionally username.
         let mut query: HashMap<&str, String> = HashMap::new();
         query.insert("host", host.to_string());
-        if let Some(u) = username { query.insert("username", u.to_string()); }
+        if let Some(u) = username {
+            query.insert("username", u.to_string());
+        }
 
         // Convert to HashMap<&str, &str> for API call (collect references lifetime limited to this scope)
         let attr: HashMap<&str, &str> = query.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
-        let result = self.runtime.block_on(self.connection.search_items(attr))
-            .map_err(|e| CredentialStoreError::AccessError(format!("Secret Service search error: {e}")))?;
+        let result = self
+            .runtime
+            .block_on(self.connection.search_items(attr))
+            .map_err(|e| {
+                CredentialStoreError::AccessError(format!("Secret Service search error: {e}"))
+            })?;
 
         // Prefer unlocked items; if first locked exists attempt unlock (operate on references, no clone needed)
         let mut item_ref: Option<&secret_service::Item<'_>> = result.unlocked.first();
@@ -185,16 +198,25 @@ impl CredentialStore for UnixCredentialStore {
         }
 
         if let Some(item) = item_ref {
-            let secret = self.runtime.block_on(item.get_secret())
-                .map_err(|e| CredentialStoreError::AccessError(format!("Secret retrieval failed: {e}")))?;
+            let secret = self.runtime.block_on(item.get_secret()).map_err(|e| {
+                CredentialStoreError::AccessError(format!("Secret retrieval failed: {e}"))
+            })?;
             // Reconstruct username if not provided, via attributes
-            let username_val = username.map(|s| s.to_string()).or_else(|| {
-                // Attempt to fetch attributes if username was not specified.
-                self.runtime.block_on(item.get_attributes())
-                    .ok()
-                    .and_then(|attrs| attrs.get("username").map(|s| s.to_string()))
-            }).unwrap_or_default();
-            let cred = Credential::new(host.to_string(), username_val, String::from_utf8_lossy(&secret).to_string());
+            let username_val = username
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    // Attempt to fetch attributes if username was not specified.
+                    self.runtime
+                        .block_on(item.get_attributes())
+                        .ok()
+                        .and_then(|attrs| attrs.get("username").map(|s| s.to_string()))
+                })
+                .unwrap_or_default();
+            let cred = Credential::new(
+                host.to_string(),
+                username_val,
+                String::from_utf8_lossy(&secret).to_string(),
+            );
             Ok(Some(cred))
         } else {
             Ok(None)
@@ -204,34 +226,47 @@ impl CredentialStore for UnixCredentialStore {
     fn add(&self, credential: Credential) -> CredentialStoreResult<()> {
         use std::collections::HashMap;
         // First check existence to mimic AlreadyExists semantics
-        if self.get(&credential.host, Some(&credential.username))?.is_some() {
-            return Err(CredentialStoreError::AlreadyExists(format!("{}:{}", credential.host, credential.username)));
+        if self
+            .get(&credential.host, Some(&credential.username))?
+            .is_some()
+        {
+            return Err(CredentialStoreError::AlreadyExists(format!(
+                "{}:{}",
+                credential.host, credential.username
+            )));
         }
-        let collection = self.runtime.block_on(self.connection.get_default_collection())
-            .map_err(|e| CredentialStoreError::AccessError(format!("Secret Service collection error: {e}")))?;
+        let collection = self
+            .runtime
+            .block_on(self.connection.get_default_collection())
+            .map_err(|e| {
+                CredentialStoreError::AccessError(format!("Secret Service collection error: {e}"))
+            })?;
         let mut props: HashMap<&str, &str> = HashMap::new();
         props.insert("service", SERVICE_NAME);
         props.insert("host", &credential.host);
         props.insert("username", &credential.username);
         let label = format!("{SERVICE_NAME}:{}:{}", credential.host, credential.username);
-        self.runtime.block_on(collection.create_item(
-            &label,
-            props,
-            credential.password_or_token.as_bytes(),
-            false, // do not replace
-            "text/plain",
-        )).map_err(|e| CredentialStoreError::AccessError(format!("Create item failed: {e}")))?;
+        self.runtime
+            .block_on(collection.create_item(
+                &label,
+                props,
+                credential.password_or_token.as_bytes(),
+                false, // do not replace
+                "text/plain",
+            ))
+            .map_err(|e| CredentialStoreError::AccessError(format!("Create item failed: {e}")))?;
         Ok(())
     }
 
     fn remove(&self, host: &str, username: &str) -> CredentialStoreResult<()> {
         use std::collections::HashMap;
-        let attrs: HashMap<&str, &str> = HashMap::from([
-            ("host", host),
-            ("username", username),
-        ]);
-        let result = self.runtime.block_on(self.connection.search_items(attrs))
-            .map_err(|e| CredentialStoreError::AccessError(format!("Secret Service search error: {e}")))?;
+        let attrs: HashMap<&str, &str> = HashMap::from([("host", host), ("username", username)]);
+        let result = self
+            .runtime
+            .block_on(self.connection.search_items(attrs))
+            .map_err(|e| {
+                CredentialStoreError::AccessError(format!("Secret Service search error: {e}"))
+            })?;
         // Work with references; unlock locked item if chosen
         let mut item_ref: Option<&secret_service::Item<'_>> = result.unlocked.first();
         if item_ref.is_none() {
@@ -241,11 +276,15 @@ impl CredentialStore for UnixCredentialStore {
             }
         }
         if let Some(item) = item_ref {
-            self.runtime.block_on(item.delete())
+            self.runtime
+                .block_on(item.delete())
                 .map_err(|e| CredentialStoreError::AccessError(format!("Delete failed: {e}")))?;
             Ok(())
         } else {
-            Err(CredentialStoreError::NotFound(format!("{}:{}", host, username)))
+            Err(CredentialStoreError::NotFound(format!(
+                "{}:{}",
+                host, username
+            )))
         }
     }
 
@@ -264,20 +303,32 @@ impl CredentialStore for UnixCredentialStore {
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 impl CredentialStore for UnixCredentialStore {
-    fn get(&self, _host: &str, _username: Option<&str>) -> CredentialStoreResult<Option<Credential>> {
-        Err(CredentialStoreError::Other("Unix keychain not supported on this platform".to_string()))
+    fn get(
+        &self,
+        _host: &str,
+        _username: Option<&str>,
+    ) -> CredentialStoreResult<Option<Credential>> {
+        Err(CredentialStoreError::Other(
+            "Unix keychain not supported on this platform".to_string(),
+        ))
     }
 
     fn add(&self, _credential: Credential) -> CredentialStoreResult<()> {
-        Err(CredentialStoreError::Other("Unix keychain not supported on this platform".to_string()))
+        Err(CredentialStoreError::Other(
+            "Unix keychain not supported on this platform".to_string(),
+        ))
     }
 
     fn remove(&self, _host: &str, _username: &str) -> CredentialStoreResult<()> {
-        Err(CredentialStoreError::Other("Unix keychain not supported on this platform".to_string()))
+        Err(CredentialStoreError::Other(
+            "Unix keychain not supported on this platform".to_string(),
+        ))
     }
 
     fn list(&self) -> CredentialStoreResult<Vec<Credential>> {
-        Err(CredentialStoreError::Other("Unix keychain not supported on this platform".to_string()))
+        Err(CredentialStoreError::Other(
+            "Unix keychain not supported on this platform".to_string(),
+        ))
     }
 
     fn update_last_used(&self, _host: &str, _username: &str) -> CredentialStoreResult<()> {

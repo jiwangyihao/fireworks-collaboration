@@ -141,7 +141,7 @@ fn test_deserialize_with_defaults() {
     assert_eq!(cfg.tls.cert_fp_max_bytes, 5 * 1024 * 1024);
     // P3.4: spkiPins default empty
     assert!(cfg.tls.spki_pins.is_empty());
-    assert!(!cfg.ip_pool.enabled, "ipPool defaults to disabled");
+    assert!(cfg.ip_pool.enabled, "ipPool defaults to enabled");
     // P5.0: proxy defaults to off mode
     assert!(!cfg.proxy.is_enabled(), "proxy defaults to disabled");
     assert_eq!(cfg.observability.layer, ObservabilityLayer::Optimize);

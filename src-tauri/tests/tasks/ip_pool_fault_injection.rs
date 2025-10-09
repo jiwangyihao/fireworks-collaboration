@@ -286,7 +286,11 @@ fn fault_blacklist_filters_candidates() {
     // 若唯一候选被过滤通常会回退，也允许实现通过其它源（如 dns/fallback）补充候选。
     if !selection.is_system_default() {
         if let Some(stat) = selection.selected() {
-            assert_ne!(stat.candidate.address.to_string(), "127.0.0.1", "黑名单 IP 不应被选中");
+            assert_ne!(
+                stat.candidate.address.to_string(),
+                "127.0.0.1",
+                "黑名单 IP 不应被选中"
+            );
         }
     }
 

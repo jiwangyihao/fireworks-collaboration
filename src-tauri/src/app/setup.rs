@@ -11,7 +11,7 @@ use tauri::Manager;
 use crate::{
     core::{
         config::{loader as cfg_loader, model::AppConfig},
-    credential::{audit::AuditLogger},
+        credential::audit::AuditLogger,
         ip_pool,
         tasks::TaskRegistry,
         workspace::WorkspaceStatusService,
@@ -57,6 +57,12 @@ pub fn run() {
             crate::app::commands::config::set_config,
             crate::app::commands::config::export_team_config_template,
             crate::app::commands::config::import_team_config_template,
+            crate::app::commands::ip_pool::ip_pool_get_snapshot,
+            crate::app::commands::ip_pool::ip_pool_update_config,
+            crate::app::commands::ip_pool::ip_pool_request_refresh,
+            crate::app::commands::ip_pool::ip_pool_start_preheater,
+            crate::app::commands::ip_pool::ip_pool_clear_auto_disabled,
+            crate::app::commands::ip_pool::ip_pool_pick_best,
             crate::app::commands::tasks::task_list,
             crate::app::commands::tasks::task_cancel,
             crate::app::commands::tasks::task_start_sleep,

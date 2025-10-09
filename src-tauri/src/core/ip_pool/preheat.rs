@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{hash_map::Entry, HashMap, HashSet},
     net::{IpAddr, SocketAddr},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -11,18 +11,44 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use tokio::{
-    net::{lookup_host, TcpStream},
+    net::TcpStream,
     sync::{Notify, Semaphore},
-    time::{sleep, Duration, Instant},
+    task::JoinSet,
+    time::{sleep, timeout, Duration, Instant},
 };
 
 use super::{
     cache::{IpCacheKey, IpCacheSlot, IpScoreCache, IpStat},
-    config::{EffectiveIpPoolConfig, IpPoolRuntimeConfig, PreheatDomain, UserStaticIp},
+    config::{
+        DnsRuntimeConfig, EffectiveIpPoolConfig, IpPoolFileConfig, IpPoolRuntimeConfig,
+        PreheatDomain, UserStaticIp,
+    },
+    dns::{self, DnsResolvedIp},
     history::{IpHistoryRecord, IpHistoryStore},
     IpCandidate, IpSource,
 };
 use ipnet::IpNet;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CandidateChannel {
+    Builtin,
+    UserStatic,
+    History,
+    Dns,
+    Fallback,
+}
+
+impl CandidateChannel {
+    fn label(self) -> &'static str {
+        match self {
+            CandidateChannel::Builtin => "builtin",
+            CandidateChannel::UserStatic => "user_static",
+            CandidateChannel::History => "history",
+            CandidateChannel::Dns => "dns",
+            CandidateChannel::Fallback => "fallback",
+        }
+    }
+}
 
 /// 判断 IP 是否在名单（支持单 IP 和 CIDR）
 fn is_ip_in_list(ip: IpAddr, list: &[String]) -> bool {
@@ -46,6 +72,12 @@ const MIN_TTL_SECS: u64 = 30;
 const MAX_PROBE_TIMEOUT_MS: u64 = 10_000;
 /// 失败时最大退避倍数，避免无限放大刷新间隔。
 const FAILURE_BACKOFF_MULT_MAX: u64 = 6;
+/// 快速路径等待窗口上限（毫秒）。
+const FAST_WAIT_DEFAULT_MS: u64 = 1_200;
+/// 快速路径等待窗口下限（毫秒）。
+const FAST_WAIT_MIN_MS: u64 = 300;
+/// 触发快速结束的延迟阈值（毫秒）。
+const FAST_LATENCY_THRESHOLD_MS: u32 = 200;
 
 #[derive(Debug)]
 pub struct PreheatService {
@@ -145,7 +177,8 @@ async fn run_preheat_loop(
         return;
     }
 
-    if config.file.preheat_domains.is_empty() {
+    let preheat_domains = resolve_preheat_domains(&config.file);
+    if preheat_domains.is_empty() {
         tracing::info!(
             target = "ip_pool",
             "no preheat domains configured; preheat loop idle"
@@ -156,11 +189,8 @@ async fn run_preheat_loop(
 
     let ttl_secs = config.file.score_ttl_seconds.max(MIN_TTL_SECS);
     let base_instant = Instant::now();
-    let mut schedules: Vec<DomainSchedule> = config
-        .file
-        .preheat_domains
-        .iter()
-        .cloned()
+    let mut schedules: Vec<DomainSchedule> = preheat_domains
+        .into_iter()
         .map(|domain| DomainSchedule::new(domain, ttl_secs, base_instant))
         .collect();
 
@@ -377,49 +407,276 @@ async fn preheat_domain(
     let host = domain.host.as_str();
     tracing::debug!(target = "ip_pool", host, ports = ?domain.ports, "preheat domain");
     for &port in &domain.ports {
-        let candidates = collect_candidates(host, port, config, history.clone()).await;
-        if candidates.is_empty() {
+        let toggles = &config.runtime.sources;
+        let runtime_cfg = config.runtime.clone();
+        let file_cfg = config.file.clone();
+        let ttl_secs = file_cfg.score_ttl_seconds;
+        let whitelist = file_cfg.whitelist.clone();
+        let blacklist = file_cfg.blacklist.clone();
+
+        let mut candidate_map: HashMap<IpAddr, AggregatedCandidate> = HashMap::new();
+        let mut join_set: JoinSet<(CandidateChannel, Result<Vec<AggregatedCandidate>>)> =
+            JoinSet::new();
+        let mut task_count = 0usize;
+        let host_owned = host.to_string();
+
+        if toggles.builtin {
+            let host_clone = host_owned.clone();
+            join_set.spawn(async move {
+                (
+                    CandidateChannel::Builtin,
+                    gather_builtin_candidates(host_clone.as_str(), port),
+                )
+            });
+            task_count += 1;
+        }
+
+        if toggles.user_static {
+            let host_clone = host_owned.clone();
+            let entries = file_cfg.user_static.clone();
+            join_set.spawn(async move {
+                (
+                    CandidateChannel::UserStatic,
+                    gather_user_static_candidates(host_clone.as_str(), port, &entries),
+                )
+            });
+            task_count += 1;
+        }
+
+        if toggles.history {
+            let host_clone = host_owned.clone();
+            let history_clone = history.clone();
+            join_set.spawn(async move {
+                (
+                    CandidateChannel::History,
+                    gather_history_candidates(host_clone.as_str(), port, history_clone),
+                )
+            });
+            task_count += 1;
+        }
+
+        if toggles.dns {
+            let host_clone = host_owned.clone();
+            let dns_cfg = runtime_cfg.dns.clone();
+            join_set.spawn(async move {
+                (
+                    CandidateChannel::Dns,
+                    gather_dns_candidates(host_clone.as_str(), port, &dns_cfg).await,
+                )
+            });
+            task_count += 1;
+        }
+
+        if toggles.fallback {
+            let host_clone = host_owned.clone();
+            join_set.spawn(async move {
+                (
+                    CandidateChannel::Fallback,
+                    gather_fallback_candidates(host_clone.as_str(), port),
+                )
+            });
+            task_count += 1;
+        }
+
+        if task_count == 0 {
+            tracing::warn!(
+                target = "ip_pool",
+                host,
+                port,
+                "no candidate sources enabled for preheat"
+            );
+            continue;
+        }
+
+        let fast_wait_ms = runtime_cfg
+            .probe_timeout_ms
+            .min(FAST_WAIT_DEFAULT_MS)
+            .max(FAST_WAIT_MIN_MS);
+        let wait_deadline = Instant::now() + Duration::from_millis(fast_wait_ms);
+        let mut waiting = true;
+        let mut fast_path_hit = false;
+        let mut timeout_triggered = false;
+        let mut measured_once = false;
+
+        while !join_set.is_empty() {
+            let join_item = if waiting {
+                let now = Instant::now();
+                if now >= wait_deadline {
+                    waiting = false;
+                    timeout_triggered = true;
+                    None
+                } else {
+                    match timeout(wait_deadline - now, join_set.join_next()).await {
+                        Ok(item) => item,
+                        Err(_) => {
+                            waiting = false;
+                            timeout_triggered = true;
+                            None
+                        }
+                    }
+                }
+            } else {
+                join_set.join_next().await
+            };
+
+            let Some(join_result) = join_item else {
+                break;
+            };
+
+            match join_result {
+                Ok((channel, Ok(batch))) => {
+                    if batch.is_empty() {
+                        tracing::debug!(
+                            target = "ip_pool",
+                            host,
+                            port,
+                            channel = channel.label(),
+                            "candidate channel returned no entries"
+                        );
+                        continue;
+                    }
+
+                    tracing::debug!(
+                        target = "ip_pool",
+                        host,
+                        port,
+                        channel = channel.label(),
+                        count = batch.len(),
+                        "collected candidates"
+                    );
+
+                    let merged = merge_candidate_map(&mut candidate_map, batch);
+                    let filtered = apply_cidr_filters(&mut candidate_map, &whitelist, &blacklist);
+
+                    if merged || filtered {
+                        let snapshot: Vec<AggregatedCandidate> =
+                            candidate_map.values().cloned().collect();
+                        match measure_and_update_candidates(
+                            host,
+                            port,
+                            snapshot,
+                            &runtime_cfg,
+                            ttl_secs,
+                            cache.clone(),
+                            history.clone(),
+                            true,
+                        )
+                        .await
+                        {
+                            Ok(stats) => {
+                                measured_once = true;
+                                use crate::core::ip_pool::events::emit_ip_pool_refresh;
+                                use uuid::Uuid;
+                                let task_id = Uuid::new_v4();
+                                if stats.is_empty() {
+                                    emit_ip_pool_refresh(
+                                        task_id,
+                                        host,
+                                        false,
+                                        &[],
+                                        "all_probes_failed".to_string(),
+                                    );
+                                } else {
+                                    emit_ip_pool_refresh(
+                                        task_id,
+                                        host,
+                                        true,
+                                        &stats,
+                                        "preheat".to_string(),
+                                    );
+
+                                    if waiting {
+                                        if let Some(latency) =
+                                            stats.first().and_then(|s| s.latency_ms)
+                                        {
+                                            if latency < FAST_LATENCY_THRESHOLD_MS {
+                                                fast_path_hit = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    target = "ip_pool",
+                                    host,
+                                    port,
+                                    error = %err,
+                                    "failed to measure candidates"
+                                );
+                            }
+                        }
+                    }
+                }
+                Ok((channel, Err(err))) => {
+                    tracing::warn!(
+                        target = "ip_pool",
+                        host,
+                        port,
+                        channel = channel.label(),
+                        error = %err,
+                        "candidate channel failed"
+                    );
+                }
+                Err(join_err) => {
+                    tracing::debug!(
+                        target = "ip_pool",
+                        host,
+                        port,
+                        error = %join_err,
+                        "candidate channel join error"
+                    );
+                }
+            }
+        }
+
+        if !measured_once && candidate_map.is_empty() {
             tracing::warn!(target = "ip_pool", host, port, "no candidates collected");
-            // Emit failure event
-            {
-                use crate::core::ip_pool::events::emit_ip_pool_refresh;
-                use uuid::Uuid;
-                let task_id = Uuid::new_v4();
-                emit_ip_pool_refresh(task_id, host, false, &[], "no_candidates".to_string());
-            }
-            continue;
-        }
-
-        let stats = measure_candidates(
-            host,
-            port,
-            candidates,
-            &config.runtime,
-            config.file.score_ttl_seconds,
-        )
-        .await;
-
-        if stats.is_empty() {
-            tracing::warn!(target = "ip_pool", host, port, "all probes failed");
-            cache.remove(host, port);
-            // Emit failure event
-            {
-                use crate::core::ip_pool::events::emit_ip_pool_refresh;
-                use uuid::Uuid;
-                let task_id = Uuid::new_v4();
-                emit_ip_pool_refresh(task_id, host, false, &[], "all_probes_failed".to_string());
-            }
-            continue;
-        }
-
-        update_cache_and_history(host, port, stats.clone(), cache.clone(), history.clone())?;
-
-        // Emit IP pool refresh event for observability
-        {
             use crate::core::ip_pool::events::emit_ip_pool_refresh;
             use uuid::Uuid;
             let task_id = Uuid::new_v4();
-            emit_ip_pool_refresh(task_id, host, true, &stats, "preheat".to_string());
+            emit_ip_pool_refresh(task_id, host, false, &[], "no_candidates".to_string());
+        }
+
+        let pending = !join_set.is_empty();
+        if pending && (fast_path_hit || timeout_triggered) {
+            let host_bg = host_owned.clone();
+            let runtime_bg = runtime_cfg.clone();
+            let whitelist_bg = whitelist.clone();
+            let blacklist_bg = blacklist.clone();
+            let cache_bg = cache.clone();
+            let history_bg = history.clone();
+            tokio::spawn(async move {
+                drain_remaining_candidates(
+                    join_set,
+                    candidate_map,
+                    host_bg,
+                    port,
+                    runtime_bg,
+                    ttl_secs,
+                    whitelist_bg,
+                    blacklist_bg,
+                    cache_bg,
+                    history_bg,
+                )
+                .await;
+            });
+            continue;
+        }
+
+        // Ensure pending tasks are fully consumed when we decide not to hand them off.
+        while let Some(result) = join_set.join_next().await {
+            if let Ok((channel, Err(err))) = result {
+                tracing::warn!(
+                    target = "ip_pool",
+                    host,
+                    port,
+                    channel = channel.label(),
+                    error = %err,
+                    "candidate channel failed during finalization"
+                );
+            }
         }
     }
     Ok(())
@@ -429,6 +686,7 @@ async fn preheat_domain(
 pub struct AggregatedCandidate {
     pub candidate: IpCandidate,
     pub sources: HashSet<IpSource>,
+    pub resolver_tags: HashSet<String>,
 }
 
 impl AggregatedCandidate {
@@ -438,6 +696,7 @@ impl AggregatedCandidate {
         Self {
             candidate: IpCandidate::new(ip, port, source),
             sources,
+            resolver_tags: HashSet::new(),
         }
     }
 
@@ -445,14 +704,347 @@ impl AggregatedCandidate {
         self.sources.insert(source);
     }
 
+    fn merge_resolver_tag<S: Into<String>>(&mut self, tag: S) {
+        self.resolver_tags.insert(tag.into());
+    }
+
+    fn merge_from(&mut self, mut other: AggregatedCandidate) -> bool {
+        let mut changed = false;
+        for source in other.sources.drain() {
+            if self.sources.insert(source) {
+                changed = true;
+            }
+        }
+        for tag in other.resolver_tags.drain() {
+            if self.resolver_tags.insert(tag) {
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub fn to_stat(&self, latency_ms: u32, ttl_secs: u64) -> IpStat {
         let now_ms = current_epoch_ms();
         let expires = now_ms + (ttl_secs as i64 * 1000);
         let mut stat = IpStat::with_latency(self.candidate.clone(), latency_ms);
         stat.sources = self.sources.iter().copied().collect();
+        if !self.resolver_tags.is_empty() {
+            let mut tags: Vec<String> = self.resolver_tags.iter().cloned().collect();
+            tags.sort();
+            stat.resolver_metadata = tags;
+        }
         stat.measured_at_epoch_ms = Some(now_ms);
         stat.expires_at_epoch_ms = Some(expires);
         stat
+    }
+}
+
+fn merge_candidate_map(
+    map: &mut HashMap<IpAddr, AggregatedCandidate>,
+    incoming: Vec<AggregatedCandidate>,
+) -> bool {
+    let mut changed = false;
+    for candidate in incoming {
+        let address = candidate.candidate.address;
+        match map.entry(address) {
+            Entry::Vacant(entry) => {
+                entry.insert(candidate);
+                changed = true;
+            }
+            Entry::Occupied(mut entry) => {
+                if entry.get_mut().merge_from(candidate) {
+                    changed = true;
+                }
+            }
+        }
+    }
+    changed
+}
+
+fn apply_cidr_filters(
+    map: &mut HashMap<IpAddr, AggregatedCandidate>,
+    whitelist: &[String],
+    blacklist: &[String],
+) -> bool {
+    let mut changed = false;
+
+    if !whitelist.is_empty() {
+        let mut allowed: HashSet<IpAddr> = HashSet::new();
+        for (&ip, _) in map.iter() {
+            for cidr in whitelist {
+                if is_ip_in_list(ip, &[cidr.clone()]) {
+                    crate::core::ip_pool::events::emit_ip_pool_cidr_filter(ip, "whitelist", cidr);
+                    allowed.insert(ip);
+                    break;
+                }
+            }
+        }
+
+        let before = map.len();
+        map.retain(|ip, _| allowed.contains(ip));
+        if map.len() != before {
+            changed = true;
+        }
+    }
+
+    if !blacklist.is_empty() {
+        let mut to_remove: Vec<IpAddr> = Vec::new();
+        for (&ip, _) in map.iter() {
+            for cidr in blacklist {
+                if is_ip_in_list(ip, &[cidr.clone()]) {
+                    crate::core::ip_pool::events::emit_ip_pool_cidr_filter(ip, "blacklist", cidr);
+                    to_remove.push(ip);
+                    break;
+                }
+            }
+        }
+
+        if !to_remove.is_empty() {
+            let mut removed = 0_usize;
+            for ip in to_remove {
+                if map.remove(&ip).is_some() {
+                    removed += 1;
+                }
+            }
+            if removed > 0 {
+                tracing::info!(
+                    target = "ip_pool",
+                    removed,
+                    "candidates removed by blacklist"
+                );
+                changed = true;
+            }
+        }
+    }
+
+    changed
+}
+
+fn gather_builtin_candidates(host: &str, port: u16) -> Result<Vec<AggregatedCandidate>> {
+    let candidates = builtin_lookup(host)
+        .into_iter()
+        .map(|ip| AggregatedCandidate::new(ip, port, IpSource::Builtin))
+        .collect();
+    Ok(candidates)
+}
+
+fn gather_user_static_candidates(
+    host: &str,
+    port: u16,
+    entries: &[UserStaticIp],
+) -> Result<Vec<AggregatedCandidate>> {
+    let candidates = user_static_lookup(host, port, entries)
+        .into_iter()
+        .map(|ip| AggregatedCandidate::new(ip, port, IpSource::UserStatic))
+        .collect();
+    Ok(candidates)
+}
+
+fn gather_history_candidates(
+    host: &str,
+    port: u16,
+    history: Arc<IpHistoryStore>,
+) -> Result<Vec<AggregatedCandidate>> {
+    let mut items = Vec::new();
+    if let Some(record) = history.get_fresh(host, port, current_epoch_ms()) {
+        let mut candidate =
+            AggregatedCandidate::new(record.candidate.address, port, IpSource::History);
+        for src in record.sources {
+            candidate.merge_source(src);
+        }
+        for tag in record.resolver_metadata {
+            candidate.merge_resolver_tag(tag);
+        }
+        items.push(candidate);
+    }
+    Ok(items)
+}
+
+async fn gather_dns_candidates(
+    host: &str,
+    port: u16,
+    runtime_dns: &DnsRuntimeConfig,
+) -> Result<Vec<AggregatedCandidate>> {
+    let mut items = Vec::new();
+    for DnsResolvedIp { ip, label } in dns::resolve(host, port, runtime_dns).await? {
+        let mut candidate = AggregatedCandidate::new(ip, port, IpSource::Dns);
+        if let Some(tag) = label {
+            candidate.merge_resolver_tag(tag);
+        }
+        items.push(candidate);
+    }
+    Ok(items)
+}
+
+fn gather_fallback_candidates(host: &str, port: u16) -> Result<Vec<AggregatedCandidate>> {
+    let candidates = fallback_lookup(host)
+        .into_iter()
+        .map(|ip| AggregatedCandidate::new(ip, port, IpSource::Fallback))
+        .collect();
+    Ok(candidates)
+}
+
+async fn measure_and_update_candidates(
+    host: &str,
+    port: u16,
+    candidates: Vec<AggregatedCandidate>,
+    runtime_cfg: &IpPoolRuntimeConfig,
+    ttl_secs: u64,
+    cache: Arc<IpScoreCache>,
+    history: Arc<IpHistoryStore>,
+    with_progress: bool,
+) -> Result<Vec<IpStat>> {
+    if candidates.is_empty() {
+        cache.remove(host, port);
+        return Ok(Vec::new());
+    }
+
+    let stats = if with_progress {
+        let cache_progress = cache.clone();
+        let history_progress = history.clone();
+        let host_owned = host.to_string();
+        let mut progress = move |current: &[IpStat]| -> Result<()> {
+            if current.is_empty() {
+                return Ok(());
+            }
+            let snapshot: Vec<IpStat> = current.iter().cloned().collect();
+            update_cache_and_history(
+                host_owned.as_str(),
+                port,
+                snapshot,
+                cache_progress.clone(),
+                history_progress.clone(),
+            )
+        };
+
+        measure_candidates(
+            host,
+            port,
+            candidates,
+            runtime_cfg,
+            ttl_secs,
+            Some(&mut progress),
+        )
+        .await
+    } else {
+        measure_candidates(host, port, candidates, runtime_cfg, ttl_secs, None).await
+    };
+
+    if stats.is_empty() {
+        cache.remove(host, port);
+        return Ok(stats);
+    }
+
+    update_cache_and_history(host, port, stats.clone(), cache, history)?;
+    Ok(stats)
+}
+
+async fn drain_remaining_candidates(
+    mut join_set: JoinSet<(CandidateChannel, Result<Vec<AggregatedCandidate>>)>,
+    mut candidates: HashMap<IpAddr, AggregatedCandidate>,
+    host: String,
+    port: u16,
+    runtime_cfg: IpPoolRuntimeConfig,
+    ttl_secs: u64,
+    whitelist: Vec<String>,
+    blacklist: Vec<String>,
+    cache: Arc<IpScoreCache>,
+    history: Arc<IpHistoryStore>,
+) {
+    while let Some(result) = join_set.join_next().await {
+        match result {
+            Ok((channel, Ok(batch))) => {
+                if batch.is_empty() {
+                    tracing::debug!(
+                        target = "ip_pool",
+                        host = host.as_str(),
+                        port,
+                        channel = channel.label(),
+                        "candidate channel returned no entries"
+                    );
+                    continue;
+                }
+
+                tracing::debug!(
+                    target = "ip_pool",
+                    host = host.as_str(),
+                    port,
+                    channel = channel.label(),
+                    count = batch.len(),
+                    "received additional candidates"
+                );
+
+                let merged = merge_candidate_map(&mut candidates, batch);
+                let filtered = apply_cidr_filters(&mut candidates, &whitelist, &blacklist);
+
+                if merged || filtered {
+                    let snapshot: Vec<AggregatedCandidate> = candidates.values().cloned().collect();
+                    match measure_and_update_candidates(
+                        host.as_str(),
+                        port,
+                        snapshot,
+                        &runtime_cfg,
+                        ttl_secs,
+                        cache.clone(),
+                        history.clone(),
+                        false,
+                    )
+                    .await
+                    {
+                        Ok(stats) => {
+                            use crate::core::ip_pool::events::emit_ip_pool_refresh;
+                            use uuid::Uuid;
+                            let task_id = Uuid::new_v4();
+                            if stats.is_empty() {
+                                emit_ip_pool_refresh(
+                                    task_id,
+                                    host.as_str(),
+                                    false,
+                                    &[],
+                                    "preheat_background_all_failed".to_string(),
+                                );
+                            } else {
+                                emit_ip_pool_refresh(
+                                    task_id,
+                                    host.as_str(),
+                                    true,
+                                    &stats,
+                                    "preheat_background".to_string(),
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                target = "ip_pool",
+                                host = host.as_str(),
+                                port,
+                                error = %err,
+                                "failed to refresh candidates during background collection"
+                            );
+                        }
+                    }
+                }
+            }
+            Ok((channel, Err(err))) => {
+                tracing::warn!(
+                    target = "ip_pool",
+                    host = host.as_str(),
+                    port,
+                    channel = channel.label(),
+                    error = %err,
+                    "candidate channel failed during background collection"
+                );
+            }
+            Err(join_err) => {
+                tracing::debug!(
+                    target = "ip_pool",
+                    host = host.as_str(),
+                    port,
+                    error = %join_err,
+                    "candidate channel join error during background collection"
+                );
+            }
+        }
     }
 }
 
@@ -466,123 +1058,70 @@ pub async fn collect_candidates(
     let toggles = &config.runtime.sources;
 
     if toggles.builtin {
-        for ip in builtin_lookup(host) {
-            map.entry(ip)
-                .and_modify(|entry| entry.merge_source(IpSource::Builtin))
-                .or_insert_with(|| AggregatedCandidate::new(ip, port, IpSource::Builtin));
+        if let Ok(batch) = gather_builtin_candidates(host, port) {
+            merge_candidate_map(&mut map, batch);
         }
     }
 
     if toggles.user_static {
-        for entry in user_static_lookup(host, port, &config.file.user_static) {
-            map.entry(entry)
-                .and_modify(|agg| agg.merge_source(IpSource::UserStatic))
-                .or_insert_with(|| AggregatedCandidate::new(entry, port, IpSource::UserStatic));
+        if let Ok(batch) = gather_user_static_candidates(host, port, &config.file.user_static) {
+            merge_candidate_map(&mut map, batch);
         }
     }
 
     if toggles.history {
-        if let Some(record) = history.get_fresh(host, port, current_epoch_ms()) {
-            let ip = record.candidate.address;
-            map.entry(ip)
-                .and_modify(|agg| {
-                    for src in record.sources.iter().copied() {
-                        agg.merge_source(src);
-                    }
-                    agg.merge_source(IpSource::History);
-                })
-                .or_insert_with(|| AggregatedCandidate::new(ip, port, IpSource::History));
+        if let Ok(batch) = gather_history_candidates(host, port, history.clone()) {
+            merge_candidate_map(&mut map, batch);
         }
     }
 
     if toggles.dns {
-        if let Ok(addrs) = resolve_dns(host, port).await {
-            for ip in addrs {
-                map.entry(ip)
-                    .and_modify(|agg| agg.merge_source(IpSource::Dns))
-                    .or_insert_with(|| AggregatedCandidate::new(ip, port, IpSource::Dns));
+        match gather_dns_candidates(host, port, &config.runtime.dns).await {
+            Ok(batch) => {
+                merge_candidate_map(&mut map, batch);
+            }
+            Err(err) => {
+                tracing::debug!(
+                    target = "ip_pool",
+                    host,
+                    port,
+                    error = %err,
+                    "dns candidate collection failed"
+                );
             }
         }
     }
 
     if toggles.fallback {
-        for ip in fallback_lookup(host) {
-            map.entry(ip)
-                .and_modify(|agg| agg.merge_source(IpSource::Fallback))
-                .or_insert_with(|| AggregatedCandidate::new(ip, port, IpSource::Fallback));
+        if let Ok(batch) = gather_fallback_candidates(host, port) {
+            merge_candidate_map(&mut map, batch);
         }
     }
 
-    let mut candidates: Vec<AggregatedCandidate> = map.into_values().collect();
-    let whitelist = &config.file.whitelist;
-    let blacklist = &config.file.blacklist;
-    // 白名单优先
-    if !whitelist.is_empty() {
-        candidates.retain(|c| {
-            let mut allowed = false;
-            for cidr in whitelist {
-                if is_ip_in_list(c.candidate.address, &[cidr.clone()]) {
-                    allowed = true;
-                    crate::core::ip_pool::events::emit_ip_pool_cidr_filter(
-                        c.candidate.address,
-                        "whitelist",
-                        cidr,
-                    );
-                    break;
-                }
-            }
-            allowed
-        });
-    }
-    // 黑名单过滤
-    if !blacklist.is_empty() {
-        let before = candidates.len();
-        candidates.retain(|c| {
-            let mut blocked = false;
-            for cidr in blacklist {
-                if is_ip_in_list(c.candidate.address, &[cidr.clone()]) {
-                    blocked = true;
-                    crate::core::ip_pool::events::emit_ip_pool_cidr_filter(
-                        c.candidate.address,
-                        "blacklist",
-                        cidr,
-                    );
-                    break;
-                }
-            }
-            !blocked
-        });
-        let after = candidates.len();
-        if before != after {
-            tracing::info!(
-                target = "ip_pool",
-                removed = before - after,
-                "candidates removed by blacklist"
-            );
-        }
-    }
-    candidates
+    apply_cidr_filters(&mut map, &config.file.whitelist, &config.file.blacklist);
+    map.into_values().collect()
 }
 
 pub(super) async fn measure_candidates(
     host: &str,
-    _port: u16,
+    port: u16,
     candidates: Vec<AggregatedCandidate>,
     runtime_cfg: &IpPoolRuntimeConfig,
     ttl_secs: u64,
+    mut progress: Option<&mut (dyn FnMut(&[IpStat]) -> Result<()> + Send)>,
 ) -> Vec<IpStat> {
     let max_parallel = runtime_cfg.max_parallel_probes.max(1);
     let timeout = runtime_cfg
         .probe_timeout_ms
         .clamp(100, MAX_PROBE_TIMEOUT_MS);
     let semaphore = Arc::new(Semaphore::new(max_parallel));
-    let mut handles = Vec::with_capacity(candidates.len());
+    let mut join_set = JoinSet::new();
 
     for candidate in candidates {
         let permit = semaphore.clone();
         let timeout_ms = timeout;
-        let host = host.to_string();
-        handles.push(tokio::spawn(async move {
+        let host_label = host.to_string();
+        join_set.spawn(async move {
             let _permit = permit
                 .acquire_owned()
                 .await
@@ -595,26 +1134,66 @@ pub(super) async fn measure_candidates(
             .await?;
             tracing::debug!(
                 target = "ip_pool",
-                host = host.as_str(),
+                host = host_label.as_str(),
                 port = candidate.candidate.port,
                 ip = %candidate.candidate.address,
                 latency_ms = latency,
                 "probe success"
             );
             Ok::<IpStat, anyhow::Error>(candidate.to_stat(latency, ttl_secs))
-        }));
+        });
     }
 
     let mut stats: Vec<IpStat> = Vec::new();
-    for handle in handles {
-        match handle.await {
-            Ok(Ok(stat)) => stats.push(stat),
-            Ok(Err(err)) => tracing::debug!(target = "ip_pool", error = %err, "probe failed"),
-            Err(err) => tracing::debug!(target = "ip_pool", error = %err, "probe join error"),
+    let mut last_notified: Option<(u32, IpAddr)> = None;
+
+    while let Some(result) = join_set.join_next().await {
+        match result {
+            Ok(Ok(stat)) => {
+                stats.push(stat);
+                stats.sort_by_key(|item| item.latency_ms.unwrap_or(u32::MAX));
+
+                if let Some(callback) = progress.as_mut() {
+                    if let Some(best) = stats.first() {
+                        let current = (best.latency_ms.unwrap_or(u32::MAX), best.candidate.address);
+                        let should_notify = match last_notified {
+                            None => true,
+                            Some(prev) => current.0 < prev.0 || current.1 != prev.1,
+                        };
+                        if should_notify {
+                            if let Err(err) = callback(&stats) {
+                                tracing::warn!(
+                                    target = "ip_pool",
+                                    host,
+                                    port,
+                                    error = %err,
+                                    "failed to apply preheat progress update"
+                                );
+                            } else {
+                                last_notified = Some(current);
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Err(err)) => tracing::debug!(
+                target = "ip_pool",
+                host,
+                port,
+                error = %err,
+                "probe failed"
+            ),
+            Err(err) => tracing::debug!(
+                target = "ip_pool",
+                host,
+                port,
+                error = %err,
+                "probe join error"
+            ),
         }
     }
 
-    stats.sort_by_key(|stat| stat.latency_ms.unwrap_or(u32::MAX));
+    stats.sort_by_key(|item| item.latency_ms.unwrap_or(u32::MAX));
     stats
 }
 
@@ -658,9 +1237,72 @@ pub fn update_cache_and_history(
         latency_ms: best.latency_ms.unwrap_or_default(),
         measured_at_epoch_ms: best.measured_at_epoch_ms.unwrap_or_else(current_epoch_ms),
         expires_at_epoch_ms: best.expires_at_epoch_ms.unwrap_or_else(current_epoch_ms),
+        resolver_metadata: best.resolver_metadata.clone(),
     };
     history.upsert(record)?;
     Ok(())
+}
+
+pub(crate) fn resolve_preheat_domains(file_cfg: &IpPoolFileConfig) -> Vec<PreheatDomain> {
+    let mut disabled: HashSet<String> = HashSet::new();
+    for entry in &file_cfg.disabled_builtin_preheat {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        disabled.insert(trimmed.to_ascii_lowercase());
+    }
+
+    let mut domains: Vec<PreheatDomain> = Vec::new();
+    let mut index_map: HashMap<String, usize> = HashMap::new();
+
+    for (pattern, _) in BUILTIN_IPS.iter() {
+        for host in expand_builtin_pattern(pattern) {
+            let key = host.to_ascii_lowercase();
+            if disabled.contains(&key) || index_map.contains_key(&key) {
+                continue;
+            }
+            let domain = PreheatDomain::new(host);
+            index_map.insert(key, domains.len());
+            domains.push(domain);
+        }
+    }
+
+    for custom in &file_cfg.preheat_domains {
+        let key = custom.host.trim().to_ascii_lowercase();
+        if key.is_empty() {
+            continue;
+        }
+        if let Some(idx) = index_map.get(&key).copied() {
+            domains[idx] = custom.clone();
+        } else {
+            index_map.insert(key, domains.len());
+            domains.push(custom.clone());
+        }
+    }
+
+    domains
+}
+
+fn expand_builtin_pattern(pattern: &str) -> Vec<String> {
+    if let Some(stripped) = pattern.strip_prefix("*.") {
+        if stripped.is_empty() {
+            return Vec::new();
+        }
+        return vec![stripped.to_string()];
+    }
+
+    if pattern.starts_with('^') {
+        if pattern == r"^(analytics|ghcc)\.githubassets\.com$" {
+            return vec![
+                "analytics.githubassets.com".to_string(),
+                "ghcc.githubassets.com".to_string(),
+            ];
+        }
+        return Vec::new();
+    }
+
+    vec![pattern.to_string()]
 }
 
 pub fn builtin_lookup(host: &str) -> Vec<IpAddr> {
@@ -687,17 +1329,6 @@ fn fallback_lookup(host: &str) -> Vec<IpAddr> {
         .unwrap_or_default()
 }
 
-async fn resolve_dns(host: &str, port: u16) -> Result<Vec<IpAddr>> {
-    let mut addrs = Vec::new();
-    let iter = lookup_host((host, port)).await?;
-    for addr in iter {
-        addrs.push(addr.ip());
-    }
-    addrs.sort();
-    addrs.dedup();
-    Ok(addrs)
-}
-
 pub fn current_epoch_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -705,20 +1336,128 @@ pub fn current_epoch_ms() -> i64 {
         .as_millis() as i64
 }
 
-const BUILTIN_IPS: &[(&str, &[&str])] = &[
+pub(crate) const BUILTIN_IPS: &[(&str, &[&str])] = &[
     (
         "github.com",
-        &["140.82.112.3", "140.82.113.3", "140.82.114.3"],
+        &[
+            "4.237.22.38",
+            "20.200.245.247",
+            "20.201.28.151",
+            "20.205.243.166",
+            "20.26.156.215",
+            "20.27.177.113",
+            "20.87.245.0",
+            "140.82.112.3",
+            "140.82.113.3",
+            "140.82.114.3",
+            "140.82.114.4",
+            "140.82.116.3",
+            "140.82.116.4",
+            "140.82.121.3",
+            "140.82.121.4",
+        ],
+    ),
+    (
+        "gist.github.com",
+        &[
+            "4.237.22.38",
+            "20.200.245.247",
+            "20.205.243.166",
+            "20.27.177.113",
+            "140.82.116.3",
+            "140.82.116.4",
+        ],
+    ),
+    (
+        "github.dev",
+        &[
+            "20.43.185.14",
+            "20.99.227.183",
+            "51.137.3.17",
+            "52.224.38.193",
+        ],
     ),
     (
         "codeload.github.com",
-        &["140.82.112.9", "140.82.113.9", "140.82.114.9"],
+        &[
+            "20.26.156.216",
+            "20.27.177.114",
+            "20.87.245.7",
+            "20.200.245.246",
+            "20.201.28.149",
+            "20.205.243.165",
+            "20.248.137.55",
+            "140.82.112.9",
+            "140.82.113.9",
+            "140.82.114.9",
+            "140.82.114.10",
+            "140.82.116.10",
+            "140.82.121.9",
+        ],
+    ),
+    (
+        "api.github.com",
+        &[
+            "20.26.156.210",
+            "20.27.177.116",
+            "20.87.245.6",
+            "20.200.245.245",
+            "20.201.28.148",
+            "20.205.243.168",
+            "20.248.137.49",
+            "140.82.112.5",
+            "140.82.113.6",
+            "140.82.114.6",
+            "140.82.116.6",
+            "140.82.121.6",
+        ],
     ),
     (
         "githubusercontent.com",
         &["185.199.108.133", "185.199.110.133", "185.199.111.133"],
     ),
-    ("api.github.com", &["140.82.113.6", "140.82.114.6"]),
+    (
+        "*.githubusercontent.com",
+        &["146.75.92.133", "199.232.88.133", "199.232.144.133"],
+    ),
+    (
+        "viewscreen.githubusercontent.com",
+        &[
+            "140.82.112.21",
+            "140.82.112.22",
+            "140.82.113.21",
+            "140.82.113.22",
+            "140.82.114.21",
+            "140.82.114.22",
+        ],
+    ),
+    (
+        "github.io",
+        &[
+            "185.199.108.153",
+            "185.199.109.153",
+            "185.199.110.153",
+            "185.199.111.153",
+        ],
+    ),
+    (
+        "*.githubassets.com",
+        &[
+            "185.199.108.154",
+            "185.199.109.154",
+            "185.199.110.154",
+            "185.199.111.154",
+        ],
+    ),
+    (
+        r"^(analytics|ghcc)\.githubassets\.com$",
+        &[
+            "185.199.108.153",
+            "185.199.109.153",
+            "185.199.110.153",
+            "185.199.111.153",
+        ],
+    ),
 ];
 
 const FALLBACK_IPS: &[(&str, &[&str])] = &[("github.com", &["20.205.243.166"])];

@@ -117,8 +117,12 @@ fn test_submodule_manager_list_handles_empty_repo() {
     let temp_dir = TempDir::new().unwrap();
     let repo = Repository::init(temp_dir.path()).unwrap();
     if let Ok(mut cfg) = repo.config() {
-        if cfg.get_entry("user.name").is_err() { let _ = cfg.set_str("user.name", "Test User"); }
-        if cfg.get_entry("user.email").is_err() { let _ = cfg.set_str("user.email", "test@example.com"); }
+        if cfg.get_entry("user.name").is_err() {
+            let _ = cfg.set_str("user.name", "Test User");
+        }
+        if cfg.get_entry("user.email").is_err() {
+            let _ = cfg.set_str("user.email", "test@example.com");
+        }
     }
 
     // 创建一个初始提交

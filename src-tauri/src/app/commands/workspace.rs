@@ -1097,9 +1097,9 @@ pub async fn restore_workspace(backup_path: String, workspace_path: String) -> R
     let storage = WorkspaceStorage::new(workspace.clone());
 
     storage.restore_from_backup(&backup).map_err(|e| {
-            error!("Failed to restore workspace from {}: {}", backup_path, e);
-            format!("Failed to restore from backup: {}", e)
-        })?;
+        error!("Failed to restore workspace from {}: {}", backup_path, e);
+        format!("Failed to restore from backup: {}", e)
+    })?;
 
     info!("Workspace restored from backup: {}", backup_path);
     Ok(())

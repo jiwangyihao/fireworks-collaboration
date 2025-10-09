@@ -4,6 +4,7 @@ pub mod config;
 pub mod credential;
 pub mod git;
 pub mod http;
+pub mod ip_pool;
 pub mod metrics;
 pub mod oauth;
 pub mod proxy;
@@ -25,6 +26,10 @@ pub use git::{
     git_remote_add, git_remote_remove, git_remote_set, git_tag,
 };
 pub use http::http_fake_request;
+pub use ip_pool::{
+    ip_pool_clear_auto_disabled, ip_pool_get_snapshot, ip_pool_pick_best, ip_pool_request_refresh,
+    ip_pool_update_config,
+};
 pub use metrics::metrics_snapshot;
 pub use oauth::{clear_oauth_state, get_oauth_callback_data, start_oauth_server};
 pub use proxy::{

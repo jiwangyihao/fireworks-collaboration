@@ -14,12 +14,14 @@ use tokio_rustls::TlsConnector;
 
 use crate::core::config::model::AppConfig;
 use crate::core::ip_pool::global::pick_best_async;
-use crate::core::ip_pool::IpSelectionStrategy;
-use crate::core::ip_pool::IpOutcome;
 use crate::core::ip_pool::global::report_outcome_async;
+use crate::core::ip_pool::IpOutcome;
+use crate::core::ip_pool::IpSelectionStrategy;
 // Metrics / events instrumentation
 use crate::core::ip_pool::events::emit_ip_pool_selection;
-use crate::events::structured::{publish_global, Event as StructuredEvent, StrategyEvent as StructuredStrategyEvent};
+use crate::events::structured::{
+    publish_global, Event as StructuredEvent, StrategyEvent as StructuredStrategyEvent,
+};
 use uuid::Uuid;
 // Reuse existing metrics enabled flag (resides in git transport metrics module) to keep gating consistent
 use crate::core::git::transport::metrics::metrics_enabled;
@@ -105,7 +107,9 @@ impl HttpClient {
 
         // Only keep reporter when selection used cached ip
         let mut outcome_reporter = if sel.strategy() == IpSelectionStrategy::Cached {
-            Some(OutcomeReporter { sel: Some(sel.clone()) })
+            Some(OutcomeReporter {
+                sel: Some(sel.clone()),
+            })
         } else {
             None
         };
@@ -239,7 +243,7 @@ impl HttpClient {
             let chunk = next.context("read body")?;
             buf.extend_from_slice(&chunk);
         }
-    let total_ms = start_total.elapsed().as_millis() as u32;
+        let total_ms = start_total.elapsed().as_millis() as u32;
 
         let body_size = buf.len();
         if self.should_warn_large_body(body_size) {
@@ -276,8 +280,7 @@ impl HttpClient {
             };
             let ip_source = if used_ip_pool {
                 sel.selected().map(|stat| {
-                    stat
-                        .sources
+                    stat.sources
                         .iter()
                         .map(|s| format!("{:?}", s))
                         .collect::<Vec<_>>()
@@ -286,21 +289,27 @@ impl HttpClient {
             } else {
                 None
             };
-            let ip_latency_ms = if used_ip_pool { sel.selected().and_then(|s| s.latency_ms) } else { None };
-            publish_global(StructuredEvent::Strategy(StructuredStrategyEvent::AdaptiveTlsTiming {
-                id: request_id.to_string(),
-                kind: "HttpSingle".to_string(),
-                used_fake_sni: fake,
-                fallback_stage: "Direct".to_string(),
-                connect_ms: Some(connect_ms),
-                tls_ms: Some(tls_ms),
-                first_byte_ms: Some(first_byte_ms),
-                total_ms: Some(total_ms),
-                cert_fp_changed: false,
-                ip_source,
-                ip_latency_ms,
-                ip_selection_stage: Some(strategy_label.to_string()),
-            }));
+            let ip_latency_ms = if used_ip_pool {
+                sel.selected().and_then(|s| s.latency_ms)
+            } else {
+                None
+            };
+            publish_global(StructuredEvent::Strategy(
+                StructuredStrategyEvent::AdaptiveTlsTiming {
+                    id: request_id.to_string(),
+                    kind: "HttpSingle".to_string(),
+                    used_fake_sni: fake,
+                    fallback_stage: "Direct".to_string(),
+                    connect_ms: Some(connect_ms),
+                    tls_ms: Some(tls_ms),
+                    first_byte_ms: Some(first_byte_ms),
+                    total_ms: Some(total_ms),
+                    cert_fp_changed: false,
+                    ip_source,
+                    ip_latency_ms,
+                    ip_selection_stage: Some(strategy_label.to_string()),
+                },
+            ));
         }
         // Mark success if we used ip pool and reached here
         if let Some(r) = outcome_reporter.take() {

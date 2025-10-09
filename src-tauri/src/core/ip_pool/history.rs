@@ -22,6 +22,8 @@ pub struct IpHistoryRecord {
     pub latency_ms: u32,
     pub measured_at_epoch_ms: i64,
     pub expires_at_epoch_ms: i64,
+    #[serde(default)]
+    pub resolver_metadata: Vec<String>,
 }
 
 impl IpHistoryRecord {

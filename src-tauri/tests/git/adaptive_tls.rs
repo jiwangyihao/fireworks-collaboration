@@ -24,7 +24,8 @@ use fireworks_collaboration_lib::core::git::transport::{
     is_fake_disabled, tl_take_fallback_events, AutoDisableConfig, FallbackEventRecord,
 };
 use fireworks_collaboration_lib::core::ip_pool::config::{
-    EffectiveIpPoolConfig, IpPoolFileConfig, IpPoolRuntimeConfig, IpPoolSourceToggle, UserStaticIp,
+    DnsRuntimeConfig, EffectiveIpPoolConfig, IpPoolFileConfig, IpPoolRuntimeConfig,
+    IpPoolSourceToggle, UserStaticIp,
 };
 use fireworks_collaboration_lib::core::ip_pool::global::testing::reset_global_pool;
 use fireworks_collaboration_lib::core::ip_pool::global::{obtain_global_pool, set_global_pool};
@@ -45,6 +46,15 @@ use std::time::Duration;
 fn counter_guard() -> &'static Mutex<()> {
     static GUARD: OnceLock<Mutex<()>> = OnceLock::new();
     GUARD.get_or_init(|| Mutex::new(()))
+}
+
+fn install_disabled_global_pool() {
+    reset_global_pool();
+    let mut runtime = IpPoolRuntimeConfig::default();
+    runtime.enabled = false;
+    let file = IpPoolFileConfig::default();
+    let pool = IpPool::new(EffectiveIpPoolConfig::from_parts(runtime, file));
+    set_global_pool(Arc::new(Mutex::new(pool)));
 }
 
 fn spawn_tls_server(ip: &str, port: u16) -> (Arc<AtomicBool>, thread::JoinHandle<()>) {
@@ -155,7 +165,10 @@ fn fallback_transition_emits_events_and_triggers_auto_disable() {
     reset_fallback_counters();
     reset_auto_disable();
     reset_injected_failures();
-    let cfg = AppConfig::default();
+    install_disabled_global_pool();
+
+    let mut cfg = AppConfig::default();
+    cfg.ip_pool.enabled = false;
     let sub = TestSubtransport::new(cfg.clone());
     let mut auto_disable_seen = false;
     for i in 0..5 {
@@ -194,6 +207,7 @@ fn fallback_transition_emits_events_and_triggers_auto_disable() {
         "fake SNI should be disabled after trigger"
     );
     reset_auto_disable();
+    reset_global_pool();
 }
 
 #[test]
@@ -217,6 +231,7 @@ fn ip_pool_candidate_successfully_used() {
             user_static: true,
             fallback: false,
         },
+        dns: DnsRuntimeConfig::default(),
         max_parallel_probes: 2,
         probe_timeout_ms: 1_000,
         history_path: None,
@@ -240,6 +255,7 @@ fn ip_pool_candidate_successfully_used() {
         }],
         blacklist: Vec::new(),
         whitelist: Vec::new(),
+        disabled_builtin_preheat: Vec::new(),
     };
     let effective = EffectiveIpPoolConfig::from_parts(runtime, file);
     let pool = IpPool::new(effective);
@@ -316,6 +332,7 @@ fn ip_pool_candidate_exhaustion_falls_back_to_system() {
             user_static: true,
             fallback: false,
         },
+        dns: DnsRuntimeConfig::default(),
         max_parallel_probes: 2,
         probe_timeout_ms: 500,
         history_path: None,
@@ -346,6 +363,7 @@ fn ip_pool_candidate_exhaustion_falls_back_to_system() {
         ],
         blacklist: Vec::new(),
         whitelist: Vec::new(),
+        disabled_builtin_preheat: Vec::new(),
     };
     let effective = EffectiveIpPoolConfig::from_parts(runtime, file);
     let pool = IpPool::new(effective);
@@ -450,6 +468,7 @@ fn ip_pool_second_candidate_recovers_after_failure() {
             user_static: true,
             fallback: false,
         },
+        dns: DnsRuntimeConfig::default(),
         max_parallel_probes: 2,
         probe_timeout_ms: 1_000,
         history_path: None,
@@ -469,6 +488,7 @@ fn ip_pool_second_candidate_recovers_after_failure() {
         user_static: vec![],
         blacklist: Vec::new(),
         whitelist: Vec::new(),
+        disabled_builtin_preheat: Vec::new(),
     };
     let pool = IpPool::new(EffectiveIpPoolConfig::from_parts(runtime, file));
 

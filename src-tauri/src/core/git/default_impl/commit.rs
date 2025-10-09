@@ -136,7 +136,9 @@ pub fn git_commit<F: FnMut(ProgressPayload)>(
             Ok(s) => s,
             Err(e) => {
                 let msg = e.message().to_owned();
-                if msg.contains("config value 'user.name'") || msg.contains("config value 'user.email'") {
+                if msg.contains("config value 'user.name'")
+                    || msg.contains("config value 'user.email'")
+                {
                     if let Ok(mut cfg) = repo.config() {
                         let _ = cfg.set_str("user.name", "Test User");
                         let _ = cfg.set_str("user.email", "test@example.com");

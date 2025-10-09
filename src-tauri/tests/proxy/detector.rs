@@ -569,7 +569,10 @@ fn test_detect_socks5_proxy() {
     // 使用 ALL_PROXY 以便在 detect_from_env 遍历顺序中优先匹配（HTTPS_PROXY/HTTP_PROXY 已被删除）
     let result = SystemProxyDetector::detect_from_env();
     if let Some(cfg) = &result {
-        eprintln!("detected proxy mode={:?} url={} (expected Socks5)", cfg.mode, cfg.url);
+        eprintln!(
+            "detected proxy mode={:?} url={} (expected Socks5)",
+            cfg.mode, cfg.url
+        );
     } else {
         eprintln!("no proxy detected for socks5 test");
     }
@@ -601,7 +604,13 @@ fn test_detect_socks5_proxy() {
 
     assert!(result.is_some());
     let config = result.unwrap();
-    assert_eq!(config.mode, ProxyMode::Socks5, "expected Socks5 but got {:?} with url {}", config.mode, config.url);
+    assert_eq!(
+        config.mode,
+        ProxyMode::Socks5,
+        "expected Socks5 but got {:?} with url {}",
+        config.mode,
+        config.url
+    );
     assert!(config.url.contains("socks-proxy.example.com"));
 }
 

@@ -106,7 +106,13 @@ async fn sample_once(pool: &IpPool, host: &str, port: u16) -> Result<Option<IpCa
         );
         maintenance::expire_entry(pool, host, port);
         // Emit failure refresh event for observability (on-demand path)
-        emit_ip_pool_refresh(Uuid::new_v4(), host, false, &[], "no_candidates".to_string());
+        emit_ip_pool_refresh(
+            Uuid::new_v4(),
+            host,
+            false,
+            &[],
+            "no_candidates".to_string(),
+        );
         return Ok(None);
     }
 
@@ -116,6 +122,7 @@ async fn sample_once(pool: &IpPool, host: &str, port: u16) -> Result<Option<IpCa
         candidates,
         &config.runtime,
         config.file.score_ttl_seconds,
+        None,
     )
     .await;
 
@@ -128,7 +135,13 @@ async fn sample_once(pool: &IpPool, host: &str, port: u16) -> Result<Option<IpCa
         );
         maintenance::expire_entry(pool, host, port);
         // Emit failure refresh event for observability (on-demand path)
-        emit_ip_pool_refresh(Uuid::new_v4(), host, false, &[], "all_probes_failed".to_string());
+        emit_ip_pool_refresh(
+            Uuid::new_v4(),
+            host,
+            false,
+            &[],
+            "all_probes_failed".to_string(),
+        );
         return Ok(None);
     }
 

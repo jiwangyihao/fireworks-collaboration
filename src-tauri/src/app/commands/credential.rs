@@ -306,7 +306,7 @@ pub async fn delete_credential(
         .map_err(|e| format!("Failed to delete credential: {}", e))?;
 
     // Log audit event
-        if let Ok(logger) = audit.lock() {
+    if let Ok(logger) = audit.lock() {
         logger.log_operation(
             crate::core::credential::audit::OperationType::Remove,
             &host,
@@ -354,7 +354,7 @@ pub async fn list_credentials(
         .map_err(|e| format!("Failed to list credentials: {}", e))?;
 
     // Log audit event
-        if let Ok(logger) = audit.lock() {
+    if let Ok(logger) = audit.lock() {
         logger.log_operation(
             crate::core::credential::audit::OperationType::List,
             "",
@@ -392,7 +392,10 @@ pub async fn set_master_password(
     // 如果使用文件存储，需要后续在 EncryptedFileStore 上单独设置主密码；暂未暴露 trait 接口。
     // 这里先创建存储并忽略密码（后续实现真正的密码设置逻辑）。
     if config.storage == crate::core::credential::config::StorageType::File {
-        tracing::warn!(target = "credential", "File storage master password is currently ignored (not yet implemented)");
+        tracing::warn!(
+            target = "credential",
+            "File storage master password is currently ignored (not yet implemented)"
+        );
     }
 
     let store = CredentialStoreFactory::create(&config)

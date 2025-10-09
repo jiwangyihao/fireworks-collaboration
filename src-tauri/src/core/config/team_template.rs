@@ -597,12 +597,16 @@ fn merge_ip_pool_runtime(dest: &mut IpPoolRuntimeConfig, src: &IpPoolRuntimeConf
     let defaults = IpPoolRuntimeConfig::default();
     let mut changed = false;
 
-    if src.enabled != defaults.enabled {
+    if dest.enabled != src.enabled {
         dest.enabled = src.enabled;
         changed = true;
     }
     if src.sources != defaults.sources {
         dest.sources = src.sources.clone();
+        changed = true;
+    }
+    if src.dns != defaults.dns {
+        dest.dns = src.dns.clone();
         changed = true;
     }
     if src.max_parallel_probes != defaults.max_parallel_probes {

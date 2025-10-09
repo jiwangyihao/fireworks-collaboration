@@ -1502,10 +1502,16 @@ fn alerts_engine_triggers_and_resolves() {
     let registry = global_registry();
     // 记录本测试专属 kind 初始值（初次应为 0）
     let failed_before = registry
-        .get_counter(GIT_TASKS_TOTAL, &[("kind", kind.as_str()), ("state", "failed")])
+        .get_counter(
+            GIT_TASKS_TOTAL,
+            &[("kind", kind.as_str()), ("state", "failed")],
+        )
         .unwrap_or(0);
     let completed_before = registry
-        .get_counter(GIT_TASKS_TOTAL, &[("kind", kind.as_str()), ("state", "completed")])
+        .get_counter(
+            GIT_TASKS_TOTAL,
+            &[("kind", kind.as_str()), ("state", "completed")],
+        )
         .unwrap_or(0);
 
     // 简化策略：直接注入失败 3、成功 2，形成 3/(3+2)=0.6 > 0.3，避免全局指标干扰复杂计算
@@ -1514,7 +1520,10 @@ fn alerts_engine_triggers_and_resolves() {
 
     for idx in 0..f {
         let id = format!("{kind}-fail-{idx}");
-        publish_global(Event::Task(TaskEvent::Started { id: id.clone(), kind: kind.clone() }));
+        publish_global(Event::Task(TaskEvent::Started {
+            id: id.clone(),
+            kind: kind.clone(),
+        }));
         publish_global(Event::Task(TaskEvent::Failed {
             id,
             category: "Network".into(),
@@ -1524,37 +1533,55 @@ fn alerts_engine_triggers_and_resolves() {
     }
     for idx in 0..s {
         let id = format!("{kind}-ok-{idx}");
-        publish_global(Event::Task(TaskEvent::Started { id: id.clone(), kind: kind.clone() }));
+        publish_global(Event::Task(TaskEvent::Started {
+            id: id.clone(),
+            kind: kind.clone(),
+        }));
         publish_global(Event::Task(TaskEvent::Completed { id }));
     }
 
     let warn_before = registry
         .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
         .unwrap_or(0);
-    wait_for_counter(
+    let failed_after = wait_for_counter(
         &registry,
         GIT_TASKS_TOTAL,
         &[("kind", kind.as_str()), ("state", "failed")],
-        failed_before + 4,
+        failed_before + f,
     );
-    wait_for_counter(
+    let completed_after = wait_for_counter(
         &registry,
         GIT_TASKS_TOTAL,
         &[("kind", kind.as_str()), ("state", "completed")],
-        completed_before + 2,
+        completed_before + s,
+    );
+    assert!(
+        failed_after >= failed_before + f,
+        "expected failed counter to reach {target}, got {failed_after}",
+        target = failed_before + f,
+        failed_after = failed_after
+    );
+    assert!(
+        completed_after >= completed_before + s,
+        "expected completed counter to reach {target}, got {completed_after}",
+        target = completed_before + s,
+        completed_after = completed_after
     );
 
     // 评估告警：在较慢平台上可能需要多次调度 / 聚合，增加重试。
     let mut warn_after = warn_before;
     let mut events_first = Vec::new();
-    for _ in 0..6 { // 最长 ~180ms
+    for _ in 0..12 {
+        // 最长 ~600ms
         evaluate_alerts_now();
-        std::thread::sleep(Duration::from_millis(30));
+        std::thread::sleep(Duration::from_millis(50));
         events_first = memory_bus.take_all();
         warn_after = registry
             .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
             .unwrap_or(warn_after);
-        if warn_after >= warn_before + 1 { break; }
+        if warn_after >= warn_before + 1 {
+            break;
+        }
     }
     assert!(
         warn_after >= warn_before + 1,
@@ -1576,27 +1603,43 @@ fn alerts_engine_triggers_and_resolves() {
     let resolve_successes = (f * 2).max(6); // 足够数量拉低失败率
     for idx in 0..resolve_successes {
         let id = format!("{kind}-resolve-{idx}");
-        publish_global(Event::Task(TaskEvent::Started { id: id.clone(), kind: kind.clone() }));
+        publish_global(Event::Task(TaskEvent::Started {
+            id: id.clone(),
+            kind: kind.clone(),
+        }));
         publish_global(Event::Task(TaskEvent::Completed { id }));
     }
 
-    wait_for_counter(
+    let resolved_completed = wait_for_counter(
         &registry,
         GIT_TASKS_TOTAL,
         &[("kind", kind.as_str()), ("state", "completed")],
         completed_before + resolve_successes,
     );
+    assert!(
+        resolved_completed >= completed_before + resolve_successes,
+        "expected completion counter to reach {target}, got {resolved_completed}",
+        target = completed_before + resolve_successes,
+        resolved_completed = resolved_completed
+    );
 
     // 重试寻求 Resolved 状态
     let mut events_second = Vec::new();
-    for _ in 0..6 {
+    for _ in 0..12 {
         evaluate_alerts_now();
-        std::thread::sleep(Duration::from_millis(30));
+        std::thread::sleep(Duration::from_millis(50));
         events_second = memory_bus.take_all();
-        if events_second.iter().any(|event| matches!(
-            event,
-            Event::Strategy(StrategyEvent::MetricAlert { state: MetricAlertState::Resolved, .. })
-        )) { break; }
+        if events_second.iter().any(|event| {
+            matches!(
+                event,
+                Event::Strategy(StrategyEvent::MetricAlert {
+                    state: MetricAlertState::Resolved,
+                    ..
+                })
+            )
+        }) {
+            break;
+        }
     }
     let states: Vec<MetricAlertState> = events_second
         .into_iter()

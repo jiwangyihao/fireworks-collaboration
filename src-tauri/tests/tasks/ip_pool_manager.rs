@@ -12,20 +12,24 @@ fn __init_env() {
 
 // ---------------- section_selection_behaviour ----------------
 mod section_selection_behaviour {
+    use super::super::common::ip_pool::{
+        bind_ephemeral, make_user_static_pool_with_listener, spawn_single_accept,
+    };
     use super::super::common::prelude::*;
+    use fireworks_collaboration_lib::core::ip_pool::global::pick_best_async;
     use fireworks_collaboration_lib::core::ip_pool::IpScoreCache;
     use fireworks_collaboration_lib::core::ip_pool::{IpPool, IpSource};
-    use fireworks_collaboration_lib::core::ip_pool::global::pick_best_async;
-    use std::sync::atomic::Ordering;
-    use super::super::common::ip_pool::{make_user_static_pool_with_listener, bind_ephemeral, spawn_single_accept};
-    use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
     use tokio::time::{sleep, Duration};
     #[tokio::test]
     async fn selection_behaviour_variants() {
-        // 场景 A: 池未启用（默认构造） -> 系统默认
+        // 场景 A: 显式禁用池 -> 回退系统默认
         {
-            let pool_disabled = IpPool::default();
+            let mut cfg = enabled_config();
+            cfg.runtime.enabled = false;
+            let pool_disabled = IpPool::with_cache(cfg, IpScoreCache::new());
             let sel = pool_disabled.pick_best("github.com", 443).await;
             assert!(sel.is_system_default() && sel.selected().is_none());
         }
@@ -45,17 +49,28 @@ mod section_selection_behaviour {
         {
             let cache = IpScoreCache::new();
             let now = epoch_ms();
-            let stat = make_latency_stat([1,1,1,1], 443, 15, IpSource::Builtin, Some(now - 1_000), Some(now + 60_000));
+            let stat = make_latency_stat(
+                [1, 1, 1, 1],
+                443,
+                15,
+                IpSource::Builtin,
+                Some(now - 1_000),
+                Some(now + 60_000),
+            );
             cache_best(&cache, "github.com", 443, stat.clone());
             let pool = IpPool::with_cache(enabled_config(), cache);
             let sel = pool.pick_best("github.com", 443).await;
             assert!(!sel.is_system_default());
-            assert_eq!(sel.selected().unwrap().candidate.address, stat.candidate.address);
+            assert_eq!(
+                sel.selected().unwrap().candidate.address,
+                stat.candidate.address
+            );
         }
 
         // 场景 D: 按需采样使用 user_static 候选 + 第二次命中缓存
         {
-            let (pool, addr, _counter, accept_task) = make_user_static_pool_with_listener("local.test").await;
+            let (pool, addr, _counter, accept_task) =
+                make_user_static_pool_with_listener("local.test").await;
             let first = pool.pick_best("local.test", addr.port()).await;
             assert!(!first.is_system_default());
             accept_task.await.unwrap();
@@ -73,14 +88,16 @@ mod section_selection_behaviour {
             cfg.runtime.max_cache_entries = 16;
             cfg.file.score_ttl_seconds = 1;
             let pool = IpPool::with_cache(cfg, IpScoreCache::new());
-            let first = pool.pick_best("ttl.test", addr.port()).await; assert!(!first.is_system_default());
+            let first = pool.pick_best("ttl.test", addr.port()).await;
+            assert!(!first.is_system_default());
             accept_task.await.unwrap();
             assert_eq!(counter.load(Ordering::SeqCst), 1);
             // 等待略大于 1s 的 TTL，缩短总时间同时保证过期
             sleep(Duration::from_millis(1_050)).await; // wait for ttl expiry
             let listener2 = tokio::net::TcpListener::bind(addr).await.unwrap();
             let accept_task2 = spawn_single_accept(listener2, counter.clone());
-            let second = pool.pick_best("ttl.test", addr.port()).await; assert!(!second.is_system_default());
+            let second = pool.pick_best("ttl.test", addr.port()).await;
+            assert!(!second.is_system_default());
             accept_task2.await.unwrap();
             assert_eq!(counter.load(Ordering::SeqCst), 2);
         }
@@ -119,26 +136,33 @@ mod section_selection_behaviour {
 // ---------------- section_config_mutation ----------------
 mod section_config_mutation {
     use super::super::common::fixtures;
-    use super::super::common::prelude::*;
     use super::super::common::ip_pool::enabled_config_with_history;
+    use super::super::common::prelude::*;
     use fireworks_collaboration_lib::core::config::loader as cfg_loader;
     use fireworks_collaboration_lib::core::config::model::AppConfig;
     use fireworks_collaboration_lib::core::ip_pool::config::{save_file_at, IpPoolFileConfig};
-    use fireworks_collaboration_lib::core::ip_pool::{load_effective_config_at, IpPool, IpSource};
+    use fireworks_collaboration_lib::core::ip_pool::{
+        load_effective_config_at, IpPool, IpScoreCache, IpSource,
+    };
     use std::fs;
     use std::net::{IpAddr, Ipv4Addr};
     #[tokio::test]
     async fn config_runtime_and_history_path_variants() {
         // 变体1: runtime update 应用后可用缓存候选
         {
-            let mut pool = IpPool::default();
-            let stat = make_latency_stat([9,9,9,9], 443, 7, IpSource::Builtin, None, None);
+            let mut cfg = enabled_config();
+            cfg.runtime.enabled = false;
+            let mut pool = IpPool::with_cache(cfg, IpScoreCache::new());
+            let stat = make_latency_stat([9, 9, 9, 9], 443, 7, IpSource::Builtin, None, None);
             cache_best(pool.cache(), "github.com", 443, stat.clone());
             assert!(pool.pick_best("github.com", 443).await.is_system_default());
             pool.update_config(enabled_config());
             let updated = pool.pick_best("github.com", 443).await;
             assert!(!updated.is_system_default());
-            assert_eq!(updated.selected().unwrap().candidate.address, IpAddr::V4(Ipv4Addr::new(9,9,9,9)));
+            assert_eq!(
+                updated.selected().unwrap().candidate.address,
+                IpAddr::V4(Ipv4Addr::new(9, 9, 9, 9))
+            );
         }
 
         // 变体2: 自定义 history path 持久化
@@ -147,10 +171,20 @@ mod section_config_mutation {
             let history_path = base.join("nested").join("custom-history.json");
             let cfg = enabled_config_with_history(&history_path);
             let pool = IpPool::new(cfg);
-            let stat = make_latency_stat([2,2,2,2],443,10,IpSource::Builtin,Some(epoch_ms()-1_000),Some(epoch_ms()+1_000));
-            let record = history_record("custom.test", 443, &stat); pool.history().upsert(record).unwrap();
+            let stat = make_latency_stat(
+                [2, 2, 2, 2],
+                443,
+                10,
+                IpSource::Builtin,
+                Some(epoch_ms() - 1_000),
+                Some(epoch_ms() + 1_000),
+            );
+            let record = history_record("custom.test", 443, &stat);
+            pool.history().upsert(record).unwrap();
             assert!(history_path.exists());
-            assert!(fs::read_to_string(&history_path).unwrap().contains("custom.test"));
+            assert!(fs::read_to_string(&history_path)
+                .unwrap()
+                .contains("custom.test"));
             let _ = fs::remove_dir_all(&base);
         }
 
@@ -161,15 +195,37 @@ mod section_config_mutation {
             let history_two = base.join("history-two.json");
             let mut cfg = enabled_config_with_history(&history_one);
             let mut pool = IpPool::new(cfg.clone());
-            let stat_one = make_latency_stat([3,3,3,3],443,11,IpSource::Builtin,Some(epoch_ms()-2_000),Some(epoch_ms()+2_000));
-            pool.history().upsert(history_record("first.test", 443, &stat_one)).unwrap();
+            let stat_one = make_latency_stat(
+                [3, 3, 3, 3],
+                443,
+                11,
+                IpSource::Builtin,
+                Some(epoch_ms() - 2_000),
+                Some(epoch_ms() + 2_000),
+            );
+            pool.history()
+                .upsert(history_record("first.test", 443, &stat_one))
+                .unwrap();
             assert!(history_one.exists());
             cfg.runtime.history_path = Some(history_two.to_string_lossy().into());
             pool.update_config(cfg);
-            let stat_two = make_latency_stat([4,4,4,4],443,12,IpSource::Builtin,Some(epoch_ms()-1_000),Some(epoch_ms()+3_000));
-            pool.history().upsert(history_record("second.test", 443, &stat_two)).unwrap();
-            assert!(fs::read_to_string(&history_one).unwrap().contains("first.test"));
-            assert!(fs::read_to_string(&history_two).unwrap().contains("second.test"));
+            let stat_two = make_latency_stat(
+                [4, 4, 4, 4],
+                443,
+                12,
+                IpSource::Builtin,
+                Some(epoch_ms() - 1_000),
+                Some(epoch_ms() + 3_000),
+            );
+            pool.history()
+                .upsert(history_record("second.test", 443, &stat_two))
+                .unwrap();
+            assert!(fs::read_to_string(&history_one)
+                .unwrap()
+                .contains("first.test"));
+            assert!(fs::read_to_string(&history_two)
+                .unwrap()
+                .contains("second.test"));
             let _ = fs::remove_dir_all(&base);
         }
 
@@ -177,12 +233,20 @@ mod section_config_mutation {
         {
             let base = fixtures::create_empty_dir();
             let mut file_cfg = IpPoolFileConfig::default();
-            file_cfg.preheat_domains.push(fireworks_collaboration_lib::core::ip_pool::config::PreheatDomain::new("github.com"));
-            file_cfg.score_ttl_seconds = 600; save_file_at(&file_cfg, &base).expect("save ip-config.json");
-            let mut app_cfg = AppConfig::default(); app_cfg.ip_pool.enabled = true; app_cfg.ip_pool.max_parallel_probes = 16;
+            file_cfg.preheat_domains.push(
+                fireworks_collaboration_lib::core::ip_pool::config::PreheatDomain::new(
+                    "github.com",
+                ),
+            );
+            file_cfg.score_ttl_seconds = 600;
+            save_file_at(&file_cfg, &base).expect("save ip-config.json");
+            let mut app_cfg = AppConfig::default();
+            app_cfg.ip_pool.enabled = true;
+            app_cfg.ip_pool.max_parallel_probes = 16;
             let effective = load_effective_config_at(&app_cfg, &base).expect("load config");
             assert!(effective.runtime.enabled && effective.runtime.max_parallel_probes == 16);
-            assert_eq!(effective.file.preheat_domains.len(), 1); assert_eq!(effective.file.score_ttl_seconds, 600);
+            assert_eq!(effective.file.preheat_domains.len(), 1);
+            assert_eq!(effective.file.score_ttl_seconds, 600);
             let _ = fs::remove_dir_all(&base);
         }
 
@@ -190,7 +254,8 @@ mod section_config_mutation {
         {
             let base = fixtures::create_empty_dir();
             cfg_loader::set_global_base_dir(&base);
-            let mut app_cfg = AppConfig::default(); app_cfg.ip_pool.enabled = true;
+            let mut app_cfg = AppConfig::default();
+            app_cfg.ip_pool.enabled = true;
             let pool = IpPool::from_app_config(&app_cfg).expect("ip pool from app config");
             assert!(pool.is_enabled() && pool.file_config().preheat_domains.is_empty());
             let _ = fs::remove_dir_all(&base);
@@ -199,7 +264,8 @@ mod section_config_mutation {
         // 变体6: load_effective_config 无效文件错误
         {
             let base = fixtures::create_empty_dir();
-            let cfg_dir = base.join("config"); std::fs::create_dir_all(&cfg_dir).unwrap();
+            let cfg_dir = base.join("config");
+            std::fs::create_dir_all(&cfg_dir).unwrap();
             fs::write(cfg_dir.join("ip-config.json"), b"not-json").unwrap();
             assert!(load_effective_config_at(&AppConfig::default(), &base).is_err());
             let _ = fs::remove_dir_all(&base);
@@ -209,19 +275,32 @@ mod section_config_mutation {
 
 // ---------------- section_cache_maintenance ----------------
 mod section_cache_maintenance {
+    use super::super::common::ip_pool::cache_and_history;
     use super::super::common::prelude::*;
     use fireworks_collaboration_lib::core::ip_pool::config::PreheatDomain;
     use fireworks_collaboration_lib::core::ip_pool::IpScoreCache;
     use fireworks_collaboration_lib::core::ip_pool::{IpPool, IpSource};
-    use super::super::common::ip_pool::cache_and_history;
     #[test]
     fn cache_maintenance_variants() {
         // 变体1: 过期条目同时从 cache 与 history 移除
         {
             let pool = IpPool::with_cache(enabled_config(), IpScoreCache::new());
             let now = epoch_ms();
-            let expired = make_latency_stat([10,0,0,1], 443, 20, IpSource::Builtin, Some(now-10_000), Some(now-1_000));
-            cache_and_history("expire.test", 443, expired, pool.cache(), Some(pool.history()));
+            let expired = make_latency_stat(
+                [10, 0, 0, 1],
+                443,
+                20,
+                IpSource::Builtin,
+                Some(now - 10_000),
+                Some(now - 1_000),
+            );
+            cache_and_history(
+                "expire.test",
+                443,
+                expired,
+                pool.cache(),
+                Some(pool.history()),
+            );
             pool.maintenance_tick_at(now);
             assert!(pool.cache().get("expire.test", 443).is_none());
             assert!(pool.history().get("expire.test", 443).is_none());
@@ -229,45 +308,130 @@ mod section_cache_maintenance {
 
         // 变体2: 容量淘汰保留较新条目
         {
-            let mut cfg = enabled_config(); cfg.runtime.max_cache_entries = 1; let pool = IpPool::with_cache(cfg, IpScoreCache::new());
+            let mut cfg = enabled_config();
+            cfg.runtime.max_cache_entries = 1;
+            let pool = IpPool::with_cache(cfg, IpScoreCache::new());
             let now = epoch_ms();
-            let older = make_latency_stat([11,0,0,1],443,40,IpSource::Builtin,Some(now-50_000),Some(now+50_000));
-            let newer = make_latency_stat([11,0,0,2],443,30,IpSource::Builtin,Some(now-10_000),Some(now+50_000));
-            cache_and_history("old.example",443,older,pool.cache(),Some(pool.history()));
-            cache_and_history("new.example",443,newer,pool.cache(),Some(pool.history()));
-            pool.maintenance_tick_at(now+1_000);
-            assert!(pool.cache().get("old.example",443).is_none());
-            assert!(pool.cache().get("new.example",443).is_some());
+            let older = make_latency_stat(
+                [11, 0, 0, 1],
+                443,
+                40,
+                IpSource::Builtin,
+                Some(now - 50_000),
+                Some(now + 50_000),
+            );
+            let newer = make_latency_stat(
+                [11, 0, 0, 2],
+                443,
+                30,
+                IpSource::Builtin,
+                Some(now - 10_000),
+                Some(now + 50_000),
+            );
+            cache_and_history(
+                "old.example",
+                443,
+                older,
+                pool.cache(),
+                Some(pool.history()),
+            );
+            cache_and_history(
+                "new.example",
+                443,
+                newer,
+                pool.cache(),
+                Some(pool.history()),
+            );
+            pool.maintenance_tick_at(now + 1_000);
+            assert!(pool.cache().get("old.example", 443).is_none());
+            assert!(pool.cache().get("new.example", 443).is_some());
         }
 
         // 变体3: 预热域优先保留 + 淘汰旧条目
         {
-            let mut cfg = enabled_config(); cfg.runtime.max_cache_entries = 1; cfg.file.preheat_domains.push(PreheatDomain::new("keep.test"));
-            let pool = IpPool::with_cache(cfg, IpScoreCache::new()); let now = epoch_ms();
-            let keep = make_latency_stat([12,0,0,1],443,18,IpSource::Builtin,Some(now-5_000),Some(now+60_000));
-            let drop_old = make_latency_stat([13,0,0,1],443,30,IpSource::Builtin,Some(now-10_000),Some(now+60_000));
-            let drop_new = make_latency_stat([14,0,0,1],443,16,IpSource::Builtin,Some(now-1_000),Some(now+60_000));
-            cache_and_history("keep.test",443,keep,pool.cache(),Some(pool.history()));
-            cache_and_history("drop-old.test",443,drop_old,pool.cache(),Some(pool.history()));
-            cache_and_history("drop-new.test",443,drop_new,pool.cache(),Some(pool.history()));
-            pool.maintenance_tick_at(now+2_000);
-            assert!(pool.cache().get("drop-old.test",443).is_none());
-            assert!(pool.cache().get("drop-new.test",443).is_some());
-            assert!(pool.cache().get("keep.test",443).is_some());
+            let mut cfg = enabled_config();
+            cfg.runtime.max_cache_entries = 1;
+            cfg.file
+                .preheat_domains
+                .push(PreheatDomain::new("keep.test"));
+            let pool = IpPool::with_cache(cfg, IpScoreCache::new());
+            let now = epoch_ms();
+            let keep = make_latency_stat(
+                [12, 0, 0, 1],
+                443,
+                18,
+                IpSource::Builtin,
+                Some(now - 5_000),
+                Some(now + 60_000),
+            );
+            let drop_old = make_latency_stat(
+                [13, 0, 0, 1],
+                443,
+                30,
+                IpSource::Builtin,
+                Some(now - 10_000),
+                Some(now + 60_000),
+            );
+            let drop_new = make_latency_stat(
+                [14, 0, 0, 1],
+                443,
+                16,
+                IpSource::Builtin,
+                Some(now - 1_000),
+                Some(now + 60_000),
+            );
+            cache_and_history("keep.test", 443, keep, pool.cache(), Some(pool.history()));
+            cache_and_history(
+                "drop-old.test",
+                443,
+                drop_old,
+                pool.cache(),
+                Some(pool.history()),
+            );
+            cache_and_history(
+                "drop-new.test",
+                443,
+                drop_new,
+                pool.cache(),
+                Some(pool.history()),
+            );
+            pool.maintenance_tick_at(now + 2_000);
+            assert!(pool.cache().get("drop-old.test", 443).is_none());
+            assert!(pool.cache().get("drop-new.test", 443).is_some());
+            assert!(pool.cache().get("keep.test", 443).is_some());
         }
 
         // 变体4: 过期 preheat 仍留在 cache 但从 history 移除
         {
-            let mut cfg = enabled_config(); cfg.runtime.cache_prune_interval_secs = 1; cfg.file.preheat_domains.push(PreheatDomain::new("keep.test"));
-            let pool = IpPool::with_cache(cfg, IpScoreCache::new()); let now = epoch_ms();
-            let keep = make_latency_stat([21,0,0,1],443,19,IpSource::Builtin,Some(now-10_000),Some(now-1));
-            let drop = make_latency_stat([22,0,0,1],443,33,IpSource::Builtin,Some(now-9_000),Some(now-1));
-            cache_and_history("keep.test",443,keep,pool.cache(),Some(pool.history()));
-            cache_and_history("drop.test",443,drop,pool.cache(),Some(pool.history()));
-            pool.maintenance_tick_at(now+5_000);
-            assert!(pool.cache().get("drop.test",443).is_none());
-            assert!(pool.cache().get("keep.test",443).is_some());
-            assert!(pool.history().get("keep.test",443).is_none());
+            let mut cfg = enabled_config();
+            cfg.runtime.cache_prune_interval_secs = 1;
+            cfg.file
+                .preheat_domains
+                .push(PreheatDomain::new("keep.test"));
+            let pool = IpPool::with_cache(cfg, IpScoreCache::new());
+            let now = epoch_ms();
+            let keep = make_latency_stat(
+                [21, 0, 0, 1],
+                443,
+                19,
+                IpSource::Builtin,
+                Some(now - 10_000),
+                Some(now - 1),
+            );
+            let drop = make_latency_stat(
+                [22, 0, 0, 1],
+                443,
+                33,
+                IpSource::Builtin,
+                Some(now - 9_000),
+                Some(now - 1),
+            );
+            cache_and_history("keep.test", 443, keep, pool.cache(), Some(pool.history()));
+            cache_and_history("drop.test", 443, drop, pool.cache(), Some(pool.history()));
+            pool.maintenance_tick_at(now + 5_000);
+            assert!(pool.cache().get("drop.test", 443).is_none());
+            assert!(pool.cache().get("keep.test", 443).is_some());
+            assert!(pool.history().get("keep.test", 443).is_none());
         }
     }
 }
@@ -308,6 +472,9 @@ mod section_outcome_metrics {
 
 // ---------------- section_event_emission ----------------
 mod section_event_emission {
+    use super::super::common::ip_pool::{
+        expect_single_strategy_event as expect_single_event, expect_strategy_event_count,
+    };
     use super::super::common::prelude::*;
     use fireworks_collaboration_lib::core::ip_pool::config::EffectiveIpPoolConfig;
     use fireworks_collaboration_lib::core::ip_pool::events::{
@@ -315,15 +482,9 @@ mod section_event_emission {
         emit_ip_pool_config_update, emit_ip_pool_ip_recovered, emit_ip_pool_ip_tripped,
         emit_ip_pool_refresh, emit_ip_pool_selection,
     };
-    use fireworks_collaboration_lib::core::ip_pool::{
-        IpPool, IpSelectionStrategy, IpSource,
-    };
+    use fireworks_collaboration_lib::core::ip_pool::{IpPool, IpSelectionStrategy, IpSource};
     use fireworks_collaboration_lib::events::structured::StrategyEvent;
     use uuid::Uuid;
-    use super::super::common::ip_pool::{
-        expect_single_strategy_event as expect_single_event,
-        expect_strategy_event_count,
-    };
 
     #[test]
     fn emit_ip_pool_selection_includes_strategy_and_latency() {
@@ -376,12 +537,34 @@ mod section_event_emission {
             let bus = install_test_event_bus();
             let task_id = Uuid::new_v4();
             let stats = vec![
-                make_latency_stat([1, 1, 1, 1], 443, 10, IpSource::Builtin, Some(epoch_ms()), Some(epoch_ms() + 60_000)),
-                make_latency_stat([2, 2, 2, 2], 443, 30, IpSource::Dns, Some(epoch_ms()), Some(epoch_ms() + 60_000)),
+                make_latency_stat(
+                    [1, 1, 1, 1],
+                    443,
+                    10,
+                    IpSource::Builtin,
+                    Some(epoch_ms()),
+                    Some(epoch_ms() + 60_000),
+                ),
+                make_latency_stat(
+                    [2, 2, 2, 2],
+                    443,
+                    30,
+                    IpSource::Dns,
+                    Some(epoch_ms()),
+                    Some(epoch_ms() + 60_000),
+                ),
             ];
             emit_ip_pool_refresh(task_id, "example.com", true, &stats, "test".to_string());
             expect_single_event(bus.strategy_events(), |event| match event {
-                StrategyEvent::IpPoolRefresh { id, domain, success, candidates_count, min_latency_ms, max_latency_ms, reason } => {
+                StrategyEvent::IpPoolRefresh {
+                    id,
+                    domain,
+                    success,
+                    candidates_count,
+                    min_latency_ms,
+                    max_latency_ms,
+                    reason,
+                } => {
                     assert_eq!(id, &task_id.to_string());
                     assert_eq!(domain, "example.com");
                     assert!(success);
@@ -398,9 +581,22 @@ mod section_event_emission {
         {
             let bus = install_test_event_bus();
             let task_id = Uuid::new_v4();
-            emit_ip_pool_refresh(task_id, "empty.com", false, &[], "no_candidates".to_string());
+            emit_ip_pool_refresh(
+                task_id,
+                "empty.com",
+                false,
+                &[],
+                "no_candidates".to_string(),
+            );
             expect_single_event(bus.strategy_events(), |event| match event {
-                StrategyEvent::IpPoolRefresh { success, candidates_count, min_latency_ms, max_latency_ms, reason, .. } => {
+                StrategyEvent::IpPoolRefresh {
+                    success,
+                    candidates_count,
+                    min_latency_ms,
+                    max_latency_ms,
+                    reason,
+                    ..
+                } => {
                     assert!(!success);
                     assert_eq!(*candidates_count, 0);
                     assert!(min_latency_ms.is_none());
@@ -482,14 +678,24 @@ mod section_event_emission {
         // CIDR filter variants
         {
             let bus = install_test_event_bus();
-            emit_ip_pool_cidr_filter("192.168.1.1".parse().unwrap(), "blacklist", "192.168.1.0/24");
+            emit_ip_pool_cidr_filter(
+                "192.168.1.1".parse().unwrap(),
+                "blacklist",
+                "192.168.1.0/24",
+            );
             emit_ip_pool_cidr_filter("1.2.3.4".parse().unwrap(), "blacklist", "");
             emit_ip_pool_cidr_filter("1.2.3.5".parse().unwrap(), "whitelist", "invalid_cidr");
             let events = bus.strategy_events();
             assert_eq!(events.len(), 3);
-            assert!(matches!(events[0], StrategyEvent::IpPoolCidrFilter { ref ip, ref list_type, ref cidr } if ip == "192.168.1.1" && list_type == "blacklist" && cidr == "192.168.1.0/24"));
-            assert!(matches!(events[1], StrategyEvent::IpPoolCidrFilter { ref ip, ref list_type, ref cidr } if ip == "1.2.3.4" && list_type == "blacklist" && cidr.is_empty()));
-            assert!(matches!(events[2], StrategyEvent::IpPoolCidrFilter { ref ip, ref list_type, ref cidr } if ip == "1.2.3.5" && list_type == "whitelist" && cidr == "invalid_cidr"));
+            assert!(
+                matches!(events[0], StrategyEvent::IpPoolCidrFilter { ref ip, ref list_type, ref cidr } if ip == "192.168.1.1" && list_type == "blacklist" && cidr == "192.168.1.0/24")
+            );
+            assert!(
+                matches!(events[1], StrategyEvent::IpPoolCidrFilter { ref ip, ref list_type, ref cidr } if ip == "1.2.3.4" && list_type == "blacklist" && cidr.is_empty())
+            );
+            assert!(
+                matches!(events[2], StrategyEvent::IpPoolCidrFilter { ref ip, ref list_type, ref cidr } if ip == "1.2.3.5" && list_type == "whitelist" && cidr == "invalid_cidr")
+            );
         }
         // IP tripped + recovered
         {
@@ -498,8 +704,12 @@ mod section_event_emission {
             emit_ip_pool_ip_recovered("10.0.0.2".parse().unwrap());
             let events = bus.strategy_events();
             assert_eq!(events.len(), 2);
-            assert!(matches!(events[0], StrategyEvent::IpPoolIpTripped { ref ip, ref reason } if ip == "10.0.0.2" && reason == "failures_exceeded"));
-            assert!(matches!(events[1], StrategyEvent::IpPoolIpRecovered { ref ip } if ip == "10.0.0.2"));
+            assert!(
+                matches!(events[0], StrategyEvent::IpPoolIpTripped { ref ip, ref reason } if ip == "10.0.0.2" && reason == "failures_exceeded")
+            );
+            assert!(
+                matches!(events[1], StrategyEvent::IpPoolIpRecovered { ref ip } if ip == "10.0.0.2")
+            );
         }
         // config update single + hot reload burst
         {
@@ -517,8 +727,14 @@ mod section_event_emission {
         {
             let bus = install_test_event_bus();
             let dummy = EffectiveIpPoolConfig::default();
-            for _ in 0..5 { emit_ip_pool_config_update(&dummy, &dummy); }
-            expect_strategy_event_count(bus.strategy_events(), |e| matches!(e, StrategyEvent::IpPoolConfigUpdate { .. }), 5);
+            for _ in 0..5 {
+                emit_ip_pool_config_update(&dummy, &dummy);
+            }
+            expect_strategy_event_count(
+                bus.strategy_events(),
+                |e| matches!(e, StrategyEvent::IpPoolConfigUpdate { .. }),
+                5,
+            );
         }
     }
 
@@ -528,7 +744,8 @@ mod section_event_emission {
         // This test documents expected behavior: pick_best prepares candidates but doesn't emit
         let bus = install_test_event_bus();
         // 复用公共 helper：减少绑定监听与 accept 样板
-        let (pool, addr, _counter, accept_task) = super::super::common::ip_pool::make_user_static_pool_with_listener("local.test").await;
+        let (pool, addr, _counter, accept_task) =
+            super::super::common::ip_pool::make_user_static_pool_with_listener("local.test").await;
         let _selection = pool.pick_best("local.test", addr.port()).await;
         accept_task.await.unwrap();
 
@@ -681,7 +898,10 @@ mod section_ip_pool_cache {
             cache.insert(key.clone(), IpCacheSlot::with_best(stat.clone()));
             let fetched = cache.get("github.com", 443).unwrap();
             assert_eq!(fetched.best.as_ref().unwrap().latency_ms, Some(42));
-            assert_eq!(fetched.best.unwrap().candidate.address, stat.candidate.address);
+            assert_eq!(
+                fetched.best.unwrap().candidate.address,
+                stat.candidate.address
+            );
             assert_eq!(stat.sources, vec![IpSource::Builtin]);
             assert!(cache.snapshot().contains_key(&key));
         }
@@ -690,7 +910,11 @@ mod section_ip_pool_cache {
             cache.insert(
                 IpCacheKey::new("github.com", 443),
                 IpCacheSlot::with_best(IpStat::with_latency(
-                    IpCandidate::new(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), 443, IpSource::Builtin),
+                    IpCandidate::new(
+                        IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+                        443,
+                        IpSource::Builtin,
+                    ),
                     10,
                 )),
             );
@@ -711,6 +935,7 @@ mod section_ip_pool_cache {
 
 // ---------------- section_ip_pool_config ----------------
 mod section_ip_pool_config {
+    use super::super::common::fixtures;
     use fireworks_collaboration_lib::core::ip_pool::config::{
         default_cache_prune_interval_secs, default_cooldown_seconds,
         default_failure_rate_threshold, default_failure_threshold, default_failure_window_seconds,
@@ -721,20 +946,28 @@ mod section_ip_pool_config {
     use fireworks_collaboration_lib::core::ip_pool::config::{
         join_ip_config_path, load_or_init_file_at, save_file_at,
     };
-    use std::fs;
-    use super::super::common::fixtures; // reuse common temp dir helper
+    use std::fs; // reuse common temp dir helper
 
     #[test]
     fn config_defaults_and_deserialize_behaviour() {
         // defaults (runtime + file)
         {
             let r = IpPoolRuntimeConfig::default();
-            assert!(!r.enabled);
+            assert!(r.enabled);
             assert_eq!(r.max_parallel_probes, default_max_parallel_probes());
             assert_eq!(r.probe_timeout_ms, default_probe_timeout_ms());
             assert!(r.history_path.is_none());
-            assert!(r.sources.builtin && r.sources.dns && r.sources.history && r.sources.user_static && r.sources.fallback);
-            assert_eq!(r.cache_prune_interval_secs, default_cache_prune_interval_secs());
+            assert!(
+                r.sources.builtin
+                    && r.sources.dns
+                    && r.sources.history
+                    && r.sources.user_static
+                    && r.sources.fallback
+            );
+            assert_eq!(
+                r.cache_prune_interval_secs,
+                default_cache_prune_interval_secs()
+            );
             assert_eq!(r.max_cache_entries, default_max_cache_entries());
             assert_eq!(r.singleflight_timeout_ms, default_singleflight_timeout_ms());
             assert_eq!(r.failure_threshold, default_failure_threshold());
@@ -773,9 +1006,15 @@ mod section_ip_pool_config {
             assert_eq!(domain.host, "github.com");
             assert_eq!(domain.ports, vec![443, 80]);
             assert!(cfg.file.user_static.is_empty());
-            assert_eq!(cfg.runtime.cache_prune_interval_secs, default_cache_prune_interval_secs());
+            assert_eq!(
+                cfg.runtime.cache_prune_interval_secs,
+                default_cache_prune_interval_secs()
+            );
             assert_eq!(cfg.runtime.max_cache_entries, default_max_cache_entries());
-            assert_eq!(cfg.runtime.singleflight_timeout_ms, default_singleflight_timeout_ms());
+            assert_eq!(
+                cfg.runtime.singleflight_timeout_ms,
+                default_singleflight_timeout_ms()
+            );
         }
     }
 
@@ -797,7 +1036,11 @@ mod section_ip_pool_config {
             let mut cfg = IpPoolFileConfig::default();
             cfg.preheat_domains.push(PreheatDomain::new("github.com"));
             cfg.score_ttl_seconds = 120;
-            cfg.user_static.push(UserStaticIp { host: "github.com".into(), ip: "140.82.112.3".into(), ports: vec![443] });
+            cfg.user_static.push(UserStaticIp {
+                host: "github.com".into(),
+                ip: "140.82.112.3".into(),
+                ports: vec![443],
+            });
             save_file_at(&cfg, &temp_dir).expect("save ip config");
             let loaded = load_or_init_file_at(&temp_dir).expect("load ip config");
             assert_eq!(loaded.preheat_domains.len(), 1);
@@ -819,7 +1062,11 @@ mod section_circuit_breaker {
     fn circuit_breaker_comprehensive_behaviour() {
         // 场景 1: 连续失败触发熔断
         {
-            let breaker = CircuitBreaker::new(CircuitBreakerConfig { enabled: true, consecutive_failure_threshold: 3, ..Default::default() });
+            let breaker = CircuitBreaker::new(CircuitBreakerConfig {
+                enabled: true,
+                consecutive_failure_threshold: 3,
+                ..Default::default()
+            });
             let ip = "192.0.2.1".parse().unwrap();
             breaker.record_failure(ip);
             breaker.record_failure(ip);
@@ -833,7 +1080,13 @@ mod section_circuit_breaker {
 
         // 场景 2: 中途成功重置连续失败
         {
-            let breaker = CircuitBreaker::new(CircuitBreakerConfig { enabled: true, consecutive_failure_threshold: 3, failure_rate_threshold: 0.9, min_samples_in_window: 10, ..Default::default() });
+            let breaker = CircuitBreaker::new(CircuitBreakerConfig {
+                enabled: true,
+                consecutive_failure_threshold: 3,
+                failure_rate_threshold: 0.9,
+                min_samples_in_window: 10,
+                ..Default::default()
+            });
             let ip = "192.0.2.2".parse().unwrap();
             breaker.record_failure(ip);
             breaker.record_failure(ip);
@@ -845,7 +1098,13 @@ mod section_circuit_breaker {
 
         // 场景 3: 失败率触发熔断
         {
-            let breaker = CircuitBreaker::new(CircuitBreakerConfig { enabled: true, consecutive_failure_threshold: 100, failure_rate_threshold: 0.5, min_samples_in_window: 5, ..Default::default() });
+            let breaker = CircuitBreaker::new(CircuitBreakerConfig {
+                enabled: true,
+                consecutive_failure_threshold: 100,
+                failure_rate_threshold: 0.5,
+                min_samples_in_window: 5,
+                ..Default::default()
+            });
             let ip = "192.0.2.3".parse().unwrap();
             breaker.record_success(ip);
             breaker.record_success(ip);
@@ -857,7 +1116,11 @@ mod section_circuit_breaker {
 
         // 场景 4: 手动重置
         {
-            let breaker = CircuitBreaker::new(CircuitBreakerConfig { enabled: true, consecutive_failure_threshold: 2, ..Default::default() });
+            let breaker = CircuitBreaker::new(CircuitBreakerConfig {
+                enabled: true,
+                consecutive_failure_threshold: 2,
+                ..Default::default()
+            });
             let ip = "192.0.2.4".parse().unwrap();
             breaker.record_failure(ip);
             breaker.record_failure(ip);
@@ -868,7 +1131,11 @@ mod section_circuit_breaker {
 
         // 场景 5: 禁用状态永不熔断
         {
-            let breaker = CircuitBreaker::new(CircuitBreakerConfig { enabled: false, consecutive_failure_threshold: 1, ..Default::default() });
+            let breaker = CircuitBreaker::new(CircuitBreakerConfig {
+                enabled: false,
+                consecutive_failure_threshold: 1,
+                ..Default::default()
+            });
             let ip = "192.0.2.5".parse().unwrap();
             breaker.record_failure(ip);
             breaker.record_failure(ip);
@@ -878,7 +1145,11 @@ mod section_circuit_breaker {
 
         // 场景 6: get_tripped_ips 返回正确集合
         {
-            let breaker = CircuitBreaker::new(CircuitBreakerConfig { enabled: true, consecutive_failure_threshold: 2, ..Default::default() });
+            let breaker = CircuitBreaker::new(CircuitBreakerConfig {
+                enabled: true,
+                consecutive_failure_threshold: 2,
+                ..Default::default()
+            });
             let ip1: IpAddr = "192.0.2.6".parse().unwrap();
             let ip2: IpAddr = "192.0.2.7".parse().unwrap();
             let ip3: IpAddr = "192.0.2.8".parse().unwrap();
@@ -901,6 +1172,7 @@ mod section_circuit_breaker {
 
 // ---------------- section_preheat ----------------
 mod section_preheat {
+    use super::super::common::ip_pool::make_history_record;
     use fireworks_collaboration_lib::core::ip_pool::cache::IpScoreCache;
     use fireworks_collaboration_lib::core::ip_pool::config::{
         EffectiveIpPoolConfig, PreheatDomain, UserStaticIp,
@@ -911,7 +1183,6 @@ mod section_preheat {
         update_cache_and_history, user_static_lookup, AggregatedCandidate, DomainSchedule,
     };
     use fireworks_collaboration_lib::core::ip_pool::IpSource;
-    use super::super::common::ip_pool::make_history_record;
     use std::net::IpAddr;
     use std::sync::Arc;
     use tokio::runtime::Builder;
@@ -925,20 +1196,37 @@ mod section_preheat {
     fn preheat_operations_variants() {
         // builtin + user static lookup + schedule/backoff
         {
-            let ips = builtin_lookup("github.com"); assert!(!ips.is_empty());
-            let entries = vec![UserStaticIp { host: "example.com".into(), ip: "1.1.1.1".into(), ports: vec![80] }];
+            let ips = builtin_lookup("github.com");
+            assert!(!ips.is_empty());
+            let entries = vec![UserStaticIp {
+                host: "example.com".into(),
+                ip: "1.1.1.1".into(),
+                ports: vec![80],
+            }];
             assert!(user_static_lookup("example.com", 443, &entries).is_empty());
             assert_eq!(user_static_lookup("example.com", 80, &entries).len(), 1);
             let base = Instant::now();
             let mut sched = DomainSchedule::new(PreheatDomain::new("example.com"), 120, base);
-            for expected in [240,480,720,720] { sched.mark_failure(base); assert_eq!(sched.current_backoff().as_secs(), expected); }
-            sched.mark_success(base); assert_eq!(sched.current_backoff().as_secs(), 120);
-            let mut second = DomainSchedule::new(PreheatDomain::new("refresh.com"), 300, base); second.mark_failure(base);
-            let later = base + TokioDuration::from_secs(5); second.force_refresh(later); assert_eq!(second.failure_streak(),0); assert_eq!(second.next_due(), later);
-            let mut early = DomainSchedule::new(PreheatDomain::new("early.com"),120,base); early.mark_success(base);
-            let mut now_sched = DomainSchedule::new(PreheatDomain::new("now.com"),120,base); now_sched.force_refresh(base);
+            for expected in [240, 480, 720, 720] {
+                sched.mark_failure(base);
+                assert_eq!(sched.current_backoff().as_secs(), expected);
+            }
+            sched.mark_success(base);
+            assert_eq!(sched.current_backoff().as_secs(), 120);
+            let mut second = DomainSchedule::new(PreheatDomain::new("refresh.com"), 300, base);
+            second.mark_failure(base);
+            let later = base + TokioDuration::from_secs(5);
+            second.force_refresh(later);
+            assert_eq!(second.failure_streak(), 0);
+            assert_eq!(second.next_due(), later);
+            let mut early = DomainSchedule::new(PreheatDomain::new("early.com"), 120, base);
+            early.mark_success(base);
+            let mut now_sched = DomainSchedule::new(PreheatDomain::new("now.com"), 120, base);
+            now_sched.force_refresh(base);
             let schedules = vec![early.clone(), now_sched.clone()];
-            let (idx, due) = next_due_schedule(&schedules).unwrap(); assert_eq!(schedules[idx].domain.host, "now.com"); assert!(due <= early.next_due());
+            let (idx, due) = next_due_schedule(&schedules).unwrap();
+            assert_eq!(schedules[idx].domain.host, "now.com");
+            assert!(due <= early.next_due());
         }
 
         // collect_candidates builtin prefer + history merge + skip expired + update_cache_and_history + probe timeout
@@ -948,34 +1236,96 @@ mod section_preheat {
             // merge scenario
             let ip: IpAddr = "140.82.112.3".parse().unwrap();
             let future_expire = current_epoch_ms() + 60_000;
-            history.upsert(make_history_record("github.com",443,[140,82,112,3],vec![IpSource::History,IpSource::UserStatic],12,future_expire-60_000,future_expire)).unwrap();
-            let mut cfg = EffectiveIpPoolConfig::default(); cfg.runtime.enabled = true; cfg.runtime.sources.builtin = true; cfg.runtime.sources.history = true; cfg.runtime.sources.dns=false; cfg.runtime.sources.user_static=false; cfg.runtime.sources.fallback=false;
-            let merged = rt.block_on(async { collect_candidates("github.com",443,&cfg,history.clone()).await });
-            assert!(merged.iter().any(|c| c.candidate.address==ip && c.sources.contains(&IpSource::Builtin) && c.sources.contains(&IpSource::History) && c.sources.contains(&IpSource::UserStatic)));
+            history
+                .upsert(make_history_record(
+                    "github.com",
+                    443,
+                    [140, 82, 112, 3],
+                    vec![IpSource::History, IpSource::UserStatic],
+                    12,
+                    future_expire - 60_000,
+                    future_expire,
+                ))
+                .unwrap();
+            let mut cfg = EffectiveIpPoolConfig::default();
+            cfg.runtime.enabled = true;
+            cfg.runtime.sources.builtin = true;
+            cfg.runtime.sources.history = true;
+            cfg.runtime.sources.dns = false;
+            cfg.runtime.sources.user_static = false;
+            cfg.runtime.sources.fallback = false;
+            let merged = rt.block_on(async {
+                collect_candidates("github.com", 443, &cfg, history.clone()).await
+            });
+            assert!(merged.iter().any(|c| c.candidate.address == ip
+                && c.sources.contains(&IpSource::Builtin)
+                && c.sources.contains(&IpSource::History)
+                && c.sources.contains(&IpSource::UserStatic)));
             // skip expired
             let expired_store = Arc::new(IpHistoryStore::in_memory());
-            expired_store.upsert(make_history_record("expired.test",443,[1,1,1,1],vec![IpSource::History],10,1,2)).unwrap();
-            let mut cfg2 = EffectiveIpPoolConfig::default(); cfg2.runtime.enabled = true; cfg2.runtime.sources.history = true; for f in [&mut cfg2.runtime.sources.builtin,&mut cfg2.runtime.sources.dns,&mut cfg2.runtime.sources.user_static,&mut cfg2.runtime.sources.fallback] { *f = false; }
-            let empty = rt.block_on(async { collect_candidates("expired.test",443,&cfg2,expired_store.clone()).await }); assert!(empty.is_empty()); assert!(expired_store.get("expired.test",443).is_none());
+            expired_store
+                .upsert(make_history_record(
+                    "expired.test",
+                    443,
+                    [1, 1, 1, 1],
+                    vec![IpSource::History],
+                    10,
+                    1,
+                    2,
+                ))
+                .unwrap();
+            let mut cfg2 = EffectiveIpPoolConfig::default();
+            cfg2.runtime.enabled = true;
+            cfg2.runtime.sources.history = true;
+            for f in [
+                &mut cfg2.runtime.sources.builtin,
+                &mut cfg2.runtime.sources.dns,
+                &mut cfg2.runtime.sources.user_static,
+                &mut cfg2.runtime.sources.fallback,
+            ] {
+                *f = false;
+            }
+            let empty = rt.block_on(async {
+                collect_candidates("expired.test", 443, &cfg2, expired_store.clone()).await
+            });
+            assert!(empty.is_empty());
+            assert!(expired_store.get("expired.test", 443).is_none());
             // update_cache_and_history
-            let cache = Arc::new(IpScoreCache::new()); let stat = AggregatedCandidate::new("1.1.1.1".parse().unwrap(),443,IpSource::Builtin).to_stat(10,60);
-            update_cache_and_history("github.com",443,vec![stat],cache.clone(),history.clone()).unwrap();
-            assert!(cache.get("github.com",443).is_some() && history.get("github.com",443).is_some());
+            let cache = Arc::new(IpScoreCache::new());
+            let stat = AggregatedCandidate::new("1.1.1.1".parse().unwrap(), 443, IpSource::Builtin)
+                .to_stat(10, 60);
+            update_cache_and_history(
+                "github.com",
+                443,
+                vec![stat],
+                cache.clone(),
+                history.clone(),
+            )
+            .unwrap();
+            assert!(
+                cache.get("github.com", 443).is_some() && history.get("github.com", 443).is_some()
+            );
             // probe latency timing
-            let start = std::time::Instant::now(); let ip_probe: IpAddr = "198.51.100.1".parse().unwrap(); let timeout_ms=150; let result = rt.block_on(async { probe_latency(ip_probe,9,timeout_ms).await });
-            let elapsed_ms = start.elapsed().as_millis() as u64; assert!(elapsed_ms <= timeout_ms * 2 + 50); if let Ok(lat)=result { assert!(u64::from(lat) <= timeout_ms * 2); }
+            let start = std::time::Instant::now();
+            let ip_probe: IpAddr = "198.51.100.1".parse().unwrap();
+            let timeout_ms = 150;
+            let result = rt.block_on(async { probe_latency(ip_probe, 9, timeout_ms).await });
+            let elapsed_ms = start.elapsed().as_millis() as u64;
+            assert!(elapsed_ms <= timeout_ms * 2 + 50);
+            if let Ok(lat) = result {
+                assert!(u64::from(lat) <= timeout_ms * 2);
+            }
         }
     }
 }
 
 // ---------------- section_history_tests ----------------
 mod section_history_tests {
+    use super::super::common::fixtures; // temp dir helper
+    use super::super::common::ip_pool::{make_history_record, make_history_record_builtin};
     use fireworks_collaboration_lib::core::ip_pool::history::IpHistoryStore;
     use fireworks_collaboration_lib::core::ip_pool::IpSource;
     use std::fs;
-    use super::super::common::fixtures; // temp dir helper
-    use super::super::common::ip_pool::{make_history_record, make_history_record_builtin};
-
 
     #[test]
     fn history_store_variants() {
@@ -996,34 +1346,125 @@ mod section_history_tests {
         {
             let dir = fixtures::create_empty_dir();
             let store = IpHistoryStore::load_or_init_at(&dir).unwrap();
-            let rec = make_history_record("github.com",443,[1,1,1,1],vec![IpSource::Builtin,IpSource::Dns],32,1,2);
+            let rec = make_history_record(
+                "github.com",
+                443,
+                [1, 1, 1, 1],
+                vec![IpSource::Builtin, IpSource::Dns],
+                32,
+                1,
+                2,
+            );
             store.upsert(rec.clone()).unwrap();
-            let fetched = store.get("github.com",443).unwrap();
-            assert_eq!(fetched.latency_ms,32); assert_eq!(fetched.sources, vec![IpSource::Builtin,IpSource::Dns]);
-            assert_eq!(store.snapshot().unwrap().len(),1); fs::remove_dir_all(&dir).ok();
+            let fetched = store.get("github.com", 443).unwrap();
+            assert_eq!(fetched.latency_ms, 32);
+            assert_eq!(fetched.sources, vec![IpSource::Builtin, IpSource::Dns]);
+            assert_eq!(store.snapshot().unwrap().len(), 1);
+            fs::remove_dir_all(&dir).ok();
         }
         // get_fresh 过期驱逐 + 有效
         {
-            let store = IpHistoryStore::in_memory(); store.upsert(make_history_record_builtin("github.com",443,[1,1,1,1],10,1,5)).unwrap();
-            assert!(store.get_fresh("github.com",443,10).is_none() && store.snapshot().unwrap().is_empty());
-            let store2 = IpHistoryStore::in_memory(); let rec = make_history_record("github.com",443,[1,1,1,1],vec![IpSource::Builtin,IpSource::History],8,1,10_000); store2.upsert(rec.clone()).unwrap();
-            let fetched = store2.get_fresh("github.com",443,5_000).unwrap(); assert_eq!(fetched.latency_ms,rec.latency_ms); assert_eq!(store2.snapshot().unwrap().len(),1);
+            let store = IpHistoryStore::in_memory();
+            store
+                .upsert(make_history_record_builtin(
+                    "github.com",
+                    443,
+                    [1, 1, 1, 1],
+                    10,
+                    1,
+                    5,
+                ))
+                .unwrap();
+            assert!(
+                store.get_fresh("github.com", 443, 10).is_none()
+                    && store.snapshot().unwrap().is_empty()
+            );
+            let store2 = IpHistoryStore::in_memory();
+            let rec = make_history_record(
+                "github.com",
+                443,
+                [1, 1, 1, 1],
+                vec![IpSource::Builtin, IpSource::History],
+                8,
+                1,
+                10_000,
+            );
+            store2.upsert(rec.clone()).unwrap();
+            let fetched = store2.get_fresh("github.com", 443, 5_000).unwrap();
+            assert_eq!(fetched.latency_ms, rec.latency_ms);
+            assert_eq!(store2.snapshot().unwrap().len(), 1);
         }
         // remove idempotent
         {
-            let store = IpHistoryStore::in_memory(); store.upsert(make_history_record_builtin("github.com",443,[1,1,1,1],10,1,10_000)).unwrap();
-            assert!(store.remove("github.com",443).unwrap()); assert!(store.get("github.com",443).is_none()); assert!(!store.remove("github.com",443).unwrap());
+            let store = IpHistoryStore::in_memory();
+            store
+                .upsert(make_history_record_builtin(
+                    "github.com",
+                    443,
+                    [1, 1, 1, 1],
+                    10,
+                    1,
+                    10_000,
+                ))
+                .unwrap();
+            assert!(store.remove("github.com", 443).unwrap());
+            assert!(store.get("github.com", 443).is_none());
+            assert!(!store.remove("github.com", 443).unwrap());
         }
         // enforce_capacity
         {
-            let store = IpHistoryStore::in_memory(); for i in 0..5 { let rec = make_history_record_builtin(&format!("host{i}.com"),443,[1,1,1,i as u8 +1],10 + i as u32,(i+1) as i64 *1000,100_000); store.upsert(rec).unwrap(); }
-            assert_eq!(store.enforce_capacity(3).unwrap(),2); let snap = store.snapshot().unwrap(); assert_eq!(snap.len(),3); assert!(snap.iter().all(|e| matches!(e.host.as_str(),"host2.com"|"host3.com"|"host4.com")));
+            let store = IpHistoryStore::in_memory();
+            for i in 0..5 {
+                let rec = make_history_record_builtin(
+                    &format!("host{i}.com"),
+                    443,
+                    [1, 1, 1, i as u8 + 1],
+                    10 + i as u32,
+                    (i + 1) as i64 * 1000,
+                    100_000,
+                );
+                store.upsert(rec).unwrap();
+            }
+            assert_eq!(store.enforce_capacity(3).unwrap(), 2);
+            let snap = store.snapshot().unwrap();
+            assert_eq!(snap.len(), 3);
+            assert!(snap
+                .iter()
+                .all(|e| matches!(e.host.as_str(), "host2.com" | "host3.com" | "host4.com")));
         }
         // prune_and_enforce
         {
-            let store = IpHistoryStore::in_memory(); for i in 0..2 { store.upsert(make_history_record_builtin(&format!("expired{i}.com"),443,[1,1,1,i as u8 +1],10,1000,5000)).unwrap(); }
-            for i in 0..4 { store.upsert(make_history_record_builtin(&format!("valid{i}.com"),443,[2,2,2,i as u8 +1],20,(i+1) as i64 *2000 + 10000,100_000)).unwrap(); }
-            let (expired,cap) = store.prune_and_enforce(10_000,3).unwrap(); assert_eq!(expired,2); assert_eq!(cap,1); let snap = store.snapshot().unwrap(); assert_eq!(snap.len(),3); assert!(snap.iter().all(|e| e.host.starts_with("valid")));
+            let store = IpHistoryStore::in_memory();
+            for i in 0..2 {
+                store
+                    .upsert(make_history_record_builtin(
+                        &format!("expired{i}.com"),
+                        443,
+                        [1, 1, 1, i as u8 + 1],
+                        10,
+                        1000,
+                        5000,
+                    ))
+                    .unwrap();
+            }
+            for i in 0..4 {
+                store
+                    .upsert(make_history_record_builtin(
+                        &format!("valid{i}.com"),
+                        443,
+                        [2, 2, 2, i as u8 + 1],
+                        20,
+                        (i + 1) as i64 * 2000 + 10000,
+                        100_000,
+                    ))
+                    .unwrap();
+            }
+            let (expired, cap) = store.prune_and_enforce(10_000, 3).unwrap();
+            assert_eq!(expired, 2);
+            assert_eq!(cap, 1);
+            let snap = store.snapshot().unwrap();
+            assert_eq!(snap.len(), 3);
+            assert!(snap.iter().all(|e| e.host.starts_with("valid")));
         }
     }
 }

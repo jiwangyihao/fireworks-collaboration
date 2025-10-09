@@ -61,6 +61,9 @@ pub struct IpStat {
     /// 评分过期时间（Unix epoch 毫秒）。
     #[serde(default)]
     pub expires_at_epoch_ms: Option<i64>,
+    /// 解析器来源信息标签。
+    #[serde(default)]
+    pub resolver_metadata: Vec<String>,
 }
 
 impl IpStat {
@@ -72,6 +75,7 @@ impl IpStat {
             measured_at_epoch_ms: None,
             expires_at_epoch_ms: None,
             sources: vec![initial_source],
+            resolver_metadata: Vec::new(),
         }
     }
 
