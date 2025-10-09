@@ -90,7 +90,6 @@ fn validate_url(url: &str, cfg: &AppConfig) -> Result<(hyper::Uri, String), Stri
 
 /// Process redirect response.
 fn process_redirect(
-    status: u16,
     headers: &HashMap<String, String>,
     current_url: &str,
     cfg: &AppConfig,
@@ -210,7 +209,7 @@ pub async fn http_fake_request(
                 }
 
                 // Process redirect
-                let next_url = process_redirect(status, &out.headers, &current_url, &cfg_val)?;
+                let next_url = process_redirect(&out.headers, &current_url, &cfg_val)?;
 
                 tracing::debug!(
                     target = "http",

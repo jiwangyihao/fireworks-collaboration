@@ -167,7 +167,7 @@ pub async fn ip_pool_pick_best(
 ) -> Result<IpSelectionDto, String> {
     let pool_arc = pool.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let mut guard = pool_arc.lock().map_err(|e| e.to_string())?;
+        let guard = pool_arc.lock().map_err(|e| e.to_string())?;
         let selection = guard.pick_best_blocking(&host, port);
         let outcome = metrics_to_dto(guard.outcome_metrics(&host, port));
         let strategy = selection.strategy();
