@@ -14,11 +14,20 @@ pub fn proxy_force_disabled() -> bool {
 
 /// 判断是否应启用伪 SNI
 /// - `cfg.http.fake_sni_enabled` 为真 且 未强制 real 时，返回 true
-pub fn should_use_fake(cfg: &AppConfig, force_real: bool) -> bool {
+pub fn should_use_fake(cfg: &AppConfig, force_real: bool, real_host: &str) -> bool {
     if force_real {
         return false;
     }
-    cfg.http.fake_sni_enabled
+    if !cfg.http.fake_sni_enabled {
+        return false;
+    }
+    if cfg.http.fake_sni_target_hosts.is_empty() {
+        return false;
+    }
+    cfg.http
+        .fake_sni_target_hosts
+        .iter()
+        .any(|pattern| match_domain(pattern, real_host))
 }
 
 /// 简单通配符匹配：仅支持前缀 "*." 的域名通配符
@@ -93,7 +102,7 @@ pub fn decide_sni_host_with_proxy(
     if force_real || proxy_present {
         return (real_host.to_string(), false);
     }
-    if !cfg.http.fake_sni_enabled {
+    if !should_use_fake(cfg, false, real_host) {
         return (real_host.to_string(), false);
     }
     // 构造候选：仅来自 fake_sni_hosts（受用户控制）；忽略 legacy fake_sni_host

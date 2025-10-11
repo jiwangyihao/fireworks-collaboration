@@ -3,13 +3,9 @@
 use std::collections::HashMap;
 use tauri::State;
 
-use crate::core::{
-    config::model::AppConfig,
-    http::{
-        client::HttpClient,
-        types::{HttpRequestInput, HttpResponseOutput, RedirectInfo},
-    },
-    tls::util::match_domain,
+use crate::core::http::{
+    client::HttpClient,
+    types::{HttpRequestInput, HttpResponseOutput, RedirectInfo},
 };
 
 use super::super::types::SharedConfig;
@@ -31,15 +27,6 @@ pub(crate) fn redact_auth_in_headers(
     }
 
     headers
-}
-
-/// Check if a host is in the SAN whitelist.
-pub(crate) fn host_in_whitelist(host: &str, cfg: &AppConfig) -> bool {
-    let whitelist = &cfg.tls.san_whitelist;
-    if whitelist.is_empty() {
-        return false;
-    }
-    whitelist.iter().any(|pattern| match_domain(pattern, host))
 }
 
 /// Classify error messages into categories.
@@ -68,7 +55,7 @@ pub(crate) fn classify_error_msg(e: &str) -> (&'static str, String) {
 }
 
 /// Validate and parse URL for HTTP requests.
-fn validate_url(url: &str, cfg: &AppConfig) -> Result<(hyper::Uri, String), String> {
+fn validate_url(url: &str) -> Result<(hyper::Uri, String), String> {
     let parsed = url
         .parse::<hyper::Uri>()
         .map_err(|e| format!("Input: invalid URL - {}", e))?;
@@ -81,10 +68,6 @@ fn validate_url(url: &str, cfg: &AppConfig) -> Result<(hyper::Uri, String), Stri
         .host()
         .ok_or_else(|| "Input: url host missing".to_string())?;
 
-    if !host_in_whitelist(host, cfg) {
-        return Err("Verify: SAN whitelist mismatch (precheck)".into());
-    }
-
     Ok((parsed.clone(), host.to_string()))
 }
 
@@ -92,7 +75,6 @@ fn validate_url(url: &str, cfg: &AppConfig) -> Result<(hyper::Uri, String), Stri
 fn process_redirect(
     headers: &HashMap<String, String>,
     current_url: &str,
-    cfg: &AppConfig,
 ) -> Result<String, String> {
     let location = headers
         .get("location")
@@ -107,17 +89,6 @@ fn process_redirect(
         .join(location)
         .map_err(|e| format!("Input: bad redirect location - {}", e))?
         .to_string();
-
-    // Validate next host against whitelist
-    let next_host = url::Url::parse(&next_url)
-        .map_err(|e| format!("Internal: url parse - {}", e))?
-        .host_str()
-        .ok_or_else(|| "Input: redirect host missing".to_string())?
-        .to_string();
-
-    if !host_in_whitelist(&next_host, cfg) {
-        return Err("Verify: SAN whitelist mismatch (redirect)".into());
-    }
 
     Ok(next_url)
 }
@@ -163,7 +134,7 @@ pub async fn http_fake_request(
 
     // Early validation of URL and host whitelist
     let mut current_url = input.url.clone();
-    validate_url(&current_url, &cfg_val)?;
+    validate_url(&current_url)?;
 
     // Log request with redacted headers
     let redacted =
@@ -209,7 +180,7 @@ pub async fn http_fake_request(
                 }
 
                 // Process redirect
-                let next_url = process_redirect(&out.headers, &current_url, &cfg_val)?;
+                let next_url = process_redirect(&out.headers, &current_url)?;
 
                 tracing::debug!(
                     target = "http",

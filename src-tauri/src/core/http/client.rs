@@ -26,20 +26,23 @@ use uuid::Uuid;
 // Reuse existing metrics enabled flag (resides in git transport metrics module) to keep gating consistent
 use crate::core::git::transport::metrics::metrics_enabled;
 use crate::core::tls::util::{decide_sni_host_with_proxy, proxy_present};
-use crate::core::tls::verifier::create_client_config;
+use crate::core::tls::verifier::{create_client_config, create_client_config_with_expected_name};
 
 use super::types::{HttpRequestInput, HttpResponseOutput, TimingInfo};
 
 /// 内部简单 HTTP 客户端：使用手动连接 + hyper `client::conn，便于自定义` SNI
 pub struct HttpClient {
     cfg: AppConfig,
-    tls: Arc<ClientConfig>,
+    tls_default: Arc<ClientConfig>,
 }
 
 impl HttpClient {
     pub fn new(cfg: AppConfig) -> Self {
         let tls_cfg = Arc::new(create_client_config(&cfg.tls));
-        Self { cfg, tls: tls_cfg }
+        Self {
+            cfg,
+            tls_default: tls_cfg,
+        }
     }
 
     /// 计算用于 TLS 握手的 SNI 主机名，并返回是否使用了伪 SNI
@@ -184,7 +187,12 @@ impl HttpClient {
         let server_name = ServerName::try_from(sni_host_final.as_str())
             .map_err(|_| anyhow!("invalid dns name for sni"))?;
         let start_tls = Instant::now();
-        let tls = TlsConnector::from(self.tls.clone());
+        let tls_config: Arc<ClientConfig> = if fake {
+            Arc::new(create_client_config_with_expected_name(&self.cfg.tls, &host))
+        } else {
+            self.tls_default.clone()
+        };
+        let tls = TlsConnector::from(tls_config);
         let stream = tls
             .connect(server_name, connect_addr)
             .await

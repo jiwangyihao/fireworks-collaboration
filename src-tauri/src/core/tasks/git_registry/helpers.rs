@@ -1,7 +1,7 @@
 use super::super::TaskRegistry;
 use crate::core::config::model::{AppConfig, RetryCfg};
 use crate::core::git::default_impl::opts::{
-    StrategyHttpOverride, StrategyRetryOverride, StrategyTlsOverride,
+    StrategyHttpOverride, StrategyRetryOverride,
 };
 use crate::core::git::errors::{ErrorCategory, GitError};
 use crate::core::tasks::model::TaskErrorEvent;
@@ -63,7 +63,6 @@ pub(super) fn emit_strategy_summary(
     kind: &str,
     http: (bool, u8),
     retry: &RetryPlan,
-    tls: (bool, bool),
     codes: Vec<String>,
     has_filter: bool,
 ) {
@@ -77,8 +76,6 @@ pub(super) fn emit_strategy_summary(
             retry_base_ms: retry.base_ms,
             retry_factor: retry.factor,
             retry_jitter: retry.jitter,
-            tls_insecure: tls.0,
-            tls_skip_san: tls.1,
             applied_codes: codes,
             filter_requested: has_filter,
         },
@@ -96,11 +93,10 @@ impl TaskRegistry {
         kind: &str,
         http: (bool, u8),
         retry: &RetryPlan,
-        tls: (bool, bool),
         codes: Vec<String>,
         has_filter: bool,
     ) {
-        emit_strategy_summary(app, id, kind, http, retry, tls, codes, has_filter)
+        emit_strategy_summary(app, id, kind, http, retry, codes, has_filter)
     }
 
     pub fn decide_partial_fallback(
@@ -213,48 +209,4 @@ impl TaskRegistry {
         (plan, changed)
     }
 
-    pub fn apply_tls_override(
-        kind: &str,
-        id: &uuid::Uuid,
-        global: &AppConfig,
-        override_tls: Option<&StrategyTlsOverride>,
-    ) -> (bool, bool, bool, Option<String>) {
-        let mut insecure = global.tls.insecure_skip_verify;
-        let mut skip_san = global.tls.skip_san_whitelist;
-        let mut changed = false;
-        let mut conflict: Option<String> = None;
-        if let Some(o) = override_tls {
-            if let Some(v) = o.insecure_skip_verify {
-                if v != insecure {
-                    insecure = v;
-                    changed = true;
-                }
-            }
-            if let Some(v) = o.skip_san_whitelist {
-                if v != skip_san {
-                    skip_san = v;
-                    changed = true;
-                }
-            }
-            if insecure && skip_san {
-                conflict =
-                    Some("insecureSkipVerify=true normalizes skipSanWhitelist=false".to_string());
-                if skip_san {
-                    skip_san = false;
-                    changed = true;
-                }
-            }
-        }
-        if changed {
-            tracing::info!(
-                target = "strategy",
-                task_kind = %kind,
-                task_id = %id,
-                insecure_skip_verify = %insecure,
-                skip_san_whitelist = %skip_san,
-                "tls override applied"
-            );
-        }
-        (insecure, skip_san, changed, conflict)
-    }
 }

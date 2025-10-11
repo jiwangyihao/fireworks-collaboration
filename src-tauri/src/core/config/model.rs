@@ -14,6 +14,9 @@ pub struct HttpCfg {
     /// 可选：自定义多个伪 SNI 候选；若未提供，默认填充一组常见域名以便开箱即用
     #[serde(default = "default_fake_sni_hosts")]
     pub fake_sni_hosts: Vec<String>,
+    /// 仅对这些域名启用伪 SNI 与自定义验证逻辑；为空表示禁用伪 SNI
+    #[serde(default)]
+    pub fake_sni_target_hosts: Vec<String>,
     /// 在服务端返回 403 时，是否尝试切换到其他 SNI 候选并自动重试（仅限 info/refs GET 阶段）
     #[serde(default = "default_true")]
     pub sni_rotate_on_403: bool,
@@ -40,14 +43,6 @@ pub struct HttpCfg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TlsCfg {
-    #[serde(default = "default_san_whitelist")]
-    pub san_whitelist: Vec<String>,
-    /// 原型期可选：跳过证书链与域名校验（极不安全，默认关闭）
-    #[serde(default)]
-    pub insecure_skip_verify: bool,
-    /// 可选：仅跳过自定义 SAN 白名单校验，但仍执行常规的证书链与域名校验（默认关闭）
-    #[serde(default)]
-    pub skip_san_whitelist: bool,
     /// P3.4: SPKI Pin 列表（Base64URL 无填充，长度=43）。非空即启用强校验。
     #[serde(default)]
     pub spki_pins: Vec<String>,
@@ -122,15 +117,6 @@ pub fn default_auto_disable_threshold_pct() -> u8 {
 pub fn default_auto_disable_cooldown_sec() -> u64 {
     300
 }
-fn default_san_whitelist() -> Vec<String> {
-    vec![
-        "github.com".into(),
-        "*.github.com".into(),
-        "*.githubusercontent.com".into(),
-        "*.githubassets.com".into(),
-        "codeload.github.com".into(),
-    ]
-}
 fn default_log_level() -> String {
     "info".to_string()
 }
@@ -198,6 +184,7 @@ impl Default for AppConfig {
             http: HttpCfg {
                 fake_sni_enabled: default_true(),
                 fake_sni_hosts: default_fake_sni_hosts(),
+                fake_sni_target_hosts: Vec::new(),
                 sni_rotate_on_403: default_true(),
                 fake_sni_rollout_percent: default_rollout_percent(),
                 host_allow_list_extra: Vec::new(),
@@ -208,9 +195,6 @@ impl Default for AppConfig {
                 auto_disable_fake_cooldown_sec: default_auto_disable_cooldown_sec(),
             },
             tls: TlsCfg {
-                san_whitelist: default_san_whitelist(),
-                insecure_skip_verify: false,
-                skip_san_whitelist: false,
                 spki_pins: Vec::new(),
                 real_host_verify_enabled: true,
                 metrics_enabled: true,

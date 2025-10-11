@@ -36,14 +36,6 @@ pub struct StrategyHttpOverride {
     pub max_redirects: Option<u32>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-#[serde(default, rename_all = "camelCase")]
-pub struct StrategyTlsOverride {
-    #[serde(alias = "insecureSkipVerify", alias = "insecure_skip_verify")]
-    pub insecure_skip_verify: Option<bool>,
-    #[serde(alias = "skipSanWhitelist", alias = "skip_san_whitelist")]
-    pub skip_san_whitelist: Option<bool>,
-}
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
@@ -59,7 +51,6 @@ pub struct StrategyRetryOverride {
 #[serde(default, rename_all = "camelCase")]
 pub struct StrategyOverrideInput {
     pub http: Option<StrategyHttpOverride>,
-    pub tls: Option<StrategyTlsOverride>,
     pub retry: Option<StrategyRetryOverride>,
     // Unknown top-level keys are ignored by serde; we emit warn logs in parser when present.
 }
@@ -134,7 +125,7 @@ pub fn parse_strategy_override(
         };
         // detect unknown top-level keys
         for k in &top_keys {
-            if k != "http" && k != "tls" && k != "retry" {
+            if k != "http" && k != "retry" {
                 tracing::warn!(target="strategy", key=%k, "unknown top-level strategyOverride key ignored");
                 res.ignored_top_level.push(k.clone());
             }
@@ -148,20 +139,6 @@ pub fn parse_strategy_override(
                 ) {
                     tracing::warn!(target="strategy", section="http", key=%k, "unknown http override field ignored");
                     res.ignored_nested.push(("http".into(), k.clone()));
-                }
-            }
-        }
-        if let Some(tls) = obj.get("tls").and_then(|v| v.as_object()) {
-            for k in tls.keys() {
-                if !matches!(
-                    k.as_str(),
-                    "insecureSkipVerify"
-                        | "skipSanWhitelist"
-                        | "insecure_skip_verify"
-                        | "skip_san_whitelist"
-                ) {
-                    tracing::warn!(target="strategy", section="tls", key=%k, "unknown tls override field ignored");
-                    res.ignored_nested.push(("tls".into(), k.clone()));
                 }
             }
         }

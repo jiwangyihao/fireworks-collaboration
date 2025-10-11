@@ -88,11 +88,6 @@ pub enum StrategyEvent {
         follow: bool,
         max_redirects: u8,
     },
-    TlsApplied {
-        id: String,
-        insecure_skip_verify: bool,
-        skip_san_whitelist: bool,
-    },
     Conflict {
         id: String,
         kind: String,
@@ -107,8 +102,6 @@ pub enum StrategyEvent {
         retry_base_ms: u64,
         retry_factor: f64,
         retry_jitter: bool,
-        tls_insecure: bool,
-        tls_skip_san: bool,
         applied_codes: Vec<String>,
         filter_requested: bool,
     },

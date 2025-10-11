@@ -149,8 +149,6 @@ impl TaskRegistry {
             let mut effective_max_redirects: u8 = global_cfg.http.max_redirects;
             let mut retry_plan: crate::core::tasks::retry::RetryPlan =
                 global_cfg.retry.clone().into();
-            let mut effective_insecure_skip_verify: bool = global_cfg.tls.insecure_skip_verify;
-            let mut effective_skip_san_whitelist: bool = global_cfg.tls.skip_san_whitelist;
             let mut applied_codes: Vec<String> = vec![];
             if let Some(raw) = strategy_override.clone() {
                 use crate::core::git::default_impl::opts::parse_strategy_override;
@@ -223,40 +221,6 @@ impl TaskRegistry {
                                     }
                                 }
                             }
-                            if let Some(tls_over) = parsed.tls.as_ref() {
-                                let (ins, skip, changed, conflict) =
-                                    TaskRegistry::apply_tls_override(
-                                        "GitPush",
-                                        &id,
-                                        &global_cfg,
-                                        Some(tls_over),
-                                    );
-                                effective_insecure_skip_verify = ins;
-                                effective_skip_san_whitelist = skip;
-                                if changed {
-                                    publish_global(StructuredEvent::Strategy(
-                                        StructuredStrategyEvent::TlsApplied {
-                                            id: id.to_string(),
-                                            insecure_skip_verify: ins,
-                                            skip_san_whitelist: skip,
-                                        },
-                                    ));
-                                    applied_codes.push("tls_strategy_override_applied".into());
-                                }
-                                if let Some(msg) = conflict {
-                                    if let Some(app_ref) = &app {
-                                        let evt = TaskErrorEvent {
-                                            task_id: id,
-                                            kind: "GitPush".into(),
-                                            category: "Protocol".into(),
-                                            code: Some("strategy_override_conflict".into()),
-                                            message: format!("tls conflict: {msg}"),
-                                            retried_times: None,
-                                        };
-                                        this.emit_error(app_ref, &evt);
-                                    }
-                                }
-                            }
                             if let Some(retry_over) = parsed.retry.as_ref() {
                                 let (plan_new, changed) = TaskRegistry::apply_retry_override(
                                     &global_cfg.retry,
@@ -286,8 +250,6 @@ impl TaskRegistry {
                                 has_override = true,
                                 http_follow = ?effective_follow_redirects,
                                 http_max_redirects = ?effective_max_redirects,
-                                tls_insecure = ?effective_insecure_skip_verify,
-                                tls_skip_san = ?effective_skip_san_whitelist,
                                 strategy_override_valid = true,
                                 "strategyOverride accepted for push (parse+http/tls apply)"
                             );
@@ -298,8 +260,6 @@ impl TaskRegistry {
                                 has_override = true,
                                 http_follow = ?effective_follow_redirects,
                                 http_max_redirects = ?effective_max_redirects,
-                                tls_insecure = ?effective_insecure_skip_verify,
-                                tls_skip_san = ?effective_skip_san_whitelist,
                                 strategy_override_valid = true,
                                 "strategyOverride accepted for push (empty object)"
                             );
@@ -323,7 +283,6 @@ impl TaskRegistry {
                 "GitPush",
                 (effective_follow_redirects, effective_max_redirects),
                 &retry_plan,
-                (effective_insecure_skip_verify, effective_skip_san_whitelist),
                 applied_codes.clone(),
                 false,
             );

@@ -20,7 +20,7 @@ use crate::core::git::transport::{
     FallbackDecision, FallbackStage, TimingRecorder,
 };
 use crate::core::ip_pool::{self, IpOutcome, IpPool, IpSelectionStrategy, IpStat};
-use crate::core::tls::util::{decide_sni_host_with_proxy, match_domain, proxy_present};
+use crate::core::tls::util::{decide_sni_host_with_proxy, proxy_present};
 use crate::core::tls::verifier::{create_client_config, create_client_config_with_expected_name};
 
 use super::fallback::{classify_and_count_fallback, reason_label, stage_label};
@@ -75,17 +75,6 @@ impl git2::transport::SmartSubtransport for CustomHttpsSubtransport {
             .ok_or_else(|| Error::from_str("missing host"))?;
         let port = parsed.port_or_known_default().unwrap_or(443);
         let path = parsed.path().to_string();
-
-        let allowed = self
-            .cfg
-            .tls
-            .san_whitelist
-            .iter()
-            .any(|p| match_domain(p, host));
-        if !allowed {
-            tracing::debug!(target="git.transport", host=%host, "host not allowed by SAN whitelist");
-            return Err(Error::from_str("host not allowed by SAN whitelist"));
-        }
 
         tracing::debug!(target="git.transport", host=%host, port=%port, "connecting tls with fallback");
         let (stream, used_fake_sni, sni_used) = self.connect_tls_with_fallback(host, port)?;

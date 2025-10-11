@@ -140,8 +140,6 @@ impl TaskRegistry {
             let mut retry_plan: crate::core::tasks::retry::RetryPlan =
                 global_cfg.retry.clone().into();
             let mut depth_applied: Option<u32> = None;
-            let mut effective_insecure_skip_verify: bool = global_cfg.tls.insecure_skip_verify;
-            let mut effective_skip_san_whitelist: bool = global_cfg.tls.skip_san_whitelist;
             let mut filter_requested: Option<String> = None;
             let mut applied_codes: Vec<String> = vec![];
             if let Err(e) = parsed_options_res {
@@ -224,36 +222,6 @@ impl TaskRegistry {
                         ));
                     }
                 }
-                if let Some(tls_over) = opts.strategy_override.as_ref().and_then(|s| s.tls.as_ref())
-                {
-                    let (ins, skip, changed, conflict) = TaskRegistry::apply_tls_override(
-                        "GitClone",
-                        &id,
-                        &global_cfg,
-                        Some(tls_over),
-                    );
-                    effective_insecure_skip_verify = ins;
-                    effective_skip_san_whitelist = skip;
-                    if changed {
-                        publish_global(StructuredEvent::Strategy(
-                            StructuredStrategyEvent::TlsApplied {
-                                id: id.to_string(),
-                                insecure_skip_verify: ins,
-                                skip_san_whitelist: skip,
-                            },
-                        ));
-                        applied_codes.push("tls_strategy_override_applied".into());
-                    }
-                    if let Some(conflict_msg) = conflict {
-                        publish_global(StructuredEvent::Strategy(
-                            StructuredStrategyEvent::Conflict {
-                                id: id.to_string(),
-                                kind: "tls".into(),
-                                message: conflict_msg,
-                            },
-                        ));
-                    }
-                }
                 if let Some(retry_over) = opts
                     .strategy_override
                     .as_ref()
@@ -282,8 +250,6 @@ impl TaskRegistry {
                     has_strategy = ?opts.strategy_override.is_some(),
                     strategy_http_follow = ?effective_follow_redirects,
                     strategy_http_max_redirects = ?effective_max_redirects,
-                    strategy_tls_insecure = ?effective_insecure_skip_verify,
-                    strategy_tls_skip_san = ?effective_skip_san_whitelist,
                     "git_clone options accepted (depth/filter/strategy parsed)"
                 );
                 if let Some((_, shallow)) = TaskRegistry::decide_partial_fallback(
@@ -305,7 +271,6 @@ impl TaskRegistry {
                     "GitClone",
                     (effective_follow_redirects, effective_max_redirects),
                     &retry_plan,
-                    (effective_insecure_skip_verify, effective_skip_san_whitelist),
                     applied_codes.clone(),
                     filter_requested.is_some(),
                 );

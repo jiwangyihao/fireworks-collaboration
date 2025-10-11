@@ -49,8 +49,12 @@ fn decide_https_to_custom_inner(
         Some(h) => h,
         None => return decision,
     };
-    // 命中主白名单或附加白名单才继续
-    let mut allowed = cfg.tls.san_whitelist.iter().any(|p| match_domain(p, host));
+    // 仅对允许伪装 SNI 的域名进行改写
+    let mut allowed = cfg
+        .http
+        .fake_sni_target_hosts
+        .iter()
+        .any(|p| match_domain(p, host));
     if !allowed {
         allowed = cfg
             .http

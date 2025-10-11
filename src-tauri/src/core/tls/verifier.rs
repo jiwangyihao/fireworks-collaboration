@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use super::util::match_domain;
 use crate::core::config::model::TlsCfg;
 use crate::core::tls::spki::{compute_spki_sha256_b64, SpkiSource};
 use base64::Engine;
@@ -8,55 +7,30 @@ use rustls::client::{ServerCertVerified, ServerCertVerifier};
 use rustls::ClientConfig;
 use rustls::{Certificate, Error as TlsError, OwnedTrustAnchor, RootCertStore, ServerName};
 
-/// 包装 rustls 默认验证器，并在其基础上增加 SAN 白名单域校验。
-pub struct WhitelistCertVerifier {
+pub struct RealHostCertVerifier {
     pub inner: Arc<dyn ServerCertVerifier>,
-    pub whitelist: Vec<String>,
-    // 若设置，则白名单匹配基于该主机名进行（用于伪 SNI 时按真实主机校验）
     pub override_host: Option<String>,
-    // P3.3: Real-Host 验证开关（默认开启）。开启时：即使握手使用了 Fake SNI，链与域名验证也按真实域执行；
-    // 关闭时：回退到按 SNI 执行默认验证的旧逻辑（override_host 仅用于白名单匹配）。
     pub real_host_verify_enabled: bool,
-    // P3.4: SPKI Pin 强校验（Base64URL，无填充，长度=43）。非空时启用。
     pub spki_pins: Vec<String>,
 }
 
-impl WhitelistCertVerifier {
-    pub fn new(inner: Arc<dyn ServerCertVerifier>, whitelist: Vec<String>) -> Self {
-        Self {
-            inner,
-            whitelist,
-            override_host: None,
-            real_host_verify_enabled: true,
-            spki_pins: Vec::new(),
-        }
-    }
-
-    pub fn new_with_override(
+impl RealHostCertVerifier {
+    pub fn new(
         inner: Arc<dyn ServerCertVerifier>,
-        whitelist: Vec<String>,
         override_host: Option<String>,
         real_host_verify_enabled: bool,
         spki_pins: Vec<String>,
     ) -> Self {
         Self {
             inner,
-            whitelist,
             override_host,
             real_host_verify_enabled,
             spki_pins,
         }
     }
-
-    pub fn host_allowed_str(&self, host: &str) -> bool {
-        if self.whitelist.is_empty() {
-            return false;
-        }
-        self.whitelist.iter().any(|p| match_domain(p, host))
-    }
 }
 
-impl ServerCertVerifier for WhitelistCertVerifier {
+impl ServerCertVerifier for RealHostCertVerifier {
     fn verify_server_cert(
         &self,
         end_entity: &Certificate,
@@ -71,7 +45,6 @@ impl ServerCertVerifier for WhitelistCertVerifier {
         // - 否则使用传入的 server_name（通常来源于 SNI）。
         if self.real_host_verify_enabled {
             if let Some(expected) = &self.override_host {
-                // 尝试以真实域名执行验证（即使握手使用了 Fake SNI）
                 match ServerName::try_from(expected.as_str()) {
                     Ok(exp_name) => {
                         self.inner.verify_server_cert(
@@ -84,7 +57,6 @@ impl ServerCertVerifier for WhitelistCertVerifier {
                         )?;
                     }
                     Err(_) => {
-                        // 无法构造期望名称时，回退到原始 server_name
                         self.inner.verify_server_cert(
                             end_entity,
                             intermediates,
@@ -106,7 +78,6 @@ impl ServerCertVerifier for WhitelistCertVerifier {
                 )?;
             }
         } else {
-            // 关闭开关：按旧逻辑使用 SNI 对应的 server_name
             self.inner.verify_server_cert(
                 end_entity,
                 intermediates,
@@ -117,19 +88,6 @@ impl ServerCertVerifier for WhitelistCertVerifier {
             )?;
         }
 
-        // 再做域白名单判定（优先使用 override_host；否则使用 SNI 中的 DNS 名称）
-        let host_to_check = if let Some(h) = &self.override_host {
-            h.as_str()
-        } else {
-            match server_name {
-                ServerName::DnsName(n) => n.as_ref(),
-                _ => return Err(TlsError::General("non-dns server name".into())),
-            }
-        };
-        if !self.host_allowed_str(host_to_check) {
-            return Err(TlsError::General("SAN whitelist mismatch".into()));
-        }
-
         // P3.4: SPKI Pin 强校验（若配置非空）。在链与主机名验证成功、白名单通过后执行。
         if !self.spki_pins.is_empty() {
             // 仅当 pin 列表全部合法时才执行；否则视为禁用（记录一次调试日志）。
@@ -137,127 +95,57 @@ impl ServerCertVerifier for WhitelistCertVerifier {
                 let (spki_b64, spki_source) = compute_spki_sha256_b64(end_entity);
                 let pin_count = valid_pins.len() as u8;
                 if !valid_pins.iter().any(|p| p == &spki_b64) {
+                    let host_to_log = if let Some(h) = &self.override_host {
+                        h.as_str()
+                    } else {
+                        match server_name {
+                            ServerName::DnsName(n) => n.as_ref(),
+                            _ => "",
+                        }
+                    };
                     // 发送结构化事件并返回 Verify 类错误；不触发 Fake->Real 回退。
-                    tracing::warn!(target="git.transport", host=%host_to_check, pin_enforced="on", pin_count=%pin_count, cert_spki=%spki_b64, spki_source=%log_spki_source(spki_source), "pin_mismatch");
+                    tracing::warn!(target="git.transport", host=%host_to_log, pin_enforced="on", pin_count=%pin_count, cert_spki=%spki_b64, spki_source=%log_spki_source(spki_source), "pin_mismatch");
                     use crate::events::structured::{
                         publish_global, Event as StructuredEvent,
                         StrategyEvent as StructuredStrategyEvent,
                     };
                     publish_global(StructuredEvent::Strategy(
                         StructuredStrategyEvent::CertFpPinMismatch {
-                            id: host_to_check.to_string(),
-                            host: host_to_check.to_string(),
+                            id: host_to_log.to_string(),
+                            host: host_to_log.to_string(),
                             spki_sha256: spki_b64.clone(),
                             pin_count,
                         },
                     ));
                     return Err(TlsError::General("cert_fp_pin_mismatch".into()));
                 } else {
-                    tracing::debug!(target="git.transport", host=%host_to_check, pin_enforced="on", pin_count=%pin_count, spki_source=%log_spki_source(spki_source), "pin_match");
+                    let host_to_log = if let Some(h) = &self.override_host {
+                        h.as_str()
+                    } else {
+                        match server_name {
+                            ServerName::DnsName(n) => n.as_ref(),
+                            _ => "",
+                        }
+                    };
+                    tracing::debug!(target="git.transport", host=%host_to_log, pin_enforced="on", pin_count=%pin_count, spki_source=%log_spki_source(spki_source), "pin_match");
                 }
             } else {
-                tracing::warn!(target="git.transport", host=%host_to_check, pin_enforced="off", reason="invalid_pins", "pin_disabled_this_conn");
+                let host_to_log = if let Some(h) = &self.override_host {
+                    h.as_str()
+                } else {
+                    match server_name {
+                        ServerName::DnsName(n) => n.as_ref(),
+                        _ => "",
+                    }
+                };
+                tracing::warn!(target="git.transport", host=%host_to_log, pin_enforced="off", reason="invalid_pins", "pin_disabled_this_conn");
             }
         }
         Ok(ServerCertVerified::assertion())
     }
 }
 
-/// 仅进行 SAN 白名单校验的验证器；不进行证书链与主机名的默认校验。
-/// 用途：当用户选择“跳过默认证书验证，但仍希望保留自定义白名单校验”时。
-pub struct WhitelistOnlyVerifier {
-    whitelist: Vec<String>,
-    override_host: Option<String>,
-}
-
-impl WhitelistOnlyVerifier {
-    pub fn new(whitelist: Vec<String>, override_host: Option<String>) -> Self {
-        Self {
-            whitelist,
-            override_host,
-        }
-    }
-    pub fn host_allowed_str(&self, host: &str) -> bool {
-        if self.whitelist.is_empty() {
-            return false;
-        }
-        self.whitelist.iter().any(|p| match_domain(p, host))
-    }
-}
-
-impl ServerCertVerifier for WhitelistOnlyVerifier {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &Certificate,
-        _intermediates: &[Certificate],
-        server_name: &ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
-        _ocsp_response: &[u8],
-        _now: std::time::SystemTime,
-    ) -> Result<ServerCertVerified, TlsError> {
-        // 仅做白名单域匹配
-        let host_to_check = if let Some(h) = &self.override_host {
-            h.as_str()
-        } else {
-            match server_name {
-                ServerName::DnsName(n) => n.as_ref(),
-                _ => return Err(TlsError::General("non-dns server name".into())),
-            }
-        };
-        if !self.host_allowed_str(host_to_check) {
-            return Err(TlsError::General("SAN whitelist mismatch".into()));
-        }
-        Ok(ServerCertVerified::assertion())
-    }
-}
-
-/// 极不安全：完全跳过证书链与域名校验，仅用于原型阶段联调。
-/// 当 `tls.insecure_skip_verify=true` 时启用。
-pub struct InsecureCertVerifier;
-
-impl ServerCertVerifier for InsecureCertVerifier {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &Certificate,
-        _intermediates: &[Certificate],
-        _server_name: &ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
-        _ocsp_response: &[u8],
-        _now: std::time::SystemTime,
-    ) -> Result<ServerCertVerified, TlsError> {
-        Ok(ServerCertVerified::assertion())
-    }
-}
-
-/// 使用系统根证书构造 `WhitelistCertVerifier` 的便利函数
-pub fn make_whitelist_verifier(tls: &TlsCfg) -> Arc<dyn ServerCertVerifier> {
-    let mut root_store = RootCertStore::empty();
-    root_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
-        OwnedTrustAnchor::from_subject_spki_name_constraints(
-            ta.subject,
-            ta.spki,
-            ta.name_constraints,
-        )
-    }));
-    let inner = Arc::new(rustls::client::WebPkiVerifier::new(root_store, None));
-    Arc::new(WhitelistCertVerifier::new(inner, tls.san_whitelist.clone()))
-}
-
-/// 根据 TLS 配置构造合适的证书验证器：
-/// - `insecure_skip_verify=true`: 返回完全跳过验证的 `InsecureCertVerifier`
-/// - `skip_san_whitelist=true`: 返回仅做默认链与主机名验证的 `WebPkiVerifier`
-/// - 否则：返回默认链验证+SAN 白名单增强的 `WhitelistCertVerifier`
 fn build_cert_verifier(tls: &TlsCfg, override_host: Option<String>) -> Arc<dyn ServerCertVerifier> {
-    if tls.insecure_skip_verify {
-        // 若用户仍希望保留白名单校验，则仅执行白名单匹配；否则完全跳过
-        if !tls.skip_san_whitelist {
-            return Arc::new(WhitelistOnlyVerifier::new(
-                tls.san_whitelist.clone(),
-                override_host,
-            ));
-        }
-        return Arc::new(InsecureCertVerifier);
-    }
     let mut root_store = RootCertStore::empty();
     root_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
         OwnedTrustAnchor::from_subject_spki_name_constraints(
@@ -267,24 +155,12 @@ fn build_cert_verifier(tls: &TlsCfg, override_host: Option<String>) -> Arc<dyn S
         )
     }));
     let inner = Arc::new(rustls::client::WebPkiVerifier::new(root_store, None));
-    if tls.skip_san_whitelist {
-        // 仅使用默认的链路与主机名校验
-        return inner;
-    }
-    if let Some(h) = override_host {
-        Arc::new(WhitelistCertVerifier::new_with_override(
-            inner,
-            tls.san_whitelist.clone(),
-            Some(h),
-            tls.real_host_verify_enabled,
-            tls.spki_pins.clone(),
-        ))
-    } else {
-        // 当未提供 override_host 时，real_host_verify_enabled 与旧逻辑等价（按 SNI 验证），此处保持默认开启值。
-        let mut v = WhitelistCertVerifier::new(inner, tls.san_whitelist.clone());
-        v.spki_pins = tls.spki_pins.clone();
-        Arc::new(v)
-    }
+    Arc::new(RealHostCertVerifier::new(
+        inner,
+        override_host,
+        tls.real_host_verify_enabled,
+        tls.spki_pins.clone(),
+    ))
 }
 
 /// 基于白名单验证器创建 rustls ClientConfig（无客户端证书）
@@ -328,7 +204,7 @@ pub fn create_client_config_with_expected_name(tls: &TlsCfg, expected_host: &str
         .with_root_certificates(root_store)
         .with_no_client_auth();
 
-    // 构造验证器，若未跳过 SAN 白名单，将以 expected_host 作为白名单匹配的 override 主机名
+    // 构造验证器，并将 expected_host 作为真实域名覆盖用于校验
     let verifier = build_cert_verifier(tls, Some(expected_host.to_string()));
     cfg.dangerous().set_certificate_verifier(verifier);
     cfg

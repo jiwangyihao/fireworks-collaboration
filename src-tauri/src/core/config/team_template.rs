@@ -758,17 +758,6 @@ fn merge_tls_config(dest: &mut TlsCfg, src: &TlsCfg) -> bool {
     let defaults = AppConfig::default().tls;
     let mut changed = false;
 
-    if merge_unique(&mut dest.san_whitelist, &src.san_whitelist) {
-        changed = true;
-    }
-    if src.insecure_skip_verify != defaults.insecure_skip_verify {
-        dest.insecure_skip_verify = src.insecure_skip_verify;
-        changed = true;
-    }
-    if src.skip_san_whitelist != defaults.skip_san_whitelist {
-        dest.skip_san_whitelist = src.skip_san_whitelist;
-        changed = true;
-    }
     if merge_unique(&mut dest.spki_pins, &src.spki_pins) {
         changed = true;
     }
