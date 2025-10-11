@@ -41,7 +41,6 @@ fn test_filter_invalid() {
 fn test_strategy_override_parse() {
     let raw = json!({
         "http": { "followRedirects": true, "maxRedirects": 3 },
-        "tls": { "insecureSkipVerify": false },
         "retry": { "max": 5, "baseMs": 200, "factor": 1.2, "jitter": true },
         "unknownTop": { "x": 1 }
     });
@@ -116,19 +115,12 @@ fn test_combined_depth_and_filter() {
 #[test]
 fn test_strategy_override_each_section_individually() {
     let http_only = json!({"http":{"followRedirects":true}});
-    let tls_only = json!({"tls":{"insecureSkipVerify":true}});
     let retry_only = json!({"retry":{"max":4,"factor":1.1}});
     assert!(parse_depth_filter_opts(None, None, Some(http_only))
         .unwrap()
         .strategy_override
         .unwrap()
         .http
-        .is_some());
-    assert!(parse_depth_filter_opts(None, None, Some(tls_only))
-        .unwrap()
-        .strategy_override
-        .unwrap()
-        .tls
         .is_some());
     assert!(parse_depth_filter_opts(None, None, Some(retry_only))
         .unwrap()
@@ -150,7 +142,6 @@ fn test_strategy_override_invalid_type() {
 fn test_strategy_override_unknown_keys_ignored() {
     let raw = json!({
         "http": { "followRedirects": true, "AAA": 123 },
-        "tls": { "insecureSkipVerify": true, "BBB": false },
         "retry": { "max": 3, "factor": 1.1, "CCC": 42 },
         "extraTop": { "x": 1 }
     });
@@ -205,7 +196,7 @@ fn test_strategy_override_empty_object_ignored() {
     let opts = parse_depth_filter_opts(None, None, Some(raw)).unwrap();
     assert!(opts.strategy_override.is_some()); // parsed as default (all None)
     let s = opts.strategy_override.unwrap();
-    assert!(s.http.is_none() && s.tls.is_none() && s.retry.is_none());
+    assert!(s.http.is_none() && s.retry.is_none());
 }
 
 #[test]
@@ -214,7 +205,7 @@ fn test_strategy_override_only_unknown_top_level() {
     let opts = parse_depth_filter_opts(None, None, Some(raw)).unwrap();
     assert!(opts.strategy_override.is_some());
     let s = opts.strategy_override.unwrap();
-    assert!(s.http.is_none() && s.tls.is_none() && s.retry.is_none());
+    assert!(s.http.is_none() && s.retry.is_none());
 }
 
 #[test]

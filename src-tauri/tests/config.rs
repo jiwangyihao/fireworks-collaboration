@@ -36,11 +36,8 @@ fn test_load_or_init_creates_default_at_base() {
         assert!(std::path::Path::new("config/config.json").exists());
         // 校验部分默认值
         assert!(cfg.http.fake_sni_enabled);
-        assert!(cfg
-            .tls
-            .san_whitelist
-            .iter()
-            .any(|d| d.contains("github.com")));
+        assert!(cfg.tls.real_host_verify_enabled);
+        assert!(cfg.tls.metrics_enabled);
         assert_eq!(cfg.logging.log_level, "info");
     });
 }
@@ -78,7 +75,6 @@ fn test_serialize_camel_case_keys() {
     assert!(s.contains("\"largeBodyWarnBytes\""));
     assert!(s.contains("\"autoDisableFakeThresholdPct\""));
     assert!(s.contains("\"autoDisableFakeCooldownSec\""));
-    assert!(s.contains("\"sanWhitelist\""));
     assert!(s.contains("\"authHeaderMasked\""));
     assert!(s.contains("\"logLevel\""));
     assert!(s.contains("\"retry\""));
@@ -119,11 +115,6 @@ fn test_deserialize_with_defaults() {
     // 未提供的保持默认
     assert!(cfg.http.follow_redirects);
     assert_eq!(cfg.http.max_redirects, 5);
-    assert!(cfg
-        .tls
-        .san_whitelist
-        .iter()
-        .any(|d| d.ends_with("github.com")));
     assert_eq!(
         cfg.http.auto_disable_fake_threshold_pct,
         default_auto_disable_threshold_pct()
@@ -795,11 +786,11 @@ mod section_team_template {
     #[test]
     fn test_import_respects_disabled_sections() {
         let mut cfg = AppConfig::default();
-        assert!(!cfg.tls.skip_san_whitelist);
+        assert!(cfg.tls.cert_fp_log_enabled);
 
         let mut template = TeamConfigTemplate::new();
         let mut tls_cfg = cfg.tls.clone();
-        tls_cfg.skip_san_whitelist = true;
+        tls_cfg.cert_fp_log_enabled = false;
         template.sections.tls = Some(tls_cfg);
 
         let mut options = TemplateImportOptions::default();
@@ -813,10 +804,7 @@ mod section_team_template {
         )
         .expect("disabled sections should not fail import");
 
-        assert!(
-            !cfg.tls.skip_san_whitelist,
-            "TLS config should remain unchanged when section is disabled"
-        );
+        assert!(cfg.tls.cert_fp_log_enabled);
 
         assert!(outcome
             .report
@@ -926,8 +914,8 @@ mod section_team_template {
                 cred
             });
             let mut tls_template = AppConfig::default().tls;
-            tls_template.skip_san_whitelist = true;
-            tls_template.san_whitelist.push("example.com".into());
+            tls_template.real_host_verify_enabled = false;
+            tls_template.metrics_enabled = false;
             template.sections.tls = Some(tls_template);
             template.sections.ip_pool = Some(IpPoolTemplate {
                 runtime: {
@@ -976,7 +964,8 @@ mod section_team_template {
                 "password should remain None"
             );
             assert!(cfg_value.credential.require_confirmation);
-            assert!(cfg_value.tls.skip_san_whitelist);
+            assert!(!cfg_value.tls.real_host_verify_enabled);
+            assert!(!cfg_value.tls.metrics_enabled);
             assert!(cfg_value.ip_pool.enabled);
             assert_eq!(cfg_value.ip_pool.max_parallel_probes, 6);
 

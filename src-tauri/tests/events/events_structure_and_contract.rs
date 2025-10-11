@@ -96,8 +96,6 @@ mod section_legacy_absence {
             retry_base_ms: 200,
             retry_factor: 1.2,
             retry_jitter: true,
-            tls_insecure: false,
-            tls_skip_san: true,
             applied_codes: vec!["http_strategy_override_applied".into()],
             filter_requested: true,
         }));
@@ -581,7 +579,7 @@ mod section_tls_fingerprint_log {
 mod section_tls_pin_enforcement {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use fireworks_collaboration_lib::core::tls::spki::compute_spki_sha256_b64;
-    use fireworks_collaboration_lib::core::tls::verifier::WhitelistCertVerifier;
+    use fireworks_collaboration_lib::core::tls::verifier::RealHostCertVerifier;
     use fireworks_collaboration_lib::events::structured::{
         set_test_event_bus, Event, MemoryEventBus, StrategyEvent,
     };
@@ -617,9 +615,8 @@ mod section_tls_pin_enforcement {
         let (spki_sha256, _) = compute_spki_sha256_b64(&leaf);
 
         let pins = vec![URL_SAFE_NO_PAD.encode([0u8; 32])];
-        let verifier = WhitelistCertVerifier::new_with_override(
+        let verifier = RealHostCertVerifier::new(
             Arc::new(AlwaysOkVerifier),
-            vec![format!("*.{}", host), host.clone()],
             Some(host.clone()),
             true,
             pins,
@@ -668,9 +665,8 @@ mod section_tls_pin_enforcement {
         let leaf = Certificate(der.clone());
         let (pin, _) = compute_spki_sha256_b64(&leaf);
 
-        let verifier = WhitelistCertVerifier::new_with_override(
+        let verifier = RealHostCertVerifier::new(
             Arc::new(AlwaysOkVerifier),
-            vec![host.clone()],
             Some(host.clone()),
             true,
             vec![pin],
@@ -705,9 +701,8 @@ mod section_tls_pin_enforcement {
         let der = cert.serialize_der().unwrap();
         let leaf = Certificate(der);
 
-        let verifier = WhitelistCertVerifier::new_with_override(
+        let verifier = RealHostCertVerifier::new(
             Arc::new(AlwaysOkVerifier),
-            vec![host.clone()],
             Some(host.clone()),
             true,
             vec!["not-base64!!".into()],

@@ -215,34 +215,26 @@ mod section_strategy_props {
         #[test]
         fn strategy_summary_applied_codes_consistency(http_follow in proptest::bool::ANY,
                                                       http_max in 0u8..=20,
-                                                      tls_insecure in proptest::bool::ANY,
-                                                      tls_skip in proptest::bool::ANY,
                                                       retry_max in 1u32..10,
                                                       retry_base in 50u64..500,
                                                       retry_factor in 1u32..5) {
             let mut global = AppConfig::default();
             global.http.follow_redirects = !http_follow;
             global.http.max_redirects = if http_max==0 {1} else {http_max};
-            global.tls.insecure_skip_verify = !tls_insecure;
-            global.tls.skip_san_whitelist = !tls_skip;
             global.retry.max = retry_max + 5;
             global.retry.base_ms = retry_base + 10;
             global.retry.factor = (retry_factor as f64) + 0.5;
             let http_over = fireworks_collaboration_lib::core::git::default_impl::opts::StrategyHttpOverride { follow_redirects: Some(http_follow), max_redirects: Some(http_max as u32) };
-            let tls_over = fireworks_collaboration_lib::core::git::default_impl::opts::StrategyTlsOverride { insecure_skip_verify: Some(tls_insecure), skip_san_whitelist: Some(tls_skip) };
             let retry_over = fireworks_collaboration_lib::core::git::default_impl::opts::StrategyRetryOverride { max: Some(retry_max), base_ms: Some(retry_base as u32), factor: Some(retry_factor as f32), jitter: Some(false) };
             let (f,m,http_changed,_http_conflict) = TaskRegistry::apply_http_override("GitClone", &Uuid::nil(), &global, Some(&http_over));
-            let (_ins,_skip,tls_changed,_tls_conflict) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&tls_over));
             let (_retry_plan, retry_changed) = TaskRegistry::apply_retry_override(&global.retry, Some(&retry_over));
             let mut codes: Vec<String> = vec![];
             if http_changed { codes.push("http_strategy_override_applied".into()); }
-            if tls_changed { codes.push("tls_strategy_override_applied".into()); }
             if retry_changed { codes.push("retry_strategy_override_applied".into()); }
             codes.sort(); codes.dedup();
             if http_changed { assert!(codes.iter().any(|c| c=="http_strategy_override_applied")); }
-            if tls_changed { assert!(codes.iter().any(|c| c=="tls_strategy_override_applied")); }
             if retry_changed { assert!(codes.iter().any(|c| c=="retry_strategy_override_applied")); }
-            if !http_changed && !tls_changed && !retry_changed { assert!(codes.is_empty()); }
+            if !http_changed && !retry_changed { assert!(codes.is_empty()); }
             assert_ne!(global.http.follow_redirects, f, "we intentionally changed follow to trigger changed");
             let _ = m; // silence warnings
         }
@@ -291,39 +283,6 @@ mod section_partial_filter_props {
                     assert_eq!(shallow_flag, shallow_expected, "shallow flag should mirror depth presence");
                 }
             }
-        }
-    }
-}
-
-// ---------------- section_tls_props ----------------
-#[cfg(test)]
-mod section_tls_props {
-    use fireworks_collaboration_lib::core::config::model::AppConfig;
-    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
-    use proptest::prelude::*;
-    use uuid::Uuid;
-
-    proptest! {
-        #[test]
-        fn tls_override_conflict_normalization(insecure in proptest::bool::ANY, skip in proptest::bool::ANY) {
-            let mut global = AppConfig::default();
-            global.tls.insecure_skip_verify = false; global.tls.skip_san_whitelist = false;
-            let over = fireworks_collaboration_lib::core::git::default_impl::opts::StrategyTlsOverride {
-                insecure_skip_verify: Some(insecure),
-                skip_san_whitelist: Some(skip),
-            };
-            let (_ins, skip_eff, changed, conflict) = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
-            if insecure {
-                assert!(!skip_eff, "when insecure=true skipSan must normalize to false");
-                if skip { assert!(conflict.is_some(), "conflict expected when both insecure and skip requested"); } else { assert!(conflict.is_none(), "no conflict when insecure=true but skip=false"); }
-            } else {
-                assert_eq!(skip_eff, skip, "when insecure=false skip preserved");
-                assert!(conflict.is_none(), "no conflict when insecure=false");
-            }
-            let normalized_change = insecure && skip;
-            let expect_changed = (insecure != global.tls.insecure_skip_verify) || (!insecure && skip != global.tls.skip_san_whitelist) || normalized_change;
-            assert_eq!(changed, expect_changed, "changed flag semantic");
-            assert!(!global.tls.insecure_skip_verify); assert!(!global.tls.skip_san_whitelist);
         }
     }
 }

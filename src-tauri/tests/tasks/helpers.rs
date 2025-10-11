@@ -185,7 +185,7 @@ mod section_preheat_event_emission {
 mod section_registry_git_helpers {
     use fireworks_collaboration_lib::core::config::model::{AppConfig, RetryCfg};
     use fireworks_collaboration_lib::core::git::default_impl::opts::{
-        StrategyHttpOverride, StrategyRetryOverride, StrategyTlsOverride,
+    StrategyHttpOverride, StrategyRetryOverride,
     };
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
     use uuid::Uuid;
@@ -263,73 +263,4 @@ mod section_registry_git_helpers {
         assert!(!plan.jitter);
     }
 
-    #[test]
-    fn no_tls_override() {
-        let global = AppConfig::default();
-        let (ins, skip, changed, conflict) =
-            TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, None);
-        assert_eq!(ins, global.tls.insecure_skip_verify);
-        assert_eq!(skip, global.tls.skip_san_whitelist);
-        assert!(!changed);
-        assert!(conflict.is_none());
-    }
-
-    #[test]
-    fn tls_override_insecure_only() {
-        let global = AppConfig::default();
-        let over = StrategyTlsOverride {
-            insecure_skip_verify: Some(!global.tls.insecure_skip_verify),
-            skip_san_whitelist: None,
-        };
-        let (ins, skip, changed, conflict) =
-            TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
-        assert_eq!(ins, !global.tls.insecure_skip_verify);
-        assert_eq!(skip, global.tls.skip_san_whitelist);
-        assert!(changed);
-        assert!(conflict.is_none());
-    }
-
-    #[test]
-    fn tls_override_skip_san_only() {
-        let global = AppConfig::default();
-        let over = StrategyTlsOverride {
-            insecure_skip_verify: None,
-            skip_san_whitelist: Some(!global.tls.skip_san_whitelist),
-        };
-        let (ins, skip, changed, conflict) =
-            TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
-        assert_eq!(ins, global.tls.insecure_skip_verify);
-        assert_eq!(skip, !global.tls.skip_san_whitelist);
-        assert!(changed);
-        assert!(conflict.is_none());
-    }
-
-    #[test]
-    fn tls_override_both_changed() {
-        let mut global = AppConfig::default();
-        global.tls.insecure_skip_verify = false;
-        global.tls.skip_san_whitelist = false;
-        let over = StrategyTlsOverride {
-            insecure_skip_verify: Some(true),
-            skip_san_whitelist: Some(true),
-        };
-        let (ins, skip, changed, conflict) =
-            TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
-        assert!(changed);
-        assert!(ins);
-        assert!(!skip);
-        assert!(conflict.is_some());
-    }
-
-    #[test]
-    fn tls_global_config_not_mutated() {
-        let global = AppConfig::default();
-        let over = StrategyTlsOverride {
-            insecure_skip_verify: Some(true),
-            skip_san_whitelist: Some(true),
-        };
-        let _ = TaskRegistry::apply_tls_override("GitClone", &Uuid::nil(), &global, Some(&over));
-        assert!(!global.tls.insecure_skip_verify);
-        assert!(!global.tls.skip_san_whitelist);
-    }
 }

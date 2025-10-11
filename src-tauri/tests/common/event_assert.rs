@@ -265,30 +265,6 @@ pub fn assert_no_applied_codes(task_id: &str) {
 }
 
 #[allow(dead_code)]
-pub fn assert_tls_applied(task_id: &str, expected: bool) {
-    use fireworks_collaboration_lib::events::structured::{
-        get_global_memory_bus, Event, StrategyEvent,
-    };
-    if let Some(bus) = get_global_memory_bus() {
-        let mut saw = false;
-        for e in bus.snapshot() {
-            if let Event::Strategy(StrategyEvent::TlsApplied { id, .. }) = e {
-                if id == task_id {
-                    saw = true;
-                    break;
-                }
-            }
-        }
-        assert_eq!(
-            saw, expected,
-            "tls applied expectation mismatch for {task_id}"
-        );
-    } else {
-        panic!("no global memory bus installed");
-    }
-}
-
-#[allow(dead_code)]
 pub fn assert_http_applied(task_id: &str, expected: bool) {
     use fireworks_collaboration_lib::events::structured::{
         get_global_memory_bus, Event, StrategyEvent,

@@ -42,13 +42,13 @@ fn test_redact_auth_no_mask_keeps_original() {
 #[test]
 fn test_host_in_whitelist_exact_and_wildcard() {
     let mut cfg = AppConfig::default();
-    // default has github.com and *.github.com
+    cfg.http.fake_sni_target_hosts = vec!["github.com".into(), "*.github.com".into()];
     assert!(host_in_whitelist("github.com", &cfg));
     assert!(host_in_whitelist("api.github.com", &cfg));
     assert!(!host_in_whitelist("example.com", &cfg));
 
     // empty whitelist -> reject any
-    cfg.tls.san_whitelist.clear();
+    cfg.http.fake_sni_target_hosts.clear();
     assert!(!host_in_whitelist("github.com", &cfg));
 }
 
@@ -234,10 +234,11 @@ use fireworks_collaboration_lib::core::tls::util::{
 fn test_should_use_fake() {
     let mut cfg = AppConfig::default();
     cfg.http.fake_sni_enabled = true;
-    assert!(should_use_fake(&cfg, false));
-    assert!(!should_use_fake(&cfg, true));
+    cfg.http.fake_sni_target_hosts = vec!["github.com".into()];
+    assert!(should_use_fake(&cfg, false, "github.com"));
+    assert!(!should_use_fake(&cfg, true, "github.com"));
     cfg.http.fake_sni_enabled = false;
-    assert!(!should_use_fake(&cfg, false));
+    assert!(!should_use_fake(&cfg, false, "github.com"));
 }
 
 #[test]
@@ -262,6 +263,7 @@ fn test_decide_sni_host_with_proxy_and_candidates() {
     let mut cfg = AppConfig::default();
     cfg.http.fake_sni_enabled = true;
     cfg.http.fake_sni_hosts = vec!["a.com".into(), "b.com".into(), "c.com".into()];
+    cfg.http.fake_sni_target_hosts = vec!["github.com".into()];
     let (sni, used_fake) = decide_sni_host_with_proxy(&cfg, false, "github.com", false);
     assert!(used_fake);
     assert!(sni == "a.com" || sni == "b.com" || sni == "c.com");
@@ -281,6 +283,7 @@ fn test_last_good_preferred_when_present() {
     let mut cfg = AppConfig::default();
     cfg.http.fake_sni_enabled = true;
     cfg.http.fake_sni_hosts = vec!["x.com".into(), "y.com".into()];
+    cfg.http.fake_sni_target_hosts = vec!["github.com".into()];
     set_last_good_sni("github.com", "y.com");
     let (sni, used_fake) = decide_sni_host_with_proxy(&cfg, false, "github.com", false);
     assert!(used_fake);

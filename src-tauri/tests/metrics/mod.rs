@@ -84,6 +84,8 @@ const TEST_RUNTIME_IP_METRIC: MetricDescriptor = MetricDescriptor::counter(
 
 const WAIT_RETRIES: usize = 50;
 const WAIT_DELAY_MS: u64 = 10;
+const ALERT_RETRIES: usize = 24;
+const ALERT_DELAY_MS: u64 = 50;
 
 fn wait_for_counter(
     registry: &MetricRegistry,
@@ -1571,10 +1573,10 @@ fn alerts_engine_triggers_and_resolves() {
     // 评估告警：在较慢平台上可能需要多次调度 / 聚合，增加重试。
     let mut warn_after = warn_before;
     let mut events_first = Vec::new();
-    for _ in 0..12 {
-        // 最长 ~600ms
+    for _ in 0..ALERT_RETRIES {
+        // 允许较慢平台（Windows、CI）有更充裕时间处理告警流水线
         evaluate_alerts_now();
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(ALERT_DELAY_MS));
         events_first = memory_bus.take_all();
         warn_after = registry
             .get_counter(ALERTS_FIRED_TOTAL, &[("severity", "warn")])
@@ -1625,9 +1627,9 @@ fn alerts_engine_triggers_and_resolves() {
 
     // 重试寻求 Resolved 状态
     let mut events_second = Vec::new();
-    for _ in 0..12 {
+    for _ in 0..ALERT_RETRIES {
         evaluate_alerts_now();
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(ALERT_DELAY_MS));
         events_second = memory_bus.take_all();
         if events_second.iter().any(|event| {
             matches!(

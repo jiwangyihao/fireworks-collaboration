@@ -2,6 +2,7 @@
 //!
 //! 补充测试密码强度验证、内存清零、HMAC完整性等安全特性
 
+use base64::{engine::general_purpose, Engine as _};
 use fireworks_collaboration_lib::core::credential::{
     audit::{AuditLogger, OperationType},
     config::{CredentialConfig, StorageType},
@@ -229,17 +230,18 @@ fn test_hmac_detects_nonce_tampering() {
     store.add(cred).unwrap();
 
     // 读取加密文件
-    let mut file_content = fs::read_to_string(&file_path).unwrap();
+    let file_content = fs::read_to_string(&file_path).unwrap();
 
-    // 篡改 nonce
-    if let Some(nonce_start) = file_content.find("\"nonce\":") {
-        let bytes = unsafe { file_content.as_bytes_mut() };
-        if nonce_start + 15 < bytes.len() {
-            bytes[nonce_start + 15] = b'Z';
-        }
-    }
+    // 篡改 nonce（确保修改后的值仍能解析但与原始字节不同）
+    let mut json: serde_json::Value = serde_json::from_str(&file_content).unwrap();
+    let original = json["nonce"].as_str().expect("nonce 字段应该存在");
+    let mut nonce_bytes = general_purpose::STANDARD
+        .decode(original)
+        .expect("nonce 应该是合法的 Base64 字符串");
+    nonce_bytes[0] ^= 0xFF; // 翻转一个字节
+    json["nonce"] = serde_json::Value::String(general_purpose::STANDARD.encode(nonce_bytes));
 
-    fs::write(&file_path, &file_content).unwrap();
+    fs::write(&file_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
 
     // 尝试读取应该失败
     let store2 = EncryptedFileStore::new(&config).expect("应该创建文件存储");

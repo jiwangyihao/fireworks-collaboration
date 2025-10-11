@@ -68,8 +68,6 @@ fn publish_strategy_summary(
     http_follow: bool,
     http_max: u8,
     retry_plan: &RetryPlan,
-    tls_insecure: bool,
-    tls_skip_san: bool,
     applied_codes: Vec<String>,
     filter_requested: bool,
 ) {
@@ -83,8 +81,6 @@ fn publish_strategy_summary(
             retry_base_ms: retry_plan.base_ms,
             retry_factor: retry_plan.factor,
             retry_jitter: retry_plan.jitter,
-            tls_insecure,
-            tls_skip_san,
             applied_codes,
             filter_requested,
         },
@@ -123,8 +119,6 @@ pub fn test_emit_clone_with_override(
     let mut effective_follow = global_cfg.http.follow_redirects;
     let mut effective_max = global_cfg.http.max_redirects;
     let mut retry_plan: RetryPlan = global_cfg.retry.clone().into();
-    let mut effective_insecure = global_cfg.tls.insecure_skip_verify;
-    let mut effective_skip = global_cfg.tls.skip_san_whitelist;
     if let Some(http_over) = parsed_opts
         .strategy_override
         .as_ref()
@@ -163,44 +157,6 @@ pub fn test_emit_clone_with_override(
             ));
         }
     }
-    if let Some(tls_over) = parsed_opts
-        .strategy_override
-        .as_ref()
-        .and_then(|s| s.tls.as_ref())
-    {
-        let (ins, skip, changed, conflict) =
-            TaskRegistry::apply_tls_override("GitClone", &task_id, &global_cfg, Some(tls_over));
-        effective_insecure = ins;
-        effective_skip = skip;
-        if changed {
-            publish_global(StructuredEvent::Strategy(
-                StructuredStrategyEvent::TlsApplied {
-                    id: task_id.to_string(),
-                    insecure_skip_verify: ins,
-                    skip_san_whitelist: skip,
-                },
-            ));
-            applied_codes.push("tls_strategy_override_applied".into());
-        }
-        if let Some(msg) = conflict {
-            let evt = TaskErrorEvent {
-                task_id,
-                kind: "GitClone".into(),
-                category: "Protocol".into(),
-                code: Some("strategy_override_conflict".into()),
-                message: format!("tls conflict: {msg}"),
-                retried_times: None,
-            };
-            emit_all(&AppHandle, EV_ERROR, &evt);
-            publish_global(StructuredEvent::Strategy(
-                StructuredStrategyEvent::Conflict {
-                    id: task_id.to_string(),
-                    kind: "tls".into(),
-                    message: msg,
-                },
-            ));
-        }
-    }
     if let Some(retry_over) = parsed_opts
         .strategy_override
         .as_ref()
@@ -229,8 +185,6 @@ pub fn test_emit_clone_with_override(
         effective_follow,
         effective_max,
         &retry_plan,
-        effective_insecure,
-        effective_skip,
         applied_codes_clone,
         false,
     );
@@ -240,8 +194,6 @@ pub fn test_emit_clone_with_override(
         effective_follow,
         effective_max,
         &retry_plan,
-        effective_insecure,
-        effective_skip,
         applied_codes,
         false,
     );
@@ -374,6 +326,7 @@ mod tests {
         let mut cfg = AppConfig::default();
         cfg.http.fake_sni_enabled = true;
         cfg.http.fake_sni_rollout_percent = percent;
+        cfg.http.fake_sni_target_hosts = vec!["github.com".into()];
         loader::save_at(&cfg, dir.path()).expect("save config");
         dir
     }
