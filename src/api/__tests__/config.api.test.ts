@@ -10,11 +10,18 @@ import { getConfig, setConfig, type AppConfig } from "../config";
 const fakeCfg = {
   http: {
     fakeSniEnabled: true,
+    fakeSniHosts: ["example.com"],
+    fakeSniTargetHosts: ["github.com"],
     followRedirects: true,
     maxRedirects: 5,
     largeBodyWarnBytes: 1024,
   },
-  tls: { sanWhitelist: ["github.com", "*.github.com"] },
+  tls: {
+    spkiPins: ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"],
+    metricsEnabled: true,
+    certFpLogEnabled: false,
+    certFpMaxBytes: 4096,
+  },
   logging: { authHeaderMasked: true, logLevel: "info" },
 } as unknown as AppConfig;
 

@@ -66,16 +66,7 @@
       "debugProxyLogging": false
     },
     "tls": {
-      "sanWhitelist": [
-        "github.com",
-        "*.github.com",
-        "*.githubassets.com",
-        "example.com"
-      ],
-      "insecureSkipVerify": false,
-      "skipSanWhitelist": false,
       "spkiPins": [],
-      "realHostVerifyEnabled": true,
       "metricsEnabled": true,
       "certFpLogEnabled": true,
       "certFpMaxBytes": 5242880

@@ -81,14 +81,6 @@
       <div class="card-body gap-3">
         <h3 class="font-semibold">SNI / TLS 策略</h3>
         <div class="grid grid-cols-2 gap-2 items-center">
-          <label class="label cursor-pointer gap-2 col-span-2">
-            <span>跳过证书验证（不安全，仅用于联通性验证）</span>
-            <input type="checkbox" v-model="insecureSkipVerify" class="checkbox checkbox-sm" @change="applyTlsToggle" />
-          </label>
-          <label class="label cursor-pointer gap-2 col-span-2">
-            <span>跳过 SAN 白名单校验</span>
-            <input type="checkbox" v-model="skipSanWhitelist" class="checkbox checkbox-sm" @change="applyTlsToggle" />
-          </label>
           <label class="label cursor-pointer gap-2"><span>启用 Fake SNI</span><input type="checkbox" v-model="fakeSniEnabled" class="checkbox checkbox-sm" /></label>
           <label class="label cursor-pointer gap-2"><span>403 时自动轮换 SNI</span><input type="checkbox" v-model="sniRotateOn403" class="checkbox checkbox-sm" /></label>
           <textarea v-model="fakeSniHostsText" class="textarea textarea-bordered w-full col-span-2" rows="3" placeholder="多个候选域名：每行一个或用逗号分隔"></textarea>
@@ -182,8 +174,6 @@ const commitAuthorEmail = ref('');
 const commitAllowEmpty = ref(false);
 
 // SNI/TLS 策略
-const insecureSkipVerify = ref(false);
-const skipSanWhitelist = ref(false);
 const fakeSniEnabled = ref(true);
 const fakeSniHostsText = ref('');
 const sniRotateOn403 = ref(true);
@@ -193,9 +183,6 @@ const logs = useLogsStore();
 onMounted(async () => {
   try {
     cfg.value = await getConfig();
-  // TLS
-  insecureSkipVerify.value = !!cfg.value.tls.insecureSkipVerify;
-  skipSanWhitelist.value = !!(cfg.value.tls as any).skipSanWhitelist;
   // HTTP SNI
   fakeSniEnabled.value = !!cfg.value.http.fakeSniEnabled;
     const hosts = (cfg.value.http as any).fakeSniHosts as string[] | undefined;
@@ -240,18 +227,6 @@ function prettyBytes(n?: number) {
   return n + ' B';
 }
 
-async function applyTlsToggle() {
-  try {
-    if (!cfg.value) cfg.value = await getConfig();
-  cfg.value!.tls.insecureSkipVerify = !!insecureSkipVerify.value;
-  (cfg.value!.tls as any).skipSanWhitelist = !!skipSanWhitelist.value;
-    await setConfig(cfg.value!);
-  } catch (e) {
-    console.error('更新 TLS 配置失败', e);
-    logs.push('error', `更新 TLS 配置失败: ${String(e)}`);
-  }
-}
-
 async function applyHttpStrategy() {
   try {
     if (!cfg.value) cfg.value = await getConfig();
@@ -269,7 +244,6 @@ async function applyHttpStrategy() {
 
 const policySummary = computed(() => {
   const parts: string[] = [];
-  parts.push(`insecureSkipVerify=${insecureSkipVerify.value ? 'on' : 'off'}`);
   parts.push(`fakeSni=${fakeSniEnabled.value ? 'on' : 'off'}`);
   const cnt = (fakeSniHostsText.value || '').split(/[\n,]/).map(s => s.trim()).filter(Boolean).length;
   parts.push(`candidates=${cnt}`);

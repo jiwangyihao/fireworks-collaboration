@@ -12,8 +12,8 @@ use fireworks_collaboration_lib::core::git::transport::metrics::{
     tl_reset as tl_metrics_reset, tl_snapshot,
 };
 use fireworks_collaboration_lib::core::git::transport::testing::{
-    auto_disable_guard, classify_and_count_fallback, reset_auto_disable,
-    reset_fallback_counters, snapshot_fallback_counters,
+    auto_disable_guard, classify_and_count_fallback, reset_auto_disable, reset_fallback_counters,
+    snapshot_fallback_counters,
 };
 use fireworks_collaboration_lib::core::git::transport::{
     is_fake_disabled, record_fake_attempt, tl_push_fallback_event, tl_take_fallback_events,
@@ -89,13 +89,9 @@ fn fallback_transition_emits_events_and_triggers_auto_disable() {
     let events = tl_take_fallback_events();
     assert!(auto_disable_seen, "auto-disable event not observed");
     assert!(is_fake_disabled(&auto_cfg));
-    assert!(events.iter().any(|e| matches!(
-        e,
-        FallbackEventRecord::AutoDisable {
-            enabled: true,
-            ..
-        }
-    )));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, FallbackEventRecord::AutoDisable { enabled: true, .. })));
 
     reset_auto_disable();
     reset_fallback_counters();

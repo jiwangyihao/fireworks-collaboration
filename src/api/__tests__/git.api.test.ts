@@ -77,14 +77,14 @@ describe("api/git clone 调用", () => {
 
   it("startGitPush 透传 strategyOverride", async () => {
     (invoke as any).mockResolvedValueOnce("task-so3");
-    const id = await startGitPush({ dest: "C:/tmp/repo3", strategyOverride: { tls: { insecureSkipVerify: true } } });
-    expect(invoke).toHaveBeenCalledWith("git_push", { dest: "C:/tmp/repo3", strategy_override: { tls: { insecureSkipVerify: true } } });
+    const id = await startGitPush({ dest: "C:/tmp/repo3", strategyOverride: { http: { followRedirects: false } } });
+    expect(invoke).toHaveBeenCalledWith("git_push", { dest: "C:/tmp/repo3", strategy_override: { http: { followRedirects: false } } });
     expect(id).toBe("task-so3");
   });
 
   it("startGitPush 透传 http+tls+retry 全量 strategyOverride", async () => {
     (invoke as any).mockResolvedValueOnce("task-so4");
-    const override = { http: { followRedirects: false, maxRedirects: 1 }, tls: { skipSanWhitelist: true }, retry: { max: 2, baseMs: 400, factor: 1.2, jitter: false } };
+    const override = { http: { followRedirects: false, maxRedirects: 1 }, retry: { max: 2, baseMs: 400, factor: 1.2, jitter: false } };
     const id = await startGitPush({ dest: "C:/tmp/repo4", strategyOverride: override });
     expect(id).toBe("task-so4");
     expect(invoke).toHaveBeenCalledWith("git_push", { dest: "C:/tmp/repo4", strategy_override: override });
@@ -106,9 +106,9 @@ describe("api/git clone 调用", () => {
 
   it("startGitClone depth+filter+strategyOverride 全量", async () => {
     (invoke as any).mockResolvedValueOnce("task-so6");
-    const id = await startGitClone("r-clone", "C:/tmp/clone", { depth: 3, filter: "blob:none", strategyOverride: { tls: { insecureSkipVerify: true }, retry: { max: 1, jitter: false } } });
+    const id = await startGitClone("r-clone", "C:/tmp/clone", { depth: 3, filter: "blob:none", strategyOverride: { http: { followRedirects: true }, retry: { max: 1, jitter: false } } });
     expect(id).toBe("task-so6");
-    expect(invoke).toHaveBeenCalledWith("git_clone", { repo: "r-clone", dest: "C:/tmp/clone", depth: 3, filter: "blob:none", strategy_override: { tls: { insecureSkipVerify: true }, retry: { max: 1, jitter: false } } });
+    expect(invoke).toHaveBeenCalledWith("git_clone", { repo: "r-clone", dest: "C:/tmp/clone", depth: 3, filter: "blob:none", strategy_override: { http: { followRedirects: true }, retry: { max: 1, jitter: false } } });
   });
 
   it("startGitClone 空 strategyOverride 对象", async () => {
@@ -127,8 +127,8 @@ describe("api/git clone 调用", () => {
 
   it("startGitPush credentials + refspecs + strategyOverride", async () => {
     (invoke as any).mockResolvedValueOnce("task-so7b");
-    const id = await startGitPush({ dest: "C:/tmp/retry2", remote: "origin", refspecs: ["refs/heads/main:refs/heads/main"], username: "x-access-token", password: "tok", strategyOverride: { http: { followRedirects: false }, tls: { skipSanWhitelist: true } } });
+    const id = await startGitPush({ dest: "C:/tmp/retry2", remote: "origin", refspecs: ["refs/heads/main:refs/heads/main"], username: "x-access-token", password: "tok", strategyOverride: { http: { followRedirects: false } } });
     expect(id).toBe("task-so7b");
-    expect(invoke).toHaveBeenCalledWith("git_push", { dest: "C:/tmp/retry2", remote: "origin", refspecs: ["refs/heads/main:refs/heads/main"], username: "x-access-token", password: "tok", strategy_override: { http: { followRedirects: false }, tls: { skipSanWhitelist: true } } });
+    expect(invoke).toHaveBeenCalledWith("git_push", { dest: "C:/tmp/retry2", remote: "origin", refspecs: ["refs/heads/main:refs/heads/main"], username: "x-access-token", password: "tok", strategy_override: { http: { followRedirects: false } } });
   });
 });

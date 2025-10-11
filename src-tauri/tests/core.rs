@@ -236,6 +236,7 @@ fn test_should_use_fake() {
     cfg.http.fake_sni_enabled = true;
     cfg.http.fake_sni_target_hosts = vec!["github.com".into()];
     assert!(should_use_fake(&cfg, false, "github.com"));
+    assert!(!should_use_fake(&cfg, false, "example.com"));
     assert!(!should_use_fake(&cfg, true, "github.com"));
     cfg.http.fake_sni_enabled = false;
     assert!(!should_use_fake(&cfg, false, "github.com"));

@@ -761,10 +761,6 @@ fn merge_tls_config(dest: &mut TlsCfg, src: &TlsCfg) -> bool {
     if merge_unique(&mut dest.spki_pins, &src.spki_pins) {
         changed = true;
     }
-    if src.real_host_verify_enabled != defaults.real_host_verify_enabled {
-        dest.real_host_verify_enabled = src.real_host_verify_enabled;
-        changed = true;
-    }
     if src.metrics_enabled != defaults.metrics_enabled {
         dest.metrics_enabled = src.metrics_enabled;
         changed = true;

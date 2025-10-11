@@ -254,8 +254,16 @@ fn test_proxy_manager_concurrent_state_updates() {
         eprintln!("[warn] proxy concurrent state updates ended with 0/0 counters (benign)");
     }
     // 由于各线程最多各自上报一次，计数应保持在合理范围内，若超过说明逻辑出现异常
-    assert!(context.consecutive_failures <= 5, "unexpected failure streak: {}", context.consecutive_failures);
-    assert!(context.consecutive_successes <= 5, "unexpected success streak: {}", context.consecutive_successes);
+    assert!(
+        context.consecutive_failures <= 5,
+        "unexpected failure streak: {}",
+        context.consecutive_failures
+    );
+    assert!(
+        context.consecutive_successes <= 5,
+        "unexpected success streak: {}",
+        context.consecutive_successes
+    );
 }
 
 #[test]

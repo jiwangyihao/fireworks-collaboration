@@ -2,10 +2,10 @@
 //! 聚合测试：Error Mapping & i18n (Roadmap 12.14)
 //! ------------------------------------------------------------
 //! Phase4 Metrics (属性测试集中 v1.17)：
-//!   * Added sections (props): `strategy_props` / `retry_props` / `partial_filter_props` / `tls_props`
-//!   * Migrated property source files: 5 (`prop_strategy_http_override.rs`, `prop_retry_override.rs`, `prop_strategy_summary_codes.rs`, `prop_partial_filter_capability.rs`, `prop_tls_override.rs`)
-//!   * Seeds retained: prop_tls_override.proptest-regressions
-//!   * Total proptest groups: 5 (http override, summary codes, retry override, partial filter fallback, tls override normalization)
+//!   * Added sections (props): `strategy_props` / `retry_props` / `partial_filter_props`
+//!   * Migrated property source files: 4 (`prop_strategy_http_override.rs`, `prop_retry_override.rs`, `prop_strategy_summary_codes.rs`, `prop_partial_filter_capability.rs`)
+//!   * Legacy seeds archived: `prop_tls_override.proptest-regressions`（TLS override 属性测试已退役）
+//!   * Total proptest groups: 4 (http override, summary codes, retry override, partial filter fallback)
 //!   * Root-level prop_* files replaced with placeholders (assert!(true)) preserving git blame
 //!   * Consolidation rationale: reduce search surface & ensure future override semantic changes require touching a single file
 //!   * Next follow-up (optional): extract shared `AppConfig` mutation patterns into a helper to cut duplication (~30 lines)
@@ -176,13 +176,12 @@ mod section_i18n_fallback {
 // 删除过时占位：integration_edge_placeholder（无实际覆盖价值）
 
 // -----------------------------------------------------------------------------
-// Phase 4 属性测试集中 (strategy / retry / partial_filter / tls)
+// Phase 4 属性测试集中 (strategy / retry / partial_filter)
 // 来源文件 (root-level prop_*.rs，将在迁移完成后占位化):
 //   - prop_strategy_http_override.rs
 //   - prop_retry_override.rs
 //   - prop_strategy_summary_codes.rs
 //   - prop_partial_filter_capability.rs
-//   - prop_tls_override.rs
 // 说明：保持与原测试函数名一致，添加 section_* 前缀模块划分。
 // 属性测试均受 cfg(not(feature = "tauri-app")) 保护，与本文件一致无需额外 cfg。
 // -----------------------------------------------------------------------------

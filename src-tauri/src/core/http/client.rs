@@ -188,7 +188,10 @@ impl HttpClient {
             .map_err(|_| anyhow!("invalid dns name for sni"))?;
         let start_tls = Instant::now();
         let tls_config: Arc<ClientConfig> = if fake {
-            Arc::new(create_client_config_with_expected_name(&self.cfg.tls, &host))
+            Arc::new(create_client_config_with_expected_name(
+                &self.cfg.tls,
+                &host,
+            ))
         } else {
             self.tls_default.clone()
         };

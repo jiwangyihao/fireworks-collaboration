@@ -1485,12 +1485,13 @@ fn alerts_engine_triggers_and_resolves() {
     let memory_bus = MemoryEventBus::new();
     fanout.register(Arc::new(memory_bus.clone()));
 
-    // 使用唯一 kind 标签限制统计范围
+    // 使用唯一 kind 与规则 ID 限制统计范围，避免跨测试复用状态
     let kind = format!("GitAlert_{}", Uuid::new_v4());
+    let rule_id = format!("git_fail_rate_override_{}", Uuid::new_v4());
     // 规则表达式需符合 Prometheus 语法: label value 必须使用双引号
     let rule_spec = format!(
         r#"[{{
-  "id": "git_fail_rate",
+    "id": "{rule_id}",
   "expr": "git_tasks_total{{kind=\"{kind}\",state=\"failed\"}}/git_tasks_total{{kind=\"{kind}\"}} > 0.3",
   "severity": "warn",
   "window": "5m"

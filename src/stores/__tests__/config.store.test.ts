@@ -12,12 +12,19 @@ import { getConfig, setConfig } from "../../api/config";
 const fakeCfg = {
   http: {
     fakeSniEnabled: true,
-    fakeSniHost: "baidu.com",
+    fakeSniHosts: ["baidu.com"],
+    fakeSniTargetHosts: ["github.com"],
+    sniRotateOn403: true,
     followRedirects: true,
     maxRedirects: 5,
     largeBodyWarnBytes: 1024,
   },
-  tls: { sanWhitelist: ["github.com", "*.github.com"] },
+  tls: {
+    spkiPins: [],
+    metricsEnabled: false,
+    certFpLogEnabled: false,
+    certFpMaxBytes: 4096,
+  },
   logging: { authHeaderMasked: true, logLevel: "info" },
 };
 

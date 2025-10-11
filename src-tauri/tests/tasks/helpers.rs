@@ -185,7 +185,7 @@ mod section_preheat_event_emission {
 mod section_registry_git_helpers {
     use fireworks_collaboration_lib::core::config::model::{AppConfig, RetryCfg};
     use fireworks_collaboration_lib::core::git::default_impl::opts::{
-    StrategyHttpOverride, StrategyRetryOverride,
+        StrategyHttpOverride, StrategyRetryOverride,
     };
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
     use uuid::Uuid;
@@ -262,5 +262,4 @@ mod section_registry_git_helpers {
         assert!((plan.factor - 2.0).abs() < f64::EPSILON);
         assert!(!plan.jitter);
     }
-
 }

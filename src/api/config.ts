@@ -15,15 +15,12 @@ export interface HttpCfg {
   largeBodyWarnBytes: number;
 }
 export interface TlsCfg {
-  sanWhitelist: string[];
-  insecureSkipVerify?: boolean;
-  skipSanWhitelist?: boolean;
-  // P3.2：可观测性
+  // P3.4：SPKI Pin 列表（Base64URL，无填充，长度固定 43）。
+  spkiPins?: string[];
+  // P3.2：TLS 可观测性指标与证书指纹日志。
   metricsEnabled?: boolean;
   certFpLogEnabled?: boolean;
   certFpMaxBytes?: number;
-  // P3.3：Real-Host 验证
-  realHostVerifyEnabled?: boolean;
 }
 export interface LoggingCfg {
   authHeaderMasked: boolean;

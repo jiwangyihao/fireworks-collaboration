@@ -19,7 +19,24 @@ vi.mock("../../api/http", () => ({
 }));
 
 vi.mock("../../api/config", () => ({
-  getConfig: vi.fn().mockResolvedValue({ http: { fakeSniEnabled: true, fakeSniHost: "baidu.com", followRedirects: true, maxRedirects: 5, largeBodyWarnBytes: 1024 }, tls: { sanWhitelist: ["github.com"], insecureSkipVerify: false }, logging: { authHeaderMasked: true, logLevel: "info" } }),
+  getConfig: vi.fn().mockResolvedValue({
+    http: {
+      fakeSniEnabled: true,
+      fakeSniHosts: ["baidu.com"],
+      fakeSniTargetHosts: ["github.com"],
+      sniRotateOn403: true,
+      followRedirects: true,
+      maxRedirects: 5,
+      largeBodyWarnBytes: 1024,
+    },
+    tls: {
+      spkiPins: [],
+      metricsEnabled: false,
+      certFpLogEnabled: false,
+      certFpMaxBytes: 4096,
+    },
+    logging: { authHeaderMasked: true, logLevel: "info" },
+  }),
   setConfig: vi.fn().mockResolvedValue(undefined),
 }));
 

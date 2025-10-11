@@ -1,16 +1,16 @@
-# proptest regression seeds (TLS Override property tests)
-# ------------------------------------------------------
+# proptest regression seeds (retired TLS override property tests)
+# --------------------------------------------------------------
 # 作用 (Purpose):
-#   - 存储历史失败（最小化 shrink 后）的输入案例，执行属性测试前优先重放，保障回归。
+#   - 存档历史失败（最小化 shrink 后）的输入案例，供需要时参考或迁移至后续 Real Host 校验测试。
 # 关联测试 (Linked sections):
-#   - quality/error_and_i18n.rs :: section_tls_props （TLS override normalization & conflict scenarios）
+#   - （Legacy）quality/error_and_i18n.rs :: section_tls_props （已移除，当前未自动加载该文件）
 # 使用说明 (Usage):
-#   - proptest 会在运行属性测试前自动读取此文件并重放其中列出的种子。
-#   - 若新增失败案例：将失败输出中的 "cc <hex>" 行追加到本文件末尾（保持注释描述），提交版本控制。
-#   - 若某案例长期稳定且不再触发，可在确认无价值后删除其行，但建议保留最近几次新增种子以提高回归信心。
+#   - 若后续引入新的 TLS 校验属性测试，可根据需要选择重放或清理此文件。
+#   - 若重新启用 TLS 属性测试：将失败输出中的 "cc <hex>" 行追加到本文件末尾（保持注释描述），提交版本控制。
+#   - 若后续确认无需保留，可将该文件移动至文档目录或删除（请在测试计划中记录原因）。
 # 维护策略 (Maintenance):
 #   - 不手动改写已有种子内容，只增删整行；不要改动前缀 'cc '。
-#   - 如果文件出现大量（>20）历史种子，可按时间顺序保留最近 10~15 条，其余归档到 docs/ 目录（可选）。
+#   - 如果未来重新启用且出现大量（>20）历史种子，可按时间顺序保留最近 10~15 条，其余归档到 docs/ 目录（可选）。
 # 清理建议 (Cleanup criteria):
 #   - 连续多个版本无失败且引擎策略已稳定；或该生成器策略已被替换/废弃。
 

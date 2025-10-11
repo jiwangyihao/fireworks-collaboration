@@ -10,7 +10,6 @@ use rustls::{Certificate, Error as TlsError, OwnedTrustAnchor, RootCertStore, Se
 pub struct RealHostCertVerifier {
     pub inner: Arc<dyn ServerCertVerifier>,
     pub override_host: Option<String>,
-    pub real_host_verify_enabled: bool,
     pub spki_pins: Vec<String>,
 }
 
@@ -18,13 +17,11 @@ impl RealHostCertVerifier {
     pub fn new(
         inner: Arc<dyn ServerCertVerifier>,
         override_host: Option<String>,
-        real_host_verify_enabled: bool,
         spki_pins: Vec<String>,
     ) -> Self {
         Self {
             inner,
             override_host,
-            real_host_verify_enabled,
             spki_pins,
         }
     }
@@ -40,42 +37,28 @@ impl ServerCertVerifier for RealHostCertVerifier {
         ocsp_response: &[u8],
         now: std::time::SystemTime,
     ) -> Result<ServerCertVerified, TlsError> {
-        // 先使用系统默认验证器验证链路与主机名：
-        // - 若 real_host_verify_enabled 且 override_host 存在，则按真实域名构造 ServerName 传给 inner 验证器；
-        // - 否则使用传入的 server_name（通常来源于 SNI）。
-        if self.real_host_verify_enabled {
-            if let Some(expected) = &self.override_host {
-                match ServerName::try_from(expected.as_str()) {
-                    Ok(exp_name) => {
-                        self.inner.verify_server_cert(
-                            end_entity,
-                            intermediates,
-                            &exp_name,
-                            scts,
-                            ocsp_response,
-                            now,
-                        )?;
-                    }
-                    Err(_) => {
-                        self.inner.verify_server_cert(
-                            end_entity,
-                            intermediates,
-                            server_name,
-                            scts,
-                            ocsp_response,
-                            now,
-                        )?;
-                    }
+        if let Some(expected) = &self.override_host {
+            match ServerName::try_from(expected.as_str()) {
+                Ok(exp_name) => {
+                    self.inner.verify_server_cert(
+                        end_entity,
+                        intermediates,
+                        &exp_name,
+                        scts,
+                        ocsp_response,
+                        now,
+                    )?;
                 }
-            } else {
-                self.inner.verify_server_cert(
-                    end_entity,
-                    intermediates,
-                    server_name,
-                    scts,
-                    ocsp_response,
-                    now,
-                )?;
+                Err(_) => {
+                    self.inner.verify_server_cert(
+                        end_entity,
+                        intermediates,
+                        server_name,
+                        scts,
+                        ocsp_response,
+                        now,
+                    )?;
+                }
             }
         } else {
             self.inner.verify_server_cert(
@@ -145,7 +128,7 @@ impl ServerCertVerifier for RealHostCertVerifier {
     }
 }
 
-fn build_cert_verifier(tls: &TlsCfg, override_host: Option<String>) -> Arc<dyn ServerCertVerifier> {
+fn build_root_store() -> RootCertStore {
     let mut root_store = RootCertStore::empty();
     root_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
         OwnedTrustAnchor::from_subject_spki_name_constraints(
@@ -154,58 +137,37 @@ fn build_cert_verifier(tls: &TlsCfg, override_host: Option<String>) -> Arc<dyn S
             ta.name_constraints,
         )
     }));
-    let inner = Arc::new(rustls::client::WebPkiVerifier::new(root_store, None));
-    Arc::new(RealHostCertVerifier::new(
-        inner,
-        override_host,
-        tls.real_host_verify_enabled,
-        tls.spki_pins.clone(),
-    ))
+    root_store
 }
 
 /// 基于白名单验证器创建 rustls ClientConfig（无客户端证书）
-pub fn create_client_config(tls: &TlsCfg) -> ClientConfig {
-    // Root store 与 WebPkiVerifier 一致
-    let mut root_store = RootCertStore::empty();
-    root_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
-        OwnedTrustAnchor::from_subject_spki_name_constraints(
-            ta.subject,
-            ta.spki,
-            ta.name_constraints,
-        )
-    }));
-
-    let mut cfg = ClientConfig::builder()
+pub fn create_client_config(_tls: &TlsCfg) -> ClientConfig {
+    let cfg = ClientConfig::builder()
         .with_safe_defaults()
-        .with_root_certificates(root_store)
+        .with_root_certificates(build_root_store())
         .with_no_client_auth();
 
-    // 基于 flags 构造相应验证器
-    let verifier = build_cert_verifier(tls, None);
-    cfg.dangerous().set_certificate_verifier(verifier);
     cfg
 }
 
 /// 基于白名单验证器创建 rustls ClientConfig，但强制基于“期望的真实主机名”做白名单校验。
 /// 用途：当 TLS 握手使用“伪 SNI”时，仍希望后续证书白名单与域名一致性检验以真实主机名为准。
 pub fn create_client_config_with_expected_name(tls: &TlsCfg, expected_host: &str) -> ClientConfig {
-    // Root store 与 WebPkiVerifier 一致
-    let mut root_store = RootCertStore::empty();
-    root_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
-        OwnedTrustAnchor::from_subject_spki_name_constraints(
-            ta.subject,
-            ta.spki,
-            ta.name_constraints,
-        )
-    }));
-
     let mut cfg = ClientConfig::builder()
         .with_safe_defaults()
-        .with_root_certificates(root_store)
+        .with_root_certificates(build_root_store())
         .with_no_client_auth();
 
-    // 构造验证器，并将 expected_host 作为真实域名覆盖用于校验
-    let verifier = build_cert_verifier(tls, Some(expected_host.to_string()));
+    // 构造 Fake SNI 验证器：默认跳过链路校验，仅执行自定义校验（如 SPKI Pin）。
+    let inner = Arc::new(rustls::client::WebPkiVerifier::new(
+        build_root_store(),
+        None,
+    ));
+    let verifier = Arc::new(RealHostCertVerifier::new(
+        inner,
+        Some(expected_host.to_string()),
+        tls.spki_pins.clone(),
+    ));
     cfg.dangerous().set_certificate_verifier(verifier);
     cfg
 }

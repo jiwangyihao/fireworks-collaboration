@@ -586,7 +586,7 @@ mod section_tls_pin_enforcement {
     use rcgen::generate_simple_self_signed;
     use rustls::client::{ServerCertVerified, ServerCertVerifier};
     use rustls::{Certificate, ServerName};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     struct AlwaysOkVerifier;
 
@@ -604,6 +604,59 @@ mod section_tls_pin_enforcement {
         }
     }
 
+    struct RecordingVerifier {
+        observed: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl ServerCertVerifier for RecordingVerifier {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &Certificate,
+            _intermediates: &[Certificate],
+            server_name: &ServerName,
+            _scts: &mut dyn Iterator<Item = &[u8]>,
+            _ocsp_response: &[u8],
+            _now: std::time::SystemTime,
+        ) -> Result<ServerCertVerified, rustls::Error> {
+            let observed_name = match server_name {
+                ServerName::DnsName(name) => name.as_ref().to_string(),
+                other => format!("{:?}", other),
+            };
+            self.observed.lock().unwrap().push(observed_name);
+            Ok(ServerCertVerified::assertion())
+        }
+    }
+
+    #[test]
+    fn override_host_enforced_during_fake_sni() {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let recording = RecordingVerifier {
+            observed: observed.clone(),
+        };
+        let verifier = RealHostCertVerifier::new(
+            Arc::new(recording),
+            Some("real.example.com".to_string()),
+            vec![],
+        );
+
+        let leaf = Certificate(vec![0x30, 0x82, 0x01]);
+        let mut scts = std::iter::empty::<&[u8]>();
+        verifier
+            .verify_server_cert(
+                &leaf,
+                &[],
+                &ServerName::try_from("fake.example.com").unwrap(),
+                &mut scts,
+                &[],
+                std::time::SystemTime::now(),
+            )
+            .expect("override host should succeed");
+
+        let captured = observed.lock().unwrap();
+        assert_eq!(captured.len(), 1, "inner verifier should run once");
+        assert_eq!(captured[0], "real.example.com");
+    }
+
     #[test]
     fn pin_mismatch_emits_event_and_counts_verify() {
         let bus = Arc::new(MemoryEventBus::new());
@@ -615,12 +668,8 @@ mod section_tls_pin_enforcement {
         let (spki_sha256, _) = compute_spki_sha256_b64(&leaf);
 
         let pins = vec![URL_SAFE_NO_PAD.encode([0u8; 32])];
-        let verifier = RealHostCertVerifier::new(
-            Arc::new(AlwaysOkVerifier),
-            Some(host.clone()),
-            true,
-            pins,
-        );
+        let verifier =
+            RealHostCertVerifier::new(Arc::new(AlwaysOkVerifier), Some(host.clone()), pins);
 
         let mut scts = std::iter::empty::<&[u8]>();
         let err = verifier
@@ -665,12 +714,8 @@ mod section_tls_pin_enforcement {
         let leaf = Certificate(der.clone());
         let (pin, _) = compute_spki_sha256_b64(&leaf);
 
-        let verifier = RealHostCertVerifier::new(
-            Arc::new(AlwaysOkVerifier),
-            Some(host.clone()),
-            true,
-            vec![pin],
-        );
+        let verifier =
+            RealHostCertVerifier::new(Arc::new(AlwaysOkVerifier), Some(host.clone()), vec![pin]);
 
         let mut scts = std::iter::empty::<&[u8]>();
         let result = verifier.verify_server_cert(
@@ -704,7 +749,6 @@ mod section_tls_pin_enforcement {
         let verifier = RealHostCertVerifier::new(
             Arc::new(AlwaysOkVerifier),
             Some(host.clone()),
-            true,
             vec!["not-base64!!".into()],
         );
 
@@ -719,5 +763,44 @@ mod section_tls_pin_enforcement {
         );
         assert!(result.is_ok(), "invalid pins should disable enforcement");
         assert!(bus.snapshot().is_empty(), "no events when pins invalid");
+    }
+
+    struct AlwaysErrVerifier;
+
+    impl ServerCertVerifier for AlwaysErrVerifier {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &Certificate,
+            _intermediates: &[Certificate],
+            _server_name: &ServerName,
+            _scts: &mut dyn Iterator<Item = &[u8]>,
+            _ocsp_response: &[u8],
+            _now: std::time::SystemTime,
+        ) -> Result<ServerCertVerified, rustls::Error> {
+            Err(rustls::Error::General("forced failure".into()))
+        }
+    }
+
+    #[test]
+    fn verifier_propagates_inner_errors() {
+        let host = format!("skip-default-{}.test", uuid::Uuid::new_v4());
+        let cert = generate_simple_self_signed(vec![host.clone()]).unwrap();
+        let der = cert.serialize_der().unwrap();
+        let leaf = Certificate(der);
+
+        let verifier =
+            RealHostCertVerifier::new(Arc::new(AlwaysErrVerifier), Some(host.clone()), vec![]);
+
+        let mut scts = std::iter::empty::<&[u8]>();
+        let result = verifier.verify_server_cert(
+            &leaf,
+            &[],
+            &ServerName::try_from("fake.sni.example").unwrap(),
+            &mut scts,
+            &[],
+            std::time::SystemTime::now(),
+        );
+        let err = result.expect_err("inner verifier failure should propagate");
+        assert!(format!("{err}").contains("forced failure"));
     }
 }

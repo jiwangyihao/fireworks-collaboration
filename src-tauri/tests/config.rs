@@ -36,7 +36,6 @@ fn test_load_or_init_creates_default_at_base() {
         assert!(std::path::Path::new("config/config.json").exists());
         // 校验部分默认值
         assert!(cfg.http.fake_sni_enabled);
-        assert!(cfg.tls.real_host_verify_enabled);
         assert!(cfg.tls.metrics_enabled);
         assert_eq!(cfg.logging.log_level, "info");
     });
@@ -82,7 +81,6 @@ fn test_serialize_camel_case_keys() {
     assert!(s.contains("\"factor\""));
     assert!(s.contains("\"jitter\""));
     assert!(s.contains("\"partialFilterSupported\""));
-    assert!(s.contains("\"realHostVerifyEnabled\""));
     assert!(s.contains("\"metricsEnabled\""));
     assert!(s.contains("\"certFpLogEnabled\""));
     assert!(s.contains("\"certFpMaxBytes\""));
@@ -122,10 +120,6 @@ fn test_deserialize_with_defaults() {
     assert_eq!(
         cfg.http.auto_disable_fake_cooldown_sec,
         default_auto_disable_cooldown_sec()
-    );
-    assert!(
-        cfg.tls.real_host_verify_enabled,
-        "realHostVerifyEnabled default true"
     );
     assert!(cfg.tls.metrics_enabled, "metricsEnabled default true");
     assert!(cfg.tls.cert_fp_log_enabled, "certFpLogEnabled default true");
@@ -914,7 +908,6 @@ mod section_team_template {
                 cred
             });
             let mut tls_template = AppConfig::default().tls;
-            tls_template.real_host_verify_enabled = false;
             tls_template.metrics_enabled = false;
             template.sections.tls = Some(tls_template);
             template.sections.ip_pool = Some(IpPoolTemplate {
@@ -964,7 +957,6 @@ mod section_team_template {
                 "password should remain None"
             );
             assert!(cfg_value.credential.require_confirmation);
-            assert!(!cfg_value.tls.real_host_verify_enabled);
             assert!(!cfg_value.tls.metrics_enabled);
             assert!(cfg_value.ip_pool.enabled);
             assert_eq!(cfg_value.ip_pool.max_parallel_probes, 6);

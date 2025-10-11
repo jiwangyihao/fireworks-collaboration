@@ -90,7 +90,6 @@ export async function cancelTask(id: string) {
 // P0.6：启动 Git Clone 任务，返回 taskId
 export interface StrategyOverride {
   http?: { followRedirects?: boolean; maxRedirects?: number };
-  tls?: { insecureSkipVerify?: boolean; skipSanWhitelist?: boolean };
   retry?: { max?: number; baseMs?: number; factor?: number; jitter?: boolean };
   // 未来可扩展其它子集（保持前端宽松，后端忽略未知并触发护栏事件）
 }

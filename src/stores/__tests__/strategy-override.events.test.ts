@@ -10,15 +10,13 @@ describe('strategy override informational events', () => {
     setActivePinia(createPinia());
   });
 
-  it('records http/retry/tls applied event codes', () => {
+  it('records http/retry applied event codes', () => {
     const store = useTasksStore();
     store.setLastError('t1', { category: 'Protocol', message: 'http override applied: follow=false max=3', code: 'http_strategy_override_applied' });
     store.setLastError('t2', { category: 'Protocol', message: 'retry override applied: max=2 baseMs=300 factor=1.5 jitter=true', code: 'retry_strategy_override_applied' });
-    store.setLastError('t3', { category: 'Protocol', message: 'tls override applied: insecureSkipVerify=true skipSanWhitelist=false', code: 'tls_strategy_override_applied' });
 
     expect(store.lastErrorById['t1'].code).toBe('http_strategy_override_applied');
     expect(store.lastErrorById['t2'].code).toBe('retry_strategy_override_applied');
-    expect(store.lastErrorById['t3'].code).toBe('tls_strategy_override_applied');
   });
 
   it('records conflict and ignored fields events', () => {

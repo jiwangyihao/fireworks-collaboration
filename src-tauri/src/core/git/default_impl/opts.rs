@@ -36,7 +36,6 @@ pub struct StrategyHttpOverride {
     pub max_redirects: Option<u32>,
 }
 
-
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct StrategyRetryOverride {

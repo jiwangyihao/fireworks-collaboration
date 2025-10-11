@@ -319,7 +319,6 @@ impl CustomHttpsSubtransport {
             } else {
                 self.tls.clone()
             };
-            let rhv = self.cfg.tls.real_host_verify_enabled;
             tracing::debug!(
                 target="git.transport",
                 host=%host,
@@ -327,7 +326,6 @@ impl CustomHttpsSubtransport {
                 sni=%sni,
                 used_fake=%used_fake,
                 stage=?stage,
-                real_host_verify=%rhv,
                 "start tls handshake"
             );
             let mut conn = ClientConnection::new(tls_cfg.clone(), server_name)

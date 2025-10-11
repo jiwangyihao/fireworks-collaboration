@@ -95,7 +95,11 @@ mod section_http_events {
         let output = run_http_override(&case);
         expect_subsequence(
             &output.events,
-            &["http:override:start", "http:override", "http:override:applied"],
+            &[
+                "http:override:start",
+                "http:override",
+                "http:override:applied",
+            ],
         );
         expect_optional_tags_subsequence(&output.events, &["http", "http"]);
     }
@@ -193,16 +197,17 @@ mod section_strategy_summary {
                 StructuredEvent::Strategy(StrategyEvent::HttpApplied { .. }) => {
                     has_http = true;
                 }
-                StructuredEvent::Strategy(StrategyEvent::Summary {
-                    applied_codes, ..
-                }) => {
+                StructuredEvent::Strategy(StrategyEvent::Summary { applied_codes, .. }) => {
                     summary_codes = Some(applied_codes.clone());
                 }
                 _ => {}
             }
         }
 
-        assert!(!has_http, "http applied event should not fire when nothing changes");
+        assert!(
+            !has_http,
+            "http applied event should not fire when nothing changes"
+        );
         let codes = summary_codes.expect("expected summary event");
         assert!(
             codes.is_empty(),

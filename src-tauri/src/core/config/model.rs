@@ -46,10 +46,6 @@ pub struct TlsCfg {
     /// P3.4: SPKI Pin 列表（Base64URL 无填充，长度=43）。非空即启用强校验。
     #[serde(default)]
     pub spki_pins: Vec<String>,
-    /// P3.3: Real-Host 验证开关。启用后即便握手使用了 Fake SNI，证书链与主机名验证也以真实目标域名为准；
-    /// 失败时会触发一次回退至 Real SNI 的重握手。默认启用。
-    #[serde(default = "default_true")]
-    pub real_host_verify_enabled: bool,
     /// P3.2: 是否启用自适应 TLS timing 指标采集（connect/tls/firstByte/total）。默认启用；关闭后不记录/不发事件。
     #[serde(default = "default_true")]
     pub metrics_enabled: bool,
@@ -196,7 +192,6 @@ impl Default for AppConfig {
             },
             tls: TlsCfg {
                 spki_pins: Vec::new(),
-                real_host_verify_enabled: true,
                 metrics_enabled: true,
                 cert_fp_log_enabled: true,
                 cert_fp_max_bytes: default_cert_fp_max_bytes(),

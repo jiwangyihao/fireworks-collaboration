@@ -1,8 +1,6 @@
 use super::super::TaskRegistry;
 use crate::core::config::model::{AppConfig, RetryCfg};
-use crate::core::git::default_impl::opts::{
-    StrategyHttpOverride, StrategyRetryOverride,
-};
+use crate::core::git::default_impl::opts::{StrategyHttpOverride, StrategyRetryOverride};
 use crate::core::git::errors::{ErrorCategory, GitError};
 use crate::core::tasks::model::TaskErrorEvent;
 use crate::core::tasks::retry::{categorize, RetryPlan};
@@ -208,5 +206,4 @@ impl TaskRegistry {
         }
         (plan, changed)
     }
-
 }
