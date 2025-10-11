@@ -73,8 +73,8 @@
 
 ### 4) 配置：`get_config()` / `set_config(newCfg)`
 - AppConfig（camelCase）：
-  - `http`: `{ fakeSniEnabled: boolean, fakeSniHosts?: string[], sniRotateOn403?: boolean, followRedirects: boolean, maxRedirects: number, largeBodyWarnBytes: number }`
-  - `tls`: `{ sanWhitelist: string[], insecureSkipVerify?: boolean, skipSanWhitelist?: boolean }`
+  - `http`: `{ fakeSniEnabled: boolean, fakeSniHosts?: string[], fakeSniTargetHosts?: string[], sniRotateOn403?: boolean, followRedirects: boolean, maxRedirects: number, largeBodyWarnBytes: number }`
+  - `tls`: `{ spkiPins?: string[], metricsEnabled?: boolean, certFpLogEnabled?: boolean, certFpMaxBytes?: number }`
   - `logging`: `{ authHeaderMasked: boolean, logLevel: string }`
 - 存储：`<app_config_dir>/config/config.json`
   - Windows 示例：`%APPDATA%/top.jwyihao.fireworks-collaboration/config/config.json`
@@ -94,18 +94,14 @@
 
 ---
 
-## 四、TLS 与白名单验证（安全基线）
+## 四、TLS 与 Fake SNI 验证（安全基线）
 
-- 验证器：`WhitelistCertVerifier` 基于 `rustls` 的 `WebPkiVerifier`。流程为“先链验证，再以 SNI/override 名称做白名单匹配”。
-- 白名单匹配规则：支持精确域与 `*.` 前缀通配（大小写不敏感、要求点分界）。空白名单视为拒绝（更安全）。
-- 开关已拆分并可组合：
-  - `tls.insecureSkipVerify`（默认 false）：跳过默认证书链与主机名校验；
-  - `tls.skipSanWhitelist`（默认 false）：跳过自定义的 SAN 白名单校验；
-  - 组合语义：
-    - 两者均为 false（默认）：执行链验证 + 主机名 + SAN 白名单（最严格）；
-    - insecureSkipVerify=true 且 skipSanWhitelist=false：仅执行“白名单校验”（Whitelist-only），用于在跳过链验证时仍保留域名范围控制；
-    - skipSanWhitelist=true：不做白名单校验；若同时 insecureSkipVerify=true，则完全不做任何校验（极不安全，仅原型/联调场景）。
-- 注意：P3 计划引入“伪 SNI 握手 + 以真实域名进行验证”的 Real-Host 验证器，并配套 Fake→Real 回退。
+- 验证器：`RealHostCertVerifier` 继承自 `rustls` 的 `WebPkiVerifier`，即便握手阶段改写了 SNI，也始终以真实目标域名验证证书链与主机名。
+- Fake SNI 触发条件：仅当 `http.fakeSniTargetHosts` 命中目标域名时才改写 ClientHello 中的 SNI；握手结束后仍记录真实域名并执行验证，未命中则使用真实域名直连。
+- TLS 配置面板聚焦观测与 Pin：
+  - `tls.spkiPins`：可选的 Base64URL SPKI Pin 列表。
+  - `tls.metricsEnabled` / `tls.certFpLogEnabled` / `tls.certFpMaxBytes`：控制证书指纹与观测指标采集。
+- 不再提供 `insecureSkipVerify` 或 SAN 白名单跳过开关；相关逻辑在 v1.8 之后移除，避免用户绕过真实主机验证。
 
 ---
 

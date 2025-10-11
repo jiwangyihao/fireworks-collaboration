@@ -178,7 +178,7 @@
 - 实现要点：
   - URL 识别与白名单：命中域名时启用；
   - SNI 策略：默认 Real；灰度控制 Fake→Real 单次回退；
-  - TLS 验证：保持链验证；可选 Real-Host 复核；
+  - TLS 验证：始终由 `RealHostCertVerifier` 以真实域名执行链/主机名校验；
   - 代理模式下默认禁用 Fake（避免异常指纹叠加）；
   - 事件：在调试级别记录 usedFakeSni/realHost 验证结果（可选字段）；
   - 回退链：Fake→Real→libgit2 默认；确保最终可用或明确失败类别。
@@ -208,16 +208,10 @@
   - 403 轮换（仅 `GET /info/refs` 阶段）：每个流最多一次，将当前 SNI 从候选中排除，随机选择其它候选；无候选或禁用则回退 Real SNI。
   - 代理存在时强制使用 Real SNI，并跳过改写。
 
-- TLS 验证与开关
-  - 默认：默认证书链/主机名校验 + 自定义 SAN 白名单校验；伪 SNI 握手时通过 override 以真实主机名进行白名单匹配，避免假 SNI 影响验证。
-  - 新增开关拆分：
-    - `tls.insecureSkipVerify`（默认 false）：跳过默认证书验证；
-    - `tls.skipSanWhitelist`（默认 false）：跳过自定义 SAN 白名单验证；
-    - 组合行为：
-      - 两者均关：执行“链/主机名 + SAN 白名单”；
-      - 仅关 SAN 白名单：仅执行“链/主机名”；
-      - 仅关默认证书：仅执行“SAN 白名单”，作为最小安全闸；
-      - 两者全关：完全跳过校验（仅原型调试用途）。
+- TLS 验证与遥测
+  - Fake SNI 场景统一由 `RealHostCertVerifier` 在握手后使用真实域名执行 chain + host 校验，并保持 SAN 白名单匹配；验证失败触发 Fake→Real 回退。
+  - 运行时不再提供跳过证书或 SAN 白名单的配置开关；安全审计后相关字段被移除。
+  - `tls` 命名空间仅保留观测类字段（`spkiPins`、`metricsEnabled`、`certFpLogEnabled`、`certFpMaxBytes`），用于指纹强校验与握手遥测。
 
 - 动态配置与路径一致性
   - 通过全局 base dir 统一配置加载路径（注入 app_config_dir），subtransport 在运行中也能读取最新配置（无需重启）。
@@ -228,7 +222,7 @@
 
 - 前端对齐
   - 前端已移除 `fakeSniHost` 字段，仅保留 `fakeSniHosts` 列表与 403 轮换开关；
-  - TLS 设置面板新增“跳过 SAN 白名单校验”复选框。
+  - TLS 设置面板不再暴露“跳过校验”类开关，仅保留 Fake SNI 策略与可观测字段展示。
 
 ### 4.3 MP1.3 Git Push 使用自定义 smart subtransport（方式A）
 
@@ -238,7 +232,7 @@
   - URL 改写：在 push 流程对命中白名单域的 `https://` 远端改写为 `https+custom://`，仅改变传输接管点；HTTP 智能协议仍由 libgit2 处理。
   - SNI 策略：优先使用 Fake SNI（来自 `http.fakeSniHosts` 候选，优先“最近成功”），若早期阶段（如 info/refs）出现 403/握手异常，轮换一次；仍失败则回退 Real SNI。
   - 代理互斥：检测到代理时强制使用 Real SNI，并跳过改写与 Fake SNI。
-  - TLS 验证：保持链/主机名校验与 SAN 白名单策略；在 Fake SNI 握手中以真实主机名进行白名单匹配，避免假 SNI 干扰验证；尊重现有 `tls.*` 开关。
+  - TLS 验证：保持链/主机名校验与 SAN 白名单策略；在 Fake SNI 握手中以真实主机名进行白名单匹配，避免假 SNI 干扰验证；不再提供跳过校验的运行时开关。
   - 事件与脱敏：可在调试级别附带 `usedFakeSni`、`sniCandidate` 等可选字段；敏感信息（Authorization/密码/令牌）一律脱敏。
   - 回退链：Fake → Real → libgit2 默认；发生回退时记录类别化错误，最终失败时清晰上报。
 - 接口影响：
@@ -292,7 +286,7 @@
 
 - TLS 与安全
   - 维持默认证书链/主机名校验；在 Fake SNI 握手时按真实主机名执行 SAN 白名单匹配；
-  - 尊重 `tls.insecureSkipVerify` 与 `tls.skipSanWhitelist` 的组合开关；调试日志默认脱敏。
+  - TLS 校验不可关闭；相关不安全开关已移除，仅保留调试日志脱敏与观测字段。
 
 - 配置与热加载
   - 统一从应用数据目录加载配置（通过 Tauri 注入的 base dir），传输层实时读取，修改后即时生效；
@@ -436,8 +430,8 @@
 ## 6. 配置模型（MP1 初版）
 
 - `retry`: `{ max: number, baseMs: number, factor: number, jitter: boolean }`
-- `httpStrategy`: `{ fakeSniEnabled: boolean, enforceDomainWhitelist: boolean }`
-- `tls`: `{ realHostVerify: boolean }`
+- `http`: `{ fakeSniEnabled: boolean, fakeSniHosts: string[], fakeSniTargetHosts?: string[], sniRotateOn403?: boolean }`
+- `tls`: `{ spkiPins?: string[], metricsEnabled?: boolean, certFpLogEnabled?: boolean, certFpMaxBytes?: number }`
 - `logging`: `{ debugAuthLogging: boolean }`（默认脱敏）
 
 注：策略可在后续阶段（P2+）支持任务级覆盖，MP1 暂不强制。
@@ -533,7 +527,7 @@
 - [ ] 错误分类与 `task://error` 事件；
 - [ ] Subtransport(A) 白名单识别、SNI 策略与回退链；
 - [ ] Retry v1：类别化判定与退避器；
-- [ ] 配置开关：`retry.*`/`httpStrategy.fakeSniEnabled`/`tls.realHostVerify`；
+- [ ] 配置字段：`retry.*` / `http.fakeSni*` / `tls.{spkiPins,metricsEnabled,certFpLogEnabled,certFpMaxBytes}`；
 - [ ] 单元/集成测试用例齐备（含本地裸仓库 push）；
 - [ ] 文档更新与手册用例；
 - [ ] 回退演练（开/关各子功能）。

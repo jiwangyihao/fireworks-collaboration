@@ -17,7 +17,7 @@
 更新（2025-09-15）：完成 MP1.2（自适应 TLS 传输层灰度）的关键实现与前后端对齐：
 - 配置：从模型中移除 `http.fakeSniHost`，改为使用 `http.fakeSniHosts: string[]` 候选，运行期维护 last-good SNI；
 - 轮换：`403` 仅在 `GET /info/refs` 阶段按流单次轮换，排除当前 SNI，随机其余候选，否则回退 Real；
-- TLS：拆分开关 `tls.insecureSkipVerify` 与 `tls.skipSanWhitelist`；支持在“跳过默认证书验证”时保留仅 SAN 白名单校验；
+- TLS：移除 `tls.insecureSkipVerify`/`tls.skipSanWhitelist` 等跳过开关，统一在 Fake SNI 场景挂载 `RealHostCertVerifier` 以真实域名校验证书与 SPKI pin；
 - 代理：检测到代理时禁用 Fake SNI 与 URL 改写；
 - 配置热加载路径一致：subtransport 读取 app_config_dir 注入的全局 base dir，保存后即时生效；
 - 可观测性：HTTP 嗅探与调试日志完善，默认脱敏；
@@ -189,7 +189,7 @@ Real-Host 验证按真实域匹配（详见 §8），失败时回退真实 SNI �
 
 `config.json` 关键片段：
 - `http`：`{ fakeSniEnabled: boolean, fakeSniHosts?: string[], sniRotateOn403?: boolean, followRedirects: boolean, maxRedirects: number, largeBodyWarnBytes: number }`
-- `tls`：`{ sanWhitelist: string[], insecureSkipVerify?: boolean, skipSanWhitelist?: boolean }`
+- `tls`：`{ spkiPins?: string[], metricsEnabled?: boolean, certFpLogEnabled?: boolean, certFpMaxBytes?: number }`
 - `retry`：`{ max: number, baseMs: number, factor: number, jitter: boolean }`（规划项，MP1.4）
 - `proxy`: `{ mode: 'off'|'http'|'socks5', url?: string }`
 - `logging`: `{ debugAuthLogging: boolean }`（默认脱敏）
@@ -202,7 +202,7 @@ P2 起的任务级覆盖对象（strategyOverride）结构补充：
 ```
 strategyOverride?: {
   http?: { followRedirects?: boolean; maxRedirects?: number },
-  tls?: { insecureSkipVerify?: boolean; skipSanWhitelist?: boolean },
+  tls?: { spkiPins?: string[]; metricsEnabled?: boolean; certFpLogEnabled?: boolean; certFpMaxBytes?: number },
   retry?: { max?: number; baseMs?: number; factor?: number; jitter?: boolean }
 }
 ```
@@ -221,15 +221,10 @@ strategyOverride?: {
     "largeBodyWarnBytes": 10485760
   },
   "tls": {
-    "sanWhitelist": [
-      "github.com",
-      "*.github.com",
-      "*.githubusercontent.com",
-      "*.githubassets.com",
-      "codeload.github.com"
-    ],
-    "insecureSkipVerify": false,
-    "skipSanWhitelist": false
+    "spkiPins": [],
+    "metricsEnabled": false,
+    "certFpLogEnabled": false,
+    "certFpMaxBytes": 4096
   },
   "retry": { "max": 6, "baseMs": 300, "factor": 1.5, "jitter": true },
   "proxy": { "mode": "off" },
@@ -710,7 +705,7 @@ HTTP 策略摘要（由原 §11 合并）：
 ```
 strategyOverride: {
   http?: { followRedirects?: boolean; maxRedirects?: number },
-  tls?: { insecureSkipVerify?: boolean; skipSanWhitelist?: boolean },
+  tls?: { spkiPins?: string[]; metricsEnabled?: boolean; certFpLogEnabled?: boolean; certFpMaxBytes?: number },
   retry?: { max?: number; baseMs?: number; factor?: number; jitter?: boolean }
 }
 ```

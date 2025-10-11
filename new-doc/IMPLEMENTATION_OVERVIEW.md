@@ -2,9 +2,18 @@
 
 > 目的：以统一视角梳理 MP0、MP1、P2、P3、P4、P5、P6 七个阶段以及测试重构后的现状，面向后续演进的研发、运维与质量成员，提供完整的实现细节、配置指引、事件契约、测试矩阵与回退策略。
 >
-> 版本：v1.7（2025-10-09） 维护者：Core Team
+> 版本：v1.8（2025-10-11） 维护者：Core Team
 
 ---
+
+### 2025-10-11 增量更新摘要（v1.8）
+
+本次增量聚焦 Fake SNI 场景下的 TLS 校验一致性，主要更新如下：
+
+1. `RealHostCertVerifier` 现始终使用真实域名执行证书链校验，即使启用 Fake SNI 也不会回退到伪造域名，相关的 `tls.realHostVerifyEnabled` 配置开关已删除以避免误关能力。
+2. 新增 `override_host_enforced_during_fake_sni` 集成测试（位于 `src-tauri/tests/events/events_structure_and_contract.rs`），通过记录式 verifier 证明实际传入的 ServerName 为真实域；同时回归 `cargo test --test events` 与完整 `cargo test` 均通过。
+3. 团队模板与前端配置类型已同步移除遗留的 `tls.realHostVerifyEnabled` 字段，避免误以为仍可热切换 Real Host 校验。
+4. 目前 SPKI pin 校验仅在通过 `create_client_config_with_expected_name` 构造的 Fake SNI 路径生效（即安装了 `RealHostCertVerifier` 的请求），真实 SNI 场景暂未挂载该校验器，后续需统一处理。
 
 ### 2025-10-09 增量更新摘要（v1.7）
 
@@ -259,8 +268,8 @@ fn ip_pool_emits_refresh_log() {
 |------|-----------|---------------|----------|----------|----------|
 | MP0 | git2-rs 基线，Clone/Fetch 稳定，取消/错误分类统一 | 无新增，进度保持兼容 | 继承 HTTP Fake 调试配置 | 可回退到旧二进制（保留 gitoxide tag 归档） | `cargo test` / `pnpm test` 全绿 |
 | MP1 | Push、方式A smart subtransport、Retry v1、进度阶段化 | `task://error`，Push `PreUpload/Upload/PostReceive`，错误分类输出 | HTTP/TLS/Fake SNI 配置热加载 | Push/方式A/Retry 可配置关闭或自动回退 | Rust/前端测试覆盖 push、事件 casing |
-| P2 | 本地操作（commit/branch/checkout/tag/remote）、Shallow/Partial、策略覆盖、护栏、Summary | 覆盖策略事件：`*_override_applied`、`strategy_override_summary` 等 | `strategyOverride` 入参，env gating（`FWC_PARTIAL_FILTER_SUPPORTED`、`FWC_STRATEGY_APPLIED_EVENTS`） | 逐项移除 TaskKind / 关闭 gating | 新增矩阵测试、属性测试覆盖策略解析 |
-| P3 | 自适应 TLS rollout + 可观测性、Real Host 校验、SPKI Pin、自动禁用、Soak | `AdaptiveTls*` 结构化事件、指纹变化事件 | `http.fakeSniRolloutPercent`、`tls.metricsEnabled`、`tls.certFpLogEnabled`、`tls.spkiPins` 等 | 配置层关闭 Fake/metrics/pin；自动禁用冷却 | Soak 测试 + 指标契约测试 |
+| P2 | 本地操作（commit/branch/checkout/tag/remote）、Shallow/Partial、策略覆盖、护栏、Summary | 结构化策略事件（Strategy::HttpApplied/Conflict/IgnoredFields/Summary + Policy::RetryApplied + Transport::PartialFilterFallback） | `strategyOverride` 入参，env gating（`FWC_PARTIAL_FILTER_SUPPORTED`、`FWC_PARTIAL_FILTER_CAPABLE`） | 逐项移除 TaskKind / 停用能力探测 | 新增矩阵测试、属性测试覆盖策略解析 |
+| P3 | 自适应 TLS rollout + 可观测性、Real Host 校验、SPKI Pin、自动禁用、Soak | `AdaptiveTls*` 结构化事件、指纹变化事件 | `http.fakeSniRolloutPercent`、`tls.metricsEnabled`、`tls.certFpLogEnabled`、`tls.spkiPins` 等 | 配置层关闭 Fake/metrics/pin；自动禁用冷却（Real Host 校验常开） | Soak 测试 + 指标契约测试 |
 | P4 | IP 池采样与握手优选、传输集成、异常治理、观测扩展、Soak 阈值 | `IpPoolSelection`、`IpPoolRefresh`、`IpPoolAutoDisable`、`IpPoolCidrFilter` 等 | `ip_pool.*` 运行期与文件配置（缓存、熔断、TTL、黑白名单）| 配置禁用 IP 池/熔断/预热；自动禁用冷却 | Rust 单测/集测、IP 池集成测试、Soak 报告 |
 | P5 | 代理支持（HTTP/SOCKS5/System）、自动降级与恢复、前端集成 | `ProxyStateEvent`、`ProxyFallbackEvent`、`ProxyRecoveredEvent`、`ProxyHealthCheckEvent` 等 | `proxy.*` 配置（mode/url/auth/超时/降级/恢复/健康检查/调试日志）| 配置禁用代理/手动降级恢复/调整阈值 | 276个测试（243 Rust + 33 TypeScript），跨平台系统检测，状态机转换验证 |
 | P6 | 凭证存储（三层：系统钥匙串/加密文件/内存）、加密安全（AES-256-GCM + Argon2id）、审计日志、访问控制、Git自动填充 | `CredentialEvent`（Add/Get/Update/Delete/List/Cleanup）、`AuditEvent`（操作审计 Unlock 含）、`AccessControlEvent`（失败锁定） | `credential.*` 配置（storage/auditMode/accessControl/keyCache/TTL 等，已移除 masterPassword 字段）| 配置逐层禁用存储/关闭审计/调整锁定阈值 | 1286个测试（991 Rust + 295 前端），99.9%通过率，88.5%覆盖率，批准生产环境上线 |
@@ -379,12 +388,12 @@ invalidate_workspace_status_entry(opts: { repoId: string }): Promise<boolean>
   - Push：`phase ∈ PreUpload|Upload|PostReceive`；
 - `task://error`：分类或信息事件，`{ taskId, kind, category, message, code?, retriedTimes? }`；
 - 自适应 TLS 结构化事件（P3）：`AdaptiveTlsRollout`、`AdaptiveTlsTiming`、`AdaptiveTlsFallback`、`AdaptiveTlsAutoDisable`、`CertFingerprintChanged`、`CertFpPinMismatch`；
-- 策略信息事件（P2）：`http_strategy_override_applied`、`retry_strategy_override_applied`、`tls_strategy_override_applied`、`strategy_override_conflict`、`strategy_override_ignored_fields`、`partial_filter_fallback`、`strategy_override_summary`。
+- 策略结构化事件（P2）：`Strategy::HttpApplied`、`Strategy::Conflict`、`Strategy::IgnoredFields`、`Strategy::Summary`、`Transport::PartialFilterFallback`、`Policy::RetryApplied`（Clone/Push）；Fetch 的 Retry 差异仅在 Summary `applied_codes` 中体现。
 - IP 池与优选事件（P4）：`IpPoolSelection`、`IpPoolRefresh`、`IpPoolCidrFilter`、`IpPoolIpTripped`、`IpPoolIpRecovered`、`IpPoolAutoDisable`、`IpPoolAutoEnable`、`IpPoolConfigUpdate`；同时 `AdaptiveTlsTiming/Fallback` 增补 `ip_source`、`ip_latency_ms`、`ip_selection_stage` 可选字段。
 - 代理事件（P5）：`ProxyStateEvent`（状态转换，含扩展字段）、`ProxyFallbackEvent`（自动/手动降级）、`ProxyRecoveredEvent`（自动/手动恢复）、`ProxyHealthCheckEvent`（健康检查结果）；代理启用时通过传输层注册逻辑强制禁用自定义传输层与 Fake SNI；配置热更新和系统代理检测不发射独立事件，由Tauri命令直接返回结果。
 - 凭证与审计事件（P6）：`CredentialAdded`、`CredentialRetrieved`、`CredentialUpdated`、`CredentialDeleted`、`CredentialListed`、`ExpiredCredentialsCleanedUp`（凭证生命周期）；`AuditEvent`（操作审计，含用户/时间/操作类型/结果/SHA-256哈希）；`AccessControlLocked`、`AccessControlUnlocked`（失败锁定与恢复）；`StoreUnlocked`、`StoreLocked`（加密存储解锁状态）。
 
-事件顺序约束在测试中锁定：策略 applied -> conflict -> ignored -> partial fallback -> summary；TLS 事件在任务结束前统一刷出；凭证操作触发审计事件在命令执行后同步发射。
+事件顺序约束在测试中锁定：策略结构化事件按 applied → conflict → ignored → partial fallback → summary 发出；TLS 事件在任务结束前统一刷出；凭证操作触发审计事件在命令执行后同步发射。Push 的 conflict 仍补充一条信息级 `task://error` 以兼容旧 UI。
 
 P7 未新增独立事件类型：工作区、子模块、批量调度与状态查询均复用既有 `task://state|progress|error` 语义。批量任务父进度的 `phase` 字段采用聚合文本（如 `Cloning 2/5 completed (1 failed)`），子模块递归克隆阶段通过主任务进度区间（0-70-85-100%）映射，不引入单独子模块事件流。状态服务（WorkspaceStatusService）目前仅通过命令拉取结果，后续事件推送在后续迭代规划中。
 
@@ -568,7 +577,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - `TaskRegistry` 统一取消 token（`ErrorCode::User` -> Cancel）；
   - 错误分类：Network/Tls/Verify/Protocol/Auth/Cancel/Internal；
   - HTTP Fake 调试接口沿用，提供白名单/重定向/脱敏；
-- **配置**：`AppConfig` 热加载 `tls.sanWhitelist`、`logging.authHeaderMasked`；
+- **配置**：`AppConfig` 热加载 `logging.authHeaderMasked`；原先的 `tls.sanWhitelist` 白名单在 v1.8 起被移除，改由 `http.fakeSniTargetHosts` 控制改写范围。
 - **测试**：`cargo test` 与 `pnpm test` 全部通过，git2-rs 在 Windows 确认可构建；
 - **限制**：无 push、无浅/部分克隆、无策略覆盖。
 - **后端细节**：
@@ -614,7 +623,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - Push 表单存储的凭证仅保存在内存，取消或完成后主动清空，避免残留。
 - **交接要点**：
   - 若需在后续阶段扩展 Push 认证方式（如 OAuth 设备码），需扩展 `CredentialProvider` 接口并更新 Tauri 命令签名；
-  - 方式A 白名单可在 `app config` 中追加域名，但必须同步更新 `tls.sanWhitelist`，否则会触发 Verify 错误；
+  - 方式A 白名单需在 `http.fakeSniTargetHosts`（或 `hostAllowListExtra`）中维护；证书校验直接按真实域名进行，无需同步额外的 SAN 列表。
   - Retry 参数调整需同时更新前端提示文本，保持用户对重试次数与耗时的认知。
 - **关键文件定位**：
   - 传输层：`src-tauri/src/core/git/transport/rewrite.rs`（改写决策）、`transport/runtime.rs`（Fake/Real 回退）、`transport/streams.rs`（方式A IO 桥接）、`transport/auth.rs`（Authorization 注入）。
@@ -626,7 +635,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - 方式A 失败回退会通过一次性 `task://error` 将原因标记为 `Proxy` 或 `Tls`，便于前端展示提示。
 - **常见故障排查**：
   - Push 401/403：检查 PAT/组织 SSO；Inspect `task://error` `category=Auth`，必要时启用 `logging.debugAuthLogging`（仍脱敏）。
-  - TLS/Verify 失败：确认 `tls.sanWhitelist` 与 Fake SNI 白名单匹配；代理模式下默认禁用 Fake。
+  - TLS/Verify 失败：确认目标域证书覆盖真实域名，并检查 `http.fakeSniTargetHosts` 是否包含该域；代理模式下默认禁用 Fake。
   - 进度停滞：若 Upload 阶段长时间无变化，提示手动取消并重试；事件中 `retriedTimes` 不再增长属于预期表现。
 - **交接 checklist**：
   - 评估 Push/方式A rollout 前，在预生产逐项验证：正常 Push、401/403、代理透传、取消路径、Retry 关闭/开启效果。
@@ -636,54 +645,53 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
 ### 4.3 P2 - 本地操作与策略扩展
 
 - **目标**：
-  - 引入常用本地 Git 操作（commit/branch/checkout/tag/remote），与任务系统保持一致的事件语义；
-  - 支持 Shallow/Partial 克隆与 per-task 策略覆盖，为后续策略实验提供接口；
-  - 增强护栏与信息事件，避免误配置导致的不可预期行为。
+  - 扩充常用本地 Git 操作（commit/branch/checkout/tag/remote），保持与任务系统一致的生命周期与错误语义；
+  - 为 Clone/Fetch/Push 提供 shallow/partial 能力与任务级 HTTP/Retry 覆盖；
+  - 通过结构化事件与护栏反馈避免误配置引入的隐性风险。
 - **关键实现**：
-  - 新增命令 `git_commit`、`git_branch`、`git_checkout`、`git_tag`、`git_remote_add|set|remove`，在 `core/tasks` 中落地为对应 TaskKind；
-  - Clone/Fetch 支持 `depth` 与 `filter` 参数，决策枚举 `DepthFilterDecision` 负责记录 fallback 结果；
-  - `strategy_override.rs` 解析任务级覆盖，统一 camel/snake casing，并输出 `ParsedOverride`；
-  - 护栏规则在 `apply_*_override.rs` 中执行，冲突/忽略立即通过 `task://error` 信息事件上报；
-  - Summary 事件 `strategy_override_summary` 聚合最终生效的 HTTP/TLS/Retry 策略及 `appliedCodes`。
-- **配置与 gating**：
-  - `strategyOverride` 支持白名单字段：HTTP (`followRedirects`、`maxRedirects`、`fakeSniEnabled?`、`fakeSniHosts?`)、Retry (`max`、`baseMs`、`factor`、`jitter`)、TLS (`insecureSkipVerify`、`skipSanWhitelist`)；
-  - 环境变量 `FWC_PARTIAL_FILTER_SUPPORTED` 控制是否启用 Partial filter 能力，`FWC_STRATEGY_APPLIED_EVENTS` 控制是否发送 applied 事件；
-  - 解析阶段会对数值做上限裁剪（如 `baseMs`、`max`），并允许 `max=0` 表示禁用自动重试。
+  - 新增命令 `git_commit`、`git_branch`、`git_checkout`、`git_tag`、`git_remote_add|set|remove`，在 `core/tasks/git_registry` 内映射为对应 TaskKind；
+  - `core/git/default_impl/opts.rs` 统一解析 `depth` / `filter` / `strategyOverride`，输出 `StrategyOverrideParseResult`，记录未知字段；
+  - `helpers::apply_http_override` / `helpers::apply_retry_override`（`core/tasks/git_registry/helpers.rs`）在任务内合并覆盖并返回差异标记；
+  - StructuredEvent 总线发出 `Strategy::HttpApplied/Conflict/IgnoredFields/Summary`、`Transport::PartialFilterFallback`、`Policy::RetryApplied`（Clone/Push）等事件；其中 `Strategy::Conflict` 仅由 Clone 触发，Push 为兼容现有前端仍额外发送一条 `task://error` 信息事件描述 HTTP 冲突；
+  - `TaskRegistry::emit_strategy_summary` 统一生成 `Strategy::Summary` 事件，包含最终 HTTP/Retry 参数与 `applied_codes`；Fetch 虽不发 `Policy::RetryApplied`，但会在 Summary 中保留 `retry_strategy_override_applied` 字符串。
+- **配置与能力开关**：
+  - `strategyOverride.http` 仅支持 `followRedirects` / `maxRedirects`，`retry` 支持 `max` / `baseMs` / `factor` / `jitter`；其他字段将被忽略并记入 `IgnoredFields`；
+  - `FWC_PARTIAL_FILTER_SUPPORTED=1` 或 `FWC_PARTIAL_FILTER_CAPABLE=1` 声明环境支持 partial filter；未设置或设为 0 时直接走 fallback 并发出 `Transport::PartialFilterFallback`；
+  - 数值区间在解析阶段校验：`maxRedirects ≤ 20`，`retry.max ∈ [1,20]`，`retry.baseMs ∈ [10,60000]`，`retry.factor ∈ [0.5,10]` 等。
 - **测试矩阵**：
-  - `git_clone_partial_filter.rs`、`git_fetch_partial_filter.rs` 覆盖 capability 与 fallback 场景；
-  - `git_strategy_and_override.rs` 覆盖 HTTP/Retry/TLS 组合、冲突与 ignored 事件；
-  - `git_tag_and_remote.rs`、`git_branch_and_checkout.rs` 覆盖本地操作 happy/edge/cancel；
-  - `quality/error_and_i18n.rs` 属性测试验证策略解析边界与国际化映射。
+  - `git_clone_partial_filter.rs`、`git_fetch_partial_filter.rs` 验证 capability 缓存与 fallback 事件；
+  - `git_strategy_and_override.rs` 锁定 HTTP/Retry 覆盖、冲突、ignored、结构化 Summary 序列；
+  - `git_tag_and_remote.rs`、`git_branch_and_checkout.rs` 覆盖本地操作的成功/失败/取消路径；
+  - `quality/error_and_i18n.rs` 属性测试枚举策略解析边界与错误分类。
 - **后端细节**：
-  - `ParsedOverride` 记录 `ignored_top` 与 `ignored_nested`，用于在信息事件中准确回显未知字段；
-  - HTTP 覆盖通过 `apply_http_override.rs` 与全局配置进行浅合并，保留未覆盖字段；
-  - TLS 覆盖在 `apply_tls_override.rs` 将互斥开关重置到安全值，并记录 `strategy_override_conflict`；
-  - `partial_filter_support.rs` 引入 capability cache，以远端 URL 为键，减少重复探测；
-  - 本地操作在写引用前进行取消检查，确保半成品不会落盘。
+  - 解析层记录 `ignored_top_level` 与 `ignored_nested(section.key)`，任务层将其转化为 `Strategy::IgnoredFields`；
+  - HTTP 覆盖冲突（`followRedirects=false && maxRedirects>0`）在 Clone 发布 `Strategy::Conflict`，在 Push 同时写入信息级 `TaskErrorEvent`；Fetch 仅规范化后继续执行；
+  - Retry 覆盖调用 `load_retry_plan` + `compute_retry_diff`，差异字段在 `Policy::RetryApplied.changed` 中列出；
+  - Partial filter fallback 事件记录 `shallow` 布尔值，调用方仍可通过返回状态决定是否提示用户。
 - **数据模型与事件顺序**：
-  - `ParsedOverride` 会在解析阶段返回 `ParsedOverride::empty()` 以避免空对象触发多余事件；只有字段发生变化才追加 `*_override_applied`。
-  - `DepthFilterDecision` 统一描述 shallow/partial fallback，事件 `partial_filter_fallback` 的 `decision` 字段匹配该枚举，测试中锁定顺序。
-  - `strategy_override_summary` 聚合 `appliedCodes`（如 `http_strategy_override_applied`），`finalStrategy` 字段按 HTTP/TLS/Retry 分层，供前端展示。
+  - 结构化事件按 applied → conflict → ignored → partial fallback → summary 顺序发送，测试中使用内存事件总线断言；
+  - `Strategy::Summary` 包含 `retry_*` 数值与 `applied_codes` 列表（如 `http_strategy_override_applied`），前端无需再从 `task://error` 聚合；
+  - `TaskRegistry::decide_partial_fallback` 返回 `(message, shallow)`，用于统一的 fallback 事件。
 - **护栏策略**：
-  - HTTP 覆盖限制 `maxRedirects` 范围 0-10，若与 `followRedirects=false` 冲突则写入 `strategy_override_conflict` 并回落到安全值。
-  - TLS 覆盖禁止修改 `sanWhitelist` 列表，仅允许开关 `insecureSkipVerify` 与 `skipSanWhitelist`；任何未知字段写入 `strategy_override_ignored_fields`。
-  - Retry 覆盖允许 `max=0` 表示禁用自动重试，前端需提示用户；过大 `baseMs` 会被截断并记入 Summary。
+  - HTTP 冲突自动回落到安全值（`maxRedirects=0`），并通过事件提示；
+  - Retry 覆盖限制范围，越界即 Protocol 错误；
+  - TLS 覆盖开关已自 P2 起移除，Real Host 与 SPKI 校验在 P3 实现且不可配置关闭。
 - **常见故障排查**：
-  - 出现 `strategy_override_conflict` 时，参考事件 `message` 提供的修正值；若持续冲突，检查 UI 是否传入互斥字段组合。
-  - `partial_filter_fallback` 多次出现意味着目标远端不支持 partial；可设置 `FWC_PARTIAL_FILTER_SUPPORTED=0` 关闭探测以减少噪声。
-  - 本地操作失败常见为 ref 已存在或缺失 `force` 标记，错误分类为 `Protocol`，在 `task://error` `message` 中包含原始 git2 文本。
+  - 若持续收到 `Strategy::Conflict`，检查 UI 是否同时设置 `followRedirects=false` 与正数 `maxRedirects`；
+  - 频繁的 `Transport::PartialFilterFallback` 说明远端不支持 partial filter，可将相关环境变量置 0 以减少探测；
+  - Push 任务若出现信息级冲突事件但无结构化冲突，属于兼容模式，日志仍可定位最终跟随策略。
 - **交接 checklist**：
-  - 与前端约定新增策略字段的字段名、默认值与展示顺序，更新 `GitPanel` 表单与校验 schema。
-  - 在 `git_strategy_and_override.rs` 中为每个新增事件补充 DSL 断言，防止遗漏。
-  - 落实运维手册：记录 `FWC_PARTIAL_FILTER_SUPPORTED`、`FWC_STRATEGY_APPLIED_EVENTS` 的默认值与改动流程，确保事故响应时有明确参考。
+  - 与前端确认是否需要消费结构化事件（可通过 `events::structured::set_global_event_bus` 或 `MemoryEventBus` 订阅）；
+  - 为新增策略字段补充解析、护栏、Summary、事件与测试断言；
+  - 运维手册仅需记录 `FWC_PARTIAL_FILTER_SUPPORTED` / `FWC_PARTIAL_FILTER_CAPABLE` 的默认值与调整流程。
 - **前端/服务配合**：
-  - `src/views/GitPanel.vue` 支持策略编辑面板，提交前使用 `zod` 校验字段；
-  - Task store 继续兼容 `retried_times` / `retriedTimes`，并在全局日志展示策略信息事件；
-  - UI 上的 Summary 展示依赖 `appliedCodes`，保持与后端事件缩写一致。
+  - `GitPanel` 继续透传 `strategyOverride`，Summary 工具需从结构化事件或 `applied_codes` 中读取变更；
+  - Task store 仍保存 `lastError` 以兼容 Push 冲突提示，其他策略提示建议改为订阅结构化事件；
+  - 前端单测 `strategy-override.events.test.ts` 可升级为模拟结构化事件流以减少对 legacy 错误通道的依赖。
 - **交接要点**：
-  - 新增策略字段时需同步更新：`ParsedOverride`、护栏规则、Summary 序列化、前端编辑器、事件 DSL 与测试；
-  - 引入新的 capability provider（如企业镜像）必须实现 `supports_partial_filter` 接口并更新缓存键；
-  - 回退策略：可逐项移除 TaskKind，或关闭 `strategyOverride` 解析模块，整体回落到全局配置。
+  - 调整覆盖逻辑时务必同步更新 `core/tasks/git_registry/helpers.rs`、`git_strategy_and_override.rs` 及文档；
+  - 引入新的 capability provider 需扩展 `runtime_config` 与 fallback 逻辑，并更新测试缓存键；
+  - 回退策略：移除新增 TaskKind 或跳过策略解析，仍可保持 Clone/Fetch/Push 正常执行。
 
 ### 4.4 P3 - 自适应 TLS 与可观测性强化
 
@@ -697,21 +705,23 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - `transport/metrics.rs` 的 `TimingRecorder` 与 `fingerprint.rs` 的日志逻辑在任务结束时统一 flush 事件；
   - 自动禁用窗口根据失败率触发 `AdaptiveTlsAutoDisable`，冷却后自动恢复；
   - Soak runner (`src-tauri/src/soak`) 以环境变量驱动迭代运行并生成报告。
+  - `RealHostCertVerifier` 始终在 Fake SNI 场景下以真实域名调用内层 `ServerCertVerifier`（若 override 无法解析则自动回退到原始 SNI），避免证书链与 SAN 校验对伪域妥协；同时承担当前阶段的 SPKI pin 校验（真实 SNI 路径尚未安装该包装器）。
 - **配置与指标**：
-  - 关键项：`http.fakeSniEnabled`、`http.fakeSniRolloutPercent`、`http.autoDisableFakeThresholdPct`、`http.autoDisableFakeCooldownSec`、`tls.metricsEnabled`、`tls.certFpLogEnabled`、`tls.spkiPins`、`tls.realHostVerifyEnabled`；
+  - 关键项：`http.fakeSniEnabled`、`http.fakeSniRolloutPercent`、`http.autoDisableFakeThresholdPct`、`http.autoDisableFakeCooldownSec`、`tls.metricsEnabled`、`tls.certFpLogEnabled`、`tls.spkiPins`；
+  - `tls.realHostVerifyEnabled` 已从配置模型、团队模板与前端类型中移除：Real host 校验不可再通过配置关闭，前后端保持一致。
   - 指纹日志写入 `cert-fp.log`，滚动阈值由 `tls.certFpMaxBytes` 控制；
   - 环境变量：`FWC_TEST_FORCE_METRICS` 强制指标采集，`FWC_ADAPTIVE_TLS_SOAK` 和 `FWC_SOAK_*` 控制 soak。
 - **测试矩阵**：
   - `transport/rewrite.rs` 单测覆盖 0%/10%/100% 采样与 URL 处理；
   - `transport/runtime.rs` 单测验证 fallback 状态机与 auto disable；
-  - `tls/verifier.rs` 单测覆盖 Real host 校验与 SPKI pin，`events/events_structure_and_contract.rs` 锁定事件 schema；
+  - `tls/verifier.rs` 单测覆盖 Fake SNI 路径下的 Real host 校验与 SPKI pin（真实 SNI 尚未启用 pin 校验），`events/events_structure_and_contract.rs` 新增 `override_host_enforced_during_fake_sni` 用例锁定 Fake SNI 覆盖真实域名校验；
   - Soak 模块单测确保报告生成、基线对比与阈值判定。
 - **后端细节**：
   - `RewriteDecision` 使用 host + path 的稳定哈希决定 `sampled`，同一仓库在不同任务中行为一致；
   - `TimingRecorder` 捕获 connect_ms/tls_ms/first_byte_ms/total_ms（毫秒），并在任务完成时产生单一 `AdaptiveTlsTiming` 事件；
   - 指纹缓存 LRU 记录 512 个 host，24 小时内变化才会触发 `CertFingerprintChanged`；
   - 自动禁用窗口 `SAMPLE_CAP=20`，最少样本 `MIN_SAMPLES=5`，触发后立即清空窗口并记录 `enabled=false/true` 两个事件；
-  - Real host 验证失败视为 Verify 类错误，同时触发 Fake->Real fallback 统计。
+  - Real host 验证失败视为 Verify 类错误，同时触发 Fake->Real fallback 统计；该校验现为强制行为，无需也无法通过配置关闭（旧配置项被忽略）。
 - **模块映射与代码指针**：
   - `transport/metrics.rs`（TimingRecorder）、`transport/fingerprint.rs`（指纹日志）、`transport/fallback.rs`（状态机）、`transport/runtime.rs`（自动禁用/状态协调）。
   - TLS 验证集中在 `src-tauri/src/core/tls/verifier.rs`：同时负责 Real host 与 SPKI pin；测试样例位于同路径 `tests` 模块。
@@ -721,7 +731,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - `AdaptiveTlsTiming` 仅在 `tls.metricsEnabled=true` 时发送；`cert_fp_changed=true` 表示 24 小时窗口内指纹发生更新。
   - `AdaptiveTlsAutoDisable` 在触发与恢复时分别发送一次，`enabled=false` 表示 Fake SNI 被暂停；结合日志可定位原因。
 - **常见故障排查**：
-  - Fake 回退频繁：查看 `AdaptiveTlsFallback` 中的 `reason`，若为 `FakeHandshakeError`，多为目标域证书/SAN 变更；先同步白名单再恢复 rollout。
+  - Fake 回退频繁：查看 `AdaptiveTlsFallback` 中的 `reason`，若为 `FakeHandshakeError`，多为目标域证书或 CA 链问题；确认证书已覆盖真实域名后再恢复 rollout。
   - 指纹 mismatch：事件 `CertFpPinMismatch` 出现后应立即核对 `tls.spkiPins`；如误配导致大面积失败，临时清空 pin 后重新采集。
   - 自动禁用 oscillation：检查失败率阈值是否过低，或 Soak 报告中是否存在网络抖动；必要时提高 `autoDisableFakeThresholdPct`。
 - **交接 checklist**：
@@ -1173,7 +1183,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
 
 - **文档同步**：核对最新阶段 handoff（MP*/P*）与本文版本号、设计稿、`CHANGELOG.md`；P8 专项：`P8_IMPLEMENTATION_HANDOFF.md` 是否与实现一致（指标/配置/层级表/告警规则样例）。
 - **Smoke 速查**：见附录A；上线前按顺序执行 1~6 步确认核心链路与降级/告警可控。
-- **配置审计**：阶段配置核对：MP1（Fake SNI/Retry）、P2（`FWC_PARTIAL_FILTER_SUPPORTED`、`FWC_STRATEGY_APPLIED_EVENTS`）、P3（rollout/auto disable/SPKI pin/tls.metricsEnabled）、P4（`ip_pool.*` 缓存/熔断/并发/黑白名单）、P5（`proxy.*` 阈值/探测URL/禁用自定义传输）、P6（`credential.*` 存储/审计/缓存）、P7（`workspace.*`、`submodule.*`、`teamTemplate.*`）、P8（`observability.*` 见附录D：层级/驻留与冷却/性能(batchFlushIntervalMs,tlsSampleRate,maxMemoryBytes,enableSharding,debugMode,redact.repoHashSalt,redact.ipMode)/导出(authToken,rateLimitQps,maxSeriesPerSnapshot,bindAddress)/告警(rulesPath,evalIntervalSecs,minRepeatIntervalSecs)/降级(autoDowngrade)）。
+- **配置审计**：阶段配置核对：MP1（Fake SNI/Retry）、P2（`FWC_PARTIAL_FILTER_SUPPORTED` / `FWC_PARTIAL_FILTER_CAPABLE`）、P3（rollout/auto disable/SPKI pin/tls.metricsEnabled）、P4（`ip_pool.*` 缓存/熔断/并发/黑白名单）、P5（`proxy.*` 阈值/探测URL/禁用自定义传输）、P6（`credential.*` 存储/审计/缓存）、P7（`workspace.*`、`submodule.*`、`teamTemplate.*`）、P8（`observability.*` 见附录D：层级/驻留与冷却/性能(batchFlushIntervalMs,tlsSampleRate,maxMemoryBytes,enableSharding,debugMode,redact.repoHashSalt,redact.ipMode)/导出(authToken,rateLimitQps,maxSeriesPerSnapshot,bindAddress)/告警(rulesPath,evalIntervalSecs,minRepeatIntervalSecs)/降级(autoDowngrade)）。
 - **灰度计划**：记录阶段/层级推进与回退：P6（三步钥匙串→扩大→全量）；P8 层级 basic→aggregate→export→ui→alerts→optimize（每层 ≥24h 观察：导出延迟 <50ms、memory_pressure=0 或低频、告警噪声可控）。
 - **测试执行**：合并前运行 `cargo test -q`、`pnpm test -s`；附必要 soak 报告。P6：1286 测试 + 安全审计；P8：聚合窗口/导出/限流/告警状态机/规则热更新/内存压力降级/层级状态机/前端缓存降采样；保存 `/metrics` 与 `/metrics/snapshot` 样例输出（含内部指标与分位）。
 - **运维交接**：交付包包含：`cert-fp.log` 示例、策略 Summary 截图、最新配置快照、P8 健康清单（/metrics OK、核心指标非空、layer 预期、无连续 memory_pressure、告警稳定）、告警规则文件样例、导出内部指标说明及含义、层级降级/回升操作说明。
@@ -1195,6 +1205,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
 | 可观测性 | 自检/漂移检测 | 未实现 | 规划加入内部一致性校验周期 | 可能延迟发现指标缺失，需要人工 Smoke |
 | 凭证 | set_master_password 真正持久化 | 占位（忽略密码） | 实现密钥写入/旋转 & 验证流程 | 用户需用 unlock_store 解锁实际加密存储 |
 | 凭证 | last_used 字段 | 未实现 | 需要调整不可变模型/写路径 | 前端暂用 created/expired 近似提醒 |
+| TLS | 真实 SNI 路径未执行 SPKI pin 校验 | 未解决 | 在默认 `ClientConfig` 上挂载 `RealHostCertVerifier` 或等效逻辑 | 当前仅 Fake SNI 路径使用 SPKI pin |
 | 凭证 | 审计日志滚动策略 | 未实现 | 加入大小/日期轮换 + 保留策略 | 日志过大需人工清理 |
 | 工作区 | 子模块并行参数 parallel/maxParallel | 预留未实现 | 视规模需求引入并发执行 | 大量子模块时耗时偏长（可手动拆分） |
 | 工作区 | 状态事件推送 | 未实现 | 后续通过事件总线广播增量 | 目前需轮询；高频降 TTL/自动刷新开销 |
@@ -1212,7 +1223,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
 1. Git 基本任务：
   - Clone: `git_clone` 任意公开仓库（确认产生 `task://state running→completed` 与 `git_tasks_total{kind="clone",state="completed"}` 增量）
   - Push: `git_push`（使用测试分支，小修改）观察 `git_retry_total` 是否为0 或可控
-2. 策略覆盖：Clone 指定 shallow+partial+retry 覆盖，确认事件序列：`*_override_applied` → `strategy_override_summary`
+2. 策略覆盖：Clone 指定 shallow+partial+retry 覆盖，确认结构化事件序列：`Strategy::HttpApplied` / `Policy::RetryApplied`（若有） → `Strategy::Summary`
 3. 自适应 TLS：设置 `http.fakeSniRolloutPercent=25` 触发一次 clone；检查 `/metrics` 中 `tls_handshake_ms_bucket` 与事件 `AdaptiveTlsRollout`
 4. IP 池：确认 `ip_pool.enabled=true`（默认状态）并至少配置一个 `preheatDomains`；等待 1 个预热周期后确认 `ip_pool_refresh_total` 有 `reason=preheat`
 5. 代理降级/恢复（可选）：配置无效代理，触发失败直至 `ProxyFallbackEvent`，改为有效代理验证 `ProxyRecoveredEvent`

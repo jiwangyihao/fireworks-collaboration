@@ -19,7 +19,7 @@
 | v1.13 | 2025-09-23 | Roadmap Phase 1 规划落地前置（Tag/Remote 聚合准备） | 附录 A/B 草案：限制新增模块≤2；列出 Tag/Remote/Task/Strategy/Props 映射表；定义四阶段指标 |
 | v1.14 | 2025-09-23 | Phase 1 Completed：Tag & Remote 聚合 | 新增 `git/git_tag_and_remote.rs`（34 tests, <430 行）；原 `git_tag_remote.rs`, `git_tag_remote_extra.rs`, `refname_validation.rs` 占位；文档加来源与 Metrics；roadmap 标记 Phase 1 Completed |
 | v1.15 | 2025-09-23 | Phase 2 Completed：TaskRegistry & GitService 聚合 | 新增 `tasks/task_registry_and_service.rs`（28 tests, ~500 行）；统一 wait_predicate/wait_task_state；迁移并占位 6 个 root-level 任务 / git_tasks 文件；从 `git_impl_tests.rs` 迁出 progress/cancel 6 用例 (~30% 覆盖剪裁起点) | 
-| v1.16 | 2025-09-23 | Phase 3 Completed：Strategy/TLS/Override 聚合 & git_impl 二次剪裁 | 扩展 `git/git_strategy_and_override.rs` 新增 6 sections（strategy_summary_multiop / override_no_conflict / override_empty_unknown / override_invalid_inputs / tls_mixed_scenarios / summary_gating）；迁移 12 个 root-level strategy/tls/override 系列文件为占位；`git_impl_tests.rs` 进一步剪裁（累计≈70% 重复场景移除，仅保留 service negotiating/cancel/invalid path/fast fetch cancel 特有用例）；聚合文件行数 ~780 (<800 控制线)；新增 Phase3 Metrics 注释块；建立关键词分布基线（override/http/tls/appliedCodes/insecureSkipVerify/skipSanWhitelist）。 |
+| v1.16 | 2025-09-23 | Phase 3 Completed：Strategy Override 聚合（HTTP/Retry）& git_impl 二次剪裁 | 扩展 `git/git_strategy_and_override.rs` 聚焦 HTTP/Retry 覆盖场景，新增 4 个 sections（strategy_summary_multiop / override_no_conflict / override_empty_unknown / override_invalid_inputs）；迁移 12 个 root-level strategy/override 系列文件为占位并移除遗留 TLS override 断言；`git_impl_tests.rs` 进一步剪裁（累计≈70% 重复场景移除，仅保留 service negotiating/cancel/invalid path/fast fetch cancel 特有用例）；聚合文件行数 ~760 (<800 控制线)；新增 Phase3 Metrics 注释块；建立关键词分布基线（override/http/retry/applied_codes/RealHostCertVerifier/cert_fp）。 |
 | v1.17 | 2025-09-23 | Phase 4 Completed：属性测试集中 & git_impl 最终剪裁 | 将全部 `prop_*.rs` 属性测试迁移进 `quality/error_and_i18n.rs` 新增 4 个 sections（strategy_props / retry_props / partial_filter_props / tls_props）；原 5 个 prop 源文件占位化（保留 `prop_tls_override.proptest-regressions` seed）；`git_impl_tests.rs` 剩余 3 个 service 独有测试迁往 `tasks/task_registry_and_service.rs` 新 section_service_impl_edges 后占位化（累计剪裁≥90%）；root-level 剩余业务测试文件=0（仅种子文件保留）；属性测试集中度=100%；准备进入后续可选优化（统计脚本 & 事件 DSL 强化）。 |
 | v1.18 | 2025-09-23 | 12.16 最终清理：删除全部残余占位测试文件 | 删除 26 个 root-level 占位 `.rs`（全部为“注释+trivial assert”），仅保留 `prop_tls_override.proptest-regressions` 种子；测试回归全绿；完成测试重构收尾。 |
 
@@ -28,12 +28,11 @@
 本节补充 Phase 4 结构化指标与基线（方便后续差异跟踪或必要时回溯）。
 
 1. 迁移范围
-  - 属性测试源文件：5 个
+  - 属性测试源文件：4 个
     1) `prop_strategy_http_override.rs`
     2) `prop_retry_override.rs`
     3) `prop_strategy_summary_codes.rs`
     4) `prop_partial_filter_capability.rs`
-    5) `prop_tls_override.rs`
   - Service 级残留 (`git_impl_tests.rs`) 特有用例：3 个（progress negotiating anchor / fast cancel 映射 / invalid local path fail-fast）→ 迁移至 `tasks/task_registry_and_service.rs` `section_service_impl_edges`。
 
 2. 聚合落点 & Sections
@@ -42,8 +41,8 @@
     * `section_strategy_props`
     * `section_retry_props`
     * `section_partial_filter_props`
-    * `section_tls_props`
-  - 回归种子：`prop_tls_override.proptest-regressions`（原路径保留，仅注释指明新宿主文件）。
+    * （TLS override 属性测试已移除，不再单列 `section_tls_props`）
+  - 回归种子：TLS override 属性测试已下线；历史 `prop_tls_override.proptest-regressions` 文件保留用于归档（不再被自动加载）。
 
 3. 剪裁与集中度指标
   | 指标 | 数值 | 说明 |
@@ -56,16 +55,18 @@
 4. Keyword 分布基线（Phase 4 结束时）
   | 关键词 | 次数 | 说明 |
   |---------|------|------|
-  | `appliedCodes` | 6 | 覆盖 strategy summary / gating 断言 |
-  | `http_strategy_override_applied` | 7 | HTTP override 应用标记 / 事件锚点 |
-  | `tls_strategy_override_applied` | 11 | TLS override 应用标记 / 混合场景 |
-  | `partial_filter` | 45 | Clone + Fetch partial filter 场景 & fallback 判定 |
-  | `retry_override` | 9 | Retry override + backoff 属性与场景测试 |
+  | `applied_codes` | 22 | 覆盖 strategy summary / gating 断言 |
+  | `http_strategy_override_applied` | 5 | HTTP override 应用标记 / 事件锚点 |
+  | `retry_strategy_override_applied` | 9 | Retry override 应用标记 / 指标校验 |
+  | `RealHostCertVerifier` | 6 | Real Host 证书校验包装器覆写测试 |
+  | `cert_fp` | 36 | 证书指纹指标与日志路径 |
+  | `partial_filter` | 66 | Clone + Fetch partial filter 场景 & fallback 判定 |
+  | `retry_override` | 13 | Retry override + backoff 属性与场景测试 |
 
-  说明：计数方法为 PowerShell 下 `Select-String -SimpleMatch` 对 `tests` 目录递归统计（仅 .rs 文件）。未来新增/删除相关用例需更新此表以保持追踪一致性；若出现 >20% 波动，请在修订记录中添加说明（例如场景重构或 DSL 聚合导致的关键字减少）。
+  说明：计数方法为 PowerShell 下 `Select-String -SimpleMatch` 对 `tests` 目录递归统计（仅 .rs 文件）。未来新增/删除相关用例需更新此表以保持追踪一致性；若出现 >20% 波动，请在修订记录中添加说明（例如 Real Host 校验扩展或指标字段重命名导致的关键字调整）。
 
 5. 质量保障
-  - proptest 组数：5（HTTP override 正常化 / summary applied codes 一致性 / retry override 差异检测 / partial filter capability fallback / TLS override 正常化 & 冲突检测）
+  - proptest 组数：4（HTTP override 正常化 / summary applied codes 一致性 / retry override 差异检测 / partial filter capability fallback）
   - 种子保留：是（确保回归失败可复现）
   - 统一初始化：沿用文件级 `#[ctor] init_test_env()` 保证环境幂等
   - 行数控制：聚合后文件 < 800 行（当前 ~<实际行数待查看>，低于警戒线）
@@ -1204,9 +1205,9 @@ mod scenario_error_boundary;     // 真实远端错误处理（权限/404）
 ### A.4 既有文件扩展（不新增模块）
 | 目标聚合文件 | 追加 sections | 来源文件内容摘要 |
 |---------------|---------------|------------------|
-| `git/git_strategy_and_override.rs` | `section_strategy_summary_multiop`、`section_tls_mixed_scenarios`、`section_override_no_conflict_http_tls`、`section_summary_gating`、`section_override_empty_unknown`、`section_override_invalid_inputs` | 来自 `git_strategy_override_*`, `git_tls_*`, `strategy_override_*` 系列：多操作 summary、TLS mixed、无冲突组合、gating on/off、空/未知字段策略、非法策略参数失败路径 |
+| `git/git_strategy_and_override.rs` | `section_http_basic`、`section_http_limits`、`section_http_invalid_max`、`section_http_events`、`section_strategy_summary` | 来自 `git_strategy_override_*` 系列：HTTP override 覆盖、事件序列、summary applied codes；TLS override 系列已在 Real Host 校验落地后删去 |
 | `git/git_push_and_retry.rs` | `section_strategy_retry_summary_cross`（若需） | 如果属性/策略 summary 里存在与 retry 交叉的附加断言；否则保持现状 |
-| `quality/error_and_i18n.rs` (或新 `quality/strategy_and_filter_props.rs`) | `mod section_strategy_props;` `mod section_retry_props;` `mod section_partial_filter_props;` `mod section_tls_props;` | 来自 `prop_strategy_http_override.rs`, `prop_retry_override.rs`, `prop_strategy_summary_codes.rs`, `prop_partial_filter_capability.rs`, `prop_tls_override.rs`（保留 seeds） |
+| `quality/error_and_i18n.rs` (或新 `quality/strategy_and_filter_props.rs`) | `mod section_strategy_props;` `mod section_retry_props;` `mod section_partial_filter_props;` | 来自 `prop_strategy_http_override.rs`, `prop_retry_override.rs`, `prop_strategy_summary_codes.rs`, `prop_partial_filter_capability.rs`（TLS override 属性测试已退役，仅保留历史 seeds） |
 
 决定：属性测试单独文件过大风险（>800 行）→ 采用新文件 `quality/strategy_and_filter_props.rs`（不计入新增模块限制吗？要求限制“新建测试模块”≤2，本方案将其视作“拆分质量属性集”可选；若严格限制==2，则回退：将属性 sections 合并进现有 `error_and_i18n.rs` 末尾。最终实施时依据行数评估，文档先记录双案：
  - Primary: 新建第三文件（若策略允许）
@@ -1243,8 +1244,8 @@ mod scenario_error_boundary;     // 真实远端错误处理（权限/404）
 | prop_retry_override.rs | 合并 | 同上 | section_retry_props |
 | prop_strategy_summary_codes.rs | 合并 | 同上 | section_strategy_props（applied codes consistency） |
 | prop_partial_filter_capability.rs | 合并 | 同上 | section_partial_filter_props |
-| prop_tls_override.rs | 合并 | 同上 | section_tls_props |
-| prop_tls_override.proptest-regressions | 保留原样 | 同上所在目录 | 作为属性测试回归种子文件，不嵌入 module |
+| prop_tls_override.rs | 已退役 | - | TLS override 策略入口废弃后删除；由 Real Host 校验场景取代 |
+| prop_tls_override.proptest-regressions | 保留原样（归档） | 同上所在目录 | 仅作为历史种子存档，不再被测试框架自动加载 |
 
 ### A.6 迁移实施顺序建议
 1. 引入新模块骨架 (`git_tag_and_remote.rs`, `tasks/task_registry_and_service.rs`) + 空 sections。

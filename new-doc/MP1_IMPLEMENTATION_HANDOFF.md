@@ -80,14 +80,14 @@
 
 - UI：`src/views/GitPanel.vue`
   - 表格新增“最近错误”列：分类 Badge + 重试次数 + 错误信息；
-  - Push 表单支持用户名/密码（令牌）；Clone/Fetch 支持预设；TLS/SNI 策略可编辑，保存即生效。
+  - Push 表单支持用户名/密码（令牌）；Clone/Fetch 支持预设；HTTP Fake SNI 策略（候选列表/命中目标/403 轮换）可编辑并即时生效。
 
 ---
 
 ## 5. 配置模型（与默认值）
 
-- `http`: `{ fakeSniEnabled: boolean, fakeSniHosts?: string[], sniRotateOn403?: boolean, followRedirects: boolean, maxRedirects: number }`
-- `tls`: `{ sanWhitelist: string[], insecureSkipVerify?: boolean, skipSanWhitelist?: boolean }`
+- `http`: `{ fakeSniEnabled: boolean, fakeSniHosts?: string[], fakeSniTargetHosts?: string[], sniRotateOn403?: boolean, followRedirects: boolean, maxRedirects: number }`
+- `tls`: `{ spkiPins?: string[], metricsEnabled?: boolean, certFpLogEnabled?: boolean, certFpMaxBytes?: number }`
 - `retry`: `{ max: number, baseMs: number, factor: number, jitter: boolean }`（默认 `{ max: 6, baseMs: 300, factor: 1.5, jitter: true }`）
 - `proxy`: `{ mode: 'off'|'http'|'socks5', url?: string }`
 - `logging`: `{ debugAuthLogging: boolean }`（默认脱敏）
@@ -116,7 +116,7 @@
 
 - 安全：
   - 默认脱敏 Authorization/密码/令牌；
-  - Fake SNI 不降低证书链/主机名验证；可独立关闭 SAN 白名单或默认证书校验（调试用途）。
+  - Fake SNI 通过 `RealHostCertVerifier` 在握手后仍以真实域名验证证书链与 SPKI，无法通过配置关闭。
 
 ---
 
@@ -127,7 +127,7 @@
   - 进度事件不变；如需展示“省流量”指标，可在 progress 附加可选 `bytesSaved?`（兼容策略）。
 
 - 任务级策略覆盖：
-  - 建议入参新增可选 `http?`/`tls?`/`retry?` 子集（白名单字段），任务注册时与全局配置合并（浅合并），仅作用于当前任务。
+  - 仅允许 `http?`/`retry?` 子集（白名单字段），任务注册时与全局配置浅合并，仅作用于当前任务；TLS 策略覆盖已在 v1.8 移除。
   - 与方式A交互：代理模式下仍禁用 Fake SNI；如任务级覆盖启用 Fake SNI，应在注册处进行“代理互斥”校验并给出警告。
 
 - 兼容性约束：
@@ -144,7 +144,7 @@
 ## 9. 快速排错指引（P2 仍然适用）
 
 - Push 401/403：优先检查 PAT 权限与组织 SSO；事件 `category=Auth`，日志已脱敏。
-- TLS/Verify 失败：检查 `tls.insecureSkipVerify`/`tls.skipSanWhitelist` 的组合开关；Fake SNI 下会按真实主机校验 SAN。
+- TLS/Verify 失败：优先检查证书链与主机名是否匹配真实目标域；Fake SNI 场景同样由 `RealHostCertVerifier` 执行真实域校验，可结合 `tls.spkiPins`/Fake SNI 命中列表排查。
 - 进度停滞：关注 `phase` 是否停在 `PreUpload/Upload`；上传后不再自动重试，必要时手动取消重试。
 - 403 早期：若启用轮换，info/refs 阶段会切换一次 SNI 候选，仍失败则回退 Real。
 

@@ -341,38 +341,29 @@ Refinement (post-initial P3.2 patch): implemented precise firstByte capture hook
 - 代码清理：移除未使用导入，确保等待结果显式消费，降低未来启用 `-D warnings` 风险。
 
 ### Added
-- `strategy_override_summary` 聚合事件（Clone / Fetch / Push）提供 http/retry/tls 最终值、`appliedCodes`、`filterRequested`。
-- 任务级策略覆盖扩展：TLS (`insecureSkipVerify` / `skipSanWhitelist`) 与 Retry (`max/baseMs/factor/jitter`) 字段。
-- 环境变量：
-  - `FWC_PARTIAL_FILTER_SUPPORTED`（=1 视为支持 partial filter，不触发回退事件；兼容 `FWC_PARTIAL_FILTER_CAPABLE`）。
-  - （已废弃）`FWC_LEGACY_STRATEGY_EVENTS`：T6 中移除，对行为无影响（legacy 策略类 TaskErrorEvent 已删除）。
-- 事件：
-  - `strategy_override_conflict`（HTTP & TLS 冲突归一化提示）。
-  - `strategy_override_ignored_fields`（汇总未知顶层与分节字段）。
-  - `partial_filter_fallback`（不支持 partial 时的 shallow/full 回退提示）。
-  - `*_strategy_override_applied`（http/tls/retry 变更；可被 gating 抑制）。
+- 结构化策略事件：`StrategyEvent::Summary`（Clone / Fetch / Push）提供 HTTP/Retry 最终值、`applied_codes`、`filter_requested`；`StrategyEvent::HttpApplied`、`StrategyEvent::IgnoredFields`、`StrategyEvent::Conflict`（仅 Clone 在 HTTP 互斥组合时触发）；`PolicyEvent::RetryApplied`（Clone/Push）；`TransportEvent::PartialFilterFallback`。
+- 任务级策略覆盖扩展：HTTP (`followRedirects` / `maxRedirects`) 与 Retry (`max` / `baseMs` / `factor` / `jitter`) 字段解析与应用；TLS 覆盖在安全评审后移除。
+- 环境变量：`FWC_PARTIAL_FILTER_SUPPORTED` / `FWC_PARTIAL_FILTER_CAPABLE`（=1 视为支持 partial filter，不触发 fallback 提示）。
 - i18n：网络错误分类增加中文关键字（连接被拒绝/解析失败/超时 等）。
 
 ### Changed
-- 独立 `*_strategy_override_applied` 与 `strategy_override_summary` 结构化事件始终发布；其 legacy TaskErrorEvent 版本（含 summary）在 T6 中被彻底移除。
-- Push 任务策略覆盖逻辑与 Clone/Fetch 对齐（变更总被计入 `appliedCodes`，独立事件按 gating）。
-- Informational 覆盖事件不再清空 `retriedTimes`（保持先前重试上下文）。
+- Legacy `task://error` 策略提示被结构化事件取代；Push 保留一条信息级冲突事件以兼容旧 UI，其余任务仅发送结构化事件。
+- Summary 始终发布，`applied_codes` 去重并保留 HTTP/Retry 差异；Fetch 不再发 `Policy::RetryApplied` 但继续在 Summary 中记录差异。
+- Informational 事件不再重置 `retriedTimes`，保留既有重试上下文。
 
 ### Tests
-- 新增：Clone / Fetch / Push summary & gating 正负用例；TLS summary & conflict；ignored fields；partial capability（capable / fallback）；retry/http 事件精确匹配；gating off 行为；冲突组合 (http/tls/combo)。
-- 新增/改造文件示例：`strategy_override_summary.rs`、`git_strategy_override_summary_fetch_push.rs`、`git_strategy_override_tls_summary.rs`、`git_strategy_override_conflict_{http,tls,combo,no_conflict}.rs`、`git_strategy_override_guard_ignored.rs`、partial capability 相关测试等。
+- 新增：Clone / Fetch / Push 结构化 Summary 覆盖用例、HTTP 冲突与 ignored 字段事件断言、partial capability（capable / fallback）场景、Retry diff 计算、Push 冲突 legacy 通道兼容。
+- 新增/改造文件示例：`git_strategy_and_override.rs`（多任务 Summary 序列）、`events/events_structure_and_contract.rs`（Strategy/Policy payload 断言）、`git_clone_partial_filter.rs`、`git_fetch_partial_filter.rs`、`quality/error_and_i18n.rs`（属性测试）。
 - 对公网依赖 shallow/partial 测试加入软跳过（失败输出标记不失败）。
 
 ### Docs
-- README：新增环境变量、summary 事件结构与使用建议。
-- `new-doc/TECH_DESIGN_P2_PLAN.md`：补充 P2.3c~P2.3g 综合章节（gating / partial / i18n / 回退矩阵 / summary schema）。
+- README：更新结构化事件枚举、环境变量说明与示例 payload。
+- `new-doc/TECH_DESIGN_P2_PLAN.md` / `IMPLEMENTATION_OVERVIEW.md` / `P2_IMPLEMENTATION_HANDOFF.md`：同步移除 TLS 覆盖/事件 gating，补充结构化事件语义与回退路径。
 
 ### Backward Compatibility
-- （更新）T6 后需消费结构化事件（Strategy/Policy/Transport）；旧 *_strategy_override_applied / conflict / summary / adaptive / partial_filter_fallback / ignored_fields TaskErrorEvent 不再发射。
-- 冲突归一化：
-  - HTTP：`followRedirects=false` 且 `maxRedirects>0` → 规范化 `maxRedirects=0` 并发 conflict。
-  - TLS：`insecureSkipVerify=true` 且 `skipSanWhitelist=true` → 规范化 `skipSanWhitelist=false` 并发 conflict。
-  - 规范化导致值变化仍会出现对应 *_applied（若 gating 开）。
+- 自 T6 起，消费方需监听结构化事件（Strategy/Policy/Transport）；旧的 `_strategy_override_applied` / `strategy_override_summary` / conflict / ignored / partial_filter_fallback `TaskErrorEvent` 已移除。
+- HTTP 冲突仍规范化：`followRedirects=false` 且 `maxRedirects>0` → 规范化 `maxRedirects=0` 并发 `StrategyEvent::Conflict`；Push 额外保留 legacy 信息事件。
+- Retry 覆盖差异通过 `PolicyEvent::RetryApplied.changed` 或 Summary `applied_codes` 暴露；Fetch 路径仅依赖后者，行为保持向后兼容。
 
 ### Revert / 回退指引
 - 恢复 legacy 事件已不支持（代码删除）；如需调试旧前端请基于历史 tag 回滚。

@@ -291,13 +291,12 @@
 - 风险：前端同时出现多类 informational 事件顺序不稳定 → 在任务启动端集中排序发送（当前已通过顺序约定测试锁定）。
 
 ### P2.3a 任务级策略覆盖模型与解析
-目标：为后续 HTTP / Retry / TLS 策略按任务覆盖奠定统一数据结构、解析与校验基础，保证新增字段最小侵入现有命令与事件协议。
+目标：为后续 HTTP / Retry 策略按任务覆盖奠定统一数据结构、解析与校验基础，保证新增字段最小侵入现有命令与事件协议。（TLS 覆盖在安全审计后取消，详见 §P2.3d 说明。）
 范围：
 - 扩展任务输入结构：`strategyOverride`（可选，对 clone/fetch/push 生效）。
 - 支持字段：
   - http.followRedirects:boolean, http.maxRedirects:number
   - retry.max:number, retry.baseMs:number, retry.factor:number, retry.jitter:boolean
-  - tls.insecureSkipVerify:boolean, tls.skipSanWhitelist:boolean
 - 解析兼容：camelCase 与 snake_case；未知字段收集（不立即发事件，在后续护栏阶段使用）。
 - 校验：数值与范围（maxRedirects<=20, retry.max 1..20, baseMs 10..60000, factor 0.5..10, jitter bool）。
 - 不产生任何新事件；仅日志（level=debug/info）记录解析结果与忽略字段集合。
@@ -322,32 +321,32 @@
 - 风险：未知字段静默丢失影响可观测 → 后续护栏阶段引入 ignored 事件补足。
 
 ### P2.3b 任务级 HTTP 策略覆盖
-目标：基于已解析的 strategyOverride，按任务应用 HTTP followRedirects / maxRedirects 覆盖并在生效时提供可观测事件（单次），不变更底层实际网络行为（预留后续接入）。
+目标：基于已解析的 strategyOverride，按任务应用 HTTP followRedirects/maxRedirects 覆盖，并在实际生效时通过结构化事件一次性曝光差异；不变更底层实际网络行为（预留后续接入）。
 范围：
-- 合并规则：仅当提供字段且与全局默认不同才变更；maxRedirects 上限 clamp=20。
-- 事件：`code=http_strategy_override_applied`（category=Protocol），changed=true 时任务生命周期内发送一次。
+- 合并规则：仅当提供字段且与全局默认不同才变更；`maxRedirects` 上限 clamp=20。
+- 事件：当覆盖值改变时发送一次 `StrategyEvent::HttpApplied { id, follow, max_redirects }`；冲突（follow=false 且 max>0）在 `GitClone` 触发 `StrategyEvent::Conflict { kind:"http", message }`；`GitPush` 仅补充一条信息级 `task://error`，`GitFetch` 只规范化并记录日志。
 - 不改变 retry/TLS 或 clone/fetch/push 核心执行；仅在任务 spawn 前阶段合并。
-- 复用错误事件通道，不新增主题。
+- 结构化事件通过 `events::structured::publish_global` 发出，与 legacy 错误通道解耦。
 交付物：
 - `apply_http_override` 函数（返回 follow, max, changed）。
-- 事件发射逻辑与单元测试（clamp / changed 判定）。
+- 结构化事件发射逻辑与单元测试（clamp / changed / conflict 判定）。
 - 集成测试：改变/不变/仅一字段改变/非法 max/多任务并发 idempotent。
 验收标准：
-- 仅当至少一项值改变发送一次事件；不重复。
-- 非法参数（>20 或类型错误）Protocol 失败且不发送事件。
+- 仅当至少一项值改变发送一次 `HttpApplied`；冲突场景补充 `Conflict`。
+- 非法参数（>20 或类型错误）Protocol 失败且不发送结构化事件。
 - 其它策略字段未受影响；前端兼容（无新增解析分支）。
 回退策略：
-- 移除 changed 分支事件发射；保留合并逻辑；或完全移除函数调用恢复默认行为。
+- 移除结构化事件发射；保留合并逻辑；或完全移除函数调用恢复默认行为。
 风险与缓解：
-- 风险：future 网络栈接入导致语义差异 → 事件 message 保持抽象仅含最终 follow/max。
-- 风险：多策略先后顺序潜在竞态 → 以固定顺序 HTTP→Retry→TLS（后续章节插入）并在测试锁定事件序列。
+- 风险：future 网络栈接入导致语义差异 → `HttpApplied` payload 仅暴露最终 follow/max。
+- 风险：多策略先后顺序潜在竞态 → 以固定顺序 HTTP→Retry→TLS 并在测试锁定事件序列。
 
 ### P2.3c 任务级 Retry 策略覆盖
-目标：为 clone/fetch/push 提供按任务自定义退避计划（max/baseMs/factor/jitter），在保持全局配置不变的同时提升单任务弹性与可观测性。
+目标：为 clone/fetch/push 提供按任务自定义退避计划（max/baseMs/factor/jitter），在保持全局配置不变的同时通过结构化事件曝光差异。
 范围：
 - 合并规则：仅当任一字段与全局不同才视为 changed；解析层已校验范围。
 - 生成独立 `RetryPlan`（不写回全局）。
-- 事件：`code=retry_strategy_override_applied`（Protocol），changed=true 时单次发射。
+- 事件：Clone/Push 在 `changed` 时发送一次 `PolicyEvent::RetryApplied { id, code:"retry_strategy_override_applied", changed }`；Fetch 不单独发该事件，但会在最终 `StrategyEvent::Summary` 的 `applied_codes` 中记录差异。
 - 与 HTTP 覆盖并列，顺序：HTTP → Retry → TLS。
 - 不改变现有重试分类与上限语义（不可重试错误不进入循环）。
 交付物：
@@ -355,78 +354,65 @@
 - 集成测试：变更/不变/仅一字段变更/边界 factor=0.5 & 10 / jitter=true 透传。
 - 组合测试：与 HTTP 同时 changed 仍各发一次事件，次数不超过 1。
 验收标准：
-- 事件在 changed 时恰好一次；不变路径无事件。
+- Clone/Push 在 changed 时恰好发送一次 `PolicyEvent::RetryApplied`；Fetch 仅在 Summary `applied_codes` 中体现差异。
 - 生成的计划仅影响当前任务；并发任务计划互不干扰（测试比对不同 max/baseMs）。
-- 不可重试错误路径仍不会触发 attempt 重试进度，但 override 事件可出现。
+- 不可重试错误路径仍不会触发 attempt 重试进度，但 override 差异事件可出现。
 回退策略：
-- 移除事件发射或函数调用；其余逻辑保持；完全回退删除函数与测试。
+- 移除 `PolicyEvent::RetryApplied` 发射或函数调用；其余逻辑保持；完全回退删除函数与测试。
 风险与缓解：
 - 风险：本地化错误文本导致分类 Internal 而非 Network 进而少重试 → 后续 i18n 分类扩展缓解。
-- 风险：极端 factor/ baseMs 组合导致过长等待 → 范围校验与单测锁定上限。
+- 风险：极端 factor/baseMs 组合导致过长等待 → 范围校验与单测锁定上限。
 
-### P2.3d 任务级 TLS 策略覆盖
-目标：允许单任务在不改动全局配置的情况下放宽或保持默认 TLS 校验（insecureSkipVerify / skipSanWhitelist），提升调试灵活性并提供最小事件通知。
-范围：
-- 两个布尔字段覆盖；不允许覆盖 san_whitelist 列表。
-- 合并顺序：HTTP → Retry → TLS（或最终定序 HTTP→Retry→TLS，保持测试一致）。
-- 事件：`code=tls_strategy_override_applied`，changed=true 时一次。
-- 与后续冲突规范化兼容：若出现互斥组合（后续阶段定义）可被规范化并仍视为 changed。
-交付物：
-- `apply_tls_override` 函数 + 单元测试（无覆盖/单字段/双字段/不变）。
-- 集成测试：clone/fetch/push 各覆盖一次 + unchanged 路径。
-- 事件顺序测试：确保在护栏/summary 之前。
-验收标准：
-- 不修改全局 TLS 配置；并发任务隔离。
-- 只有有效变化发送事件；未变化无事件。
-- 与前两策略事件并存且顺序确定。
-回退策略：
-- 移除事件发射或函数调用；保留解析模型；或完全删除函数与测试回退。
-风险与缓解：
-- 风险：后续真正 TLS 传输接入会改变风险面 → 事件语义保持通用（仅陈述最终布尔值）。
-- 风险：误用导致绕过校验 → 默认值安全，覆盖需显式传入且受文档提示约束。
+### P2.3d 任务级 TLS 策略覆盖（已取消）
+最初计划在 P2 为单任务暴露 `insecureSkipVerify` / `skipSanWhitelist` 两个布尔开关，用于临时放宽 TLS 校验。然而在 v1.8 的安全审计中确认：
+- `RealHostCertVerifier` 已强制在所有 Fake SNI 场景使用真实域名做链路与主机名校验，无法再回退到不安全路径；
+- 配置模型同步移除了 `tls.insecureSkipVerify`、`tls.skipSanWhitelist` 开关，仅保留 SPKI Pin 与可观测性（`metricsEnabled`/`certFpLogEnabled`/`certFpMaxBytes`）；
+- 任务输入 `strategyOverride` 未实现 TLS 分支，后端只接受 HTTP / Retry 字段；相关事件也未上线。
 
-### P2.3e 策略覆盖护栏（ignored/conflict 事件）
-目标：在不阻断任务的前提下提供未知字段与互斥组合的可观测提示，保障策略配置可调试性与未来新增字段演进空间。
+结论：任务级 TLS 覆盖功能在实现前即被取消，文档保留此章节用于说明决策背景，实际产品行为不支持任何 TLS 放宽开关。若需排障只能通过 SPKI Pin/可观测字段诊断或临时关闭 Fake SNI。P2 交付的策略覆盖仅包含 HTTP 与 Retry 子集。
+
+### P2.3e 策略覆盖护栏（结构化 ignored/conflict 事件）
+目标：在不阻断任务的前提下提供未知字段与互斥组合的可观测提示，保障策略配置可调试性与未来字段演进空间。
 范围：
-- 忽略字段事件：`strategy_override_ignored_fields`，包含 top 与 sections 两集合（一次）。
-- 冲突事件：`strategy_override_conflict`，当前规则：HTTP follow=false & max>0；TLS insecureSkipVerify=true & skipSanWhitelist=true。
-- 规范化：冲突发生时自动调整值（max=0 / skipSanWhitelist=false），可能触发 applied + conflict 双事件。
-- 事件顺序：applied* → conflict* → ignored → summary（后续阶段）。
+- 忽略字段事件：`StrategyEvent::IgnoredFields { top_level, nested }`，每任务至多一次。
+- 冲突事件：`StrategyEvent::Conflict { kind, message }`，当前规则仅保留 HTTP follow=false & max>0；仅 Clone 发结构化事件，Push 额外复用 `task://error` 兼容旧 UI。
+- 规范化：冲突发生时自动将 max 调整为 0，可能同时发出冲突与 applied 事件。
+- 事件顺序：`HttpApplied`* → `Conflict`* → `IgnoredFields`? → 后续 Summary。
 交付物：
-- 解析结果返回 ignored 集合；合并函数返回 conflict 描述。
-- 事件发射逻辑与单元测试（含多冲突、多未知字段）。
-- 集成测试：冲突仅 HTTP / 仅 TLS / 双冲突 + ignored / 无冲突 / 仅 ignored。
+- 解析结果返回 ignored 集合；合并函数返回 conflict 描述；
+- 结构化事件发射逻辑与单元测试（含多冲突、多未知字段）；
+- 集成测试：冲突（HTTP）、仅 ignored、无冲突。
 验收标准：
-- 每任务 ignored 事件至多一次；冲突事件数量 = 触发规则数。
-- 规范化后值参与 changed 判定：若回到全局默认则只发 conflict 不发 applied。
+- 每任务 ignored 事件至多一次；冲突事件数量 = 触发规则数；
+- 规范化后值参与差异判定：若回到全局默认则只发 Conflict 不追加 `HttpApplied`；
 - 顺序测试稳定通过。
 回退策略：
-- 移除 conflict emit 保留规范化；或移除规范化恢复原值（高风险）；或全部移除回到仅 applied。
+- 移除 Conflict emit 保留规范化；或移除规范化恢复原值（高风险）；或全部移除回到仅 Summary。
 风险与缓解：
-- 风险：规则集合增加导致事件噪声上升 → 未来可聚合为 summary payload。
-- 风险：忽略字段误写难定位 → 事件 message 保留字段列表与分组区分。
+- 风险：规则集合增加导致事件噪声上升 → 已通过 Summary 聚合 `applied_codes` 降噪；
+- 风险：忽略字段误写难定位 → 事件 payload 保留字段列表与分组区分。
 
 ### P2.3f 策略覆盖汇总事件与前端集成收束
-目标：通过 summary 汇总事件与事件 gating 完成策略覆盖可观测闭环，并在前端提供统一展示及代码/回退文档化，标记策略覆盖阶段完成。
+目标：通过结构化 Summary 完成策略覆盖可观测闭环，前端统一展示并文档化回退路径。
 范围：
-- Summary 事件：`code=strategy_override_summary`，包含最终 http/retry/tls 值、appliedCodes、filterRequested。
-- 独立 applied 事件 gating：`FWC_STRATEGY_APPLIED_EVENTS=0` 时抑制 http/retry/tls *_applied，summary 仍发送。
-- retriedTimes 合并策略：信息型事件不降低已记录重试次数。
-- 前端：存储与 UI 统一分类（信息提示 vs 失败）；兼容旧 API（不传 strategyOverride）。
-- 文档：README + 设计文档补充事件代码矩阵与回退表；Changelog 追加条目。
+- Summary 事件：`StrategyEvent::Summary { http_*, retry_*, applied_codes, filter_requested }`，TLS 字段固定等同全局配置后不再包含；
+- 独立 applied 事件沿用结构化变体（`Strategy::HttpApplied`、`Policy::RetryApplied`），未实现 runtime gating；
+- retriedTimes 合并策略：信息型事件不降低已记录重试次数；
+- 前端：推荐订阅结构化事件；Push legacy `task://error` 仅保留冲突提示；
+- 文档：README / 设计文档更新事件矩阵与回退表；Changelog 追加条目。
 交付物：
-- emit_strategy_summary 实现 + 顺序测试（applied/conflict/ignored → summary）。
-- gating 判断函数与测试（开关两态）。
-- 前端事件存储逻辑与测试（顺序 / gating / retriedTimes 保留）。
+- `emit_strategy_summary` 实现 + 顺序测试（applied/conflict/ignored → summary）；
+- 前端事件存储逻辑与测试（顺序 / retriedTimes 保留 / applied_codes 展示）。
 验收标准：
-- gating=1 时 applied + summary；gating=0 时仅 summary 且 appliedCodes 保留差异列表。
-- 所有信息事件不改变任务最终状态；失败语义与前版本一致。
-- 回退矩阵清晰（禁用 summary / 禁用 gating / 单策略回退）。
+- Summary 始终发送；`applied_codes` 列表包含 HTTP/Retry 差异；
+- 所有信息事件不改变任务最终状态；失败语义与前版本一致；
+- 回退矩阵清晰（禁用 Summary / 移除覆盖函数 / 停用事件总线）。
 回退策略：
-- 删除 summary emit → 依赖独立 applied 事件；或同时开启 gating=1 保持信息完整。
+- 删除 Summary emit → 依赖独立 applied 事件；
+- 或直接跳过策略解析，回到全局配置行为。
 风险与缓解：
-- 风险：事件洪水（多策略）→ 用户多字段 override 仍至多 3 条 applied + 1 summary + 可选 conflict/ignored 上限有限。
-- 风险：前端排序波动 → 发送顺序测试锁定并在前端按 timestamp 排序兜底。
+- 风险：事件洪水（多策略）→ 通过结构化事件 + Summary 聚合降低噪声；
+- 风险：前端排序波动 → 发送顺序测试锁定，并可按 timestamp 排序兜底。
 
 ## 3. 实现说明（按阶段）
 
@@ -580,7 +566,7 @@ Remote：add/set/remove 成功链路 / add 重复 / set 不存在 / remove 不�
 #### 1. 代码落点
 - 解析与应用：`core/tasks/registry.rs::apply_http_override(kind, id, global_http, override_http)`
 - 调用：`spawn_git_{clone,fetch,push}_task*_with_opts` 在参数解析和 shallow/partial 判定之后、真正 git 操作之前
-- 事件发射：同文件内 changed 后 `emit_all(... TaskErrorEvent { code=http_strategy_override_applied })`
+- 事件发射：任务文件中按 changed 判定调用 `publish_global(Event::Strategy(StrategyEvent::HttpApplied { ... }))`
 
 #### 2. 覆盖字段与约束
 - 允许字段：`followRedirects: bool`，`maxRedirects: u8 (≤20)`
@@ -596,11 +582,11 @@ Remote：add/set/remove 成功链路 / add 重复 / set 不存在 / remove 不�
 5. 仅当 changed 为 true 发出事件；未变不发（满足幂等与低噪声）
 
 #### 4. 事件语义
-- 通道：沿用 `task://error`（信息提示类，与 partial_filter_fallback 同通道，前端无需新增订阅）
-- category：`Protocol`（统一归类为“协议/输入相关提示”）
-- code：`http_strategy_override_applied`
-- message：简要包含最终 follow 与 max 值（便于日志 grep）
-- 单任务生命周期只可能发射 0 或 1 次（一次性解析点）
+- 通道：结构化事件总线（`StrategyEvent::HttpApplied`），不再复用 `task://error`
+- payload：`follow` / `max_redirects` 仅包含最终覆盖后的值，便于前端直读
+- 冲突：`StrategyEvent::Conflict { kind:"http", message }`（仅 Clone 发射；Push/Fetch 暂未下发结构化冲突事件）
+- Push 兼容旧 UI：在冲突时额外通过 `task://error` 通道发信息级提示，其它任务不再发送 legacy code
+- 单任务生命周期 `HttpApplied` 最多 1 次（按 changed 判定）
 
 #### 5. 幂等与安全
 - 解析与应用在任务 spawn 期间执行一次；后续重试（内部网络重试）不再重新计算覆盖
@@ -620,34 +606,36 @@ Remote：add/set/remove 成功链路 / add 重复 / set 不存在 / remove 不�
 - 或整体删除 `apply_http_override` 调用与测试文件（其余任务逻辑不受影响）
 
 #### 8. 复用与扩展
-- changed 判定/事件模式在后续 Retry / TLS 扩展中复用（保持统一 code 命名 `<area>_strategy_override_applied`）
-- 单点应用函数便于组合 summary 汇总事件（后续阶段新增）
+- changed 判定/结构化事件模式在后续 Retry 扩展中复用（`PolicyEvent::RetryApplied` 保持同源 `applied_codes` 命名）。
+- 单点应用函数便于组合 Summary 聚合事件（含 `applied_codes` 与最终 HTTP/Retry 值）。
 
 #### 9. 已知限制
 - 未真正驱动底层 HTTP 客户端（当前 redirect 行为保持基线）
-- 未提示 follow=false 且 max>0 的潜在语义冲突（等待真实网络层接入时再细化）
+- GitFetch 解析到冲突仅在日志层记录，暂未发射 `Conflict` 事件
 - 仅限两个字段；其它策略（Retry/TLS）在后续阶段实现
 
-#### 10. 示例日志
+#### 10. 示例事件
 ```
-INFO strategy task_kind=GitClone task_id=... follow_redirects=false max_redirects=3 http override applied
+Event::Strategy(StrategyEvent::HttpApplied { id:"...", follow:false, max_redirects:0 })
+Event::Strategy(StrategyEvent::Conflict { id:"...", kind:"http", message:"followRedirects=false => force maxRedirects=0 (was 3)" })
+Event::Strategy(StrategyEvent::Summary { http_follow:false, http_max:0, applied_codes:["http_strategy_override_applied"], .. })
 ```
 
 #### 11. Changelog 建议
-Added: per-task HTTP strategy override (followRedirects/maxRedirects) with informative event `http_strategy_override_applied`.
+Added: per-task HTTP strategy override (followRedirects/maxRedirects) with structured events `StrategyEvent::HttpApplied` / `StrategyEvent::Conflict` / `StrategyEvent::Summary`。
 
 ### P2.3c Retry 策略覆盖实现说明
-为 clone/fetch/push 任务引入局部 Retry 参数覆盖（max/baseMs/factor/jitter），不写回全局配置；仅在任一值相对全局默认发生变更时发出一次 `retry_strategy_override_applied` 事件。
+为 clone/fetch/push 任务引入局部 Retry 参数覆盖（max/baseMs/factor/jitter），不写回全局配置；仅在任一值相对全局默认发生变更时通过结构化事件与 Summary `applied_codes` 暴露差异。
 
 #### 1. 代码落点
 - 应用函数：`core/tasks/registry.rs::apply_retry_override(global_retry, override_retry)` → `(RetryPlan, changed)`
-- 调用：`spawn_git_{clone,fetch,push}_task_with_opts` 解析 strategyOverride 后、HTTP/TLS 应用之后
-- 事件：`TaskErrorEvent code=retry_strategy_override_applied`（仅 changed）
+- 调用：`spawn_git_{clone,fetch,push}_task_with_opts` 解析 strategyOverride 后、HTTP 覆盖之后
+- 事件：Clone/Push 在 `changed` 时调用 `publish_global(Event::Policy(PolicyEvent::RetryApplied { id, code:"retry_strategy_override_applied", changed }))`；Fetch 仅依赖最终的 `StrategyEvent::Summary.applied_codes`
 
 #### 2. 合并逻辑
-1. 基线拷贝：`let mut plan = AppConfig::default().retry`（未来可热替换）
+1. 基线拷贝：`let mut plan = global_retry.clone().into()`（保持与运行时配置同步）
 2. 逐字段（max/baseMs/factor/jitter）若提供且不同 → 覆盖并 `changed=true`
-3. 返回覆盖后 RetryPlan 与 changed；未变不发事件
+3. 返回覆盖后 RetryPlan 与 changed；未变不发结构化事件（但 Summary 仍会包含空 `applied_codes`）
 
 #### 3. 约束与校验
 - 数值合法性（`max 1..=20`, `baseMs 10..60000`, `factor 0.5..=10.0`）在解析阶段完成；解析失败直接 Protocol 终止
@@ -656,17 +644,18 @@ Added: per-task HTTP strategy override (followRedirects/maxRedirects) with infor
 
 #### 4. 幂等与可观测性
 - 单任务仅在 spawn 阶段判定一次；后续 attempt 不重复计算
-- 事件通道复用 `task://error`，category=Protocol，与 HTTP 一致减少前端分支
+- Clone/Push 的结构化事件通过全局事件总线发送；Fetch 仅在 `Summary.applied_codes` 中体现差异
+- Summary 聚合 `retry_*` 数值，便于前端一次性展示最终计划
 
 #### 5. 测试要点
-- 覆盖值改变 → 事件一次；值与默认相同 → 无事件
-- http+retry 组合任务：各自事件至多一次
-- 重试循环（若分类为 retryable）不再重复发射 override 事件
+- 覆盖值改变 → Clone/Push 收到一次 `PolicyEvent::RetryApplied`；Fetch 的 Summary `applied_codes` 包含 `"retry_strategy_override_applied"`
+- 值与默认相同 → 无结构化事件，Summary `applied_codes` 为空
+- http+retry 组合任务：各自事件最多一次，顺序按 HTTP → Retry → Summary
 - 越界或无效值（max=0 等）→ 解析阶段 Protocol 失败，无事件
-- Backoff 边界（factor=0.5 / 10.0）事件消息包含对应因子
+- Backoff 边界（factor=0.5 / 10.0）`changed` 集合包含相应字段
 
 #### 6. 回退策略
-- 删除事件分支：逻辑仍覆盖但静默（仅日志）
+- 删除结构化事件发射：逻辑仍覆盖但仅在 Summary 中体现
 - 删除 `apply_retry_override` 调用：完全回到全局计划
 
 #### 7. 已知限制
@@ -674,88 +663,46 @@ Added: per-task HTTP strategy override (followRedirects/maxRedirects) with infor
 - 中文本地化网络错误分类可能导致少量 retryable 场景被视为 Internal（不影响 override 事件）
 - 未对 jitter=true 的统计分布在任务级重复验证（核心在单元测试覆盖）
 
-#### 8. 示例
-事件：`{"code":"retry_strategy_override_applied","message":"retry override applied: max=3 baseMs=500 factor=2 jitter=false"}`
-日志：`INFO strategy task_kind=GitClone task_id=... retry override applied max=3 base_ms=500 factor=2 jitter=false`
+#### 8. 示例事件
+```
+Event::Policy(PolicyEvent::RetryApplied { id:"...", code:"retry_strategy_override_applied", changed:["max","baseMs"] })
+Event::Strategy(StrategyEvent::Summary { retry_max:3, retry_base_ms:500, applied_codes:["retry_strategy_override_applied"], .. })
+```
 
 #### 9. Changelog 建议
-Added: per-task Retry strategy override (max/baseMs/factor/jitter) with informative event `retry_strategy_override_applied`.
+Added: per-task Retry strategy override (max/baseMs/factor/jitter) with structured events `PolicyEvent::RetryApplied` + Summary `applied_codes`。
 
 ### P2.3d TLS 策略覆盖实现说明
-在已有 HTTP 与 Retry 覆盖基础上，为任务级引入 `insecureSkipVerify` 与 `skipSanWhitelist` 两个布尔开关的浅覆盖；仅当任一值与全局不同（或规范化后不同）时发送一次 `tls_strategy_override_applied` 事件。
-
-#### 1. 代码落点
-- 函数：`apply_tls_override(kind, id, global_tls, tls_override)` → `(insecure, skip_san, changed)`
-- 调用：`spawn_git_{clone,fetch,push}_task_with_opts` 中 HTTP 后、Retry 前（顺序固定：HTTP→TLS→Retry）
-- 日志：`tracing target=strategy` 记录最终布尔值；事件复用 `task://error`
-
-#### 2. 合并与规范化
-1. 基线：`let mut eff = AppConfig::default().tls`
-2. 若提供 insecureSkipVerify 且不同 → 覆盖并标记 changed
-3. 若提供 skipSanWhitelist 且不同 → 覆盖并标记 changed
-4. 规范化（冲突预处理，与护栏阶段保持一致逻辑来源）：若 `insecure=true && skipSan=true` → 强制 `skipSan=false`（仍视为 changed）
-5. 不允许任务级覆盖 `san_whitelist` 列表（安全基线）
-6. 返回最终值与 changed；仅 changed 时发事件
-
-#### 3. 事件
-- code：`tls_strategy_override_applied`
-- category：`Protocol`
-- message：`tls override applied: insecureSkipVerify=<bool> skipSanWhitelist=<bool>`
-- 单任务最多一次；未改变不发；规范化导致值变化也算 changed
-
-#### 4. 测试要点
-- insecure 仅改变 / skipSan 仅改变 / 双字段改变 → 各触发一次
-- 未变化路径（false/false）不触发
-- 不同任务并行（http+tls+retry / tls-only / unchanged）事件计数互不影响
-- 规范化场景：insecure=true + skipSan=true → 仍只发一次 applied（冲突事件在护栏 P2.3e，TLS 自身不重复描述）
-- 单元：全部分支（无覆盖/单字段/双字段/规范化/不变）
-
-#### 5. 回退策略
-- 删除事件分支：保留覆盖与日志
-- 删除 `apply_tls_override` 调用：任务恢复使用全局 TLS 标志（仍保留 HTTP/Retry）
-- 移除函数与测试：完全撤销 TLS 覆盖
-
-#### 6. 已知限制
-- 尚未接入真实 TLS 验证层；两个开关当前仅作为后续自定义传输接入的参数
-- 不支持任务级动态修改 SAN 白名单；调试需求需另行设计安全开关
-
-#### 7. 示例
-事件：`{"code":"tls_strategy_override_applied","message":"tls override applied: insecureSkipVerify=true skipSanWhitelist=false"}`
-日志：`INFO strategy task_kind=GitFetch task_id=... tls override applied insecure=true skip_san=false`
-
-#### 8. Changelog 建议
-Added: per-task TLS strategy override application (insecureSkipVerify/skipSanWhitelist) with informative event `tls_strategy_override_applied`.
+本阶段未实现任何任务级 TLS 覆盖逻辑：`apply_tls_override` 等函数从未落地，相关事件/测试也未编写。最新实现沿用全局配置的强制 Real-Host 验证与 SPKI Pin 支持，不存在临时放宽路径，Changelog 亦无需记录 TLS 覆盖条目。
 
 ### P2.3e 策略覆盖护栏实现说明（忽略字段 + 冲突规范化）
 提供两类非阻断护栏：1) 未知字段收集并一次性提示；2) 冲突组合规范化并发冲突事件，确保任务级策略覆盖透明且自洽。
 
 #### 1. 功能范围
 - 任务：Clone / Fetch / Push
-- 作用对象：`strategyOverride` 顶层 + 子对象 http / tls / retry
-- 新增事件：`strategy_override_ignored_fields`、`strategy_override_conflict`；沿用已有 `*_strategy_override_applied`
+- 作用对象：`strategyOverride` 顶层 + 子对象 http / retry
+- 新增结构化事件：`StrategyEvent::IgnoredFields`（列出顶层与嵌套未知字段）、`StrategyEvent::Conflict { kind:"http", ... }`；`applied_codes` 继续通过 `StrategyEvent::Summary` 聚合
 
 #### 2. 逻辑
 1. 解析阶段：收集未知顶层键与子节未知键（记录为 `section.key`）。
 2. 冲突检测：
   - HTTP：followRedirects=false 且 maxRedirects>0 → 规范化 maxRedirects=0
-  - TLS：insecureSkipVerify=true 且 skipSanWhitelist=true → 规范化 skipSanWhitelist=false
-3. 规范化后继续后续覆盖；冲突各生成一条事件（最多 2 条）。
-4. 忽略字段：若集合非空，生成一次 `strategy_override_ignored_fields` 事件，列出 top 与 sections。
+3. 规范化后继续后续覆盖；Clone 在冲突时发出 `StrategyEvent::Conflict`，Push 仅写入 legacy `task://error` 信息事件，Fetch 当前仅记录日志。
+4. 忽略字段：若集合非空，生成一次 `StrategyEvent::IgnoredFields` 事件，列出 top 与 sections。
 5. changed 判定：基于规范化后最终值与全局比较（导致“规范化回到默认”时仅发 conflict，不发 applied）。
 
 #### 3. 事件顺序（单任务）
-applied(HTTP→TLS→Retry) → conflict(HTTP→TLS) → ignored（若有）
+applied(HTTP→Retry) → conflict(仅 Clone 结构化；Push legacy 提示) → ignored（若有） → summary
 
 #### 4. 代码落点
 - 解析返回结构扩展：`StrategyOverrideParseResult { parsed, ignored_top_level, ignored_nested }`
 - 应用函数扩展返回 conflict 描述（Option<String>）
-- Spawn 流程：解析 → HTTP 应用 → TLS 应用 → Retry 应用 → emit applied* → emit conflict* → emit ignored
+- Spawn 流程：解析 → HTTP 应用 → Retry 应用 → emit applied* → emit conflict* → emit ignored
 
 #### 5. 测试要点
 - 忽略字段：含/不含未知键事件出现 0/1 次
-- HTTP 冲突：follow=false + max>0 → 事件 + max 归零
-- TLS 冲突：insecure=true + skipSan=true → 事件 + skipSan=false
-- 组合：HTTP+TLS 同时冲突 + 忽略字段并存（计数精确）
+- HTTP 冲突：follow=false + max>0 → Clone 发结构化事件并将 max 归零；Push 仅发 legacy `task://error` 提示；Fetch 仅规范化
+- 组合：HTTP 冲突 + 忽略字段并存（计数精确）
 - 无冲突合法路径：仅必要 applied 事件
 - 单元：changed / conflict / 忽略各分支
 
@@ -771,20 +718,20 @@ applied(HTTP→TLS→Retry) → conflict(HTTP→TLS) → ignored（若有）
 - 未跨域检测 Retry 与其他策略组合
 
 #### 8. Changelog 建议
-Added: per-task strategy override guard (ignored fields + conflict normalization) with events `strategy_override_ignored_fields` & `strategy_override_conflict`.
+Added: per-task strategy override guard (ignored fields + conflict normalization) with structured events `StrategyEvent::IgnoredFields` & `StrategyEvent::Conflict`.
 
 ### P2.3f 策略覆盖前端与文档支持实现说明
-为策略覆盖闭环补齐前端透传、事件存储、示例文档与回退矩阵，确保调用方可稳定使用 HTTP/TLS/Retry + 护栏全套能力。
+为策略覆盖闭环补齐前端透传、事件存储、示例文档与回退矩阵，确保调用方可稳定使用 HTTP/Retry + 护栏全套能力（TLS 覆盖已移除）。
 
 #### 1. 范围
 - 前端 API：`startGitClone/Fetch/Push` 支持 `strategyOverride`（与 depth/filter 并存）
-- 公共类型：`StrategyOverride`（http|tls|retry 子对象）
+- 公共类型：`StrategyOverride`（仅 http|retry 子对象）
 - Store：错误事件存储新增 code 保留；信息型策略事件不覆盖已有 retriedTimes
 - 测试：事件顺序、组合、兼容旧 fetch 签名、参数排列、retriedTimes 保留
 - 文档：README + 设计文档事件代码表 & 示例更新
 
-#### 2. 事件代码矩阵（最终）
-`http_strategy_override_applied` / `tls_strategy_override_applied` / `retry_strategy_override_applied` / `strategy_override_conflict` / `strategy_override_ignored_fields`（顺序：applied* → conflict → ignored）
+#### 2. 事件矩阵（最终）
+`StrategyEvent::HttpApplied` / `PolicyEvent::RetryApplied` / `StrategyEvent::Conflict` / `StrategyEvent::IgnoredFields`（顺序：applied* → conflict → ignored → summary；`StrategyEvent::Conflict` 当前仅由 GitClone 发射，Push 仅保留 legacy `task://error` 提示）；字符串 `applied_codes` 保留旧 code（例如 `http_strategy_override_applied`、`retry_strategy_override_applied`）供前端聚合展示。
 
 #### 3. retriedTimes 语义
 信息事件缺少 retriedTimes 不清零；仅更大值提升，保持重试进度可观测连续性

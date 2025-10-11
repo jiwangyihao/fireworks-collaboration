@@ -41,9 +41,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "cd '$PWD/src-tauri'; car
 
 ## 安全注意事项
 - 不要将真实 Token 写入样例/日志；`Authorization` 会自动脱敏为 `REDACTED`。
-- 默认开启 SAN 白名单校验；TLS 校验开关已拆分：
-	- `insecureSkipVerify` 跳过默认证书链与主机名校验；
-	- `skipSanWhitelist` 跳过白名单校验；
-	- 两者均不开启为推荐模式；若仅开启 `insecureSkipVerify`，仍保留“仅白名单”保护；两者同时开启则完全不校验（仅临时联调）。
+- 真实主机名验证现为强制行为；Fake SNI 仅在 `http.fakeSniTargetHosts` 命中时改写 ClientHello，并在握手后仍按真实目标域验证证书。
+- TLS 配置面板仅暴露观测与 Pin 相关字段（`tls.spkiPins`、`metricsEnabled`、`certFpLogEnabled`、`certFpMaxBytes`）；不再提供跳过验证或 SAN 白名单开关。
 
 谢谢你的贡献！

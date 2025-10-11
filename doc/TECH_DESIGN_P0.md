@@ -102,14 +102,10 @@ src/
     "largeBodyWarnBytes": 5242880
   },
   "tls": {
-    "sanWhitelist": [
-      "github.com",
-      "*.github.com",
-      "*.githubusercontent.com",
-      "*.githubassets.com",
-      "codeload.github.com"
-    ],
-    "insecureSkipVerify": false
+    "spkiPins": [],
+    "metricsEnabled": false,
+    "certFpLogEnabled": false,
+    "certFpMaxBytes": 4096
   },
   "logging": {
     "authHeaderMasked": true,
@@ -118,8 +114,7 @@ src/
 }
 ```
 
-原型期开关说明（仅用于联调/验证，默认关闭）：
-- `tls.insecureSkipVerify`: 置为 true 时将跳过证书链与域名校验（极不安全）。用于在开发原型期验证“伪 SNI 能否突破某些网络封锁”的可达性实验；请勿在生产或常规开发中启用。
+> ⚠️ v1.8 起 `tls.insecureSkipVerify` / `tls.skipSanWhitelist` 被永久移除。当前实现始终通过 `RealHostCertVerifier` 以真实域名校验证书，Fake SNI 仅在 `http.fakeSniTargetHosts` 命中时改写 ClientHello。
 
 存储位置（P0.1 实际实现）：
 - 写入 Tauri 应用配置目录 app_config_dir：`<app_config_dir>/config/config.json`
@@ -436,8 +431,8 @@ src/
 | 任务进度 | `task://progress` 事件已在前端注册并汇总到 store | `src/api/tasks.ts` 监听 progress，调用 `tasks.updateProgress` |
 | 进度模型 | `tasks` store 扩展 `progressById`（按任务聚合） | 兼容可选字段：`percent`、`phase`、`objects`、`bytes`、`total_hint` |
 | 取消任务 | 面板“取消”按钮调用 `task_cancel` | UI 仅对运行中任务展示取消按钮 |
-| HTTP 面板 | `src/views/HttpTester.vue` 强化：历史记录（最近 N 条）、点击回填；策略开关 | 支持 Fake SNI 与不安全验证开关（原型），保存到配置 |
-| 配置读写 | `getConfig`/`setConfig` 读写 `http.fakeSniEnabled/http.fakeSniHosts`、`http.sniRotateOn403` 与 `tls.insecureSkipVerify/tls.skipSanWhitelist` | 保存后即时生效，不需重启 |
+| HTTP 面板 | `src/views/HttpTester.vue` 强化：历史记录（最近 N 条）、点击回填；策略开关 | 支持 Fake SNI 候选/命中列表与 403 轮换开关，保存到配置 |
+| 配置读写 | `getConfig`/`setConfig` 读写 `http.fakeSniEnabled/http.fakeSniHosts/http.fakeSniTargetHosts/http.sniRotateOn403` 与 `tls.spkiPins/tls.metricsEnabled/tls.certFpLogEnabled/tls.certFpMaxBytes` | 保存后即时生效，不需重启 |
 | 全局错误 | 新增 `src/stores/logs.ts` 与 `src/components/GlobalErrors.vue` 浮动提示 | `HttpTester` 中将错误推送到全局错误队列 |
 | 路由 | 在 `src/router/index.ts` 注册 `/git` 路由 | 可从首页/导航进入克隆面板 |
 | UI 风格 | 继承项目现有样式体系（Tailwind/DaisyUI） | 保持一致的输入/按钮/表格风格 |
@@ -445,7 +440,7 @@ src/
 实现文件小结：
 - 前端视图与组件：
   - `src/views/GitPanel.vue`（新增）：克隆输入/启动/进度条/取消/任务表。
-  - `src/views/HttpTester.vue`（增强）：历史列表、策略开关（Fake SNI / Insecure）、错误提示。
+  - `src/views/HttpTester.vue`（增强）：历史列表、Fake SNI 策略开关（候选/命中/轮换）、错误提示。
   - `src/components/GlobalErrors.vue`（新增）：全局错误吐司展示。
 - Store 与 API：
   - `src/stores/tasks.ts`（增强）：新增 `progressById` 与 `updateProgress`；保留 `upsert/remove` 逻辑。

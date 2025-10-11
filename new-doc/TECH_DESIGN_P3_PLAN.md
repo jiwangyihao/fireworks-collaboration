@@ -20,7 +20,7 @@
 5. 向后兼容：前端命令/事件签名不破坏，仅新增可选字段（如 usedFakeSni, timing, fallbackStage, certFpChanged?）；旧前端若忽略这些字段仍正常。无已存在字段语义变更。
 6. 可回退：单一配置布尔或环境变量即可即时关闭（不需重启）并回到 libgit2 默认传输；指纹与指标逻辑在关闭时自动暂停采集。
 7. 为 P4 准备：在 timing/回退事件中预留可选 `ip`、`ipSource?` 字段（当前恒为空），P4 注入时不需要新增事件代码。 
-8. 引入“真实域名验证”（Real-Host Verification）机制：握手可用 Fake SNI 但证书域名匹配仍针对真实目标域，失败一次即回退 Real SNI；本阶段实现并默认开启（可通过调试开关关闭），为后续 Pin 细化奠定基础。
+8. 引入“真实域名验证”（Real-Host Verification）机制：握手可用 Fake SNI 但证书域名匹配仍针对真实目标域，失败一次即回退 Real SNI；本阶段实现并强制开启，后续版本（v1.8 起）不再提供配置开关，为后续 Pin 细化奠定基础。
 9. 启用 SPKI Pin 强校验：当配置 `tls.spkiPins?: string[]`（Base64URL SPKI SHA256）非空时，握手后将证书 SPKI 指纹与列表匹配；若不匹配则按 Verify 失败直接终止（不触发 Fake→Real），记录 `cert_fp_pin_mismatch` 事件与 `pin_mismatch` 日志；支持并行轮换（多指纹）。
 
 ### 1.3 范围
@@ -52,11 +52,11 @@
 4. 安全：指纹日志不含私钥或密钥材料；无环境变量/凭证泄漏；
 5. 文档：配置、事件字段、回退顺序、风险与回退策略章节齐备；
 6. 测试：新增/更新测试矩阵（含故障注入），全部通过；
-7. 可回退：关闭开关后重新执行冒烟任务全部不再触发 usedFakeSni=true。
+7. 可回退：通过配置关闭 Fake SNI（`http.fakeSniEnabled=false`）后重新执行冒烟任务全部不再触发 usedFakeSni=true。
 
 ### 1.7 交付物
 - 代码：在现有 subtransport(A) 基础上抽象决策与指标采集层（非破坏性重写）；新增指纹采集与缓存模块；自动禁用（runtime flag）机制。
-- 配置：保持 `http.fakeSniEnabled` 键；新增 `http.fakeSniRolloutPercent?`（0..100，可缺省）；在 `tls` 命名空间增量添加 `metricsEnabled`、`certFpLogEnabled`、`certFpMaxBytes`、`realHostVerifyEnabled`（默认 true）；新增 `spkiPins?`（Base64URL SPKI SHA256 列表，非空即启用强校验，建议 ≤10 个）。
+- 配置：保持 `http.fakeSniEnabled` 键；新增 `http.fakeSniRolloutPercent?`（0..100，可缺省）；在 `tls` 命名空间增量添加 `metricsEnabled`、`certFpLogEnabled`、`certFpMaxBytes`，并按历史规划曾短暂引入 `realHostVerifyEnabled`（默认 true，已在 v1.8 起移除以强制启用真实域验证）；新增 `spkiPins?`（Base64URL SPKI SHA256 列表，非空即启用强校验，建议 ≤10 个）。
 - 事件：在既有 `task://progress|error` 通道新增可选结构 `{ timing?, usedFakeSni?, fallbackStage?, certFpChanged? }` 与信息型代码 `adaptive_tls_rollout`、`adaptive_tls_fallback`、`cert_fingerprint_changed`，并启用 `cert_fp_pin_mismatch`（Pin 不匹配时发送）。
 - 文档：更新 `TECH_DESIGN_git2rs.md` P3 段落、Changelog 条目、配置示例；保留与 P2 的差异对照表。
 - 测试：故障注入（连接/TLS/读写）、回退路径覆盖、rollout 采样偏差、指纹滚动与重复抑制、性能基线（微基准或统计）。
@@ -177,32 +177,32 @@
 - 失败（域名 / SAN 白名单不符）即触发单次 Real SNI 重握手；
 - 分类：链前错误→Tls，域名 / SAN 不符→Verify；
 - 采集 fallback 计数与原因；
-- 开关：`tls.realHostVerifyEnabled`（默认 true，可关闭回退到旧逻辑）。
+- 开关：历史规划曾引入 `tls.realHostVerifyEnabled`（默认 true），但 v1.8 起已移除该配置并强制启用真实域校验。
 
-交付物：定制 verifier、配置与日志字段、回退触发统计、指标 `real_host_fallback_total{reason}`、测试用例（成功 / 回退 / 关闭开关）。
+交付物：定制 verifier、配置与日志字段、回退触发统计、指标 `real_host_fallback_total{reason}`、测试用例（成功 / 回退，历史上覆盖过关闭开关行为）。
 
 验收：
-- 开启时 Fake→Real 回退率低于设定阈值（基线 <5%）；
-- 关闭开关后日志不再输出 real_host 关键字且行为与 P3.1 一致；
+- 启用真实域校验后 Fake→Real 回退率低于设定阈值（基线 <5%）；
+- 历史回归验证曾确认关闭开关会恢复 P3.1 行为，该路径 v1.8 起已移除；
 - 错误分类与既有规则兼容（无新增 category）。
 
-回退：关闭 `tls.realHostVerifyEnabled` 或移除 verifier 包装。
+回退：需关闭 Fake SNI（`http.fakeSniEnabled=false`）或移除本阶段代码以回滚版本，因配置开关已在 v1.8 起删除。
 
 风险&缓解：
-- 证书与真实域不匹配高频 → 自动统计 + 可以快速关闭。
+- 证书与真实域不匹配高频 → 自动统计；必要时临时关闭 Fake SNI 或回滚版本。
 - 性能开销（额外 verifier 构造）→ 缓存证书链结果 / 只对 Fake 分支启用。
 
 #### 实施要点表
 | 项 | 内容 |
 |----|------|
-| 开关 | `tls.realHostVerifyEnabled` (bool, default true) |
+| 开关 | v1.8 起移除配置项，逻辑始终启用真实域校验 |
 | 验证主机来源 | URL 解析出的目标域（白名单匹配对象） |
 | 握手 SNI | 可能为 Fake；不参与 SAN 匹配 |
 | 回退条件 | 域名验证或白名单失败（Verify）立即触发 Real SNI 重握手一次 |
 | 失败分类 | TLS 早期错误→Tls；链成功但域名不符→Verify |
 | 指标补充 | `real_host_fallback_total{reason}` |
 | 日志关键词 | `real_host_verify=on` / `fallback=real_sni` |
-| 兼容关闭 | 置 false 恢复“按握手 SNI 验证”旧逻辑 |
+| 兼容关闭 | 不再提供；需关闭 Fake SNI 或回滚版本 |
 
 实现摘要：自定义 `ServerCertVerifier` 包装 rustls 默认 verifier，传入真实域名生成 `ServerName`，完成链与域名校验后再执行白名单匹配；失败返回 rustls::Error::General 区分语义前缀 (`san_mismatch` / `name_mismatch`) 供分类层解析。
 
@@ -349,12 +349,12 @@
 在最初提交基础上，P3.0 已进一步补齐以下内容，使其成为后续 P3.1～P3.2 的“稳定挂点”：
 
 1. 策略覆盖 (strategy override) 汇总事件一致性强化
-  - 为 `GitFetch` / `GitPush` 引入始终存在的 `strategy_override_summary` 事件（即使没有任何 override / gating 关闭）。
-  - `appliedCodes`：去重、与独立 applied 事件解耦；当 `FWC_STRATEGY_APPLIED_EVENTS=0` 时仅保留 summary（独立 *_strategy_override_applied 不发射）。
+  - 为 `GitFetch` / `GitPush` 引入始终存在的 `StrategyEvent::Summary` 结构化事件（即使没有任何 override）。
+  - `applied_codes`：去重、与独立结构化 applied 事件解耦；由于运行时已移除 gating，始终保留结构化 applied 事件（若实际生效）。
   - 额外测试：
-    - 含 override：`fetch_summary_event_and_applied_codes` / `push_summary_event_and_gating_off`（gating 关闭仍有 summary）。
-    - 无 override：`fetch_summary_event_no_override` / `push_summary_event_no_override`（`appliedCodes` 为空数组）。
-  - 解析测试由简单字符串包含升级为双层 JSON 解析（外层 TaskErrorEvent，内层 summary），降低转义格式回归风险。
+    - 含 override：`fetch_summary_event_and_applied_codes` / `push_summary_event_structured`（断言结构化 Summary 与 `applied_codes`）。
+    - 无 override：`fetch_summary_event_no_override` / `push_summary_event_no_override`（`applied_codes` 为空数组）。
+  - 解析测试由字符串匹配升级为结构化事件断言，降低转义格式回归风险。
 
 2. 回退状态机稳定性增强测试
   - 新增终态幂等（Default 再次 advance 不变）测试用例，保证未来扩展阶段不会破坏当前链条语义。
@@ -429,7 +429,7 @@
 - 单任务最多 1 条。未命中不发。
 示例（message 内 JSON）：`{"taskId","kind","code":"adaptive_tls_rollout","percentApplied":37,"sampled":true}`。
 
-保留：`strategy_override_summary` + `*_strategy_override_applied`（已改为精确事件匹配）。
+保留：`StrategyEvent::Summary` + `StrategyEvent::HttpApplied` / `PolicyEvent::RetryApplied`（结构化事件已改为精确匹配）。
 
 #### 5. 内部计数器
 `ROLLOUT_HIT` / `ROLLOUT_MISS` （Relaxed 原子）。allow 且：HIT 计 HIT；bucket>=percent 计 MISS。非 allow host 不计入。当前仅内存占位，后续指标导出。
@@ -441,7 +441,7 @@
 | 100% | 有且最多 1 条事件 |
 | hostAllowListExtra | 非主白名单域可触发事件 |
 | 一致性 | 同 host 多次要么全 HIT 要么全 MISS |
-| insecure push | 精确 1 条 `tls_strategy_override_applied` |
+| insecure push | 不适用（任务级 TLS 覆盖已取消） |
 | no override | summary 存在，appliedCodes=[] |
 | 并发串行化 | 不丢失 summary / 不重复 rollout |
 | helper 事件 | 无网络仍能稳定发 summary + rollout |
@@ -654,15 +654,15 @@ Thread-local 保存 (timing, used_fake, fallback_stage, cert_fp_changed)。无�
 已完成（实现于本阶段提交）：
 
 1) 配置与默认值
-- 新增 `tls.realHostVerifyEnabled: true`（默认开启，关闭后回退到旧逻辑）。
+- 设计稿最初新增 `tls.realHostVerifyEnabled: true`（默认开启，关闭后回退到旧逻辑），但正式发布（v1.8 起）已移除该字段并固定启用真实域验证。
 
 2) 验证器实现
-- 在 `core/tls/verifier.rs` 引入 `WhitelistCertVerifier { real_host_verify_enabled }`。
+- 在 `core/tls/verifier.rs` 引入 `RealHostCertVerifier` 包装 rustls `WebPkiVerifier`，以 `override_host` 强制真实域名校验并承载 SPKI pin 逻辑。
 - 当开启且存在 `override_host`（来自握手使用 Fake SNI 场景下的真实域）时，将 `override_host` 构造成 `ServerName` 传入内置 `WebPkiVerifier` 执行链路与主机名验证；否则使用 SNI 对应的 `server_name`。
 - SAN 白名单匹配始终优先使用 `override_host`（若存在），保证 Fake 握手下仍按真实域做白名单判定。
 
 3) 工厂与调用方
-- `create_client_config_with_expected_name()` 通过 `build_cert_verifier(tls, Some(expected_host))` 传递真实域；`build_cert_verifier` 将 `real_host_verify_enabled` 贯穿至 `WhitelistCertVerifier`。
+- `create_client_config_with_expected_name()` 使用 `RealHostCertVerifier::new(WebPkiVerifier, Some(expected_host), tls.spki_pins.clone())` 构建 `ClientConfig`，确保 Fake SNI 握手期间仍按真实域完成链与域名校验，并在同一 verifier 内执行 SPKI pin。
 - 子传输握手日志增加 `real_host_verify=<on|off>` 标识，便于观测。
 
 4) 测试
@@ -672,7 +672,7 @@ Thread-local 保存 (timing, used_fake, fallback_stage, cert_fp_changed)。无�
 5) 行为与分类
 - 该实现遵循设计：链前错误仍归类为 Tls；链成功但域名/SAN 不符归类为 Verify（分类基线未改动）。第一次验证失败会进入既有 Fake→Real 回退链的 Real 分支重握手（由 `fallback` 状态机与握手路径共同驱动）。
 
-回退：设置 `tls.realHostVerifyEnabled=false` 即可停用该逻辑，恢复按 SNI 验证的旧路径。
+回退：现已无独立开关；若需恢复旧路径需关闭 Fake SNI 或回滚相关版本。
 
 
 #### 补充实现细节：计数 / 分类 / 日志锚点 / 测试 / 运维
@@ -698,8 +698,8 @@ Thread-local 保存 (timing, used_fake, fallback_stage, cert_fp_changed)。无�
 
 4) 测试矩阵（新增）
 - Verifier 路径：
-  - 开启 `realHostVerifyEnabled=true` 时，捕获型 verifier（测试桩）观察到用于链与域名匹配的 `server_name` 为真实域（override host）；
-  - 关闭开关后，回退为使用握手 SNI 的旧行为。
+  - 强制启用真实域验证后，捕获型 verifier（测试桩）观察到用于链与域名匹配的 `server_name` 为真实域（override host）；
+  - 历史上验证过关闭开关时会回退到使用握手 SNI 的旧行为，该路径在 v1.8 起已移除，仅保留强制启用分支。
 - 分类与计数器：
   - 使用 `test_classify_and_count_fallback()` 输入代表性错误消息：
     - Verify：`"tls: General(SAN whitelist mismatch)"`、`"certificate name mismatch"`；
@@ -716,21 +716,21 @@ Thread-local 保存 (timing, used_fake, fallback_stage, cert_fp_changed)。无�
   - 配合握手日志中的 `real_host_verify=on|off` 校验当次任务是否启用 Real-Host 验证；
   - 结合 P3.2 的 timing 事件与证书指纹变更事件，定位是否因证书轮换引发短期 Verify 升高。
 - 应急回退：
-  - 若 `Verify` 原因占比显著升高（如 >20% 且持续）且证书侧短期无法修复，可临时将 `tls.realHostVerifyEnabled=false`，回退至旧逻辑，后续再择机恢复；
+  - 若 `Verify` 原因占比显著升高（如 >20% 且持续）且证书侧短期无法修复，可临时下调或关闭 Fake SNI（P3.1 开关），并结合回滚策略评估恢复窗口；
   - 若 `Tls` 原因整体升高（网络/策略变更），可考虑临时下调或关闭 Fake SNI（P3.1 开关），观察恢复情况。
 - 前端兼容：
-  - 已在类型中同步 `realHostVerifyEnabled?` 可选字段；前端忽略该字段不影响现有渲染。
+  - 曾在类型中同步 `realHostVerifyEnabled?` 可选字段；自 v1.8 起该字段删除，前端无需额外处理。
 
 6) 边界与风险
 - IDNA/国际化域名：当前按解析后的 ASCII/Punycode 结果进行 `ServerName` 构造；特殊大小写/同形异构域名需依赖上游 URL 解析约束。
 - 直连 IP：证书域名匹配对纯 IP 目标通常不成立，允许策略上直接走 Default 或关闭 Fake；
 - 通配名限制：`*.example.com` 不匹配多级（如 `a.b.example.com`），符合常见 CA 规则；
-- 代理/MITM：若存在企业代理进行 TLS 拦截，Verify 类错误可能升高；可与 `tls.skipSanWhitelist`（若有）或策略白名单协同评估；
+- 代理/MITM：若存在企业代理进行 TLS 拦截，Verify 类错误可能升高；需结合策略白名单与日志评估（历史 `tls.skipSanWhitelist` 开关已移除）；
 - ECH/HTTP/2：不在当前阶段范围内；不影响 Real-Host 验证逻辑。
 - 性能：Real-Host 验证在 Fake 分支上仅影响 `ServerName` 选择与一次校验，实测对握手耗时无显著影响。
 
 7) 兼容与回退摘要
-- 单一布尔开关：`tls.realHostVerifyEnabled=false` 即可回退至旧校验路径；
+- 不再提供独立布尔开关；若需退回旧校验路径需关闭 Fake SNI（`http.fakeSniEnabled=false`）或回滚版本；
 - 与 P3.1 开关配合：需要时可将 `http.fakeSniEnabled=false`，完全绕过 Fake→Real 路径；
 - 事件与类型：新增字段/日志均为加法，不破坏旧消费者。
 
@@ -771,7 +771,7 @@ Thread-local 保存 (timing, used_fake, fallback_stage, cert_fp_changed)。无�
 #### 补充实现细节（2025-09-25）
 - 配置与解析：`TlsCfg.spki_pins` 在 `core/config/model.rs` 中默认空数组，并随 `AppConfig` 序列化；每次握手调用 `validate_pins`（`core/tls/verifier.rs`）做去重、长度（43）与 Base64URL 合法性校验，超过 10 个或含非法值立即禁用本次 Pin 检查并记录 `pin_disabled_this_conn` 日志。
 - 指纹提取：新增 `core/tls/spki.rs` 使用 `x509-parser` 精确解析 SPKI DER，失败时退化为整张证书哈希；返回值标记 `SpkiSource`，供日志区分 `exact` 与 `fallback` 路径，与 P3.2 指纹日志格式保持一致。
-- 校验顺序：`WhitelistCertVerifier::verify_server_cert` 先执行链路/域名/白名单校验（Real-Host 开关生效），随后在 Fake→Real 回退之前比对 SPKI；命中时输出 `pin_match` debug 日志，未命中时立即抛出 `cert_fp_pin_mismatch`（归类 Verify），并通过 `StrategyEvent::CertFpPinMismatch` 将 host、SPKI、pin_count 发往全局事件总线。
+- 校验顺序：`RealHostCertVerifier::verify_server_cert` 先执行链路/域名/白名单校验，再在 Fake→Real 回退之前比对 SPKI；命中时输出 `pin_match` debug 日志，未命中时立即抛出 `cert_fp_pin_mismatch`（归类 Verify），并通过 `StrategyEvent::CertFpPinMismatch` 将 host、SPKI、pin_count 发往全局事件总线。
 - 观测锚点：握手起始日志包含 `pin_enforced` 与 `pin_count` 字段；禁用场景会带 `reason="invalid_pins"`，方便排查配置问题；事件与日志均以 override host（真实域）为准，便于与 Real-Host 验证对齐。
 - 回退与统计：Pin 失败不会触发 Fake→Real，fallback 状态机停留在 Fake 阶段并直接返回错误；Verify 计数与 P3.3 分类表共享，运维可结合 `cert_fp_pin_mismatch` 事件频次与回退计数评估风险。
 

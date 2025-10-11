@@ -25,7 +25,7 @@
 |------|------|------|
 | 默认启用 + 渐进放量 | 对白名单域按百分比 rollout，自适应 Fake→Real→Default 链条 | ✅ 完成，默认 100% |
 | 可观测性强化 | timing、fallback、cert 指纹事件与日志 | ✅ 完成，事件 DSL 已接入 |
-| Real-Host 验证 | Fake 握手后按真实域名验证 + 单次 Real 回退 | ✅ 完成，默认启用可关闭 |
+| Real-Host 验证 | Fake 握手后按真实域名验证 + 单次 Real 回退 | ✅ 完成，现为强制启用 |
 | SPKI Pin | 指纹强校验，支持多指纹并行，触发 mismatch 事件 | ✅ 完成，默认关闭 |
 | 自动禁用策略 | 窗口失败率阈值 + 冷却恢复，事件可观测 | ✅ 完成 |
 | Soak 稳定性 | Push→Fetch→Clone 泡脚 + 报告输出 | ✅ 完成，含基线对比 |
@@ -38,7 +38,7 @@
 | 回退决策 | `src-tauri/src/core/git/transport/fallback.rs` | 纯状态机，Fake→Real→Default transitions |
 | 指标采集 | `src-tauri/src/core/git/transport/metrics.rs` | `TimingRecorder` + TL 快照，尊重 `metrics_enabled` |
 | 指纹日志 | `src-tauri/src/core/git/transport/fingerprint.rs` | JSONL log + 24h LRU 缓存 + 结构化事件 |
-| Real-Host 验证 | `src-tauri/src/core/tls/verifier.rs` | `WhitelistCertVerifier` 支持 override host |
+| Real-Host 验证 | `src-tauri/src/core/tls/verifier.rs` | `RealHostCertVerifier` 以真实域名包装 `WebPkiVerifier` |
 | SPKI Pin | 同上 | `validate_pins` 过滤非法/超限指纹，mismatch 发事件 |
 | 自动禁用 | `src-tauri/src/core/git/transport/runtime.rs` | 失败率窗口 + 冷却，事件由任务层转发 |
 | 任务集成 | `src-tauri/src/core/tasks/registry/git/*.rs` | Rollout 事件、TLS 可观测事件、策略总结 |
@@ -56,7 +56,6 @@
 | `tls.metricsEnabled` | bool | true | 控制 `TimingRecorder` 是否生效 |
 | `tls.certFpLogEnabled` | bool | true | 指纹日志与事件开关 |
 | `tls.certFpMaxBytes` | u64 | 5 MiB | 日志滚动阈值 |
-| `tls.realHostVerifyEnabled` | bool | true | Fake 握手后按真实域名验证 |
 | `tls.spkiPins` | Vec<String> | [] | Base64URL 指纹列表 (≤10) |
 
 > ⚠️ 运行期变更依赖 `load_or_init()` 动态加载，无需重启。
@@ -89,9 +88,8 @@
 
 ---
 ## 6. Real-Host 验证与回退
-- Fake SNI 握手成功后，`WhitelistCertVerifier` 使用真实域名执行证书链 + SAN 白名单校验。
-- 失败归类 `Verify`，触发 Fake→Real 回退统计。
-- 可通过 `tls.realHostVerifyEnabled=false` 回退旧逻辑（仅 SNI 验证）。
+- Fake SNI 握手成功后，`RealHostCertVerifier` 使用真实域名执行证书链 + SAN 白名单校验。
+- 失败归类 `Verify`，触发 Fake→Real 回退统计；该校验为强制行为，不再提供配置开关。
 - 若真实域名无法被解析成 `DnsName`（例如含非法字符），验证器会自动退回到 SNI，对运维透明；白名单匹配仍优先基于 `override_host`，保证 Fake SNI 下也按真实域筛选。
 - 验证失败的错误文本包含 `SAN whitelist mismatch` / `name mismatch` 等关键字，并由 `classify_and_count_fallback` 计入 Verify 分桶；`AdaptiveTlsFallback` 在该场景下给出 `from="Fake"`、`to="Real"`、`reason="FakeHandshakeError"`，配合内部原子计数器即可量化真实域核验带来的回退量。
 
@@ -147,7 +145,7 @@
 | 暂时禁用 Fake SNI | `http.fakeSniEnabled=false` 或 rollout=0 | 回退至 libgit2 默认传输 |
 | 暂停指标采集 | `tls.metricsEnabled=false` | 不再生成 timing 事件/日志 |
 | 停止指纹日志 | `tls.certFpLogEnabled=false` | 停止写 `cert-fp.log` 与变更事件 |
-| 关闭 Real-Host 校验 | `tls.realHostVerifyEnabled=false` | 恢复旧的 SNI 验证逻辑 |
+| 停止 Real-Host 校验 | 不支持配置关闭；需禁用 Fake SNI 或回滚版本 | 当前版本强制启用 |
 | 清空 Pin | `tls.spkiPins=[]` | 立即停用强校验 |
 | 自动禁用触发 | 等待冷却或提高阈值 | 期间 Fake SNI 不再尝试 |
 
