@@ -4,6 +4,8 @@ export interface HttpCfg {
   fakeSniEnabled: boolean;
   // 新增：多候选伪 SNI 列表（若存在将参与随机选择与403轮换）
   fakeSniHosts?: string[];
+  // 新增：命中这些目标域名时才启用伪装 SNI
+  fakeSniTargetHosts?: string[];
   // 新增：403 时自动轮换 SNI（仅 InfoRefs GET 阶段）
   sniRotateOn403?: boolean;
   // P3.1：渐进放量百分比（0..=100）

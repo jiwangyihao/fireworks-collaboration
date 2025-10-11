@@ -28,26 +28,16 @@
           <label class="label cursor-pointer gap-2"><span>Force Real SNI</span><input type="checkbox" v-model="forceRealSni" class="checkbox checkbox-sm" /></label>
           <label class="label cursor-pointer gap-2"><span>Follow Redirects</span><input type="checkbox" v-model="followRedirects" class="checkbox checkbox-sm" /></label>
         </div>
-        <div class="mt-2 p-2 border rounded">
-          <div class="flex items-center gap-2">
-            <label class="label cursor-pointer gap-2">
-              <span>跳过证书验证（不安全，原型期）</span>
-              <input type="checkbox" v-model="insecureSkipVerify" class="checkbox checkbox-sm" @change="applyTlsToggle" />
-            </label>
-            <span class="text-xs opacity-70">启用后 TLS 将不校验证书链与域名，仅用于验证伪 SNI 的可达性。</span>
-          </div>
-          <div class="flex items-center gap-2 mt-1">
-            <label class="label cursor-pointer gap-2">
-              <span>跳过 SAN 白名单校验</span>
-              <input type="checkbox" v-model="skipSanWhitelist" class="checkbox checkbox-sm" @change="applyTlsToggle" />
-            </label>
-            <span class="text-xs opacity-70">开启仅跳过自定义白名单校验，仍保留常规证书链与主机名校验。</span>
-          </div>
-          <div class="grid grid-cols-2 gap-2 mt-2">
+        <div class="mt-2 p-2 border rounded space-y-2">
+          <div class="grid grid-cols-2 gap-2">
             <label class="label cursor-pointer gap-2"><span>启用 Fake SNI</span><input type="checkbox" v-model="fakeSniEnabled" class="checkbox checkbox-sm" /></label>
             <label class="label cursor-pointer gap-2"><span>403 时自动轮换 SNI</span><input type="checkbox" v-model="sniRotateOn403" class="checkbox checkbox-sm" /></label>
             <textarea v-model="fakeSniHostsText" class="textarea textarea-bordered w-full col-span-2" rows="3" placeholder="多个候选域名：每行一个，或用逗号分隔，例如\nbaidu.com\nqq.com\nweibo.com"></textarea>
+            <textarea v-model="fakeSniTargetsText" class="textarea textarea-bordered w-full col-span-2" rows="3" placeholder="启用伪装 SNI 的域名列表：仅匹配这些域名时启用伪装，支持通配符 *.example.com"></textarea>
+          </div>
+          <div class="flex items-center gap-2">
             <button class="btn btn-sm" @click="applyHttpStrategy">保存 HTTP 策略</button>
+            <span class="text-xs opacity-70">仅当目标域名命中列表时才使用伪装 SNI 与自定义校验。</span>
           </div>
         </div>
         <div class="mt-3">
@@ -101,40 +91,84 @@ import { useLogsStore } from "../stores/logs";
 import ProxyConfig from "../components/ProxyConfig.vue";
 import ProxyStatusPanel from "../components/ProxyStatusPanel.vue";
 
-// Tab state
-const activeTab = ref<"http" | "proxy">("http");
+type HistoryItem = {
+  key: string;
+  url: string;
+  method: string;
+  headers: string;
+  bodyText: string;
+  forceRealSni: boolean;
+  followRedirects: boolean;
+};
 
+const activeTab = ref<"http" | "proxy">("http");
 const method = ref("GET");
 const url = ref("https://github.com/");
 const headersText = ref('{"User-Agent":"P0Test"}');
 const bodyText = ref("");
 const forceRealSni = ref(false);
 const followRedirects = ref(true);
-const insecureSkipVerify = ref(false);
-const skipSanWhitelist = ref(false);
 const fakeSniEnabled = ref(true);
 const fakeSniHostsText = ref("");
+const fakeSniTargetsText = ref("");
 const sniRotateOn403 = ref(true);
 
 const resp = ref<HttpResponseOutput | null>(null);
 const err = ref<string | null>(null);
 const logs = useLogsStore();
-const history = ref<{ key: string; url: string; method: string; headers: string; bodyText: string; forceRealSni: boolean; followRedirects: boolean }[]>([]);
+const history = ref<HistoryItem[]>([]);
+const cfg = ref<AppConfig | null>(null);
 
 const decodedText = computed(() => {
   if (!resp.value) return "";
   try {
-    const bytes = atob(resp.value.bodyBase64);
-    return bytes;
+    return atob(resp.value.bodyBase64);
   } catch {
     return "<binary>";
   }
 });
 
+const parseList = (input: string) => {
+  return Array.from(
+    new Set(
+      (input || "")
+        .split(/[\n,]/)
+        .map(item => item.trim())
+        .filter(Boolean)
+    )
+  );
+};
+
+const formatList = (items?: string[]) => {
+  if (!items || items.length === 0) return "";
+  return items.join("\n");
+};
+
+function recordHistory() {
+  const item: HistoryItem = {
+    key: `${Date.now()}:${Math.random()}`,
+    url: url.value,
+    method: method.value,
+    headers: headersText.value,
+    bodyText: bodyText.value,
+    forceRealSni: forceRealSni.value,
+    followRedirects: followRedirects.value,
+  };
+  history.value.unshift(item);
+  if (history.value.length > 10) history.value.pop();
+}
+
 async function send() {
-  err.value = null; resp.value = null;
+  err.value = null;
+  resp.value = null;
   let headers: Record<string, string> = {};
-  try { headers = JSON.parse(headersText.value || "{}"); } catch(e) { err.value = "Headers JSON 解析失败"; return; }
+  try {
+    headers = JSON.parse(headersText.value || "{}");
+  } catch {
+    err.value = "Headers JSON 解析失败";
+    return;
+  }
+
   const req: HttpRequestInput = {
     url: url.value,
     method: method.value,
@@ -145,74 +179,54 @@ async function send() {
     followRedirects: followRedirects.value,
     maxRedirects: 5,
   };
+
   try {
-    const out = await httpFakeRequest(req);
-    resp.value = out;
-    // 记录历史
-    const item = { key: Date.now()+":"+Math.random(), url: url.value, method: method.value, headers: headersText.value, bodyText: bodyText.value, forceRealSni: forceRealSni.value, followRedirects: followRedirects.value };
-    history.value.unshift(item);
-    if (history.value.length > 10) history.value.pop();
-  } catch (e:any) {
-    err.value = String(e);
+    resp.value = await httpFakeRequest(req);
+    recordHistory();
+  } catch (error: unknown) {
+    err.value = String(error);
     logs.push("error", `HTTP 请求失败: ${err.value}`);
   }
 }
 
-// 加载/应用 TLS 跳过验证开关
-const cfg = ref<AppConfig | null>(null);
 onMounted(async () => {
   try {
     cfg.value = await getConfig();
-    insecureSkipVerify.value = !!cfg.value.tls.insecureSkipVerify;
-  skipSanWhitelist.value = !!(cfg.value.tls as any).skipSanWhitelist;
-  fakeSniEnabled.value = !!cfg.value.http.fakeSniEnabled;
-    // 新增：多候选与 403 轮换
-    const hosts = (cfg.value.http as any).fakeSniHosts as string[] | undefined;
-    fakeSniHostsText.value = (hosts && hosts.length > 0) ? hosts.join("\n") : "";
-    sniRotateOn403.value = (cfg.value.http as any).sniRotateOn403 ?? true;
-  } catch (e) {
-    // 忽略读取失败
+    const httpCfg = cfg.value.http;
+    fakeSniEnabled.value = httpCfg.fakeSniEnabled ?? true;
+    fakeSniHostsText.value = formatList(httpCfg.fakeSniHosts);
+    fakeSniTargetsText.value = formatList(httpCfg.fakeSniTargetHosts);
+    sniRotateOn403.value = httpCfg.sniRotateOn403 ?? true;
+  } catch (error) {
+    console.warn("读取 HTTP 配置失败", error);
   }
 });
 
-async function applyTlsToggle() {
+async function applyHttpStrategy() {
   try {
     if (!cfg.value) {
       cfg.value = await getConfig();
     }
-    cfg.value!.tls.insecureSkipVerify = insecureSkipVerify.value;
-  (cfg.value!.tls as any).skipSanWhitelist = !!skipSanWhitelist.value;
-    await setConfig(cfg.value!);
-  } catch (e) {
-    // 简单提示：可根据需要接入全局 toast
-    console.error("更新配置失败", e);
-    logs.push("error", `更新 TLS 配置失败: ${String(e)}`);
+    const httpCfg = cfg.value.http;
+    httpCfg.fakeSniEnabled = !!fakeSniEnabled.value;
+    httpCfg.fakeSniHosts = parseList(fakeSniHostsText.value);
+    httpCfg.fakeSniTargetHosts = parseList(fakeSniTargetsText.value);
+    httpCfg.sniRotateOn403 = !!sniRotateOn403.value;
+    await setConfig(cfg.value);
+    logs.push("info", "HTTP 策略已更新");
+  } catch (error) {
+    console.error("更新 HTTP 策略失败", error);
+    logs.push("error", `更新 HTTP 策略失败: ${String(error)}`);
   }
 }
 
-async function applyHttpStrategy() {
-  try {
-    if (!cfg.value) cfg.value = await getConfig();
-    cfg.value!.http.fakeSniEnabled = !!fakeSniEnabled.value;
-    // 解析候选列表（按换行或逗号分隔，去重、去空格、去空）
-    const raw = (fakeSniHostsText.value || "").split(/[,\n]/).map(s => s.trim()).filter(Boolean);
-    const uniq: string[] = Array.from(new Set(raw));
-    (cfg.value!.http as any).fakeSniHosts = uniq;
-    (cfg.value!.http as any).sniRotateOn403 = !!sniRotateOn403.value;
-    await setConfig(cfg.value!);
-  } catch (e) {
-    console.error("更新 HTTP 策略失败", e);
-    logs.push("error", `更新 HTTP 策略失败: ${String(e)}`);
-  }
-}
-
-function applyHistory(h: { url: string; method: string; headers: string; bodyText: string; forceRealSni: boolean; followRedirects: boolean }){
-  url.value = h.url;
-  method.value = h.method;
-  headersText.value = h.headers;
-  bodyText.value = h.bodyText;
-  forceRealSni.value = h.forceRealSni;
-  followRedirects.value = h.followRedirects;
+function applyHistory(item: HistoryItem) {
+  method.value = item.method;
+  url.value = item.url;
+  headersText.value = item.headers;
+  bodyText.value = item.bodyText;
+  forceRealSni.value = item.forceRealSni;
+  followRedirects.value = item.followRedirects;
 }
 </script>
 
