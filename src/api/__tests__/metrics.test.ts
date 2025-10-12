@@ -5,7 +5,7 @@ const { mockFetch, mockInvoke } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/plugin-http", () => ({
+vi.mock("../tauri-fetch", () => ({
   fetch: mockFetch,
 }));
 

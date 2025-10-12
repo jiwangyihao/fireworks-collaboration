@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("@tauri-apps/plugin-http", () => ({
+vi.mock("../../api/tauri-fetch", () => ({
   fetch: vi.fn(),
 }));
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openPath: vi.fn(),
 }));
 
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { fetch as tauriFetch } from "../../api/tauri-fetch";
 import { openPath } from "@tauri-apps/plugin-opener";
 import {
   generateAuthUrl,

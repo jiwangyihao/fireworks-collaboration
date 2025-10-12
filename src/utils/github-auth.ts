@@ -1,5 +1,5 @@
 import CryptoJS from "crypto-js";
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { fetch as tauriFetch } from "../api/tauri-fetch";
 import { openPath } from "@tauri-apps/plugin-opener";
 
 const GITHUB_CLIENT_ID = "Ov23liuEyOOy0l1BNyyV";

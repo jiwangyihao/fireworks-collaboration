@@ -1,4 +1,4 @@
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { fetch as tauriFetch } from "./tauri-fetch";
 import { invoke } from "./tauri";
 
 export type MetricsRange = "1m" | "5m" | "1h" | "24h";

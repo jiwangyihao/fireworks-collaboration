@@ -1,3 +1,4 @@
+import { fetch as tauriFetch } from "../api/tauri-fetch";
 import { loadAccessToken } from "./github-auth";
 
 // GitHub API 基础配置
@@ -24,7 +25,7 @@ export async function forkRepository(
 ): Promise<any> {
   try {
     const headers = await getAuthHeaders();
-    const response = await fetch(
+  const response = await tauriFetch(
       `${GITHUB_API_BASE}/repos/${owner}/${repo}/forks`,
       {
         method: "POST",
@@ -59,7 +60,7 @@ export async function createPullRequest(
 ): Promise<any> {
   try {
     const headers = await getAuthHeaders();
-    const response = await fetch(
+  const response = await tauriFetch(
       `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls`,
       {
         method: "POST",
@@ -85,7 +86,7 @@ export async function createPullRequest(
 export async function listSSHKeys(): Promise<any[]> {
   try {
     const headers = await getAuthHeaders();
-    const response = await fetch(`${GITHUB_API_BASE}/user/keys`, {
+  const response = await tauriFetch(`${GITHUB_API_BASE}/user/keys`, {
       headers,
     });
 
@@ -106,7 +107,7 @@ export async function listSSHKeys(): Promise<any[]> {
 export async function addSSHKey(title: string, key: string): Promise<any> {
   try {
     const headers = await getAuthHeaders();
-    const response = await fetch(`${GITHUB_API_BASE}/user/keys`, {
+  const response = await tauriFetch(`${GITHUB_API_BASE}/user/keys`, {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -132,7 +133,7 @@ export async function addSSHKey(title: string, key: string): Promise<any> {
 export async function deleteSSHKey(keyId: number): Promise<void> {
   try {
     const headers = await getAuthHeaders();
-    const response = await fetch(`${GITHUB_API_BASE}/user/keys/${keyId}`, {
+  const response = await tauriFetch(`${GITHUB_API_BASE}/user/keys/${keyId}`, {
       method: "DELETE",
       headers,
     });
@@ -152,7 +153,7 @@ export async function deleteSSHKey(keyId: number): Promise<void> {
 export async function getRepository(owner: string, repo: string): Promise<any> {
   try {
     const headers = await getAuthHeaders();
-    const response = await fetch(`${GITHUB_API_BASE}/repos/${owner}/${repo}`, {
+  const response = await tauriFetch(`${GITHUB_API_BASE}/repos/${owner}/${repo}`, {
       headers,
     });
 
@@ -185,7 +186,7 @@ export async function checkIfForked(
 }> {
   try {
     const headers = await getAuthHeaders();
-    const response = await fetch(
+  const response = await tauriFetch(
       `${GITHUB_API_BASE}/repos/${username}/${repo}`,
       {
         headers,
@@ -231,7 +232,7 @@ export async function getForkSyncStatus(
     const headers = await getAuthHeaders();
 
     // 比较Fork和上游仓库的主分支
-    const response = await fetch(
+  const response = await tauriFetch(
       `${GITHUB_API_BASE}/repos/${upstreamOwner}/${upstreamRepo}/compare/${baseBranch}...${forkOwner}:${baseBranch}`,
       {
         headers,
@@ -275,7 +276,7 @@ export async function syncFork(
     const headers = await getAuthHeaders();
 
     // 使用GitHub的Fork同步API
-    const response = await fetch(
+  const response = await tauriFetch(
       `${GITHUB_API_BASE}/repos/${forkOwner}/${forkRepo}/merge-upstream`,
       {
         method: "POST",
@@ -323,7 +324,7 @@ export async function canSyncFork(
 ): Promise<boolean> {
   try {
     const headers = await getAuthHeaders();
-    const response = await fetch(
+  const response = await tauriFetch(
       `${GITHUB_API_BASE}/repos/${forkOwner}/${forkRepo}`,
       {
         headers,
@@ -351,7 +352,7 @@ export async function listUserRepositories(username?: string): Promise<any[]> {
       ? `${GITHUB_API_BASE}/users/${username}/repos`
       : `${GITHUB_API_BASE}/user/repos`;
 
-    const response = await fetch(url, {
+  const response = await tauriFetch(url, {
       headers,
     });
 
@@ -377,7 +378,7 @@ export async function createBranch(
 ): Promise<any> {
   try {
     const headers = await getAuthHeaders();
-    const response = await fetch(
+  const response = await tauriFetch(
       `${GITHUB_API_BASE}/repos/${owner}/${repo}/git/refs`,
       {
         method: "POST",
@@ -410,7 +411,7 @@ export async function getBranch(
 ): Promise<any> {
   try {
     const headers = await getAuthHeaders();
-    const response = await fetch(
+  const response = await tauriFetch(
       `${GITHUB_API_BASE}/repos/${owner}/${repo}/branches/${branch}`,
       {
         headers,
@@ -446,7 +447,7 @@ export async function getFileContent(
       url.searchParams.set("ref", ref);
     }
 
-    const response = await fetch(url.toString(), {
+  const response = await tauriFetch(url.toString(), {
       headers,
     });
 
@@ -477,7 +478,7 @@ export async function createOrUpdateFile(
 ): Promise<any> {
   try {
     const headers = await getAuthHeaders();
-    const response = await fetch(
+  const response = await tauriFetch(
       `${GITHUB_API_BASE}/repos/${owner}/${repo}/contents/${path}`,
       {
         method: "PUT",
