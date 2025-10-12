@@ -1,7 +1,7 @@
 # 统一 Git 加速与传输控制综合技术方案
 
 > 路线更新提示：本仓库的 Git 实现路线已切换为 git2-rs（libgit2 绑定）。
-> 具体迁移与后续阶段细则请参考：`new-doc/TECH_DESIGN_git2rs.md`（新 P0=从 gitoxide 迁移 → P1 Push 与自定义 subtransport → P2+ 深化）。
+> 具体迁移与后续阶段细则请参考：`doc/TECH_DESIGN_git2rs.md`（新 P0=从 gitoxide 迁移 → P1 Push 与自定义 subtransport → P2+ 深化）。
 
 > 本文将“原始统一 Git 加速与传输控制技术方案（含伪 SNI、SAN 白名单、IP 优选、代理、任务事件、通用伪 SNI HTTP 请求 API 等）”与“当前仓库（Tauri + Vue + TypeScript 模板）落地新版技术方案”合并，形成一份既包含完整长期蓝图，又具有在现有仓库逐步实施路径的综合方案。  
 > 面向：架构 / 实施开发 / 测试 / 安全 / 后续演进。
@@ -434,9 +434,9 @@ Tauri Backend (Rust)
 
 开发者入口：
 - 路由 `/git` 进入 Git 克隆面板；`/` 主页包含导航。
-- 详见实现说明与文件清单：`doc/TECH_DESIGN_P0.md` 的「P0.7 实际实现说明 (已完成)」。
+- 详见实现说明与文件清单：`doc-archive/TECH_DESIGN_P0.md` 的「P0.7 实际实现说明 (已完成)」。
 
-下一阶段（P1）规划与实施细化请见：`doc/TECH_DESIGN_P1.md`。
+下一阶段（P1）规划与实施细化请见：`doc-archive/TECH_DESIGN_P1.md`。
 
 ---
 

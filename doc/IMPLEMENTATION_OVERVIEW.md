@@ -71,7 +71,7 @@
 - 在 `src-tauri/src/core/ip_pool/global.rs` 中新增异步桥（background bridge running a single-thread Tokio runtime），并公开 `pick_best_async(host, port)` 与 `report_outcome_async(selection, outcome)` 接口；
 - 在 `src-tauri/src/core/http/client.rs` 中替换了原先的阻塞式选择调用为 `pick_best_async(...).await`，并引入 OutcomeReporter RAII guard，保证请求完成后 candidate outcome 会被上报；
 - 在 `src-tauri/src/core/ip_pool/sampling.rs` 与 `core/metrics/event_bridge.rs` 中增加/增强事件发射与日志，用以使前端 observability 面板能看到 `ip_pool_refresh_total` / `ip_pool_selection_total` 等样本；
-- 在文档 `new-doc/IMPLEMENTATION_OVERVIEW.md` 中补充了实现说明与验证步骤（即本文件的增补）。
+- 在文档 `doc/IMPLEMENTATION_OVERVIEW.md` 中补充了实现说明与验证步骤（即本文件的增补）。
 
 验证与运行记录（工程内可复现步骤）：
 - 阅读/审查文件：核心修改涉及 `core/ip_pool/global.rs`, `core/http/client.rs`, `core/ip_pool/sampling.rs`, `core/metrics/event_bridge.rs` 与若干测试与配置文件；
@@ -266,7 +266,7 @@ fn ip_pool_emits_refresh_log() {
   - 新接手的后端/前端开发；
   - 运维与 SRE（回退、监控、调参）；
   - 测试与质量保障（测试矩阵、DSL 约束）。
-- **联动文档**：`new-doc/MP*_IMPLEMENTATION_HANDOFF.md`、`new-doc/P*_IMPLEMENTATION_HANDOFF.md` 系列交接稿、`new-doc/TECH_DESIGN_*.md` 设计稿、`doc/TESTS_REFACTOR_HANDOFF.md`。
+- **联动文档**：`doc/MP*_IMPLEMENTATION_HANDOFF.md`、`doc/P*_IMPLEMENTATION_HANDOFF.md` 系列交接稿、`doc/TECH_DESIGN_*.md` 设计稿、`doc/TESTS_REFACTOR_HANDOFF.md`。
 
 ---
 
@@ -546,7 +546,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
 - Schema 主版本不匹配直接拒绝导入；报告中列出 `applied` 与 `skipped` 节及原因（如 strategyKeepLocal / sectionDisabled / noChanges）。
 
 ### 3.5 发布节奏与跨阶段集成
-- **推广顺序**：遵循 MP0 -> MP1 -> P2 -> P3 的递进路径，每阶段功能上线前都需确认前置阶段的回退手段仍可用；详见 `new-doc/MP*_IMPLEMENTATION_HANDOFF.md`。
+- **推广顺序**：遵循 MP0 -> MP1 -> P2 -> P3 的递进路径，每阶段功能上线前都需确认前置阶段的回退手段仍可用；详见 `doc/MP*_IMPLEMENTATION_HANDOFF.md`。
 - **配置切换流程**：
   1. 在预生产环境调整 `AppConfig`/环境变量验证行为；
   2. 触发 `fwcctl reload-config` 或重启 Tauri 容器以生效；
@@ -570,7 +570,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - 若需降级二进制，参考 `src-tauri/_archive` 中的 legacy 实现及各阶段 handoff 文档的“回退矩阵”。
   - P7 回退：关闭 `workspace.enabled` 即可整体禁用工作区、批量与子模块 UI 入口；如仅批量操作异常，可下调 `workspace.maxConcurrentRepos=1` 退化为顺序；子模块异常时禁用递归（`submodule.autoInitOnClone=false`，手动操作可用）；模板导入风险时避免执行 `import_team_config_template` 并保留自动备份回滚；状态服务异常时将 `workspace.statusAutoRefreshSecs=0` 并清空缓存。
 - **交接资料**：
-  - 每次版本发布前更新 `CHANGELOG.md`、`new-doc/IMPLEMENTATION_OVERVIEW.md` 与对应的 handoff 文档；
+  - 每次版本发布前更新 `CHANGELOG.md`、`doc/IMPLEMENTATION_OVERVIEW.md` 与对应的 handoff 文档；
   - 附上最新 soak 报告、配置快照、事件截图，供下游团队复用。
 
 ---
@@ -598,7 +598,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - 如需回滚到 gitoxide 版本，可使用 `src-tauri/_archive/default_impl.legacy_*` 中的旧实现，编译时需重新启用 `gix` 相关依赖（非推荐，仅供紧急回退）。
   - 修改 git2 版本前务必在 Windows + macOS 双平台运行 `cargo test -q` 验证动态库加载。
 - **交接 checklist**：
-  - 对照 `new-doc/MP0_IMPLEMENTATION_HANDOFF.md` §2 的代码结构，确认 `core/git/default_impl.rs`、`core/tasks/registry.rs` 的负责人，并在交接记录中注明。
+  - 对照 `doc/MP0_IMPLEMENTATION_HANDOFF.md` §2 的代码结构，确认 `core/git/default_impl.rs`、`core/tasks/registry.rs` 的负责人，并在交接记录中注明。
   - 每次发版前手动执行 `pnpm test -s` 与 `cargo test -q`；同时用 `http_fake_request` 校验白名单与脱敏日志，确保调试工具保持可用。
   - 若需要临时回滚到 gitoxide 版本，提前验证 `_archive/default_impl.legacy_*` 分支仍能通过最小 smoke，避免紧急恢复时缺乏可用包。
 
@@ -647,7 +647,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - 进度停滞：若 Upload 阶段长时间无变化，提示手动取消并重试；事件中 `retriedTimes` 不再增长属于预期表现。
 - **交接 checklist**：
   - 评估 Push/方式A rollout 前，在预生产逐项验证：正常 Push、401/403、代理透传、取消路径、Retry 关闭/开启效果。
-  - 更新 `new-doc/MP1_IMPLEMENTATION_HANDOFF.md` 中的白名单与凭证说明，确保 SRE 拥有最新连接策略。
+  - 更新 `doc/MP1_IMPLEMENTATION_HANDOFF.md` 中的白名单与凭证说明，确保 SRE 拥有最新连接策略。
   - 前端确认 `GitPanel` 凭证输入不落盘，并在发布说明中告知新事件字段，便于文档同步。
 
 ### 4.3 P2 - 本地操作与策略扩展
@@ -747,7 +747,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - 自动禁用 oscillation：检查失败率阈值是否过低，或 Soak 报告中是否存在网络抖动；必要时提高 `autoDisableFakeThresholdPct`。
 - **交接 checklist**：
   - 发布前确认 `cert-fp.log` 滚动机制与磁盘配额，必要时在运维标准中加入归档脚本。
-  - 调整 rollout 百分比时，更新监控告警阈值并记录在 `new-doc/P3_IMPLEMENTATION_HANDOFF.md` 交接表。
+  - 调整 rollout 百分比时，更新监控告警阈值并记录在 `doc/P3_IMPLEMENTATION_HANDOFF.md` 交接表。
   - Soak 报告归档到 `doc/` 目录并附在发布邮件，确保后续回溯有依据。
 - **前端/服务配合**：
   - GitPanel 监听 `AdaptiveTls*` 信息事件并折叠展示关键字段，未开启 UI 时仍可在全局日志查看；

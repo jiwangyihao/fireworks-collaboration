@@ -27,7 +27,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "cd '$PWD/src-tauri'; car
 ## 代码风格
 - 前端：TypeScript + Vue 3，遵循现有 ESLint/Prettier 设定（已内置 prettier）。
 - 后端：Rust，保持 `clippy` 友好与模块内自测。
-- 命名与结构：与 `doc/TECH_DESIGN_P0.md` 模块划分一致（tasks/http/tls/git/config 等）。
+- 命名与结构：与 `doc-archive/TECH_DESIGN_P0.md` 模块划分一致（tasks/http/tls/git/config 等）。
 
 ## 提交规范
 - 语义化简要前缀：`feat|fix|docs|test|chore|refactor(scope): message`

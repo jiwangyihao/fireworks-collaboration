@@ -3,10 +3,10 @@
 > 适用范围：以 MP0（git2-rs 迁移完成）为基线，保持前端 API/事件/任务模型不变，补齐 Push 能力，并灰度接入“方式A：自定义 smart subtransport（仅接管连接/TLS/SNI）”，同时引入统一重试（Retry v1）与事件增强；要求全部单测通过且可一键回退。
 
 关联文档：
-- 现状与总体设计（git2-rs 版本）：`new-doc/TECH_DESIGN_git2rs.md`
-- 旧版 P0 交接稿：`doc/TECH_DESIGN_P0_HANDOFF.md`
-- 旧版 P1 设计（历史语境）：`doc/TECH_DESIGN_P1.md`
-- MP0 计划与交付：`new-doc/TECH_DESIGN_MP0_PLAN.md`
+- 现状与总体设计（git2-rs 版本）：`doc/TECH_DESIGN_git2rs.md`
+- 旧版 P0 交接稿：`doc-archive/TECH_DESIGN_P0_HANDOFF.md`
+- 旧版 P1 设计（历史语境）：`doc-archive/TECH_DESIGN_P1.md`
+- MP0 计划与交付：`doc/TECH_DESIGN_MP0_PLAN.md`
 
 ---
 
@@ -45,7 +45,7 @@
 | MP1.4 Retry v1 | 统一重试策略（指数退避+类别化），push 遵守“上传前可重试” | 失败时更稳健，错误消息包含重试计数 |
 | MP1.5 事件增强 | push 阶段化进度与标准化错误事件（task://error） | UI 可显示更丰富进度/错误（保持兼容） |
 
-不做（本阶段）：代理/IP 优选、浅克隆/部分克隆、LFS、SSH 兜底、指标面板等（详见 `new-doc/TECH_DESIGN_git2rs.md` 的后续阶段）。
+不做（本阶段）：代理/IP 优选、浅克隆/部分克隆、LFS、SSH 兜底、指标面板等（详见 `doc/TECH_DESIGN_git2rs.md` 的后续阶段）。
 
 ---
 
@@ -451,7 +451,7 @@
 
 - 事件已满足实时显示需求；
 - 可在 debug 日志中附加：usedFakeSni、realHost 验证结果、retriedTimes（均为可选）；
-- 指标/面板在后续阶段推进（参考 `new-doc/TECH_DESIGN_git2rs.md` §13/§19）。
+- 指标/面板在后续阶段推进（参考 `doc/TECH_DESIGN_git2rs.md` §13/§19）。
 
 ---
 

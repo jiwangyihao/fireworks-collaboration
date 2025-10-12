@@ -322,6 +322,6 @@ Push 额外规则：一旦进入 `Uploading` 阶段，后续错误不再自动�
 
 ## 13. 关联文档
 
-- P0 阶段细化版：`doc/TECH_DESIGN_P0.md`
-- 综合技术方案：`doc/TECH_DESIGN.md`
+- P0 阶段细化版：`doc-archive/TECH_DESIGN_P0.md`
+- 综合技术方案：`doc-archive/TECH_DESIGN.md`
 

@@ -1,7 +1,7 @@
 # P6 实现与维护对接文档 (凭证存储与安全管理)
 
 > 适用读者：凭证管理维护者、安全审计人员、前端开发者、质量保障
-> 配套文件：`new-doc/TECH_DESIGN_P6_PLAN.md`
+> 配套文件：`doc/TECH_DESIGN_P6_PLAN.md`
 > 当前状态：P6 目标全部交付（合入 main 分支），处于"生产环境准入"阶段。
 
 ---
@@ -786,7 +786,7 @@ cargo bench --bench credential_benchmark
 - **代码规模**：~3,600行凭证管理核心代码
 - **审计维度**：8个（加密、内存、日志、错误、并发、平台、配置、密钥）
 - **审计时间**：2025年10月4日
-- **审计文档**：`new-doc/P6_SECURITY_AUDIT_REPORT.md`
+- **审计文档**：`doc/P6_SECURITY_AUDIT_REPORT.md`
 
 ### 安全评分
 **总体评分**：⭐⭐⭐⭐⭐ (4.9/5)

@@ -336,8 +336,8 @@
 | 凭证数据模型 | `src-tauri/src/core/credential/model.rs` | `Credential` 结构体，包含所有必需字段和辅助方法 |
 | 存储抽象 trait | `src-tauri/src/core/credential/storage.rs` | `CredentialStore` trait 及内存存储实现 |
 | 配置结构 | `src-tauri/src/core/credential/config.rs` | `CredentialConfig` 及 `StorageType` 枚举 |
-| 安全威胁评估 | `new-doc/CREDENTIAL_SECURITY_ASSESSMENT.md` | 识别 15 个威胁及缓解措施 |
-| 加密方案设计 | `new-doc/CREDENTIAL_ENCRYPTION_DESIGN.md` | AES-256-GCM + Argon2id 详细设计 |
+| 安全威胁评估 | `doc/CREDENTIAL_SECURITY_ASSESSMENT.md` | 识别 15 个威胁及缓解措施 |
+| 加密方案设计 | `doc/CREDENTIAL_ENCRYPTION_DESIGN.md` | AES-256-GCM + Argon2id 详细设计 |
 | 依赖配置 | `src-tauri/Cargo.toml` | 添加 aes-gcm, argon2, hmac, sha2, zeroize |
 | 配置示例 | `config.example.json` | 凭证配置章节及 5 个场景示例 |
 | 单元测试 | 各模块 `#[cfg(test)]` | 26 个测试用例，100% 通过 |
@@ -355,8 +355,8 @@
 - `src-tauri/src/core/mod.rs` - 在主模块中引入 `credential` 模块
 
 **文档**：
-- `new-doc/CREDENTIAL_SECURITY_ASSESSMENT.md` - 安全评估，700+ 行
-- `new-doc/CREDENTIAL_ENCRYPTION_DESIGN.md` - 加密设计，800+ 行
+- `doc/CREDENTIAL_SECURITY_ASSESSMENT.md` - 安全评估，700+ 行
+- `doc/CREDENTIAL_ENCRYPTION_DESIGN.md` - 加密设计，800+ 行
 - `config.example.json` - 配置示例，新增 150+ 行
 
 #### 实际交付与设计差异
@@ -3909,7 +3909,7 @@ P6.6 阶段作为 P6 "凭证存储与安全管理"的最终验收阶段，目标
 - **状态**: ✅ 已完成
 
 **4. 安全审计报告** ✅
-- **文件位置**: `new-doc/P6_SECURITY_AUDIT_REPORT.md`
+- **文件位置**: `doc/P6_SECURITY_AUDIT_REPORT.md`
 - **审计范围**: ~3,600 行凭证管理代码
 - **审计内容**:
   1. 加密实现审计（AES-256-GCM + Argon2id）
@@ -3944,7 +3944,7 @@ P6.6 阶段作为 P6 "凭证存储与安全管理"的最终验收阶段，目标
 - **状态**: ✅ 已完成
 
 **5. 准入评审报告** ✅
-- **文件位置**: `new-doc/P6_ACCEPTANCE_REPORT.md`
+- **文件位置**: `doc/P6_ACCEPTANCE_REPORT.md`
 - **报告内容**:
   1. **功能完成度矩阵**
      - P6.0-P6.6 各阶段完成度统计

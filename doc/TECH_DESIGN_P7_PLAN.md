@@ -304,8 +304,8 @@
 - `workspace.json.example` - 完整的工作区配置示例，包含 4 个仓库、场景说明、字段文档
 
 **文档**:
-- `new-doc/P7_IMPLEMENTATION_HANDOFF.md` (500+ 行) - 实现交接文档，包含模块映射、配置说明、命令参考、测试矩阵、运维指南
-- `new-doc/TECH_DESIGN_P7_PLAN.md` (本文档) - 技术设计与实现说明
+- `doc/P7_IMPLEMENTATION_HANDOFF.md` (500+ 行) - 实现交接文档，包含模块映射、配置说明、命令参考、测试矩阵、运维指南
+- `doc/TECH_DESIGN_P7_PLAN.md` (本文档) - 技术设计与实现说明
 
 #### 3.2 实际交付与设计差异
 
@@ -413,7 +413,7 @@
 
 **运维文档** - 已完成 ✅
 
-`new-doc/P7_IMPLEMENTATION_HANDOFF.md` 包含:
+`doc/P7_IMPLEMENTATION_HANDOFF.md` 包含:
 - **快速启用指南** - 3 步启用工作区功能
 - **配置参考** - config.json 和 workspace.json 完整字段说明
 - **Tauri 命令表** - 15 个命令的参数、返回值、说明
@@ -1234,8 +1234,8 @@ git submodule status  # 应显示已初始化的子模块
    - `workspace_status_service_sanitizes_config_defaults` 与 `workspace_status_service_applies_runtime_updates`：保证 TTL / 并发 / 自动刷新配置在导入、热更新时被自动校验及收敛，防止 0 值或错配参数进入运行态。
 - `src-tauri/tests/common/task_wait.rs`：复用 `wait_until_task_done` 等辅助，保障批量任务在测试中可靠收敛。
 - 文档：
-   - `new-doc/P7_6_READINESS_CHECKLIST.md`：准入清单、测试矩阵、灰度策略、回滚脚本与监控指标。
-   - `new-doc/TECH_DESIGN_P7_PLAN.md`（本文档）：补充 P7.6 实现复盘、指标与残留风险。
+   - `doc/P7_6_READINESS_CHECKLIST.md`：准入清单、测试矩阵、灰度策略、回滚脚本与监控指标。
+   - `doc/TECH_DESIGN_P7_PLAN.md`（本文档）：补充 P7.6 实现复盘、指标与残留风险。
 
 #### 3.2 实际交付与设计差异
 

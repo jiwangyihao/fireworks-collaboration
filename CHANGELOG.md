@@ -44,7 +44,7 @@
 - **评估**: ✅ 所有操作亚毫秒级完成，性能优异
 
 **Security Audit:**
-- **审计文档**: `new-doc/P6_SECURITY_AUDIT_REPORT.md` (746 lines)
+- **审计文档**: `doc/P6_SECURITY_AUDIT_REPORT.md` (746 lines)
 - **审计范围**:
   - 加密算法评估 (AES-256-GCM + Argon2id + HMAC-SHA256)
   - 密钥管理审计 (生命周期 + Zeroize + 平台集成)
@@ -60,7 +60,7 @@
   - ✅ GDPR数据保护合规
 
 **Acceptance Review:**
-- **评审文档**: `new-doc/P6_ACCEPTANCE_REPORT.md` (880 lines)
+- **评审文档**: `doc/P6_ACCEPTANCE_REPORT.md` (880 lines)
 - **评审得分**: **97.35/100** (远超90分及格线)
   - 功能完整性: 100/100 (权重30%, 加权30.0)
   - 性能指标: 98/100 (权重20%, 加权19.6)
@@ -95,21 +95,21 @@
   - 添加`let _ = `处理返回值
 
 **Documentation:**
-- 新增 `new-doc/P6_SECURITY_AUDIT_REPORT.md` (746行)
+- 新增 `doc/P6_SECURITY_AUDIT_REPORT.md` (746行)
   - 加密算法安全评估
   - 密钥管理安全评估
   - 内存安全评估
   - 审计日志安全评估
   - 性能基准测试结果
   - 合规性检查
-- 新增 `new-doc/P6_ACCEPTANCE_REPORT.md` (880行)
+- 新增 `doc/P6_ACCEPTANCE_REPORT.md` (880行)
   - 功能完整性检查
   - 性能指标验收
   - 安全合规验收
   - 测试质量验收
   - 文档完备性验收
   - 准入决策矩阵
-- 更新 `new-doc/TECH_DESIGN_P6_PLAN.md`
+- 更新 `doc/TECH_DESIGN_P6_PLAN.md`
   - 添加第9.6节 "P6.6阶段总结"
   - 记录测试统计、性能数据、安全评估
   - 准入决策与遗留工作
@@ -147,7 +147,7 @@
   - Criterion框架集成，编译验证通过
 
 - **安全审计报告**:
-  - 创建 `new-doc/P6_SECURITY_AUDIT_REPORT.md`（约500行）
+  - 创建 `doc/P6_SECURITY_AUDIT_REPORT.md`（约500行）
   - 审计范围：~3,600行凭证管理代码
   - 审计维度：8个（加密/内存安全/日志脱敏/错误处理/并发/平台API/配置/密钥管理）
   - 安全评分：4.9/5星
@@ -155,7 +155,7 @@
   - 合规性验证：OWASP Top 10 + NIST标准全部通过
 
 - **准入评审报告**:
-  - 创建 `new-doc/P6_ACCEPTANCE_REPORT.md`（约800行）
+  - 创建 `doc/P6_ACCEPTANCE_REPORT.md`（约800行）
   - 功能完成度：99%（P6.0-P6.6全阶段）
   - 测试汇总：816个测试，99.9%通过率（后端520/521，前端295/295）
   - 性能验证：操作响应时间<500ms（除首次密钥派生1-2秒）
@@ -358,7 +358,7 @@ Refinement (post-initial P3.2 patch): implemented precise firstByte capture hook
 
 ### Docs
 - README：更新结构化事件枚举、环境变量说明与示例 payload。
-- `new-doc/TECH_DESIGN_P2_PLAN.md` / `IMPLEMENTATION_OVERVIEW.md` / `P2_IMPLEMENTATION_HANDOFF.md`：同步移除 TLS 覆盖/事件 gating，补充结构化事件语义与回退路径。
+- `doc/TECH_DESIGN_P2_PLAN.md` / `IMPLEMENTATION_OVERVIEW.md` / `P2_IMPLEMENTATION_HANDOFF.md`：同步移除 TLS 覆盖/事件 gating，补充结构化事件语义与回退路径。
 
 ### Backward Compatibility
 - 自 T6 起，消费方需监听结构化事件（Strategy/Policy/Transport）；旧的 `_strategy_override_applied` / `strategy_override_summary` / conflict / ignored / partial_filter_fallback `TaskErrorEvent` 已移除。

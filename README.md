@@ -15,7 +15,7 @@ Tauri + Vue 3 + TypeScript 的桌面应用，用于“统一 Git 加速与传输
 	- Git 面板：输入仓库与目标目录、启动克隆、进度条、取消
 	- 全局错误提示（脱敏）
 
-详细技术方案见 `doc/TECH_DESIGN.md`、`doc/TECH_DESIGN_P0.md`，以及 P1 阶段细化文档 `doc/TECH_DESIGN_P1.md`（涵盖 Fetch/Push 与重试策略 v1 计划）。
+详细技术方案见 `doc-archive/TECH_DESIGN.md`、`doc-archive/TECH_DESIGN_P0.md`，以及 P1 阶段细化文档 `doc-archive/TECH_DESIGN_P1.md`（涵盖 Fetch/Push 与重试策略 v1 计划）。
 
 ## ⚙️ 构建与运行（Windows / PowerShell）
 
@@ -42,7 +42,7 @@ pnpm test
 powershell -NoProfile -ExecutionPolicy Bypass -Command "cd '$PWD/src-tauri'; cargo test --quiet"
 ```
 
-所有现有用例应通过；人工验收脚本见 `doc/MANUAL_TESTS.md`。
+所有现有用例应通过；人工验收脚本见 `doc-archive/MANUAL_TESTS.md`。
 
 ## 🔐 安全基线
 
@@ -55,9 +55,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "cd '$PWD/src-tauri'; car
 
 - Git 面板：`/git`
 - HTTP 测试器：主页导航进入
-- 手动验收脚本：`doc/MANUAL_TESTS.md`
-- 设计文档：`doc/TECH_DESIGN.md`、`doc/TECH_DESIGN_P0.md`
-- P1 细化：`doc/TECH_DESIGN_P1.md`
+- 手动验收脚本：`doc-archive/MANUAL_TESTS.md`
+- 设计文档：`doc-archive/TECH_DESIGN.md`、`doc-archive/TECH_DESIGN_P0.md`
+- P1 细化：`doc-archive/TECH_DESIGN_P1.md`
 
 ## 🛠️ 开发者环境建议
 

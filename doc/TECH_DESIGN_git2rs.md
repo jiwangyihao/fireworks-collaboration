@@ -38,11 +38,11 @@
 - 归档：历史 `transport/http.rs` 已移动到 `src-tauri/_archive/http.legacy_YYYYMMDD_HHMMSS.rs`，方便回溯而不影响编译。
 
 关联文档：
-- 旧版 P0 交接稿（现状约定）：`doc/TECH_DESIGN_P0_HANDOFF.md`
-- 旧版 P1 原路线（gitoxide 视角）：`doc/TECH_DESIGN_P1.md`
- - MP0 实施交接稿（git2-rs 基线落地细则）：`new-doc/MP0_IMPLEMENTATION_HANDOFF.md`
- - MP1 实施交接稿（Push + 自适应 TLS 灰度 + Retry v1）：`new-doc/MP1_IMPLEMENTATION_HANDOFF.md`
- - MP0/MP1 规划补充（计划层面）：`new-doc/TECH_DESIGN_MP0_PLAN.md`、`new-doc/TECH_DESIGN_MP1_PLAN.md`
+- 旧版 P0 交接稿（现状约定）：`doc-archive/TECH_DESIGN_P0_HANDOFF.md`
+- 旧版 P1 原路线（gitoxide 视角）：`doc-archive/TECH_DESIGN_P1.md`
+ - MP0 实施交接稿（git2-rs 基线落地细则）：`doc/MP0_IMPLEMENTATION_HANDOFF.md`
+ - MP1 实施交接稿（Push + 自适应 TLS 灰度 + Retry v1）：`doc/MP1_IMPLEMENTATION_HANDOFF.md`
+ - MP0/MP1 规划补充（计划层面）：`doc/TECH_DESIGN_MP0_PLAN.md`、`doc/TECH_DESIGN_MP1_PLAN.md`
 
 ---
 
@@ -56,7 +56,7 @@
 | MP1.4 | Retry v1（HTTP/Git 早期错误） | 统一重试策略、指数退避；Push 仅在“进入上传前”允许重试 |
 | MP1.5 | 事件增强与错误分类 | 丰富 progress 对象/字节/阶段；新增 task://error；前端可见最近错误与计数 |
 
-不做（本阶段）：代理/IP 优选、系统级证书安装、凭证持久化、安全存储、浅克隆/部分克隆；详见 `doc/TECH_DESIGN_P1.md` 的“只做/不做”。
+不做（本阶段）：代理/IP 优选、系统级证书安装、凭证持久化、安全存储、浅克隆/部分克隆；详见 `doc-archive/TECH_DESIGN_P1.md` 的“只做/不做”。
 
 ---
 
@@ -745,8 +745,8 @@ C. 互斥与护栏
   - Fake SNI / Real SNI：握手时使用的 SNI 名称（伪装/真实）。
   - IP 来源（用于 IP 池/优选）：builtin（内置）、history（历史）、user_static（用户静态）、dns（DNS 解析）、fallback（兜底）。
 - 参考文档：
-  - MP0 实现交接稿：`new-doc/MP0_IMPLEMENTATION_HANDOFF.md`
-  - MP1 实现交接稿：`new-doc/MP1_IMPLEMENTATION_HANDOFF.md`
+  - MP0 实现交接稿：`doc/MP0_IMPLEMENTATION_HANDOFF.md`
+  - MP1 实现交接稿：`doc/MP1_IMPLEMENTATION_HANDOFF.md`
 
 ### 19.1 关键文件速览（后端/前端）
 - 后端（Rust/Tauri）

@@ -227,7 +227,7 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
 
 5) 文档与测试（[MP0.4]）
 - [x] 替换对应单测（mock git2 行为或使用临时仓库）；
-- [x] 更新 `new-doc/TECH_DESIGN_git2rs.md` 的 P0 章节为“完成”；
+- [x] 更新 `doc/TECH_DESIGN_git2rs.md` 的 P0 章节为“完成”；
 - [x] 记录迁移变更日志（CHANGELOG.md）。
 
 ---

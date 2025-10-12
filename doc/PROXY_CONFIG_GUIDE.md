@@ -859,6 +859,6 @@ The following features are planned for future releases:
 
 ## References
 
-- Technical Design: `new-doc/TECH_DESIGN_P5_PLAN.md`
+- Technical Design: `doc/TECH_DESIGN_P5_PLAN.md`
 - Implementation Details: `src-tauri/src/core/proxy/`
 - Configuration Loader: `src-tauri/src/core/config/loader.rs`

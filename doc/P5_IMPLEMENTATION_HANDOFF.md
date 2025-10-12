@@ -1,7 +1,7 @@
 # P5 实现与维护对接文档 (代理支持与自动降级)
 
 > 适用读者：代理模块维护者、传输层开发者、质量保障、运维
-> 配套文件：`new-doc/TECH_DESIGN_P5_PLAN.md`, `new-doc/PROXY_CONFIG_GUIDE.md`
+> 配套文件：`doc/TECH_DESIGN_P5_PLAN.md`, `doc/PROXY_CONFIG_GUIDE.md`
 > 当前状态：P5.0-P5.7 全部交付完成，处于"生产就绪"阶段
 
 ---

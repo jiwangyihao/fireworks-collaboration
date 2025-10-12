@@ -1,7 +1,7 @@
 # P3 实现与维护对接文档 (Implementation Guide)
 
 > 适用读者：自适应 TLS 传输层维护者、可观测性与任务编排开发者、质量保障
-> 配套文件：`new-doc/TECH_DESIGN_P3_PLAN.md`
+> 配套文件：`doc/TECH_DESIGN_P3_PLAN.md`
 > 当前状态：P3 目标全部交付（至 v1.19），进入“持续监测 + 渐进优化”阶段。
 
 ---

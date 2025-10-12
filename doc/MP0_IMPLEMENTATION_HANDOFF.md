@@ -180,5 +180,5 @@
 
 ## 12. 附：与设计文档对齐
 
-- 设计依据：`new-doc/TECH_DESIGN_git2rs.md` 的 MP0 章节；本实现严格按“保留前端契约、替换后端 git 实现、清理 gix 依赖、测试全绿”交付。
-- 后续文档：MP1 详细设计与子传输方案见 `new-doc/TECH_DESIGN_P1A_git2rs_custom_transport.md`（占位，MP1 阶段填充）。
+- 设计依据：`doc/TECH_DESIGN_git2rs.md` 的 MP0 章节；本实现严格按“保留前端契约、替换后端 git 实现、清理 gix 依赖、测试全绿”交付。
+- 后续文档：MP1 详细设计与子传输方案见 `doc/TECH_DESIGN_P1A_git2rs_custom_transport.md`（占位，MP1 阶段填充）。

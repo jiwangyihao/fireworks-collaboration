@@ -830,7 +830,7 @@ P5.0 成功建立了代理支持的基础架构。本阶段专注于构建模块
 
 ##### 3. 文档 (2个文件，约600行)
 
-**`new-doc/PROXY_CONFIG_GUIDE.md` (320行)**
+**`doc/PROXY_CONFIG_GUIDE.md` (320行)**
 - 完整配置参考手册
 - 逐字段详细说明
 - 6个实用配置示例
@@ -840,7 +840,7 @@ P5.0 成功建立了代理支持的基础架构。本阶段专注于构建模块
 - 安全注意事项
 - 未来路线图（P5.1-P5.7）
 
-**`new-doc/TECH_DESIGN_P5_PLAN.md`**
+**`doc/TECH_DESIGN_P5_PLAN.md`**
 - P5.0实现说明章节（本节）
 - 实现日期和文件路径
 - 实现详情
@@ -1513,7 +1513,7 @@ fn finish_respects_metrics_enabled_flag() {
 
 ##### ✅ 已创建文档
 
-**`new-doc/PROXY_CONFIG_GUIDE.md` - 代理配置完整指南**
+**`doc/PROXY_CONFIG_GUIDE.md` - 代理配置完整指南**
 
 涵盖内容：
 
@@ -1616,7 +1616,7 @@ src-tauri/Cargo.toml    (+1行)  - 新增winreg依赖
 ##### 文档文件（2个文件，约600行）
 
 ```
-new-doc/
+doc/
 ├── PROXY_CONFIG_GUIDE.md       (320行) - 配置指南、示例、故障排查
 └── TECH_DESIGN_P5_PLAN.md      (P5.0实现说明约180行)
 ```
@@ -1995,9 +1995,9 @@ cargo check
 **预期结果**: 无警告、无错误
 
 ##### 查看文档
-- 配置指南：`new-doc/PROXY_CONFIG_GUIDE.md`
-- 设计文档：`new-doc/TECH_DESIGN_P5_PLAN.md`（本文档）
-- 实现总结：`new-doc/P5.0_IMPLEMENTATION_SUMMARY.md`
+- 配置指南：`doc/PROXY_CONFIG_GUIDE.md`
+- 设计文档：`doc/TECH_DESIGN_P5_PLAN.md`（本文档）
+- 实现总结：`doc/P5.0_IMPLEMENTATION_SUMMARY.md`
 
 #### 结论与下一步
 
@@ -6048,7 +6048,7 @@ consecutive_threshold: config.recovery_consecutive_threshold,
 
 ##### 文档更新
 
-**配置指南更新** (`new-doc/PROXY_CONFIG_GUIDE.md`):
+**配置指南更新** (`doc/PROXY_CONFIG_GUIDE.md`):
 1. 完整示例配置添加三个新字段
 2. 新增三个字段的详细说明section：
    - `probeUrl`: 格式、验证规则、推荐值
@@ -6506,7 +6506,7 @@ probe() - 使用 probe_target 和 probe_timeout_seconds
 - ✅ 端到端测试：验证配置加载、传递、使用的完整链路
 - ✅ 回归测试：所有原有测试保持通过，无破坏性变更
 
-详细测试列表和覆盖分析请参见：`new-doc/P5.5_TEST_SUMMARY.md`
+详细测试列表和覆盖分析请参见：`doc/P5.5_TEST_SUMMARY.md`
 
 ---
 
@@ -6854,7 +6854,7 @@ P5.6 阶段完成了代理功能的前端 UI 集成、事件扩展、系统代�
 
 #### 文档更新
 
-##### 1. 配置指南更新 (`new-doc/PROXY_CONFIG_GUIDE.md`)
+##### 1. 配置指南更新 (`doc/PROXY_CONFIG_GUIDE.md`)
 
 新增章节：
 - **前端UI使用指南**（140行）：
@@ -6870,7 +6870,7 @@ P5.6 阶段完成了代理功能的前端 UI 集成、事件扩展、系统代�
 - 更新配置示例包含新字段
 - 添加UI截图说明（建议）
 
-##### 2. 实现交接文档 (`new-doc/P5.6_IMPLEMENTATION_HANDOFF.md`)
+##### 2. 实现交接文档 (`doc/P5.6_IMPLEMENTATION_HANDOFF.md`)
 
 新建文档（~400行）：
 - 实施总结与关键交付物
@@ -6896,7 +6896,7 @@ P5.6 阶段完成了代理功能的前端 UI 集成、事件扩展、系统代�
 - 说明字段用途、默认值、有效范围
 - 提供使用场景和最佳实践建议
 
-##### 4. 技术设计文档 (`new-doc/TECH_DESIGN_P5_PLAN.md`)
+##### 4. 技术设计文档 (`doc/TECH_DESIGN_P5_PLAN.md`)
 
 更新内容：
 - 更新P5.6状态为"✅ 完成"
@@ -7392,10 +7392,10 @@ interface SystemProxyResult {
 - ✅ `src/components/__tests__/ProxyStatusPanel.test.ts`: 18个组件测试 (275行)
 
 ##### 文档交付物
-- ✅ `new-doc/PROXY_CONFIG_GUIDE.md`: 新增UI使用指南 (+140行)
-- ✅ `new-doc/P5.6_IMPLEMENTATION_HANDOFF.md`: 实现交接文档 (~400行)
+- ✅ `doc/PROXY_CONFIG_GUIDE.md`: 新增UI使用指南 (+140行)
+- ✅ `doc/P5.6_IMPLEMENTATION_HANDOFF.md`: 实现交接文档 (~400行)
 - ✅ `config.example.json`: 配置示例更新（包含所有P5.5/P5.6字段）
-- ✅ `new-doc/TECH_DESIGN_P5_PLAN.md`: 本实现说明 (本节)
+- ✅ `doc/TECH_DESIGN_P5_PLAN.md`: 本实现说明 (本节)
 
 #### 验收标准完成情况
 
@@ -8332,7 +8332,7 @@ system_proxy_detection_integration.rs: 9 tests, 5 passed, 4 failed (环境依赖
 
 ##### 4.1 准入评审文档
 
-**文件**: `new-doc/P5_READINESS_REVIEW.md`  
+**文件**: `doc/P5_READINESS_REVIEW.md`  
 **完成度**: 100%  
 **页数**: 约15页
 
@@ -8363,7 +8363,7 @@ system_proxy_detection_integration.rs: 9 tests, 5 passed, 4 failed (环境依赖
 
 ##### 4.2 实施交接文档
 
-**文件**: `new-doc/P5.7_IMPLEMENTATION_HANDOFF.md`  
+**文件**: `doc/P5.7_IMPLEMENTATION_HANDOFF.md`  
 **完成度**: 100%  
 **页数**: 约12页
 
@@ -8376,7 +8376,7 @@ system_proxy_detection_integration.rs: 9 tests, 5 passed, 4 failed (环境依赖
 
 ##### 4.3 完成总结文档
 
-**文件**: `new-doc/P5.7_COMPLETION_SUMMARY.md`  
+**文件**: `doc/P5.7_COMPLETION_SUMMARY.md`  
 **完成度**: 100%  
 **页数**: 约10页
 
@@ -8391,7 +8391,7 @@ system_proxy_detection_integration.rs: 9 tests, 5 passed, 4 failed (环境依赖
 
 ##### 4.4 最终报告
 
-**文件**: `new-doc/P5.7_FINAL_REPORT.md`  
+**文件**: `doc/P5.7_FINAL_REPORT.md`  
 **完成度**: 100%  
 **页数**: 约8页
 
@@ -8557,11 +8557,11 @@ system_proxy_detection_integration.rs: 9 tests, 5 passed, 4 failed (环境依赖
 
 ##### 9.2 文档文件（5个）
 
-1. `new-doc/P5_READINESS_REVIEW.md` - 准入评审文档（新建，15页）
-2. `new-doc/P5.7_IMPLEMENTATION_HANDOFF.md` - 实施交接文档（新建，12页）
-3. `new-doc/P5.7_COMPLETION_SUMMARY.md` - 完成总结文档（新建，10页）
-4. `new-doc/P5.7_FINAL_REPORT.md` - 最终报告（新建，8页）
-5. `new-doc/TECH_DESIGN_P5_PLAN.md` - 技术设计更新（本文档）
+1. `doc/P5_READINESS_REVIEW.md` - 准入评审文档（新建，15页）
+2. `doc/P5.7_IMPLEMENTATION_HANDOFF.md` - 实施交接文档（新建，12页）
+3. `doc/P5.7_COMPLETION_SUMMARY.md` - 完成总结文档（新建，10页）
+4. `doc/P5.7_FINAL_REPORT.md` - 最终报告（新建，8页）
+5. `doc/TECH_DESIGN_P5_PLAN.md` - 技术设计更新（本文档）
 
 **总文档页数**: 50+页
 
