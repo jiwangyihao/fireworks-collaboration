@@ -179,7 +179,10 @@ MP0 拆分为 4 个可验收的小阶段，确保每阶段可单独合入、可�
 ### 2.2 模块与接口
 - 目录：`src-tauri/src/core/git/{mod.rs, service.rs, default_impl.rs, errors.rs}`
 - 接口（保持不变）：
-  - 命令：`git_clone(repo, dest, opts?)`、`git_fetch(repo, opts?)`、`task_cancel(id)`。
+  - 命令：
+    - `git_clone({ repo: string; dest: string; depth?: number | null; filter?: string; strategy_override?: StrategyOverride; recurse_submodules?: boolean }): Promise<string>`
+    - `git_fetch({ repo: string; dest: string; preset?: 'remote'|'branches'|'branches+tags'|'tags'; depth?: number | null; filter?: string; strategy_override?: StrategyOverride }): Promise<string>`
+    - `task_cancel(id: string): Promise<boolean>`。
   - 事件：`task://state`（pending|running|completed|failed|canceled）、`task://progress`（objects/bytes/totalHint/percent/phase）。
 - 进度桥接：`RemoteCallbacks::transfer_progress` → 统一 `ProgressPayload`。
 - 取消：`CancellationToken` 注入到回调闭包，命中即提前返回中止。

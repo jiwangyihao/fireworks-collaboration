@@ -363,7 +363,7 @@ src/
 5. 取消支持：
     - 在循环/回调中检查 token；若取消 -> 中断返回 Err(Cancel)
 6. API：
-    - `git_clone(repo_url, dest_path)` 返回 taskId
+  - `git_clone({ repo: string; dest: string; depth?: number | null; filter?: string; strategy_override?: StrategyOverride; recurse_submodules?: boolean })` 返回 taskId
     - `git_cancel(taskId)`
 
 前端 GitPanel：
@@ -379,7 +379,7 @@ src/
 | 任务接线 | `TaskRegistry::spawn_git_clone_task(app, id, token, repo, dest)` | 状态事件：`Pending -> Running -> Completed/Failed/Canceled` |
 | 进度事件 | 现阶段发送粗粒度阶段：`Starting (0)`、`Fetching (10)`、`Checkout (80)`、`Completed (100)` | `TaskProgressEvent` 已扩展 `objects/bytes/total_hint` 字段，后续接入细粒度 |
 | 取消 | 通过 `CancellationToken` + `&AtomicBool` 传给 gix 的 `should_interrupt` | 取消时任务状态转为 `Canceled` |
-| 命令 | `git_clone(repo: String, dest: String) -> taskId` | 由前端发起；取消复用 `task_cancel(taskId)` |
+| 命令 | `git_clone({ repo: string; dest: string; depth?: number | null; filter?: string; strategy_override?: StrategyOverride; recurse_submodules?: boolean }) -> taskId` | 由前端发起；取消复用 `task_cancel(taskId)` |
 | 事件通道 | `task://state` 与 `task://progress` | 与 P0.2 一致 |
 
 补充落地细节与兼容性说明：

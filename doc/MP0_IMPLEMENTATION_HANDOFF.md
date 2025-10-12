@@ -165,8 +165,8 @@
 
 ## 11. API 速览（对前端保持不变）
 
-- `git_clone(repo: string, dest: string): Promise<string /* taskId */>`
-- `git_fetch(repo: string, dest: string, preset?: string): Promise<string /* taskId */>`
+- `git_clone({ repo: string; dest: string; depth?: number | null; filter?: string; strategy_override?: StrategyOverride; recurse_submodules?: boolean }): Promise<string /* taskId */>`
+- `git_fetch({ repo: string; dest: string; preset?: 'remote'|'branches'|'branches+tags'|'tags'; depth?: number | null; filter?: string; strategy_override?: StrategyOverride }): Promise<string /* taskId */>`
 - `task_cancel(id: string): Promise<boolean>`
 - `task_list(): Promise<TaskSnapshot[]>`
 - `task_snapshot(id: string): Promise<TaskSnapshot | null>`

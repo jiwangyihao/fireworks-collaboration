@@ -283,7 +283,7 @@ fn ip_pool_emits_refresh_log() {
 | P6 | 凭证存储（三层：系统钥匙串/加密文件/内存）、加密安全（AES-256-GCM + Argon2id）、审计日志、访问控制、Git自动填充 | `CredentialEvent`（Add/Get/Update/Delete/List/Cleanup）、`AuditEvent`（操作审计 Unlock 含）、`AccessControlEvent`（失败锁定） | `credential.*` 配置（storage/auditMode/accessControl/keyCache/TTL 等，已移除 masterPassword 字段）| 配置逐层禁用存储/关闭审计/调整锁定阈值 | 1286个测试（991 Rust + 295 前端），99.9%通过率，88.5%覆盖率，批准生产环境上线 |
 | 测试重构 | 主题聚合、事件 DSL、属性测试集中管理 | DSL 输出 Tag 子序列 | N/A | N/A | `src-tauri/tests` 结构稳定，CI 使用共享 helper |
 | P7 | 工作区模型、子模块支持、批量并发 clone/fetch/push、团队配置模板、跨仓库状态监控、前端一体化视图 | 无新增事件类型（复用 task/state/progress/error），批量任务 progress phase 含聚合文本 | `workspace.*`、`submodule.*`、`teamTemplate`、`workspace.status*` | 配置禁用 workspace 或降并发；子模块/模板/状态可单项停用 | 新增 24 子模块测试 + 12 批量调度测试 + 状态缓存测试 + 前端 store 17 测试 + 性能基准 |
-| P8 | 可观测性体系（统一指标注册/事件桥接/窗口聚合/导出/前端面板/告警+Soak/灰度层级/性能降级） | `MetricAlert`、`ObservabilityLayerChanged`、`MetricDrift` 新增；复用 TLS/IP/代理/Soak 事件 | `observability.*`（enabled/layer/*Enabled/performance/export/alerts/...） | 层级裁剪 + autoDowngrade；逐项关闭 export/ui/alerts | 指标/导出/告警/层级/降级/前端缓存测试（详见 P8 handoff §13） |
+| P8 | 可观测性体系（统一指标注册/事件桥接/窗口聚合/导出/前端面板/告警+Soak/灰度层级/性能降级） | `MetricAlert`、`ObservabilityLayerChanged` 新增（`MetricDrift` 仍为规划项）；复用 TLS/IP/代理/Soak 事件 | `observability.*`（enabled/layer/*Enabled/performance/export/alerts/...） | 层级裁剪 + autoDowngrade；逐项关闭 export/ui/alerts | 指标/导出/告警/层级/降级/前端缓存测试（详见 P8 handoff §13） |
 
 ---
 
@@ -294,22 +294,36 @@ fn ip_pool_emits_refresh_log() {
 Tauri 暴露的稳定命令（保持 camelCase 输入，容忍 snake_case）：
 
 ```ts
-// Git 操作
-git_clone(repo: string, dest: string): Promise<string>
-git_fetch(repo: string, dest: string, preset?: 'remote'|'branches'|'branches+tags'|'tags'): Promise<string>
-git_push(opts: { dest: string; remote?: string; refspecs?: string[]; username?: string; password?: string }): Promise<string>
+// 配置与模板
+greet(name: string): Promise<string>
+get_config(): Promise<AppConfig>
+set_config(newCfg: AppConfig): Promise<void>
+export_team_config_template(params?: { destination?: string; options?: TemplateExportOptions }): Promise<string>
+import_team_config_template(params?: { source?: string; options?: TemplateImportOptions }): Promise<TemplateImportReport>
 
-// 本地操作（P2）
-git_commit(opts: CommitInput): Promise<string>
-git_branch(opts: BranchInput): Promise<string>
-git_checkout(opts: CheckoutInput): Promise<string>
-git_tag(opts: TagInput): Promise<string>
-git_remote_add|set|remove(opts: RemoteInput): Promise<string>
+// OAuth 回调
+start_oauth_server(): Promise<string>
+get_oauth_callback_data(): Promise<OAuthCallbackData | null>
+clear_oauth_state(): Promise<void>
+
+// Git 任务与本地操作
+git_clone({ repo: string; dest: string; depth?: number | null; filter?: string; strategy_override?: StrategyOverride; recurse_submodules?: boolean }): Promise<string>
+git_fetch({ repo: string; dest: string; preset?: 'remote' | 'branches' | 'branches+tags' | 'tags'; depth?: number | null; filter?: string; strategy_override?: StrategyOverride }): Promise<string>
+git_push({ dest: string; remote?: string; refspecs?: string[]; username?: string; password?: string; use_stored_credential?: boolean; strategy_override?: StrategyOverride }): Promise<string>
+git_init(dest: string): Promise<string>
+git_add(dest: string, paths: string[]): Promise<string>
+git_commit({ dest: string; message: string; allow_empty?: boolean; author_name?: string; author_email?: string }): Promise<string>
+git_branch({ dest: string; name: string; checkout?: boolean; force?: boolean }): Promise<string>
+git_checkout({ dest: string; reference: string; create?: boolean }): Promise<string>
+git_tag({ dest: string; name: string; message?: string; annotated?: boolean; force?: boolean }): Promise<string>
+git_remote_set({ dest: string; name: string; url: string }): Promise<string>
+git_remote_add({ dest: string; name: string; url: string }): Promise<string>
+git_remote_remove({ dest: string; name: string }): Promise<string>
 
 // 凭证管理（P6）
-add_credential(opts: { host: string; username: string; password: string; expiresAt?: number }): Promise<void>
-get_credential(host: string, username: string): Promise<CredentialInfo | null>
-update_credential(opts: { host: string; username: string; password: string; expiresAt?: number }): Promise<void>
+add_credential(request: { host: string; username: string; passwordOrToken: string; expiresInDays?: number }): Promise<void>
+get_credential(host: string, username?: string): Promise<CredentialInfo | null>
+update_credential(request: { host: string; username: string; newPassword: string; expiresInDays?: number }): Promise<void>
 delete_credential(host: string, username: string): Promise<void>
 list_credentials(): Promise<CredentialInfo[]>
 cleanup_expired_credentials(): Promise<number>
@@ -322,8 +336,10 @@ reset_credential_lock(): Promise<void>
 remaining_auth_attempts(): Promise<number>
 
 // 任务控制
-task_cancel(id: string): Promise<boolean>
 task_list(): Promise<TaskSnapshot[]>
+task_snapshot(id: string): Promise<TaskSnapshot | null>
+task_cancel(id: string): Promise<boolean>
+task_start_sleep(ms: number): Promise<string>
 
 // IP 池
 ip_pool_get_snapshot(): Promise<IpPoolSnapshot>
@@ -333,59 +349,81 @@ ip_pool_start_preheater(): Promise<IpPoolPreheatActivation>
 ip_pool_clear_auto_disabled(): Promise<boolean>
 ip_pool_pick_best(host: string, port: number): Promise<IpSelectionResult>
 
-// 调试
-git_task_debug?(internal)
+// 代理控制
+detect_system_proxy(): Promise<SystemProxyResult>
+get_system_proxy(): Promise<SystemProxy>
+force_proxy_fallback(reason?: string): Promise<boolean>
+force_proxy_recovery(): Promise<boolean>
+
+// Observability
+metrics_snapshot(options?: MetricsSnapshotRequest): Promise<MetricsSnapshot>
+
+// HTTP 调试
 http_fake_request(input: HttpRequestInput): Promise<HttpResponseOutput>
 ```
 
 并非所有命令都会返回 `taskId`：
+
+> 注：`StrategyOverride` 结构沿用 §4.2 的定义，`http` 仅支持 `followRedirects` / `maxRedirects`，`retry` 支持 `max` / `baseMs` / `factor` / `jitter`，其余字段会被后端忽略并记录在 `Strategy::IgnoredFields` 事件中。
 
 返回模式分类（含 P7 扩展）：
 - 返回任务ID (string)：触发异步 Git / 批量 / 长时工作（如 `git_clone`、`workspace_batch_clone` 等），前端需订阅事件流。
 - 直接结构化对象：同步查询或立即构造结果（例如 `create_workspace` / `load_workspace` 返回 `WorkspaceInfo`，`get_workspace_statuses` 返回状态结果，`import_team_config_template` 返回导入报告）。
 - 直接 void / boolean：快速成功/失败或无附加数据（`save_workspace` -> void，`restore_workspace` -> void，`validate_workspace_file` -> boolean）。
 - 字符串（非任务ID）：导出/备份生成的文件路径（如 `export_team_config_template`、`backup_workspace`、`export_audit_log`）。
-- 列表：同步枚举结果（`list_submodules`、`init_all_submodules` 等）。
+- 列表：同步枚举结果（`list_submodules`、`list_repositories` 等）。
 前端策略：仅当返回值形态为“看起来像任务ID”且调用约定属于异步任务类命令时进入事件订阅；其余直接更新本地 store。必要时可通过附加前缀/长度规则区分（当前 taskId 为 UUID 形式）。
 
 P7 新增的工作区/子模块/批量与团队配置相关命令（命名保持 camelCase，可与上表并列理解）：
 
 ```ts
 // 工作区管理
-create_workspace(opts: { name: string; rootPath: string }): Promise<WorkspaceInfo>
+create_workspace(request: { name: string; rootPath: string; metadata?: Record<string, string> }): Promise<WorkspaceInfo>
 load_workspace(path: string): Promise<WorkspaceInfo>
 save_workspace(path: string): Promise<void>
-add_repository(opts: { workspaceId: string; repo: RepositorySpec }): Promise<string>
-remove_repository(opts: { workspaceId: string; repoId: string }): Promise<boolean>
-update_repository_tags(opts: { workspaceId: string; repoId: string; tags: string[] }): Promise<boolean>
+get_workspace(): Promise<WorkspaceInfo>
+close_workspace(): Promise<void>
+add_repository(request: { id: string; name: string; path: string; remoteUrl: string; tags?: string[]; enabled?: boolean }): Promise<void>
+remove_repository(repoId: string): Promise<void>
+get_repository(repoId: string): Promise<RepositoryInfo>
+list_repositories(): Promise<RepositoryInfo[]>
+list_enabled_repositories(): Promise<RepositoryInfo[]>
+reorder_repositories(orderedIds: string[]): Promise<RepositoryInfo[]>
+update_repository_tags(repoId: string, tags: string[]): Promise<void>
+toggle_repository_enabled(repoId: string): Promise<boolean>
+get_workspace_config(): Promise<WorkspaceConfig>
 validate_workspace_file(path: string): Promise<boolean>   // 校验 workspace.json 结构
 backup_workspace(path: string): Promise<string>           // 返回带时间戳的备份文件路径
 restore_workspace(backupPath: string, workspacePath: string): Promise<void>
 
 // 子模块操作
-list_submodules(opts: { repoPath: string }): Promise<SubmoduleInfo[]>
-has_submodules(opts: { repoPath: string }): Promise<boolean>
-init_all_submodules(opts: { repoPath: string }): Promise<string[]>
-update_all_submodules(opts: { repoPath: string }): Promise<string[]>
-sync_all_submodules(opts: { repoPath: string }): Promise<string[]>
+list_submodules(repoPath: string): Promise<SubmoduleInfo[]>
+has_submodules(repoPath: string): Promise<boolean>
+init_all_submodules(repoPath: string): Promise<SubmoduleCommandResult>
+update_all_submodules(repoPath: string): Promise<SubmoduleCommandResult>
+sync_all_submodules(repoPath: string): Promise<SubmoduleCommandResult>
+init_submodule(repoPath: string, name: string): Promise<SubmoduleCommandResult>
+update_submodule(repoPath: string, name: string): Promise<SubmoduleCommandResult>
+sync_submodule(repoPath: string, name: string): Promise<SubmoduleCommandResult>
+get_submodule_config(): Promise<SubmoduleConfig>
 
 // 批量任务（返回父任务 taskId）
-workspace_batch_clone(req: WorkspaceBatchCloneRequest): Promise<string>
-workspace_batch_fetch(req: WorkspaceBatchFetchRequest): Promise<string>
-workspace_batch_push(req: WorkspaceBatchPushRequest): Promise<string>
+workspace_batch_clone(request: WorkspaceBatchCloneRequest): Promise<string>
+workspace_batch_fetch(request: WorkspaceBatchFetchRequest): Promise<string>
+workspace_batch_push(request: WorkspaceBatchPushRequest): Promise<string>
 
 ### 3.6 可观测性运行时（P8 速览）
 
 拓扑：事件 → Bridge → Registry(缓冲+分片) → Aggregator(1m/5m/1h/24h) → 导出/告警/前端面板/一致性自检/Soak；层级 basic→optimize，资源异常自动降级；详述见 §4.10 与 `P8_IMPLEMENTATION_HANDOFF.md`。
 
-// 团队配置模板
-export_team_config_template(opts?: { path?: string; sections?: string[] }): Promise<string> // 返回生成文件路径
-import_team_config_template(opts: { path?: string; strategy?: ImportStrategyConfig }): Promise<TemplateImportReport>
+// 团队配置模板（与上表中的配置命令保持一致）
+export_team_config_template(params?: { destination?: string; options?: TemplateExportOptions }): Promise<string> // 返回生成文件路径
+import_team_config_template(params?: { source?: string; options?: TemplateImportOptions }): Promise<TemplateImportReport>
 
 // 跨仓库状态
-get_workspace_statuses(opts: StatusQuery): Promise<WorkspaceStatusResult>
-clear_workspace_status_cache(): Promise<number>
-invalidate_workspace_status_entry(opts: { repoId: string }): Promise<boolean>
+get_workspace_statuses(request?: StatusQuery): Promise<WorkspaceStatusResponse>
+clear_workspace_status_cache(): Promise<void>
+invalidate_workspace_status_entry(repoId: string): Promise<boolean>
 ```
 
 ### 3.2 事件总览
@@ -899,7 +937,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
     - `ProxyHealthCheckEvent`：健康检查结果（success、response_time_ms、error、proxy_url、test_url、timestamp）；
     - 代理事件通过传输层线程局部变量与 P3 的 `AdaptiveTlsTiming/Fallback` 事件联动，但不会修改既有事件结构。
   - **Soak 与阈值**：
-    - 环境变量：`FWC_PROXY_SOAK=1`、`FWC_SOAK_MIN_PROXY_SUCCESS_RATE=0.95`（代理成功率≥95%）、`FWC_SOAK_MAX_PROXY_FALLBACK_COUNT=1`（最多降级1次）、`FWC_SOAK_MIN_PROXY_RECOVERY_RATE=0.9`（恢复率≥90%，如有降级）；
+  - 环境变量：`FWC_ADAPTIVE_TLS_SOAK=1` 用于开启 soak 模式，总体阈值可通过 `FWC_SOAK_MIN_SUCCESS_RATE`、`FWC_SOAK_MAX_FAKE_FALLBACK_RATE`、`FWC_SOAK_MIN_IP_POOL_REFRESH_RATE`、`FWC_SOAK_MAX_AUTO_DISABLE`、`FWC_SOAK_MIN_LATENCY_IMPROVEMENT` 调整；当前未提供独立的代理成功率/恢复率阈值，proxy 统计仅在报告中展示；
     - 报告扩展：`proxy` 统计（selection_total、selection_by_mode、fallback_count、recovery_count、health_check_success_rate、avg_connection_latency_ms、system_proxy_detect_success）；
     - 阈值判定：`proxy_success_rate >= 0.95`、`fallback_count <= 1`、`recovery_rate >= 0.9`（如有降级）、`system_proxy_detect_success == true`（System模式必须检测成功）。
   - **测试矩阵**：
@@ -1096,7 +1134,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
 
 - **SubmoduleManager 独立状态**:
   - `SharedSubmoduleManager = Arc<Mutex<SubmoduleManager>>` 与 workspace/status service 并行,拥有独立 `SubmoduleConfig`(默认 autoRecurse=true, maxDepth=5, autoInitOnClone=true, recursiveUpdate=true);
-  - 命令返回 `SubmoduleCommandResult { success: bool, message: String, data?: string[] }`:前端必须检查 `success` 字段判断成功/失败,而非直接依赖 Promise resolve/reject。`data` 字段包含受影响子模块名称列表。
+  - 命令返回 `SubmoduleCommandResult { success: bool, message: String, data?: serde_json::Value }`:前端必须检查 `success` 字段判断成功/失败,而非直接依赖 Promise resolve/reject。`data` 常见为字符串数组（受影响子模块列表），类型保持 JSON 值便于后续扩展。
 
  - **运维命令扩展**:
   - `validate_workspace_file(path)`: 校验 workspace.json 结构合法性,返回布尔值（内部通过 `WorkspaceStorage::new(path).validate()`）；
@@ -1171,7 +1209,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - **指标命名**：`snake_case`，counter `_total`，延迟 `_ms`，Histogram 桶统一；内部导出指标：`metrics_export_requests_total{status}`、`metrics_export_rate_limited_total` 等。
   - **告警 DSL**：分位 `metric[p95]>800`，比值 `a/b>0.05`，标签 `{label=value}`，窗口 `window:5m`；状态机 firing→active→resolved + 去抖；Soak 阻断未恢复 critical。
   - **性能**：线程本地批量、分片、可调采样、raw 样本可选、标签脱敏、内存水位禁用 raw + 降级；保持 Git 主流程热点最小额外锁争用。
-  - **运维**：健康检查清单（导出/核心指标/层级/内存压力/告警抖动）；日志关键字（metrics_export/metric_alert/metric_memory_pressure/observability_layer/metric_drift）；常用操作（调采样/停告警/重建导出/层级切换）。
+  - **运维**：健康检查清单（导出/核心指标/层级/内存压力/告警抖动）；日志关键字（metrics_export/metric_alert/metric_memory_pressure/observability_layer，`metric_drift` 仍未落地）；常用操作（调采样/停告警/重建导出/层级切换）。
   - **回退**：全局 `enabled=false`；层级 basic 保留最小计数集；逐项关闭 export/ui/alerts；删除规则文件快速静默。
   - **测试**：注册/桥接去重/窗口/导出/限流/告警状态机/热更新/内存压力/层级/前端缓存 & 降采样；性能 smoke；详见 P8 handoff §13。
   - **后续增强**：自适应采样、CKMS 分位、HTTPS 导出、规则分组+抑制、Trace、诊断 CLI、指标预算。
@@ -1334,7 +1372,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
 | observability.performance.enableSharding | true | Histogram 分片以降低热点竞争 | 单核低并发可关闭 |
 | observability.performance.debugMode | false | 额外内部调试日志（metrics target） | 仅临时排障启用 |
 | observability.performance.redact.repoHashSalt | "" | 仓库名哈希盐；为空使用随机盐（进程级） | 变更会导致哈希重生成 |
-| observability.performance.redact.ipMode | Mask | IP 脱敏模式（Mask/Hash/None） | Hash 利于聚合；None 谨慎使用 |
+| observability.performance.redact.ipMode | Mask | IP 脱敏模式（Mask/Classify/Full） | Classify 输出 loopback/private/public 等分类；Full 会暴露完整 IP，谨慎使用 |
 | (移除) internalConsistencyCheckIntervalSecs | (无) | 代码未实现；原文档残留 | 未来若实现需补充 |
 
 使用守则：

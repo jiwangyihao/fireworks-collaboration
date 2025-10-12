@@ -27,9 +27,9 @@
 ## 2. 命令与事件契约（稳定接口）
 
 - 命令（Tauri）
-  - `git_clone(repo: string, dest: string): Promise<string /* taskId */>`
-  - `git_fetch(repo: string, dest: string, preset?: 'remote'|'branches'|'branches+tags'|'tags'): Promise<string>`
-  - `git_push({ dest: string; remote?: string; refspecs?: string[]; username?: string; password?: string }): Promise<string>`
+  - `git_clone({ repo: string; dest: string; depth?: number | null; filter?: string; strategy_override?: StrategyOverride; recurse_submodules?: boolean }): Promise<string /* taskId */>`
+  - `git_fetch({ repo: string; dest: string; preset?: 'remote'|'branches'|'branches+tags'|'tags'; depth?: number | null; filter?: string; strategy_override?: StrategyOverride }): Promise<string>`
+  - `git_push({ dest: string; remote?: string; refspecs?: string[]; username?: string; password?: string; use_stored_credential?: boolean; strategy_override?: StrategyOverride }): Promise<string>`
   - `task_cancel(id: string): Promise<boolean>` / `task_list(): Promise<TaskSnapshot[]>`
 
 - 事件

@@ -2,16 +2,16 @@
 
 ## 1. 概述
 
-本文基于 MP0/MP1 已完成能力（git2-rs 基线、本地仓库操作初始集、Push、自定义 smart subtransport(A) 灰度、Retry v1、事件分类增强）继续扩展至 P2：完善本地 Git 常用操作、浅/部分克隆与策略覆盖（HTTP / TLS / Retry），并引入可观测护栏与环境 gating。目标是在不破坏现有前端任务/事件协议的前提下新增可选字段与信息型事件，保持严格回退路径与充分测试覆盖。
+本文基于 MP0/MP1 已完成能力（git2-rs 基线、本地仓库操作初始集、Push、自定义 smart subtransport(A) 灰度、Retry v1、事件分类增强）继续扩展至 P2：完善本地 Git 常用操作、浅/部分克隆与策略覆盖（HTTP / Retry），并引入可观测护栏与环境 gating。目标是在不破坏现有前端任务/事件协议的前提下新增可选字段与信息型事件，保持严格回退路径与充分测试覆盖。
 
 ### 目标
 1. 本地 Git 常用操作：覆盖 init / add / commit / branch / checkout / tag / remote(set-url/add/remove)，统一事件与错误分类。
 2. Shallow / Partial：为 clone / fetch 提供 depth 与 filter 输入，远端或环境不支持时按“最近原则”明确回退并给出结构化提示。
-3. 任务级策略覆盖：允许通过 strategyOverride 对 http / tls / retry 子集进行按任务浅合并，提供可观测 applied / conflict / ignored / summary 事件与可控 gating。
+3. 任务级策略覆盖：允许通过 strategyOverride 对 http / retry 子集进行按任务浅合并，提供可观测 applied / conflict / ignored / summary 事件与可控 gating。
 4. 兼容性：保持既有前端命令、事件管道与 Store 结构不破坏；新增字段全部可选，输入格式兼容 snake_case 与 camelCase。
 
 ### 范围
-- 后端：git2-rs 实现的本地仓库与引用操作；clone/fetch 的 depth 与 filter 决策、fallback、能力检测与 gating；按任务策略覆盖（HTTP/TLS/Retry）。
+- 后端：git2-rs 实现的本地仓库与引用操作；clone/fetch 的 depth 与 filter 决策、fallback、能力检测与 gating；按任务策略覆盖（HTTP/Retry）。
 - 前端：命令入参扩展与事件展示，不强制 UI 结构变更；可选增强（最近错误、策略事件分层）。
 
 ### 不在本阶段
@@ -197,7 +197,7 @@
 - 引入信息型回退事件：`code=partial_filter_fallback`，`message` 包含 `requestedDepth`, `requestedFilter`, `decision`。
 - 事件分类仍为 `Protocol`，不改变任务最终状态；单任务至多一次。
 - clone / fetch 两类任务均支持；push 无影响。
-- 与现有 HTTP/Retry/TLS 策略事件并存，顺序：策略 applied/conflict/ignored 之后、strategy summary 之前（若存在）。
+- 与现有 HTTP/Retry 策略事件并存，顺序：策略 applied/conflict/ignored 之后、strategy summary 之前（若存在）。
 交付物：
 - 决策实现与单元测试（覆盖所有输入组合：无输入 / 仅 depth / 仅 filter 支持 / 仅 filter 不支持 / depth+filter 支持 / depth+filter 不支持）。
 - 事件发射逻辑与序列测试（验证事件出现次数与顺序）。
@@ -325,7 +325,7 @@
 范围：
 - 合并规则：仅当提供字段且与全局默认不同才变更；`maxRedirects` 上限 clamp=20。
 - 事件：当覆盖值改变时发送一次 `StrategyEvent::HttpApplied { id, follow, max_redirects }`；冲突（follow=false 且 max>0）在 `GitClone` 触发 `StrategyEvent::Conflict { kind:"http", message }`；`GitPush` 仅补充一条信息级 `task://error`，`GitFetch` 只规范化并记录日志。
-- 不改变 retry/TLS 或 clone/fetch/push 核心执行；仅在任务 spawn 前阶段合并。
+- 不改变 retry 或 clone/fetch/push 核心执行；仅在任务 spawn 前阶段合并。
 - 结构化事件通过 `events::structured::publish_global` 发出，与 legacy 错误通道解耦。
 交付物：
 - `apply_http_override` 函数（返回 follow, max, changed）。
@@ -339,7 +339,7 @@
 - 移除结构化事件发射；保留合并逻辑；或完全移除函数调用恢复默认行为。
 风险与缓解：
 - 风险：future 网络栈接入导致语义差异 → `HttpApplied` payload 仅暴露最终 follow/max。
-- 风险：多策略先后顺序潜在竞态 → 以固定顺序 HTTP→Retry→TLS 并在测试锁定事件序列。
+- 风险：多策略先后顺序潜在竞态 → 以固定顺序 HTTP→Retry 并在测试锁定事件序列。
 
 ### P2.3c 任务级 Retry 策略覆盖
 目标：为 clone/fetch/push 提供按任务自定义退避计划（max/baseMs/factor/jitter），在保持全局配置不变的同时通过结构化事件曝光差异。
@@ -347,7 +347,7 @@
 - 合并规则：仅当任一字段与全局不同才视为 changed；解析层已校验范围。
 - 生成独立 `RetryPlan`（不写回全局）。
 - 事件：Clone/Push 在 `changed` 时发送一次 `PolicyEvent::RetryApplied { id, code:"retry_strategy_override_applied", changed }`；Fetch 不单独发该事件，但会在最终 `StrategyEvent::Summary` 的 `applied_codes` 中记录差异。
-- 与 HTTP 覆盖并列，顺序：HTTP → Retry → TLS。
+- 与 HTTP 覆盖并列，顺序：HTTP → Retry。
 - 不改变现有重试分类与上限语义（不可重试错误不进入循环）。
 交付物：
 - `apply_retry_override` 函数与单元测试（changed 判定 / 不变路径）。
@@ -423,7 +423,7 @@
 - 模块文件：`src-tauri/src/core/git/default_impl/commit.rs`
 - 任务接入：`spawn_git_commit_task`（`core/tasks/registry.rs`）
 - 枚举：`TaskKind::GitCommit { dest, message, allow_empty, author_name, author_email }`
-- Tauri 命令：`git_commit(dest, message, allow_empty?, author_name?, author_email?)`
+- Tauri 命令：`git_commit({ dest, message, allow_empty?, author_name?, author_email? })`
 - 前端：API `startGitCommit` (`src/api/tasks.ts`)；Store 扩展 TaskKind；UI `GitPanel.vue` 提交卡片；测试 `views/__tests__/git-panel.test.ts`。
 
 #### 2. 行为流程
@@ -470,7 +470,7 @@
 - 模块：`core/git/default_impl/branch.rs`、`checkout.rs`
 - Registry：`spawn_git_branch_task` / `spawn_git_checkout_task`
 - 枚举：`TaskKind::GitBranch { dest, name, checkout, force }`、`TaskKind::GitCheckout { dest, ref_name, create }`
-- 命令：`git_branch(dest,name,checkout?,force?)`、`git_checkout(dest,ref,create?)`
+- 命令：`git_branch({ dest, name, checkout?, force? })`、`git_checkout({ dest, reference, create? })`
 - 前端：API `startGitBranch` / `startGitCheckout`；Store 扩展；测试 `git_branch_checkout.rs`。
 
 #### 2. 行为语义
@@ -612,7 +612,7 @@ Remote：add/set/remove 成功链路 / add 重复 / set 不存在 / remove 不�
 #### 9. 已知限制
 - 未真正驱动底层 HTTP 客户端（当前 redirect 行为保持基线）
 - GitFetch 解析到冲突仅在日志层记录，暂未发射 `Conflict` 事件
-- 仅限两个字段；其它策略（Retry/TLS）在后续阶段实现
+- 仅限两个字段；其它策略（例如 Retry）在后续阶段实现（TLS 覆盖已取消）。
 
 #### 10. 示例事件
 ```

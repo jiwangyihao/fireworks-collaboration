@@ -19,7 +19,7 @@
     - 后端：`src-tauri/src/app.rs`（命令逻辑）、`src-tauri/src/core/http/{client.rs,types.rs}`（HTTP 栈）
     - 前端：`src/api/http.ts`（类型与调用）、`src/api/tauri-fetch.ts`（Fetch 语义桥接层）
 - Git Clone 基础
-  - 命令：`git_clone(repo, dest)`，取消：`task_cancel(id)`
+  - 命令：`git_clone({ repo, dest, depth?, filter?, strategy_override?, recurse_submodules? })`，取消：`task_cancel(id)`
   - 文件：
     - 后端：`src-tauri/src/app.rs`（命令注册）、`src-tauri/src/core/tasks/{registry.rs,model.rs}`、`src-tauri/src/core/git/{progress.rs,...}`
     - 前端：`src/api/tasks.ts`（事件订阅与启动）、`src/views/GitPanel.vue`（UI）
@@ -61,7 +61,7 @@
   - 重定向链受白名单限制；301/302/303 规范化为 GET 且清空 body，307/308 保留方法与 body。
   - 错误分类映射：Verify/Tls/Network/Input/Internal（以字符串前缀体现在错误消息中）。
 
-### 2) Git：`git_clone(repo, dest)` / `task_cancel(id)`
+### 2) Git：`git_clone({ repo, dest, depth?, filter?, strategy_override?, recurse_submodules? })` / `task_cancel(id)`
 - 启动克隆：返回 `taskId: string`。
 - 取消：返回 `boolean`（是否成功触发取消）。
 - 事件（见下一节）驱动 UI 进度与状态。

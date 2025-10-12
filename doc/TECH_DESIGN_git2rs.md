@@ -120,13 +120,13 @@ Push（HTTPS）设计（git2-rs）：
 
 ### 3.1 命令清单（对前端稳定）
 
-- `git_clone(repo: string, dest: string): Promise<string /* taskId */>`
-- `git_fetch(repo: string, dest: string, preset?: 'remote'|'branches'|'branches+tags'|'tags'): Promise<string>`
-- `git_push({ dest: string; remote?: string; refspecs?: string[]; username?: string; password?: string }): Promise<string>`
+- `git_clone({ repo: string; dest: string; depth?: number | null; filter?: string; strategy_override?: StrategyOverride; recurse_submodules?: boolean }): Promise<string /* taskId */>`
+- `git_fetch({ repo: string; dest: string; preset?: 'remote'|'branches'|'branches+tags'|'tags'; depth?: number | null; filter?: string; strategy_override?: StrategyOverride }): Promise<string>`
+- `git_push({ dest: string; remote?: string; refspecs?: string[]; username?: string; password?: string; use_stored_credential?: boolean; strategy_override?: StrategyOverride }): Promise<string>`
 - `task_cancel(id: string): Promise<boolean>`
 - `task_list(): Promise<TaskSnapshot[]>`
 
-说明：P2 起在不破坏上述签名的前提下，新增“对象参数重载”，以支持 shallow/partial 与任务级策略覆盖，详见 §18。
+说明：以上签名已采用对象参数形式，兼容 P2 之后的 shallow/partial 与任务级策略覆盖（`strategy_override`）；详见 §18。
 
 ## 4. 自适应 TLS 传输层（原方式A，面向 MP1）
 
@@ -202,11 +202,10 @@ P2 起的任务级覆盖对象（strategyOverride）结构补充：
 ```
 strategyOverride?: {
   http?: { followRedirects?: boolean; maxRedirects?: number },
-  tls?: { spkiPins?: string[]; metricsEnabled?: boolean; certFpLogEnabled?: boolean; certFpMaxBytes?: number },
   retry?: { max?: number; baseMs?: number; factor?: number; jitter?: boolean }
 }
 ```
-合并语义：对全局配置做浅合并（shallow merge），未提供字段沿用全局；越权字段忽略并记录告警。
+合并语义：对全局配置做浅合并（shallow merge），未提供字段沿用全局；顶层或嵌套出现其它字段会被忽略并记录告警，并在运行时通过 `Strategy::IgnoredFields` 事件曝光。
 
 示例配置（片段）：
 
@@ -633,12 +632,12 @@ HTTP 策略摘要（由原 §11 合并）：
 
 目标：提供常用本地 Git 操作能力，统一事件与错误分类，满足 UI 常用工作流。
 
-命令（初版建议）：
-- `git_init({ dest: string }): Promise<string /* taskId */>`
-- `git_add({ dest: string; paths: string[] }): Promise<string>`
-- `git_commit({ dest: string; message: string; author?: { name: string; email: string }; allowEmpty?: boolean }): Promise<string>`
+命令（当前实现）：
+- `git_init(dest: string): Promise<string /* taskId */>`
+- `git_add(dest: string, paths: string[]): Promise<string>`
+- `git_commit({ dest: string; message: string; allow_empty?: boolean; author_name?: string; author_email?: string }): Promise<string>`
 - `git_branch({ dest: string; name: string; checkout?: boolean; force?: boolean }): Promise<string>`
-- `git_checkout({ dest: string; ref: string; create?: boolean }): Promise<string>`
+- `git_checkout({ dest: string; reference: string; create?: boolean }): Promise<string>`
 - `git_tag({ dest: string; name: string; message?: string; annotated?: boolean; force?: boolean }): Promise<string>`
 - `git_remote_set({ dest: string; name: string; url: string }): Promise<string>`
 - `git_remote_add({ dest: string; name: string; url: string }): Promise<string>`
@@ -672,14 +671,14 @@ HTTP 策略摘要（由原 §11 合并）：
 适用命令：`git_clone` 与 `git_fetch`
 
 输入扩展（对象重载，不破坏原签名；前端保持向后兼容）：
-- `git_clone({ repo: string; dest: string; depth?: number; filter?: string; strategyOverride?: Partial<StrategyCfg> }): Promise<string>`
-- `git_fetch({ repo: string; dest: string; preset?: 'remote'|'branches'|'branches+tags'|'tags'; depth?: number; filter?: string; strategyOverride?: Partial<StrategyCfg> }): Promise<string>`
+- `git_clone({ repo: string; dest: string; depth?: number | null; filter?: string; strategy_override?: StrategyOverride; recurse_submodules?: boolean }): Promise<string>`
+- `git_fetch({ repo: string; dest: string; preset?: 'remote'|'branches'|'branches+tags'|'tags'; depth?: number | null; filter?: string; strategy_override?: StrategyOverride }): Promise<string>`
 
 参数约束：
 - `depth`: 可选，正整数；`1` 表示只要最新一层历史；`0` 或负值视为无效（报错）。
 - `filter`: 可选，字符串；首版仅允许：`'blob:none' | 'tree:0'`；非法值报错；与 `depth` 可同时存在。
 - 同时指定时的协同：二者叠加约束内容，即“部分+浅”；实现层使用 git2-rs 对应选项组合。
-- `strategyOverride`: 可选，任务级策略覆盖子对象，仅允许覆盖 `http/tls/retry` 的安全子集；非法键忽略并在日志告警。
+- `strategyOverride`: 可选，任务级策略覆盖子对象，仅允许覆盖 `http` / `retry` 的白名单字段；非法键会被忽略并在日志及 `Strategy::IgnoredFields` 事件中曝光。
 
 默认行为：两参数缺省等价“全量/完整历史”；当后端不支持 `filter`（环境或远端不兼容）时，回退到不带 `filter` 的浅克隆或全量，按“最接近”原则进行，并在进度完成后追加一次 `task://error`（category=Protocol，message="partial filter not supported, fell back to ..."）。
 
@@ -705,15 +704,14 @@ HTTP 策略摘要（由原 §11 合并）：
 ```
 strategyOverride: {
   http?: { followRedirects?: boolean; maxRedirects?: number },
-  tls?: { spkiPins?: string[]; metricsEnabled?: boolean; certFpLogEnabled?: boolean; certFpMaxBytes?: number },
   retry?: { max?: number; baseMs?: number; factor?: number; jitter?: boolean }
 }
 ```
 
 约束：
-- 仅允许覆盖声明字段；越权字段忽略并记录告警。
-- 与全局配置合并策略：浅合并（shallow merge），未提供字段沿用全局。
-- 安全护栏：若启用代理（P5），则强制 `http.fakeSniEnabled=false`，并在任务开始时追加一次告警事件：`task://error { category: "Proxy", message: "proxy mode forces real SNI" }`（不阻断任务）。
+- 当前仅允许覆盖 `http.followRedirects` / `http.maxRedirects` 与 `retry.{max, baseMs, factor, jitter}`；其它顶层或嵌套字段会被忽略并通过日志与 `Strategy::IgnoredFields` 事件暴露。
+- 与全局配置采用浅合并（shallow merge），未提供的字段沿用全局；`null` 值视为未覆盖。
+- 解析阶段会校验取值范围（如 `retry.max` 需在 1..=20，`retry.baseMs` 需在 10..=60000），非法值直接返回 `Protocol` 错误。
 
 ---
 

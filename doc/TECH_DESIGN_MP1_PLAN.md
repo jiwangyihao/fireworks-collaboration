@@ -101,7 +101,7 @@
 
 - 目标：在 git2-rs 基础上实现 push，具备凭证回调、进度桥接、取消与错误分类；保持命令/事件兼容；日志脱敏。
 - 实现要点：
-  - 新命令：`git_push(repo: string, remote: string, branch: string, auth?: { token?: string; username?: string; password?: string })`；
+  - 新命令：`git_push({ dest: string; remote?: string; refspecs?: string[]; username?: string; password?: string; use_stored_credential?: boolean; strategy_override?: StrategyOverride })`；
   - `RemoteCallbacks::credentials` 回调按上述两种模式提供；
   - 进度：`transfer_progress` + `push_transfer_progress`（若可用），映射到 `task://progress`；
   - 取消：`AtomicBool`/CancellationToken，回调中尽早返回；
@@ -121,12 +121,14 @@
 本小节记录当前代码已实现的 MP1.1 具体行为与契约，便于对照验证与后续维护（保持与前端既有事件/任务模型兼容）。
 
 - 命令（当前实现落地签名）
-  - Tauri 命令：`git_push(dest: string, remote?: string, refspecs?: string[], username?: string, password?: string)`
+  - Tauri 命令：`git_push({ dest: string; remote?: string; refspecs?: string[]; username?: string; password?: string; use_stored_credential?: boolean; strategy_override?: StrategyOverride })`
   - 说明：
     - `dest`：本地仓库路径（必须是有效的 Git 仓库目录，含 `.git/`）。
     - `remote`：可选，未传则默认使用 `origin`。
     - `refspecs`：可选，形如 `refs/heads/<src>:refs/heads/<dst>`；未传则按远程配置的默认推送行为（与 `git2`/远端配置一致）。
-    - `username`/`password`：可选的 HTTPS Basic 凭证。若仅提供令牌且 `username` 为空/未传，则后端自动使用 `x-access-token` 作为用户名以兼容 GitHub。
+  - `username`/`password`：可选的 HTTPS Basic 凭证。若仅提供令牌且 `username` 为空/未传，则后端自动使用 `x-access-token` 作为用户名以兼容 GitHub。
+  - `use_stored_credential`：可选，启用后若未显式提供用户名/密码，后端会尝试使用凭证存储中的匹配项。
+  - `strategy_override`：可选，任务级策略覆盖（HTTP/Retry 子集），非法字段将被忽略并记录事件。
   - 事件：沿用现有任务事件通道
     - `task://state`：`pending|running|completed|failed|canceled`
     - `task://progress`：push 的阶段化进度（见下）
