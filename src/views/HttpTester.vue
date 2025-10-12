@@ -33,11 +33,10 @@
             <label class="label cursor-pointer gap-2"><span>启用 Fake SNI</span><input type="checkbox" v-model="fakeSniEnabled" class="checkbox checkbox-sm" /></label>
             <label class="label cursor-pointer gap-2"><span>403 时自动轮换 SNI</span><input type="checkbox" v-model="sniRotateOn403" class="checkbox checkbox-sm" /></label>
             <textarea v-model="fakeSniHostsText" class="textarea textarea-bordered w-full col-span-2" rows="3" placeholder="多个候选域名：每行一个，或用逗号分隔，例如\nbaidu.com\nqq.com\nweibo.com"></textarea>
-            <textarea v-model="fakeSniTargetsText" class="textarea textarea-bordered w-full col-span-2" rows="3" placeholder="启用伪装 SNI 的域名列表：仅匹配这些域名时启用伪装，支持通配符 *.example.com"></textarea>
           </div>
           <div class="flex items-center gap-2">
             <button class="btn btn-sm" @click="applyHttpStrategy">保存 HTTP 策略</button>
-            <span class="text-xs opacity-70">仅当目标域名命中列表时才使用伪装 SNI 与自定义校验。</span>
+            <span class="text-xs opacity-70">仅允许内置 GitHub 域名使用伪装 SNI，目标列表已固化。</span>
           </div>
         </div>
         <div class="mt-3">
@@ -110,7 +109,6 @@ const forceRealSni = ref(false);
 const followRedirects = ref(true);
 const fakeSniEnabled = ref(true);
 const fakeSniHostsText = ref("");
-const fakeSniTargetsText = ref("");
 const sniRotateOn403 = ref(true);
 
 const resp = ref<HttpResponseOutput | null>(null);
@@ -195,7 +193,6 @@ onMounted(async () => {
     const httpCfg = cfg.value.http;
     fakeSniEnabled.value = httpCfg.fakeSniEnabled ?? true;
     fakeSniHostsText.value = formatList(httpCfg.fakeSniHosts);
-    fakeSniTargetsText.value = formatList(httpCfg.fakeSniTargetHosts);
     sniRotateOn403.value = httpCfg.sniRotateOn403 ?? true;
   } catch (error) {
     console.warn("读取 HTTP 配置失败", error);
@@ -210,7 +207,6 @@ async function applyHttpStrategy() {
     const httpCfg = cfg.value.http;
     httpCfg.fakeSniEnabled = !!fakeSniEnabled.value;
     httpCfg.fakeSniHosts = parseList(fakeSniHostsText.value);
-    httpCfg.fakeSniTargetHosts = parseList(fakeSniTargetsText.value);
     httpCfg.sniRotateOn403 = !!sniRotateOn403.value;
     await setConfig(cfg.value);
     logs.push("info", "HTTP 策略已更新");

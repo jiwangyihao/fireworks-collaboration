@@ -23,7 +23,6 @@ vi.mock("../../api/config", () => ({
     http: {
       fakeSniEnabled: true,
       fakeSniHosts: ["baidu.com"],
-      fakeSniTargetHosts: ["github.com"],
       sniRotateOn403: true,
       followRedirects: true,
       maxRedirects: 5,

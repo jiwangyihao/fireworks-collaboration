@@ -11,7 +11,6 @@ const fakeCfg = {
   http: {
     fakeSniEnabled: true,
     fakeSniHosts: ["example.com"],
-    fakeSniTargetHosts: ["github.com"],
     followRedirects: true,
     maxRedirects: 5,
     largeBodyWarnBytes: 1024,
