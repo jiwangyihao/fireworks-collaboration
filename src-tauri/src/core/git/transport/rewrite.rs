@@ -7,7 +7,7 @@ static ROLLOUT_HIT: AtomicU64 = AtomicU64::new(0);
 static ROLLOUT_MISS: AtomicU64 = AtomicU64::new(0);
 
 use crate::core::config::model::AppConfig;
-use crate::core::tls::util::{match_domain, proxy_present};
+use crate::core::tls::util::{builtin_fake_sni_targets, match_domain, proxy_present};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RewriteDecision {
@@ -50,18 +50,9 @@ fn decide_https_to_custom_inner(
         None => return decision,
     };
     // 仅对允许伪装 SNI 的域名进行改写
-    let mut allowed = cfg
-        .http
-        .fake_sni_target_hosts
+    let allowed = builtin_fake_sni_targets()
         .iter()
         .any(|p| match_domain(p, host));
-    if !allowed {
-        allowed = cfg
-            .http
-            .host_allow_list_extra
-            .iter()
-            .any(|p| match_domain(p, host));
-    }
     if !allowed {
         return decision;
     }

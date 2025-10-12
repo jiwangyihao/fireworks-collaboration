@@ -1,4 +1,5 @@
 use crate::core::config::model::AppConfig;
+use crate::core::ip_pool::preheat::BUILTIN_IPS;
 use rand::{seq::SliceRandom, thread_rng};
 use std::collections::HashMap;
 use std::env;
@@ -21,11 +22,7 @@ pub fn should_use_fake(cfg: &AppConfig, force_real: bool, real_host: &str) -> bo
     if !cfg.http.fake_sni_enabled {
         return false;
     }
-    if cfg.http.fake_sni_target_hosts.is_empty() {
-        return false;
-    }
-    cfg.http
-        .fake_sni_target_hosts
+    builtin_fake_sni_targets()
         .iter()
         .any(|pattern| match_domain(pattern, real_host))
 }
@@ -129,4 +126,26 @@ pub fn decide_sni_host_with_proxy(
         .cloned()
         .unwrap_or_else(|| candidates[0].clone());
     (pick, true)
+}
+
+/// 返回内置 Fake SNI 目标域名列表（与 BUILTIN_IPS 同步）。
+pub fn builtin_fake_sni_targets() -> &'static [String] {
+    static TARGETS: OnceLock<Vec<String>> = OnceLock::new();
+    TARGETS.get_or_init(|| {
+        let mut items: Vec<String> = Vec::new();
+        for (pattern, _) in BUILTIN_IPS.iter() {
+            if *pattern == "^(analytics|ghcc)\\.githubassets\\.com$" {
+                for literal in ["analytics.githubassets.com", "ghcc.githubassets.com"] {
+                    if !items.iter().any(|s| s == literal) {
+                        items.push(literal.to_string());
+                    }
+                }
+                continue;
+            }
+            if !items.iter().any(|s| s == *pattern) {
+                items.push((*pattern).to_string());
+            }
+        }
+        items
+    })
 }

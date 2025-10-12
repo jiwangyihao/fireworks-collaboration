@@ -326,7 +326,6 @@ mod tests {
         let mut cfg = AppConfig::default();
         cfg.http.fake_sni_enabled = true;
         cfg.http.fake_sni_rollout_percent = percent;
-        cfg.http.fake_sni_target_hosts = vec!["github.com".into()];
         loader::save_at(&cfg, dir.path()).expect("save config");
         dir
     }

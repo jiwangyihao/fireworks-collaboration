@@ -280,7 +280,6 @@ fn test_rewrite_only_when_enabled_and_whitelisted() {
     let mut cfg = AppConfig::default();
     cfg.http.fake_sni_enabled = true;
     cfg.http.fake_sni_rollout_percent = 100; // 全量
-    cfg.http.fake_sni_target_hosts = vec!["github.com".into()];
     let url = "https://github.com/rust-lang/git2-rs";
     let out = decision_with_proxy(&cfg, url, false);
     assert_eq!(
@@ -304,15 +303,17 @@ fn test_rewrite_only_when_enabled_and_whitelisted() {
     // 非白名单域不改写
     let mut cfg2 = AppConfig::default();
     cfg2.http.fake_sni_enabled = true;
-    cfg2.http.fake_sni_target_hosts = vec!["example.com".into()];
-    assert!(decision_with_proxy(&cfg2, url, false).rewritten.is_none());
+    cfg2.http.fake_sni_rollout_percent = 100;
+    let url2 = "https://example.com/owner/repo";
+    let miss = decision_with_proxy(&cfg2, url2, false);
+    assert!(miss.rewritten.is_none());
+    assert!(!miss.eligible);
 }
 
 #[test]
 fn test_rewrite_disabled_when_proxy_env_present() {
     let mut cfg = AppConfig::default();
     cfg.http.fake_sni_enabled = true;
-    cfg.http.fake_sni_target_hosts = vec!["github.com".into()];
     let url = "https://github.com/owner/repo";
     // 指定存在代理 -> 不改写
     let out = decision_with_proxy(&cfg, url, true);
@@ -326,7 +327,6 @@ fn test_rollout_sampling_zero() {
     let mut cfg = AppConfig::default();
     cfg.http.fake_sni_enabled = true;
     cfg.http.fake_sni_rollout_percent = 0; // 禁用
-    cfg.http.fake_sni_target_hosts = vec!["github.com".into()];
     let url = "https://github.com/rust-lang/git2-rs";
     let out = decision_with_proxy(&cfg, url, false);
     assert!(out.rewritten.is_none());
@@ -339,7 +339,6 @@ fn test_rollout_sampling_partial_deterministic() {
     let mut cfg = AppConfig::default();
     cfg.http.fake_sni_enabled = true;
     cfg.http.fake_sni_rollout_percent = 10; // 10%
-    cfg.http.fake_sni_target_hosts = vec!["github.com".into()];
     let url = "https://github.com/rust-lang/git2-rs";
     // 结果稳定（要么始终改写，要么始终不改写）
     let first = decision_with_proxy(&cfg, url, false).sampled;
@@ -349,24 +348,10 @@ fn test_rollout_sampling_partial_deterministic() {
 }
 
 #[test]
-fn test_extra_allow_list() {
-    let mut cfg = AppConfig::default();
-    cfg.http.fake_sni_enabled = true;
-    cfg.http.fake_sni_rollout_percent = 100;
-    cfg.http.fake_sni_target_hosts = vec!["example.com".into()];
-    cfg.http.host_allow_list_extra = vec!["github.com".into()];
-    let url = "https://github.com/owner/repo";
-    let out = decision_with_proxy(&cfg, url, false);
-    assert!(out.sampled);
-    assert!(out.rewritten.is_some());
-}
-
-#[test]
 fn test_rewrite_preserves_query_and_fragment() {
     let mut cfg = AppConfig::default();
     cfg.http.fake_sni_enabled = true;
     cfg.http.fake_sni_rollout_percent = 100;
-    cfg.http.fake_sni_target_hosts = vec!["github.com".into()];
     let url = "https://github.com/rust-lang/git2-rs?foo=bar#frag";
     let out = decision_with_proxy(&cfg, url, false);
     assert_eq!(
@@ -381,7 +366,6 @@ fn test_rewrite_existing_git_suffix_not_duplicated() {
     let mut cfg = AppConfig::default();
     cfg.http.fake_sni_enabled = true;
     cfg.http.fake_sni_rollout_percent = 100;
-    cfg.http.fake_sni_target_hosts = vec!["github.com".into()];
     let url = "https://github.com/rust-lang/git2-rs.git";
     let out = decision_with_proxy(&cfg, url, false);
     let rewritten = out.rewritten.expect("expected rewrite when rollout 100%");
@@ -394,7 +378,6 @@ fn test_rollout_sampling_clamps_percent() {
     let mut cfg = AppConfig::default();
     cfg.http.fake_sni_enabled = true;
     cfg.http.fake_sni_rollout_percent = 200; // clamp to 100
-    cfg.http.fake_sni_target_hosts = vec!["github.com".into()];
     let url = "https://github.com/rust-lang/git2-rs";
     let out = decision_with_proxy(&cfg, url, false);
     assert!(out.sampled, "percent above 100 should behave like 100");
@@ -944,7 +927,6 @@ fn test_compute_sni_host_fake_and_real() {
     let mut cfg = AppConfig::default();
     cfg.http.fake_sni_enabled = true;
     cfg.http.fake_sni_hosts = vec!["baidu.com".into()];
-    cfg.http.fake_sni_target_hosts = vec!["github.com".into()];
     let client = HttpClient::new(cfg.clone());
     let (sni, used_fake) = client.compute_sni_host(false, "github.com");
     assert_eq!(sni, "baidu.com");
