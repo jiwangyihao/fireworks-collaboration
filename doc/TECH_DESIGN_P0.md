@@ -114,7 +114,7 @@ src/
 }
 ```
 
-> ⚠️ v1.8 起 `tls.insecureSkipVerify` / `tls.skipSanWhitelist` 被永久移除。当前实现始终通过 `RealHostCertVerifier` 以真实域名校验证书，Fake SNI 仅在 `http.fakeSniTargetHosts` 命中时改写 ClientHello。
+> ⚠️ v1.8 起 `tls.insecureSkipVerify` / `tls.skipSanWhitelist` 被永久移除。当前实现始终通过 `RealHostCertVerifier` 以真实域名校验证书，Fake SNI 仅在与 `ip_pool::preheat::BUILTIN_IPS` 同步的内置名单命中时改写 ClientHello。
 
 存储位置（P0.1 实际实现）：
 - 写入 Tauri 应用配置目录 app_config_dir：`<app_config_dir>/config/config.json`
@@ -432,7 +432,7 @@ src/
 | 进度模型 | `tasks` store 扩展 `progressById`（按任务聚合） | 兼容可选字段：`percent`、`phase`、`objects`、`bytes`、`total_hint` |
 | 取消任务 | 面板“取消”按钮调用 `task_cancel` | UI 仅对运行中任务展示取消按钮 |
 | HTTP 面板 | `src/views/HttpTester.vue` 强化：历史记录（最近 N 条）、点击回填；策略开关 | 支持 Fake SNI 候选/命中列表与 403 轮换开关，保存到配置 |
-| 配置读写 | `getConfig`/`setConfig` 读写 `http.fakeSniEnabled/http.fakeSniHosts/http.fakeSniTargetHosts/http.sniRotateOn403` 与 `tls.spkiPins/tls.metricsEnabled/tls.certFpLogEnabled/tls.certFpMaxBytes` | 保存后即时生效，不需重启 |
+| 配置读写 | `getConfig`/`setConfig` 读写 `http.fakeSniEnabled/http.fakeSniHosts/http.sniRotateOn403` 与 `tls.spkiPins/tls.metricsEnabled/tls.certFpLogEnabled/tls.certFpMaxBytes` | 保存后即时生效，不需重启 |
 | 全局错误 | 新增 `src/stores/logs.ts` 与 `src/components/GlobalErrors.vue` 浮动提示 | `HttpTester` 中将错误推送到全局错误队列 |
 | 路由 | 在 `src/router/index.ts` 注册 `/git` 路由 | 可从首页/导航进入克隆面板 |
 | UI 风格 | 继承项目现有样式体系（Tailwind/DaisyUI） | 保持一致的输入/按钮/表格风格 |

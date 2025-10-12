@@ -50,7 +50,6 @@
 |------|----|------|------|
 | `http.fakeSniEnabled` | bool | true | 全量开启 adaptive TLS |
 | `http.fakeSniRolloutPercent` | u8 | 100 | 采样百分比，0 视为禁用 |
-| `http.hostAllowListExtra` | Vec<String> | [] | Rollout 白名单附加域 |
 | `http.autoDisableFakeThresholdPct` | u8 | 20 | 自动禁用失败率阈值 |
 | `http.autoDisableFakeCooldownSec` | u64 | 300 | 自动禁用冷却秒数 |
 | `tls.metricsEnabled` | bool | true | 控制 `TimingRecorder` 是否生效 |

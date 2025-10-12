@@ -430,7 +430,7 @@
 ## 6. 配置模型（MP1 初版）
 
 - `retry`: `{ max: number, baseMs: number, factor: number, jitter: boolean }`
-- `http`: `{ fakeSniEnabled: boolean, fakeSniHosts: string[], fakeSniTargetHosts?: string[], sniRotateOn403?: boolean }`
+- `http`: `{ fakeSniEnabled: boolean, fakeSniHosts: string[], sniRotateOn403?: boolean }`（目标域名单取自 `ip_pool::preheat::BUILTIN_IPS`，不再暴露配置）
 - `tls`: `{ spkiPins?: string[], metricsEnabled?: boolean, certFpLogEnabled?: boolean, certFpMaxBytes?: number }`
 - `logging`: `{ debugAuthLogging: boolean }`（默认脱敏）
 

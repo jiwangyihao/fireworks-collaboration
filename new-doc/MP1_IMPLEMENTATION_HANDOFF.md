@@ -86,7 +86,7 @@
 
 ## 5. 配置模型（与默认值）
 
-- `http`: `{ fakeSniEnabled: boolean, fakeSniHosts?: string[], fakeSniTargetHosts?: string[], sniRotateOn403?: boolean, followRedirects: boolean, maxRedirects: number }`
+- `http`: `{ fakeSniEnabled: boolean, fakeSniHosts?: string[], sniRotateOn403?: boolean, followRedirects: boolean, maxRedirects: number }`（目标域名单内置，与 `ip_pool::preheat::BUILTIN_IPS` 同步）
 - `tls`: `{ spkiPins?: string[], metricsEnabled?: boolean, certFpLogEnabled?: boolean, certFpMaxBytes?: number }`
 - `retry`: `{ max: number, baseMs: number, factor: number, jitter: boolean }`（默认 `{ max: 6, baseMs: 300, factor: 1.5, jitter: true }`）
 - `proxy`: `{ mode: 'off'|'http'|'socks5', url?: string }`

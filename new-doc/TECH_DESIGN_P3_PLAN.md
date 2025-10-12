@@ -135,7 +135,7 @@
 目标：对白名单域分阶段启用 Fake SNI 路径（含 Real 回退），从 0%→10%→50%→100%（可配置）。
 范围：
 - Rollout 策略：按哈希(taskId 或 repo host) 一致性取样（确保同仓库稳定体验）；
-- 白名单：Github 域族（与 P2 相同），新增可选 `hostAllowListExtra`；
+- 白名单：Github 域族（与 P2 相同），名单与 `ip_pool::preheat::BUILTIN_IPS` 同步，暂不支持追加自定义域；
 - 事件：首次命中 rollout 的任务输出信息事件 `{ code: "adaptive_tls_rollout", percentApplied, sampled }`（信息型，不影响结果）。
 - 决策：采样未命中 → 直接 Default；命中 → Fake 尝试，失败按链回退；
 - 记录：每种 FallbackStage 命中计数（内存/日志）。
@@ -410,7 +410,6 @@
 |------|------|------|------|
 | http.fakeSniEnabled | bool | true | 关闭后完全停用 Fake 改写与 rollout 事件 |
 | http.fakeSniRolloutPercent | u8(0..=100) | 100 | 采样阈值；0=全部 MISS（仍保留回退逻辑框架） |
-| http.hostAllowListExtra | string[] | [] | 附加允许进入 Fake 判定的域（不影响证书 SAN 校验逻辑） |
 
 缺省缺字段时采用默认值（向后兼容）。`fakeSniEnabled=false` 优先级最高，直接短路。
 
@@ -439,7 +438,6 @@
 |------|------|
 | 0% | 无 `adaptive_tls_rollout` 事件 |
 | 100% | 有且最多 1 条事件 |
-| hostAllowListExtra | 非主白名单域可触发事件 |
 | 一致性 | 同 host 多次要么全 HIT 要么全 MISS |
 | insecure push | 不适用（任务级 TLS 覆盖已取消） |
 | no override | summary 存在，appliedCodes=[] |

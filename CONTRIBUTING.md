@@ -41,7 +41,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "cd '$PWD/src-tauri'; car
 
 ## 安全注意事项
 - 不要将真实 Token 写入样例/日志；`Authorization` 会自动脱敏为 `REDACTED`。
-- 真实主机名验证现为强制行为；Fake SNI 仅在 `http.fakeSniTargetHosts` 命中时改写 ClientHello，并在握手后仍按真实目标域验证证书。
+- 真实主机名验证现为强制行为；Fake SNI 仅在与 `ip_pool::preheat::BUILTIN_IPS` 同步的内置名单命中时改写 ClientHello，并在握手后仍按真实目标域验证证书。
 - TLS 配置面板仅暴露观测与 Pin 相关字段（`tls.spkiPins`、`metricsEnabled`、`certFpLogEnabled`、`certFpMaxBytes`）；不再提供跳过验证或 SAN 白名单开关。
 
 谢谢你的贡献！

@@ -73,7 +73,7 @@
 
 ### 4) 配置：`get_config()` / `set_config(newCfg)`
 - AppConfig（camelCase）：
-  - `http`: `{ fakeSniEnabled: boolean, fakeSniHosts?: string[], fakeSniTargetHosts?: string[], sniRotateOn403?: boolean, followRedirects: boolean, maxRedirects: number, largeBodyWarnBytes: number }`
+  - `http`: `{ fakeSniEnabled: boolean, fakeSniHosts?: string[], sniRotateOn403?: boolean, followRedirects: boolean, maxRedirects: number, largeBodyWarnBytes: number }`
   - `tls`: `{ spkiPins?: string[], metricsEnabled?: boolean, certFpLogEnabled?: boolean, certFpMaxBytes?: number }`
   - `logging`: `{ authHeaderMasked: boolean, logLevel: string }`
 - 存储：`<app_config_dir>/config/config.json`
@@ -97,7 +97,7 @@
 ## 四、TLS 与 Fake SNI 验证（安全基线）
 
 - 验证器：`RealHostCertVerifier` 继承自 `rustls` 的 `WebPkiVerifier`，即便握手阶段改写了 SNI，也始终以真实目标域名验证证书链与主机名。
-- Fake SNI 触发条件：仅当 `http.fakeSniTargetHosts` 命中目标域名时才改写 ClientHello 中的 SNI；握手结束后仍记录真实域名并执行验证，未命中则使用真实域名直连。
+- Fake SNI 触发条件：仅当目标域名命中与 `ip_pool::preheat::BUILTIN_IPS` 同步的内置名单时才改写 ClientHello 中的 SNI；握手结束后仍记录真实域名并执行验证，未命中则使用真实域名直连。
 - TLS 配置面板聚焦观测与 Pin：
   - `tls.spkiPins`：可选的 Base64URL SPKI Pin 列表。
   - `tls.metricsEnabled` / `tls.certFpLogEnabled` / `tls.certFpMaxBytes`：控制证书指纹与观测指标采集。

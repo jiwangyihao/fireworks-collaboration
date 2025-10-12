@@ -2,9 +2,17 @@
 
 > 目的：以统一视角梳理 MP0、MP1、P2、P3、P4、P5、P6 七个阶段以及测试重构后的现状，面向后续演进的研发、运维与质量成员，提供完整的实现细节、配置指引、事件契约、测试矩阵与回退策略。
 >
-> 版本：v1.8（2025-10-11） 维护者：Core Team
+> 版本：v1.9（2025-10-12） 维护者：Core Team
 
 ---
+
+### 2025-10-12 增量更新摘要（v1.9）
+
+1. Fake SNI 改写与 TLS 校验现统一从 `builtin_fake_sni_targets()` 读取域名白名单，该列表由 `ip_pool::preheat::BUILTIN_IPS` 推导并去重，额外展开了 `analytics/ghcc.githubassets.com` 等正则目标，保证 Git 传输层与 TLS 校验使用完全一致的匹配集合。
+2. `http.fakeSniHosts` 仅承担伪 SNI 候选与 403 轮换角色，无法再扩缩改写白名单；留空时会自动回退真实域名。默认值仍是 legacy 时代的常见大站列表（`baidu.com`、`qq.com`、`weibo.com`、`bilibili.com` 等），主要用于首选候选和 403 轮换优先级，配置层只需关注是否启用 Fake SNI 及候选排序。
+3. 新增 `test_builtin_fake_sni_targets_cover_and_deduplicate` 与强化版 `test_should_use_fake`、`test_last_good_preferred_when_present` 等 Rust 用例，覆盖白名单去重、关键域名命中、强制回退与缓存候选优先策略，CI 现可在 `src-tauri/tests/core.rs` 上直接验证。
+
+### 2025-10-11 增量更新摘要（v1.8）
 
 ### 2025-10-11 增量更新摘要（v1.8）
 
@@ -577,7 +585,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - `TaskRegistry` 统一取消 token（`ErrorCode::User` -> Cancel）；
   - 错误分类：Network/Tls/Verify/Protocol/Auth/Cancel/Internal；
   - HTTP Fake 调试接口沿用，提供白名单/重定向/脱敏；
-- **配置**：`AppConfig` 热加载 `logging.authHeaderMasked`；原先的 `tls.sanWhitelist` 白名单在 v1.8 起被移除，改由 `http.fakeSniTargetHosts` 控制改写范围。
+- **配置**：`AppConfig` 热加载 `logging.authHeaderMasked`；原先的 `tls.sanWhitelist` 白名单在 v1.8 起被移除，改由与 `ip_pool::preheat::BUILTIN_IPS` 同步的内置 Fake SNI 目标名单控制改写范围（`tls::util::builtin_fake_sni_targets()` 会自动展开 regex 组合并去重）。
 - **测试**：`cargo test` 与 `pnpm test` 全部通过，git2-rs 在 Windows 确认可构建；
 - **限制**：无 push、无浅/部分克隆、无策略覆盖。
 - **后端细节**：
@@ -604,7 +612,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - 自定义 smart subtransport 方式A：接管连接/TLS/SNI，代理场景自动禁用，Fake->Real->libgit2 回退链；
   - Push 特化：TLS 层注入 Authorization，401 -> Auth 分类，403 info/refs 阶段触发一次性 SNI 轮换；
 - **配置热加载**：
-  - `http.fakeSniEnabled`、`http.fakeSniHosts`、`http.sniRotateOn403`；
+  - `http.fakeSniEnabled`、`http.fakeSniHosts`（仅决定伪 SNI 轮换候选，白名单固定由内置列表提供，默认值沿用历史版本的一组中国大陆常见大站域名以保持向后兼容，包含 `baidu.com`、`qq.com`、`weibo.com`、`bilibili.com`、`jd.com`、`taobao.com`、`tmall.com`、`csdn.net`、`163.com`、`126.com`、`sina.com.cn`、`sohu.com`、`youku.com`、`iqiyi.com`、`douyin.com`、`xiaomi.com`、`mi.com`、`huawei.com`、`360.cn`、`kuaishou.com`）、`http.sniRotateOn403`；
   - `retry.max`/`baseMs`/`factor`/`jitter`；
   - `proxy.mode|url`；`logging.debugAuthLogging`（脱敏开关）；
 - **前端改动**：
@@ -623,7 +631,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - Push 表单存储的凭证仅保存在内存，取消或完成后主动清空，避免残留。
 - **交接要点**：
   - 若需在后续阶段扩展 Push 认证方式（如 OAuth 设备码），需扩展 `CredentialProvider` 接口并更新 Tauri 命令签名；
-  - 方式A 白名单需在 `http.fakeSniTargetHosts`（或 `hostAllowListExtra`）中维护；证书校验直接按真实域名进行，无需同步额外的 SAN 列表。
+  - 方式A 白名单与 IP 池内置列表绑定，使用 `ip_pool::preheat::BUILTIN_IPS` 同步的伪 SNI 目标域；证书校验直接按真实域名进行，无需同步额外的 SAN 列表。
   - Retry 参数调整需同时更新前端提示文本，保持用户对重试次数与耗时的认知。
 - **关键文件定位**：
   - 传输层：`src-tauri/src/core/git/transport/rewrite.rs`（改写决策）、`transport/runtime.rs`（Fake/Real 回退）、`transport/streams.rs`（方式A IO 桥接）、`transport/auth.rs`（Authorization 注入）。
@@ -635,7 +643,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - 方式A 失败回退会通过一次性 `task://error` 将原因标记为 `Proxy` 或 `Tls`，便于前端展示提示。
 - **常见故障排查**：
   - Push 401/403：检查 PAT/组织 SSO；Inspect `task://error` `category=Auth`，必要时启用 `logging.debugAuthLogging`（仍脱敏）。
-  - TLS/Verify 失败：确认目标域证书覆盖真实域名，并检查 `http.fakeSniTargetHosts` 是否包含该域；代理模式下默认禁用 Fake。
+  - TLS/Verify 失败：确认目标域证书覆盖真实域名，并验证该域是否位于内置 Fake SNI 名单（源自 `ip_pool::preheat::BUILTIN_IPS`）；代理模式下默认禁用 Fake。
   - 进度停滞：若 Upload 阶段长时间无变化，提示手动取消并重试；事件中 `retriedTimes` 不再增长属于预期表现。
 - **交接 checklist**：
   - 评估 Push/方式A rollout 前，在预生产逐项验证：正常 Push、401/403、代理透传、取消路径、Retry 关闭/开启效果。
@@ -701,6 +709,8 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - 引入 Soak 报告确保长时运行稳定性。
 - **关键实现**：
   - `transport/rewrite.rs` 执行 Fake SNI 改写与采样决策，记录 `AdaptiveTlsRollout` 事件；
+  - Fake SNI 白名单由 `tls::util::builtin_fake_sni_targets()` 提供（从 `ip_pool::preheat::BUILTIN_IPS` 推导并去重），其中包含单值域名与 `*.githubusercontent.com` 等通配符模式（匹配规则仅支持前缀 `*.` 通配，基于 `tls::util::match_domain` 的实现），并会将正则目标（`^(analytics|ghcc)\.githubassets\.com$`）展开为具体域；`should_use_fake` 仅在命中内置集合时启动改写（遇到 `force_real` 或代理存在时会强制回退真实 SNI）；`http.fakeSniHosts` 仍负责候选轮换与 403 重试，但不再改变白名单范围，其默认候选列表沿用历史版本的中国大陆常见大站域名（如 `baidu.com`、`qq.com` 等），仅影响首次候选与 403 轮换顺序；同时 `decide_sni_host_with_proxy` 会缓存最近一次成功候选（`LastGoodSni`），失败回退后优先尝试该候选以减少切换。
+  - 配置默认值：`http.fakeSniEnabled=true`、`http.fakeSniHosts` 为上述 20 个常见域、`http.fakeSniRolloutPercent=100`（全量启用）、`http.autoDisableFakeThresholdPct=20`、`http.autoDisableFakeCooldownSec=300`；需要灰度时可下调 `fakeSniRolloutPercent` 或手动设置 `force_real` 以禁用单次任务的伪 SNI。
   - `transport/runtime.rs` 维护 Fake->Real->Default fallback 状态机，并触发 `AdaptiveTlsFallback`；
   - `transport/metrics.rs` 的 `TimingRecorder` 与 `fingerprint.rs` 的日志逻辑在任务结束时统一 flush 事件；
   - 自动禁用窗口根据失败率触发 `AdaptiveTlsAutoDisable`，冷却后自动恢复；
@@ -715,6 +725,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - `transport/rewrite.rs` 单测覆盖 0%/10%/100% 采样与 URL 处理；
   - `transport/runtime.rs` 单测验证 fallback 状态机与 auto disable；
   - `tls/verifier.rs` 单测覆盖 Fake SNI 路径下的 Real host 校验与 SPKI pin（真实 SNI 尚未启用 pin 校验），`events/events_structure_and_contract.rs` 新增 `override_host_enforced_during_fake_sni` 用例锁定 Fake SNI 覆盖真实域名校验；
+  - `tests/core.rs` 验证 `builtin_fake_sni_targets` 去重与核心域名覆盖，以及 `should_use_fake`/候选优先逻辑，确保 Fake SNI 白名单行为稳定；
   - Soak 模块单测确保报告生成、基线对比与阈值判定。
 - **后端细节**：
   - `RewriteDecision` 使用 host + path 的稳定哈希决定 `sampled`，同一仓库在不同任务中行为一致；
@@ -731,7 +742,7 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
   - `AdaptiveTlsTiming` 仅在 `tls.metricsEnabled=true` 时发送；`cert_fp_changed=true` 表示 24 小时窗口内指纹发生更新。
   - `AdaptiveTlsAutoDisable` 在触发与恢复时分别发送一次，`enabled=false` 表示 Fake SNI 被暂停；结合日志可定位原因。
 - **常见故障排查**：
-  - Fake 回退频繁：查看 `AdaptiveTlsFallback` 中的 `reason`，若为 `FakeHandshakeError`，多为目标域证书或 CA 链问题；确认证书已覆盖真实域名后再恢复 rollout。
+  - Fake 回退频繁：查看 `AdaptiveTlsFallback` 中的 `reason`，若为 `FakeHandshakeError`，多为目标域证书或 CA 链问题；确认证书已覆盖真实域名后再恢复 rollout。注意：即便在配置层新增 `fakeSniHosts`，也无法让非内置域名进入改写流程，需在 IP 池 `BUILTIN_IPS` 扩展后才生效。
   - 指纹 mismatch：事件 `CertFpPinMismatch` 出现后应立即核对 `tls.spkiPins`；如误配导致大面积失败，临时清空 pin 后重新采集。
   - 自动禁用 oscillation：检查失败率阈值是否过低，或 Soak 报告中是否存在网络抖动；必要时提高 `autoDisableFakeThresholdPct`。
 - **交接 checklist**：
