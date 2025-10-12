@@ -170,7 +170,7 @@ Push（HTTPS）设计（git2-rs）：
 ## 6. 关键时序流程（HTTP / Git / 回退）
 
 HTTP (MP0/MP1)：
-1. 前端发起 http_fake_request → 解析 URL & 校验白名单 → 判定 useFakeSni
+1. 前端通过 `tauriFetch`（封装 `http_fake_request`，默认补全 `User-Agent: fireworks-collaboration/tauri-fetch` 并保留 Authorization 等头部）发起请求 → 解析 URL & 校验白名单 → 判定 useFakeSni
 2. 若启用 IP 池（后期）→ 选 IP；TCP → TLS（SNI=伪或真实；代理模式下强制真实 SNI）
 3. 发送请求与计时（connect/tls/firstByte/total）→ 返回 Base64 Body；若 `status=403` 且启用 403 轮换，在信息发现阶段（GET /info/refs）随机切换至不同候选后重试一次
 

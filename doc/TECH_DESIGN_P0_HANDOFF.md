@@ -17,7 +17,7 @@
   - 命令：`http_fake_request(input)`
   - 文件：
     - 后端：`src-tauri/src/app.rs`（命令逻辑）、`src-tauri/src/core/http/{client.rs,types.rs}`（HTTP 栈）
-    - 前端：`src/api/http.ts`（类型与调用）
+    - 前端：`src/api/http.ts`（类型与调用）、`src/api/tauri-fetch.ts`（Fetch 语义桥接层）
 - Git Clone 基础
   - 命令：`git_clone(repo, dest)`，取消：`task_cancel(id)`
   - 文件：
@@ -56,6 +56,7 @@
   - `redirects: Array<{ status, location, count }>`
 - 行为要点：
   - 仅 https；触网前进行“域白名单预检”。
+  - 前端通过 `tauriFetch` 访问时（`src/api/tauri-fetch.ts`），若未显式提供 `User-Agent` 会自动补全为 `fireworks-collaboration/tauri-fetch`，同时原样透传 Authorization 等头部以满足 GitHub API 对 UA 的要求且不影响凭证携带。
   - Fake SNI 决策：配置开启且未 `forceRealSni` 时使用伪域；Host 头始终为真实域。
   - 重定向链受白名单限制；301/302/303 规范化为 GET 且清空 body，307/308 保留方法与 body。
   - 错误分类映射：Verify/Tls/Network/Input/Internal（以字符串前缀体现在错误消息中）。

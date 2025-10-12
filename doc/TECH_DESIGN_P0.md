@@ -331,7 +331,8 @@ src/
 - `src-tauri/src/core/tls/verifier.rs`
   - `create_client_config(tls: &TlsCfg)`：构建 rustls `ClientConfig`；当 `insecureSkipVerify=true` 时启用 `InsecureCertVerifier`（仅原型）。
 - 前端：
-  - `src/api/http.ts`：封装调用 `http_fake_request`。
+  - `src/api/http.ts`：封装调用 `http_fake_request` 并暴露类型定义。
+  - `src/api/tauri-fetch.ts`：提供与浏览器 `fetch` 接口一致的包装，在缺省情况下注入 `User-Agent: fireworks-collaboration/tauri-fetch`，同时原样保留 Authorization 等现有头部，便于前端 API（如 GitHub 集成）直接使用。
   - `src/views/HttpTester.vue`：表单与结果展示，并提供“跳过证书验证（不安全）”显式开关（写入 `tls.insecureSkipVerify`）。
 
 测试覆盖摘要（均通过）：

@@ -475,7 +475,7 @@ Credential Service (core/credential/*)
  └─ 前端集成：13个Tauri命令、4个Vue组件、Pinia Store（P6.3/P6.5）
 ```
 
-前端（Pinia + Vue）在 `src/api/tasks.ts` 统一订阅事件，将 snake/camel 输入归一，`src/stores/tasks.ts` 管理任务、进度、错误、策略事件。
+前端（Pinia + Vue）在 `src/api/tasks.ts` 统一订阅事件，将 snake/camel 输入归一，`src/stores/tasks.ts` 管理任务、进度、错误、策略事件。`src/api/tauri-fetch.ts` 提供符合 Fetch 接口的桥接层，底层仍调用 `http_fake_request`，并在未显式提供 `User-Agent` 时注入默认值 `fireworks-collaboration/tauri-fetch`，同时保留前端传入的 Authorization 头部以满足 GitHub API 认证要求。
 
 ### 3.4 核心依赖与版本策略
 - 后端 Rust 依赖：

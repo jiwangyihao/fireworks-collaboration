@@ -6,6 +6,7 @@ Tauri + Vue 3 + TypeScript 的桌面应用，用于“统一 Git 加速与传输
 
 - 通用伪 SNI HTTP 请求 API（http_fake_request）
 	- 支持 Fake SNI 开关、重定向、完整 timing、body base64 返回
+	- 前端通过 `src/api/tauri-fetch.ts` 提供的 Fetch 兼容封装调用 Tauri 命令：若未显式设置 `User-Agent` 将自动补全为 `fireworks-collaboration/tauri-fetch`，同时原样保留 Authorization 头以满足 GitHub API 认证
 	- SAN 白名单强制校验；日志对 Authorization 自动脱敏
 - 基础 Git Clone（基于 gitoxide）
 	- 任务模型（创建/状态/进度/取消）；事件推送至前端

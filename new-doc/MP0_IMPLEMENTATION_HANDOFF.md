@@ -42,6 +42,7 @@
 
 前端（Vite/Vue）：
 - 不涉及破坏性改动；所有 API 与事件契约保持不变，测试已覆盖。
+- 新增 `src/api/tauri-fetch.ts` 作为 Fetch 兼容层，内部调用 `http_fake_request`：默认注入 `User-Agent: fireworks-collaboration/tauri-fetch`，并完整保留调用方提供的 Authorization 等头部以确保 GitHub API 正常认证。
 
 ---
 
@@ -100,6 +101,7 @@
 - 命令：`http_fake_request(input)`，仅支持 https；
 - 白名单：在 `AppConfig.tls.san_whitelist` 中配置，默认包含 `github.com` 与常见子域通配；
 - 重定向：支持 301/302/303/307/308，最多 `max_redirects` 次，301/302/303 切换为 GET；
+- 前端调用：通过 `tauriFetch` 封装触发，若未提供 `User-Agent` 会自动注入 `fireworks-collaboration/tauri-fetch`，同时保留 Authorization 等原始头部；
 - 日志脱敏：`logging.auth_header_masked`（默认开启）将 Authorization 头替换为 `REDACTED`；
 - 错误分类：根据错误消息映射为 `Verify/Tls/Network/Input/Internal` 前缀字符串（见 `app.rs::classify_error_msg`）。
 

@@ -27,7 +27,7 @@
 2) 输入：
    - URL: https://github.com/
    - Method: GET
-   - Headers: 可留空或添加 { "User-Agent": "P0Test" }
+   - Headers: 可留空（默认注入 `User-Agent: fireworks-collaboration/tauri-fetch`）或添加自定义值（例如 { "User-Agent": "P0Test" }）
    - Body: 空
 3) 在右侧策略开关中：
    - 关闭“不安全跳过证书验证”（应为默认关闭）。
