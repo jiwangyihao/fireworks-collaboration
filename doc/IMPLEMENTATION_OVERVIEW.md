@@ -28,7 +28,7 @@
 本次版本围绕 IP 池与预热链路做了一轮集中迭代，重点如下：
 
 1. 运行期默认启用 IP 池，并引入全新的 DNS 运行时配置：支持系统解析器开关、自定义 DoH/DoT/UDP 解析器、内置预设目录与启用列表；团队模板合并逻辑同步下发 `enabled` 与 `dns` 字段，确保分发环境与模板保持一致。
-2. 新增 Tauri `ip_pool_*` 命令面向配置管理、快照查询、预热刷新与候选调试；前端提供 `src/api/ip-pool.ts`、全新 `IpPoolLab.vue` 实验室视图以及导航入口，可实时编辑运行期/文件配置、管理 DNS 解析器、禁用内置预热域、查看候选缓存。
+2. 新增 Tauri `ip_pool_*` 命令面向配置管理、快照查询、预热刷新与候选调试；前端提供 `src/api/ip-pool.ts`、全新 `IpPoolLab.vue` 实验室视图，并在“开发调试”聚合页面中暴露入口，可实时编辑运行期/文件配置、管理 DNS 解析器、禁用内置预热域、查看候选缓存。
 3. 预热管线重写：缓存快照新增预热目标覆盖率统计，Check View 新增“IP 池预热”步骤并复用 `waitForIpPoolWarmup` 辅助检测后台预热进度，失败/跳过场景给出清晰提示；可通过 `ip_pool_start_preheater` 显式拉起一次预热并观测状态。
 4. 测试与文档同步：Rust 侧更新 config/commands/git/adaptive_tls/transport 多处用例适配新默认值，并新增 `tests/commands/ip_pool_commands.rs` 覆盖完整命令路径；前端补充 `ip-pool.api.test.ts`、`utils/__tests__/check-preheat.test.ts` 验证 API/预热逻辑；文档新增 DNS 运行时、禁用内置预热域、命令列表与 UI 说明，现有回退/Smoke 清单全部检视过默认启用场景。
 
@@ -865,7 +865,8 @@ P7 测试覆盖摘要：新增子模块模型与操作单/集成测试 24 项；
     - 全量回归：`cargo test -q --manifest-path src-tauri/Cargo.toml`、前端 `pnpm test -s`。
   - **命令与前端**：
     - 新增 Tauri 命令 `ip_pool_get_snapshot`/`ip_pool_update_config`/`ip_pool_request_refresh`/`ip_pool_start_preheater`/`ip_pool_clear_auto_disabled`/`ip_pool_pick_best`，`setup.rs` 默认注册；
-    - 前端新增 `src/api/ip-pool.ts` 封装上述命令、`IpPoolLab.vue` 提供运行期/文件配置编辑、DNS 解析器管理与候选调试界面，导航栏增加“IP 池实验室”入口；
+  - 前端新增 `src/api/ip-pool.ts` 封装上述命令、`IpPoolLab.vue` 提供运行期/文件配置编辑、DNS 解析器管理与候选调试界面，并在 `DeveloperToolsView.vue` 的调试卡片中暴露入口；
+  - 新增 `DeveloperToolsView.vue` 聚合调试工具（凭据管理、工作区、GitHub Actions 调试、Git 面板、HTTP 测试、IP 池实验室、按需显示的可观测性面板等），顶栏导航仅保留“开发调试”按钮以减少生产环境噪声；
     - 配套类型定义补充至 `src/api/config.ts`（`DnsRuntimeConfig`/`DnsResolverConfig` 等）并在 `IpPoolLab` 及配置表单中使用；
     - `CheckView.vue` 在环境预热流程中调用 `startIpPoolPreheater`+`waitForIpPoolWarmup`，向用户展示预热进度与跳过原因；
   - **运维要点与故障排查**：

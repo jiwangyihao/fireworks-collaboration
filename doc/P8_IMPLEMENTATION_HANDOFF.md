@@ -602,7 +602,7 @@ Debug 模式（本地开发）可临时展示原值；生产默认关闭。
 | 目标 | 操作 | 验证 |
 |------|------|------|
 | 手动紧急回退 | set_layer(basic) | Gauge=0，/metrics 不再可用（若原层≥export） |
-| 升级开启 UI | set_layer(ui) 且 uiEnabled=true | 前端导航出现 Observability 菜单 |
+| 升级开启 UI | set_layer(ui) 且 uiEnabled=true | `DeveloperToolsView` 中出现 Observability 卡片 |
 | 重新启用告警 | 修复资源→set_layer(alerts) | 告警评估日志恢复 |
 | 解除降级锁 | 超过冷却后 set_layer(original) | 事件记录恢复原因 |
 

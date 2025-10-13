@@ -52,6 +52,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "cd '$PWD/src-tauri'; car
 
 所有现有用例应保持通过。更多测试矩阵、Soak 流程与手工验收脚本请参考 `doc/TESTS_REFACTOR_HANDOFF.md` 与 `doc-archive/MANUAL_TESTS.md`。
 
+## 开发调试工具
+
+- 顶栏仅保留一个“开发调试”按钮，点击后进入 `DeveloperToolsView` 聚合页。
+- 聚合页按卡片列出凭据管理、工作区、Git 面板、HTTP 测试、IP 池实验室、GitHub Actions 调试等调试入口。
+- 可观测性面板仅在 `observability.enabled && observability.uiEnabled` 时显示对应卡片，避免在未启用监控的环境暴露入口。
+
 ## 安全与合规基线
 
 - TLS 链验证与真实主机名校验始终开启；Fake SNI 场景仍使用真实域名执行证书校验。

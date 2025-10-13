@@ -7,6 +7,7 @@ import GitPanel from "../views/GitPanel.vue";
 import CredentialView from "../views/CredentialView.vue";
 import AuditLogView from "../views/AuditLogView.vue";
 import WorkspaceView from "../views/WorkspaceView.vue";
+import DeveloperToolsView from "../views/DeveloperToolsView.vue";
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -35,6 +36,11 @@ const router = createRouter({
       path: "/http-tester",
       name: "httpTester",
       component: HttpTester,
+    },
+    {
+      path: "/dev-tools",
+      name: "devTools",
+      component: DeveloperToolsView,
     },
     {
       path: "/git",
