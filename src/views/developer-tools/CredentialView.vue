@@ -228,11 +228,11 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { useCredentialStore } from '../stores/credential';
-import CredentialForm from '../components/CredentialForm.vue';
-import CredentialList from '../components/CredentialList.vue';
-import MasterPasswordDialog from '../components/MasterPasswordDialog.vue';
-import ConfirmDialog from '../components/ConfirmDialog.vue';
+import { useCredentialStore } from '../../stores/credential';
+import CredentialForm from '../../components/CredentialForm.vue';
+import CredentialList from '../../components/CredentialList.vue';
+import MasterPasswordDialog from '../../components/MasterPasswordDialog.vue';
+import ConfirmDialog from '../../components/ConfirmDialog.vue';
 
 const credentialStore = useCredentialStore();
 

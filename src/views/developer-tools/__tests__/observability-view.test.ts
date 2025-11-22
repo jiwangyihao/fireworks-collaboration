@@ -2,9 +2,9 @@ import { mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import ObservabilityView from "../ObservabilityView.vue";
-import { useMetricsStore } from "../../stores/metrics";
-import { useConfigStore } from "../../stores/config";
-import type { AppConfig, ObservabilityConfig } from "../../api/config";
+import { useMetricsStore } from "../../../stores/metrics";
+import { useConfigStore } from "../../../stores/config";
+import type { AppConfig, ObservabilityConfig } from "../../../api/config";
 
 const MOCK_SNAPSHOT = { generatedAtMs: 0, series: [] };
 

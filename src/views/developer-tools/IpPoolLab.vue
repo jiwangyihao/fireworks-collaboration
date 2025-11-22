@@ -640,7 +640,7 @@ import type {
   DnsResolverProtocol,
   IpPoolFileConfig,
   IpPoolRuntimeConfig,
-} from '../api/config';
+} from '../../api/config';
 import {
   clearIpPoolAutoDisabled,
   getIpPoolSnapshot,
@@ -650,7 +650,7 @@ import {
   type IpPoolSnapshot,
   type IpSelectionResult,
   type IpStat,
-} from '../api/ip-pool';
+} from '../../api/ip-pool';
 
 interface PreheatDomainForm {
   host: string;

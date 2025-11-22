@@ -504,16 +504,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
-import { useWorkspaceStore } from '../stores/workspace';
-import { useTasksStore } from '../stores/tasks';
+import { useWorkspaceStore } from '../../stores/workspace';
+import { useTasksStore } from '../../stores/tasks';
 import type {
   RepositoryInfo,
   WorkspaceBatchCloneRequest,
   WorkspaceBatchFetchRequest,
   WorkspaceBatchPushRequest,
-} from '../api/workspace';
-import type { SectionStrategy } from '../api/config';
-import { cancelTask } from '../api/tasks';
+} from '../../api/workspace';
+import type { SectionStrategy } from '../../api/config';
+import { cancelTask } from '../../api/tasks';
 
 const workspaceStore = useWorkspaceStore();
 const { current, repositories, loadingWorkspace, loadingStatus, status, selectedRepoIds, lastError, lastBatchTaskId, lastTemplateReport, lastBatchOperation } = storeToRefs(workspaceStore);

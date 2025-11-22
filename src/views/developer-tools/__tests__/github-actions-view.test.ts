@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 
-vi.mock("../../utils/github-auth", () => ({
+vi.mock("../../../utils/github-auth", () => ({
   getUserInfo: vi.fn(),
 }));
-vi.mock("../../utils/github-api", () => ({
+vi.mock("../../../utils/github-api", () => ({
   checkIfForked: vi.fn(),
   forkRepository: vi.fn(),
   createPullRequest: vi.fn(),
@@ -14,8 +14,8 @@ vi.mock("../../utils/github-api", () => ({
   syncFork: vi.fn(),
 }));
 
-import { getUserInfo } from "../../utils/github-auth";
-import { checkIfForked, listSSHKeys } from "../../utils/github-api";
+import { getUserInfo } from "../../../utils/github-auth";
+import { checkIfForked, listSSHKeys } from "../../../utils/github-api";
 import GitHubActionsView from "../GitHubActionsView.vue";
 
 describe("views/GitHubActionsView", () => {

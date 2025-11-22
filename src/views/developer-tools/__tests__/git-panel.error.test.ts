@@ -3,7 +3,7 @@ import { mount } from "@vue/test-utils";
 import { setActivePinia, createPinia } from "pinia";
 
 import GitPanel from "../GitPanel.vue";
-import { useTasksStore } from "../../stores/tasks";
+import { useTasksStore } from "../../../stores/tasks";
 
 // 复用现有 mock（git-panel.test.ts 中已经对 api/tasks 做了 mock），本文件不需要额外 mocks
 

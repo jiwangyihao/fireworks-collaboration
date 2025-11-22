@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
-import TimeRangeSelector from "../components/observability/TimeRangeSelector.vue";
-import OverviewPanel from "../components/observability/OverviewPanel.vue";
-import GitPanel from "../components/observability/GitPanel.vue";
-import NetworkPanel from "../components/observability/NetworkPanel.vue";
-import IpPoolPanel from "../components/observability/IpPoolPanel.vue";
-import TlsPanel from "../components/observability/TlsPanel.vue";
-import ProxyPanel from "../components/observability/ProxyPanel.vue";
-import AlertsPanel from "../components/observability/AlertsPanel.vue";
-import { useMetricsStore, type MetricsQuery } from "../stores/metrics";
-import type { MetricsRange } from "../api/metrics";
-import { useConfigStore } from "../stores/config";
+import TimeRangeSelector from "../../components/observability/TimeRangeSelector.vue";
+import OverviewPanel from "../../components/observability/OverviewPanel.vue";
+import GitPanel from "../../components/observability/GitPanel.vue";
+import NetworkPanel from "../../components/observability/NetworkPanel.vue";
+import IpPoolPanel from "../../components/observability/IpPoolPanel.vue";
+import TlsPanel from "../../components/observability/TlsPanel.vue";
+import ProxyPanel from "../../components/observability/ProxyPanel.vue";
+import AlertsPanel from "../../components/observability/AlertsPanel.vue";
+import { useMetricsStore, type MetricsQuery } from "../../stores/metrics";
+import type { MetricsRange } from "../../api/metrics";
+import { useConfigStore } from "../../stores/config";
 
 const BASE_METRIC_NAMES = [
   "git_tasks_total",
@@ -217,7 +217,7 @@ async function refresh() {
 </template>
 
 <style scoped>
-@reference "../style.css";
+@reference "../../style.css";
 .observability-view__header {
   @apply flex flex-col gap-4 border-b border-base-200 pb-4 md:flex-row md:items-center md:justify-between;
 }

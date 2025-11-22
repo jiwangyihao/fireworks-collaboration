@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import CredentialView from '../CredentialView.vue';
-import { useCredentialStore } from '../../stores/credential';
+import { useCredentialStore } from '../../../stores/credential';
 
 // Mock Tauri API
 vi.mock('@tauri-apps/api/core', () => ({
@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 // Mock child components
-vi.mock('../../components/CredentialForm.vue', () => ({
+vi.mock('../../../components/CredentialForm.vue', () => ({
   default: {
     name: 'CredentialForm',
     template: '<div class="mock-credential-form"></div>',
@@ -18,7 +18,7 @@ vi.mock('../../components/CredentialForm.vue', () => ({
   },
 }));
 
-vi.mock('../../components/CredentialList.vue', () => ({
+vi.mock('../../../components/CredentialList.vue', () => ({
   default: {
     name: 'CredentialList',
     template: '<div class="mock-credential-list"></div>',
@@ -26,7 +26,7 @@ vi.mock('../../components/CredentialList.vue', () => ({
   },
 }));
 
-vi.mock('../../components/MasterPasswordDialog.vue', () => ({
+vi.mock('../../../components/MasterPasswordDialog.vue', () => ({
   default: {
     name: 'MasterPasswordDialog',
     template: '<div class="mock-master-password-dialog"></div>',
@@ -35,7 +35,7 @@ vi.mock('../../components/MasterPasswordDialog.vue', () => ({
   },
 }));
 
-vi.mock('../../components/ConfirmDialog.vue', () => ({
+vi.mock('../../../components/ConfirmDialog.vue', () => ({
   default: {
     name: 'ConfirmDialog',
     template: '<div class="mock-confirm-dialog" v-if="show"><button @click="$emit(\'confirm\')">确认</button><button @click="$emit(\'cancel\')">取消</button></div>',
@@ -60,7 +60,7 @@ describe('CredentialView.vue', () => {
     it('应该在需要解锁时显示解锁提示', async () => {
       const wrapper = mount(CredentialView);
       const store = useCredentialStore();
-      
+
       // Set up state to make needsUnlock return true
       store.config = { storage: 'file', auditMode: false };
       store.isUnlocked = false;
@@ -74,7 +74,7 @@ describe('CredentialView.vue', () => {
     it('应该在解锁后显示凭证管理界面', async () => {
       const wrapper = mount(CredentialView);
       const store = useCredentialStore();
-      
+
       // Set up state to make needsUnlock return false
       store.isUnlocked = true;
       await wrapper.vm.$nextTick();
@@ -87,7 +87,7 @@ describe('CredentialView.vue', () => {
     it('应该显示store中的错误信息', async () => {
       const wrapper = mount(CredentialView);
       const store = useCredentialStore();
-      
+
       store.isUnlocked = true;
       store.error = 'Test error message';
       await wrapper.vm.$nextTick();
@@ -101,10 +101,10 @@ describe('CredentialView.vue', () => {
       const mockInvoke = invoke as ReturnType<typeof vi.fn>;
       // Mock successful empty response to prevent refresh errors
       mockInvoke.mockResolvedValue([]);
-      
+
       const wrapper = mount(CredentialView);
       const store = useCredentialStore();
-      
+
       store.isUnlocked = true;
       store.error = 'Test error';
       await wrapper.vm.$nextTick();
@@ -121,7 +121,7 @@ describe('CredentialView.vue', () => {
     it('应该显示即将过期凭证警告', async () => {
       const wrapper = mount(CredentialView);
       const store = useCredentialStore();
-      
+
       store.isUnlocked = true;
       const now = Date.now() / 1000;
       const expiringSoon = now + (5 * 86400); // 5 days from now
@@ -138,7 +138,7 @@ describe('CredentialView.vue', () => {
     it('应该显示已过期凭证警告', async () => {
       const wrapper = mount(CredentialView);
       const store = useCredentialStore();
-      
+
       store.isUnlocked = true;
       store.credentials = [
         { host: 'github.com', username: 'user1', isExpired: true } as any,
@@ -154,14 +154,14 @@ describe('CredentialView.vue', () => {
     it('应该在已过期警告中显示清理按钮', async () => {
       const wrapper = mount(CredentialView);
       const store = useCredentialStore();
-      
+
       store.isUnlocked = true;
       store.credentials = [
         { host: 'github.com', username: 'user1', isExpired: true } as any,
       ];
       await wrapper.vm.$nextTick();
 
-      const cleanupButton = wrapper.findAll('button').find(btn => 
+      const cleanupButton = wrapper.findAll('button').find(btn =>
         btn.text().includes('清理过期凭证')
       );
       expect(cleanupButton).toBeDefined();
@@ -175,7 +175,7 @@ describe('CredentialView.vue', () => {
       store.isUnlocked = true;
       await wrapper.vm.$nextTick();
 
-      const addButton = wrapper.findAll('button').find(btn => 
+      const addButton = wrapper.findAll('button').find(btn =>
         btn.text().includes('添加凭证')
       );
       await addButton?.trigger('click');
@@ -190,13 +190,13 @@ describe('CredentialView.vue', () => {
       await wrapper.vm.$nextTick();
 
       // Show form
-      const addButton = wrapper.findAll('button').find(btn => 
+      const addButton = wrapper.findAll('button').find(btn =>
         btn.text().includes('添加凭证')
       );
       await addButton?.trigger('click');
 
       // Hide form
-      const cancelButton = wrapper.findAll('button').find(btn => 
+      const cancelButton = wrapper.findAll('button').find(btn =>
         btn.text().includes('取消添加')
       );
       await cancelButton?.trigger('click');
@@ -212,7 +212,7 @@ describe('CredentialView.vue', () => {
       store.isUnlocked = true;
       await wrapper.vm.$nextTick();
 
-      const refreshButton = wrapper.findAll('button').find(btn => 
+      const refreshButton = wrapper.findAll('button').find(btn =>
         btn.text().includes('刷新')
       );
       expect(refreshButton).toBeDefined();
@@ -225,7 +225,7 @@ describe('CredentialView.vue', () => {
       store.loading = true;
       await wrapper.vm.$nextTick();
 
-      const refreshButton = wrapper.findAll('button').find(btn => 
+      const refreshButton = wrapper.findAll('button').find(btn =>
         btn.text().includes('刷新')
       );
       expect(refreshButton?.attributes('disabled')).toBeDefined();
@@ -236,14 +236,14 @@ describe('CredentialView.vue', () => {
     it('应该点击清理过期凭证显示确认对话框', async () => {
       const wrapper = mount(CredentialView);
       const store = useCredentialStore();
-      
+
       store.isUnlocked = true;
       store.credentials = [
         { host: 'github.com', username: 'user1', isExpired: true } as any,
       ];
       await wrapper.vm.$nextTick();
 
-      const cleanupButton = wrapper.findAll('button').find(btn => 
+      const cleanupButton = wrapper.findAll('button').find(btn =>
         btn.text().includes('清理过期凭证')
       );
       await cleanupButton?.trigger('click');
@@ -254,7 +254,7 @@ describe('CredentialView.vue', () => {
     it('应该在确认对话框中显示正确的消息', async () => {
       const wrapper = mount(CredentialView);
       const store = useCredentialStore();
-      
+
       // Use $patch to ensure reactive updates
       store.$patch({
         isUnlocked: true,
@@ -266,7 +266,7 @@ describe('CredentialView.vue', () => {
       await wrapper.vm.$nextTick();
       await flushPromises(); // Wait for all reactive updates
 
-      const cleanupButton = wrapper.findAll('button').find(btn => 
+      const cleanupButton = wrapper.findAll('button').find(btn =>
         btn.text().includes('清理过期凭证')
       );
       await cleanupButton?.trigger('click');
@@ -283,12 +283,12 @@ describe('CredentialView.vue', () => {
     it('应该使用warning变体的确认对话框', async () => {
       const wrapper = mount(CredentialView);
       const store = useCredentialStore();
-      
+
       store.isUnlocked = true;
       store.credentials = [{ host: 'github.com', username: 'user1', isExpired: true } as any];
       await wrapper.vm.$nextTick();
 
-      const cleanupButton = wrapper.findAll('button').find(btn => 
+      const cleanupButton = wrapper.findAll('button').find(btn =>
         btn.text().includes('清理过期凭证')
       );
       await cleanupButton?.trigger('click');
@@ -300,14 +300,14 @@ describe('CredentialView.vue', () => {
     it('应该点击确认按钮执行清理操作', async () => {
       const wrapper = mount(CredentialView);
       const store = useCredentialStore();
-      
+
       store.isUnlocked = true;
       store.credentials = [{ host: 'github.com', username: 'user1', isExpired: true } as any];
       store.cleanupExpired = vi.fn().mockResolvedValue(1);
       await wrapper.vm.$nextTick();
 
       // Show dialog
-      const cleanupButton = wrapper.findAll('button').find(btn => 
+      const cleanupButton = wrapper.findAll('button').find(btn =>
         btn.text().includes('清理过期凭证')
       );
       await cleanupButton?.trigger('click');
@@ -324,13 +324,13 @@ describe('CredentialView.vue', () => {
     it('应该点击取消按钮关闭对话框', async () => {
       const wrapper = mount(CredentialView);
       const store = useCredentialStore();
-      
+
       store.isUnlocked = true;
       store.credentials = [{ host: 'github.com', username: 'user1', isExpired: true } as any];
       await wrapper.vm.$nextTick();
 
       // Show dialog
-      const cleanupButton = wrapper.findAll('button').find(btn => 
+      const cleanupButton = wrapper.findAll('button').find(btn =>
         btn.text().includes('清理过期凭证')
       );
       await cleanupButton?.trigger('click');
@@ -345,14 +345,14 @@ describe('CredentialView.vue', () => {
     it('应该在清理失败时不显示成功消息', async () => {
       const wrapper = mount(CredentialView);
       const store = useCredentialStore();
-      
+
       store.isUnlocked = true;
       store.credentials = [{ host: 'github.com', username: 'user1', isExpired: true } as any];
       store.cleanupExpired = vi.fn().mockRejectedValue(new Error('Cleanup failed'));
       await wrapper.vm.$nextTick();
 
       // Show dialog and confirm
-      const cleanupButton = wrapper.findAll('button').find(btn => 
+      const cleanupButton = wrapper.findAll('button').find(btn =>
         btn.text().includes('清理过期凭证')
       );
       await cleanupButton?.trigger('click');
@@ -372,7 +372,7 @@ describe('CredentialView.vue', () => {
       store.isUnlocked = true;
       await wrapper.vm.$nextTick();
 
-      const exportButton = wrapper.findAll('button').find(btn => 
+      const exportButton = wrapper.findAll('button').find(btn =>
         btn.text().includes('导出审计日志')
       );
       expect(exportButton).toBeDefined();
@@ -385,7 +385,7 @@ describe('CredentialView.vue', () => {
       store.loading = true;
       await wrapper.vm.$nextTick();
 
-      const exportButton = wrapper.findAll('button').find(btn => 
+      const exportButton = wrapper.findAll('button').find(btn =>
         btn.text().includes('导出审计日志')
       );
       expect(exportButton?.attributes('disabled')).toBeDefined();
@@ -396,7 +396,7 @@ describe('CredentialView.vue', () => {
     it('应该在需要解锁时点击解锁按钮显示主密码对话框', async () => {
       const wrapper = mount(CredentialView);
       const store = useCredentialStore();
-      
+
       store.config = { storage: 'file', auditMode: false };
       store.isUnlocked = false;
       store.credentials = [];
@@ -412,7 +412,7 @@ describe('CredentialView.vue', () => {
     it('应该在解锁成功后刷新凭证列表', async () => {
       const wrapper = mount(CredentialView);
       const store = useCredentialStore();
-      
+
       store.config = { storage: 'file', auditMode: false };
       store.isUnlocked = false;
       store.credentials = [];

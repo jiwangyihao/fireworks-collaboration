@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { storeToRefs } from "pinia";
-import { useConfigStore } from "../stores/config";
+import { useConfigStore } from "../../stores/config";
 
 const configStore = useConfigStore();
 const { cfg: config } = storeToRefs(configStore);

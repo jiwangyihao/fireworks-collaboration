@@ -321,7 +321,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
-import { getUserInfo } from "../utils/github-auth";
+import { getUserInfo } from "../../utils/github-auth";
 import {
   forkRepository,
   createPullRequest,
@@ -330,7 +330,7 @@ import {
   deleteSSHKey,
   checkIfForked,
   syncFork,
-} from "../utils/github-api";
+} from "../../utils/github-api";
 
 // 响应式数据
 const userInfo = ref<any>(null);

@@ -4,7 +4,7 @@ import { setActivePinia, createPinia } from "pinia";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
-vi.mock("../../api/http", () => ({
+vi.mock("../../../api/http", () => ({
   httpFakeRequest: vi.fn().mockResolvedValue({
     ok: true,
     status: 200,
@@ -18,7 +18,7 @@ vi.mock("../../api/http", () => ({
   }),
 }));
 
-vi.mock("../../api/config", () => ({
+vi.mock("../../../api/config", () => ({
   getConfig: vi.fn().mockResolvedValue({
     http: {
       fakeSniEnabled: true,
@@ -39,8 +39,8 @@ vi.mock("../../api/config", () => ({
   setConfig: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { httpFakeRequest } from "../../api/http";
-import { setConfig } from "../../api/config";
+import { httpFakeRequest } from "../../../api/http";
+import { setConfig } from "../../../api/config";
 import HttpTester from "../HttpTester.vue";
 
 describe("views/HttpTester", () => {

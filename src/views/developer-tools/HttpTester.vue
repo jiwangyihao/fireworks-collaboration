@@ -84,11 +84,11 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { httpFakeRequest, type HttpRequestInput, type HttpResponseOutput } from "../api/http";
-import { getConfig, setConfig, type AppConfig } from "../api/config";
-import { useLogsStore } from "../stores/logs";
-import ProxyConfig from "../components/ProxyConfig.vue";
-import ProxyStatusPanel from "../components/ProxyStatusPanel.vue";
+import { httpFakeRequest, type HttpRequestInput, type HttpResponseOutput } from "../../api/http";
+import { getConfig, setConfig, type AppConfig } from "../../api/config";
+import { useLogsStore } from "../../stores/logs";
+import ProxyConfig from "../../components/ProxyConfig.vue";
+import ProxyStatusPanel from "../../components/ProxyStatusPanel.vue";
 
 type HistoryItem = {
   key: string;

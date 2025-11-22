@@ -2,12 +2,12 @@ import { createRouter, createWebHistory } from "vue-router";
 import HomeView from "../views/HomeView.vue";
 import CheckView from "../views/CheckView.vue";
 import ProjectView from "../views/ProjectView.vue";
-import HttpTester from "../views/HttpTester.vue";
-import GitPanel from "../views/GitPanel.vue";
-import CredentialView from "../views/CredentialView.vue";
-import AuditLogView from "../views/AuditLogView.vue";
-import WorkspaceView from "../views/WorkspaceView.vue";
-import DeveloperToolsView from "../views/DeveloperToolsView.vue";
+import HttpTester from "../views/developer-tools/HttpTester.vue";
+import GitPanel from "../views/developer-tools/GitPanel.vue";
+import CredentialView from "../views/developer-tools/CredentialView.vue";
+import AuditLogView from "../views/developer-tools/AuditLogView.vue";
+import WorkspaceView from "../views/developer-tools/WorkspaceView.vue";
+import DeveloperToolsView from "../views/developer-tools/DeveloperToolsView.vue";
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -30,7 +30,7 @@ const router = createRouter({
     {
       path: "/test",
       name: "github",
-      component: () => import("../views/GitHubActionsView.vue"),
+      component: () => import("../views/developer-tools/GitHubActionsView.vue"),
     },
     {
       path: "/http-tester",
@@ -50,7 +50,7 @@ const router = createRouter({
     {
       path: "/ip-pool",
       name: "ipPool",
-      component: () => import("../views/IpPoolLab.vue"),
+      component: () => import("../views/developer-tools/IpPoolLab.vue"),
     },
     {
       path: "/credentials",
@@ -70,7 +70,7 @@ const router = createRouter({
     {
       path: "/observability",
       name: "observability",
-      component: () => import("../views/ObservabilityView.vue"),
+      component: () => import("../views/developer-tools/ObservabilityView.vue"),
     },
   ],
 });

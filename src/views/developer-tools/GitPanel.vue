@@ -144,10 +144,10 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { useTasksStore } from '../stores/tasks';
-import { startGitClone, startGitFetch, startGitPush, startGitInit, startGitAdd, startGitCommit, cancelTask, listTasks } from '../api/tasks';
-import { getConfig, setConfig, type AppConfig } from '../api/config';
-import { useLogsStore } from '../stores/logs';
+import { useTasksStore } from '../../stores/tasks';
+import { startGitClone, startGitFetch, startGitPush, startGitInit, startGitAdd, startGitCommit, cancelTask, listTasks } from '../../api/tasks';
+import { getConfig, setConfig, type AppConfig } from '../../api/config';
+import { useLogsStore } from '../../stores/logs';
 
 const repo = ref('https://github.com/rust-lang/log');
 const dest = ref('C:/tmp/log');

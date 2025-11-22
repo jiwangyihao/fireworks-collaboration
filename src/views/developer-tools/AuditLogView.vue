@@ -266,7 +266,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { exportAuditLog, cleanupAuditLogs } from '../api/credential';
+import { exportAuditLog, cleanupAuditLogs } from '../../api/credential';
 
 interface AuditLogEntry {
   timestamp: number;
