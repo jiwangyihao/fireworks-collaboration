@@ -4,6 +4,7 @@ import { themeChange } from "theme-change";
 import { onMounted, provide, ref } from "vue";
 import { UserInfo } from "./utils/github-auth.ts";
 import GlobalErrors from "./components/GlobalErrors.vue";
+import GlobalToast from "./components/GlobalToast.vue";
 
 onMounted(() => {
   themeChange(false);
@@ -55,28 +56,17 @@ provide("user", user);
 </script>
 
 <template>
-  <header class="fixed p-3 flex w-full h-14 gap-4 justify-end z-10">
-    <div class="flex-1 flex gap-2 items-center">
-      <RouterLink to="/dev-tools" class="btn btn-sm btn-ghost gap-1.5">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="m11 7-7.64 7.64c-.61.61-.94 1.44-.94 2.31V21h3.05c.87 0 1.7-.34 2.31-.95L16 13"></path>
-          <path
-            d="m14 4 5.06 5.06c.59.59.59 1.54 0 2.12l-4 4c-.59.59-1.54.59-2.12 0L7.94 9"
-          ></path>
-        </svg>
-        <span class="hidden sm:inline">开发调试</span>
-      </RouterLink>
-    </div>
+  <!-- 右上角固定的全局导航区域 -->
+  <header class="fixed top-0 right-0 p-3 flex h-14 gap-3 items-center z-10">
+    <!-- 开发调试链接 -->
+    <RouterLink to="/dev-tools" class="btn btn-sm btn-ghost gap-1.5">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m11 7-7.64 7.64c-.61.61-.94 1.44-.94 2.31V21h3.05c.87 0 1.7-.34 2.31-.95L16 13"></path>
+        <path d="m14 4 5.06 5.06c.59.59.59 1.54 0 2.12l-4 4c-.59.59-1.54.59-2.12 0L7.94 9"></path>
+      </svg>
+      <span class="hidden sm:inline">开发调试</span>
+    </RouterLink>
+    <!-- 用户信息 -->
     <div v-if="user" class="flex items-center gap-2">
       <div class="avatar">
         <div class="h-7 w-7 rounded-full">
@@ -151,6 +141,7 @@ provide("user", user);
   </header>
   <RouterView />
   <GlobalErrors />
+  <GlobalToast />
 </template>
 
 <style>
