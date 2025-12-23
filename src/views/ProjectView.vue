@@ -11,6 +11,8 @@ import StatusCard from "../components/StatusCard.vue";
 import SyncStatusBadge from "../components/SyncStatusBadge.vue";
 import LanguageBar from "../components/LanguageBar.vue";
 import ConfirmModal from "../components/ConfirmModal.vue";
+import EmptyState from "../components/EmptyState.vue";
+import AvatarGroup, { type AvatarItem } from "../components/AvatarGroup.vue";
 import { formatNumber, relativeTime } from "../utils/format";
 
 const projectStore = useProjectStore();
@@ -41,6 +43,15 @@ watch(lastError, (error) => {
 
 // 计算属性
 const isLoading = computed(() => loadingState.value !== "idle");
+
+// 贡献者头像列表（转换为 AvatarItem 格式）
+const contributorAvatars = computed<AvatarItem[]>(() =>
+  contributors.value.map((c) => ({
+    avatarUrl: c.avatar_url,
+    name: c.login,
+    url: c.html_url,
+  }))
+);
 
 // 工作区创建表单
 const showWorktreeForm = ref(false);
@@ -533,34 +544,12 @@ onMounted(async () => {
 
             <!-- 贡献者 + 时间 + 版本 同一行 -->
             <div class="flex items-center justify-between">
-              <div v-if="contributors.length" class="flex items-center gap-2">
+              <div
+                v-if="contributorAvatars.length"
+                class="flex items-center gap-2"
+              >
                 <span class="text-xs text-base-content/50">贡献者</span>
-                <div class="avatar-group -space-x-3">
-                  <div
-                    v-for="contrib in contributors.slice(0, 5)"
-                    :key="contrib.login"
-                    class="avatar"
-                  >
-                    <a
-                      :href="contrib.html_url"
-                      target="_blank"
-                      :title="contrib.login"
-                      class="w-6 rounded-full ring ring-base-100 hover:ring-primary hover:z-10"
-                    >
-                      <img :src="contrib.avatar_url" :alt="contrib.login" />
-                    </a>
-                  </div>
-                  <div
-                    v-if="contributors.length > 5"
-                    class="avatar placeholder"
-                  >
-                    <div
-                      class="bg-neutral text-neutral-content w-6 rounded-full text-[9px]"
-                    >
-                      +{{ contributors.length - 5 }}
-                    </div>
-                  </div>
-                </div>
+                <AvatarGroup :items="contributorAvatars" :max="5" size="sm" />
               </div>
               <div class="flex items-center gap-2 text-xs">
                 <a
@@ -1155,23 +1144,19 @@ onMounted(async () => {
           </div>
 
           <!-- 空状态 -->
-          <div
+          <EmptyState
             v-else-if="localStatus?.exists && !isLoading"
-            class="text-center py-6 text-base-content/50"
-          >
-            <div class="text-3xl mb-2">📁</div>
-            <p class="text-sm">暂无分支工作区</p>
-            <p class="text-xs mt-1">点击"+ 新建"创建分支工作区</p>
-          </div>
+            icon="📁"
+            title="暂无分支工作区"
+            description="点击 '+ 新建' 创建分支工作区"
+          />
 
           <!-- 未克隆提示 -->
-          <div
+          <EmptyState
             v-else-if="!localStatus?.exists && !isLoading"
-            class="text-center py-6 text-base-content/50"
-          >
-            <div class="text-3xl mb-2">📭</div>
-            <p class="text-sm">请先克隆仓库</p>
-          </div>
+            icon="📭"
+            title="请先克隆仓库"
+          />
         </StatusCard>
       </div>
     </div>
