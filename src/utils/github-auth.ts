@@ -3,9 +3,12 @@ import { fetch as tauriFetch } from "../api/tauri-fetch";
 import { openPath } from "@tauri-apps/plugin-opener";
 
 const GITHUB_CLIENT_ID = "Ov23liuEyOOy0l1BNyyV";
-const REDIRECT_URI = "http://localhost:3429/auth/callback";
 const SCOPE = "repo user admin:public_key workflow";
 const TOKEN_STORAGE_KEY = "github_access_token";
+
+function getRedirectUri(port: number): string {
+  return `http://localhost:${port}/auth/callback`;
+}
 
 function generateRandomString(length: number): string {
   const chars =
@@ -20,22 +23,23 @@ function generateRandomString(length: number): string {
 function generatePKCE() {
   const codeVerifier = generateRandomString(128);
   const codeChallenge = CryptoJS.SHA256(codeVerifier).toString(
-    CryptoJS.enc.Base64url,
+    CryptoJS.enc.Base64url
   );
   return { codeVerifier, codeChallenge };
 }
 
-export function generateAuthUrl(): {
+export function generateAuthUrl(port: number): {
   url: string;
   codeVerifier: string;
   state: string;
 } {
   const { codeVerifier, codeChallenge } = generatePKCE();
   const state = generateRandomString(32);
+  const redirectUri = getRedirectUri(port);
 
   const params = new URLSearchParams({
     client_id: GITHUB_CLIENT_ID,
-    redirect_uri: REDIRECT_URI,
+    redirect_uri: redirectUri,
     scope: SCOPE,
     state: state,
     code_challenge: codeChallenge,
@@ -51,8 +55,10 @@ export function generateAuthUrl(): {
 export async function exchangeCodeForToken(
   code: string,
   codeVerifier: string,
+  port: number
 ): Promise<string> {
   try {
+    const redirectUri = getRedirectUri(port);
     const response = await tauriFetch(
       "https://github.com/login/oauth/access_token",
       {
@@ -66,15 +72,15 @@ export async function exchangeCodeForToken(
           client_secret: "fc39bef106d3ace7ec404f799f32818301ec4929",
           code: code,
           code_verifier: codeVerifier,
-          redirect_uri: REDIRECT_URI,
+          redirect_uri: redirectUri,
         }),
-      },
+      }
     );
 
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(
-        `GitHub OAuth 请求失败: ${response.status} ${response.statusText} - ${errorText}`,
+        `GitHub OAuth 请求失败: ${response.status} ${response.statusText} - ${errorText}`
       );
     }
 
@@ -88,7 +94,7 @@ export async function exchangeCodeForToken(
 
     if (data.error) {
       throw new Error(
-        `GitHub OAuth 错误: ${data.error_description || data.error}`,
+        `GitHub OAuth 错误: ${data.error_description || data.error}`
       );
     }
 
@@ -180,11 +186,12 @@ export async function removeAccessToken(): Promise<void> {
   }
 }
 
-export async function startOAuthFlow(): Promise<{
+export async function startOAuthFlow(port: number): Promise<{
   codeVerifier: string;
   state: string;
+  port: number;
 }> {
-  const { url, codeVerifier, state } = generateAuthUrl();
+  const { url, codeVerifier, state } = generateAuthUrl(port);
   await openPath(url);
-  return { codeVerifier, state };
+  return { codeVerifier, state, port };
 }

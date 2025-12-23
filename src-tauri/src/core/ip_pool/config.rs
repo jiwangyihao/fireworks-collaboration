@@ -26,7 +26,23 @@ fn default_preheat_ports() -> Vec<u16> {
     vec![443]
 }
 
+fn default_probe_path() -> String {
+    "/".to_string()
+}
+
+/// 延迟探测方法：HTTP 应用层协议测试或 TCP 握手测试
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ProbeMethod {
+    /// HTTPing：使用 HTTPS HEAD 请求测量应用层延迟（默认，TUN 模式兼容）
+    #[default]
+    Http,
+    /// TCP 握手延迟测试（传统方式，TUN 模式下可能不准确）
+    Tcp,
+}
+
 const IP_CONFIG_FILE_NAME: &str = "ip-config.json";
+
 
 /// 运行期控制项，来自主配置文件（config.json）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -73,6 +89,12 @@ pub struct IpPoolRuntimeConfig {
     /// 熔断器：是否启用。
     #[serde(default = "default_true")]
     pub circuit_breaker_enabled: bool,
+    /// 延迟探测方法：HTTP（默认，TUN 兼容）或 TCP
+    #[serde(default)]
+    pub probe_method: ProbeMethod,
+    /// HTTP 探测路径（默认 "/"）
+    #[serde(default = "default_probe_path")]
+    pub probe_path: String,
 }
 
 pub fn default_probe_timeout_ms() -> u64 {
@@ -129,6 +151,8 @@ impl Default for IpPoolRuntimeConfig {
             min_samples_in_window: default_min_samples_in_window(),
             cooldown_seconds: default_cooldown_seconds(),
             circuit_breaker_enabled: true,
+            probe_method: ProbeMethod::default(),
+            probe_path: default_probe_path(),
         }
     }
 }

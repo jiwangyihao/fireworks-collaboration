@@ -10,36 +10,40 @@ use tauri::State;
 
 use super::super::types::{OAuthCallbackData, OAuthState};
 
-/// Start the OAuth callback server on port 3429.
+/// Start the OAuth callback server on a dynamically allocated port.
 ///
 /// The server listens for incoming OAuth callback requests
 /// and stores the authorization code or error in the shared state.
+/// Returns the actual port number that was allocated.
 #[tauri::command]
-pub async fn start_oauth_server(state: State<'_, OAuthState>) -> Result<String, String> {
+pub async fn start_oauth_server(state: State<'_, OAuthState>) -> Result<u16, String> {
     let oauth_state = Arc::clone(&*state);
 
-    thread::spawn(move || match TcpListener::bind("127.0.0.1:3429") {
-        Ok(listener) => {
-            tracing::info!(target = "oauth", "OAuth server started on 127.0.0.1:3429");
+    // Bind to port 0 to let the OS allocate an available port
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| format!("Failed to bind OAuth server: {}", e))?;
+    
+    let port = listener.local_addr()
+        .map_err(|e| format!("Failed to get local address: {}", e))?
+        .port();
+    
+    tracing::info!(target = "oauth", port = port, "OAuth server started on dynamic port");
 
-            for stream in listener.incoming() {
-                match stream {
-                    Ok(s) => {
-                        let st = Arc::clone(&oauth_state);
-                        thread::spawn(move || handle_oauth_request(s, st));
-                    }
-                    Err(e) => {
-                        tracing::error!(target = "oauth", error = %e, "Failed to accept connection");
-                    }
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            match stream {
+                Ok(s) => {
+                    let st = Arc::clone(&oauth_state);
+                    thread::spawn(move || handle_oauth_request(s, st));
+                }
+                Err(e) => {
+                    tracing::error!(target = "oauth", error = %e, "Failed to accept connection");
                 }
             }
         }
-        Err(e) => {
-            tracing::error!(target = "oauth", error = %e, "Failed to bind OAuth server");
-        }
     });
 
-    Ok("OAuth server started".into())
+    Ok(port)
 }
 
 /// Handle an incoming OAuth callback request.

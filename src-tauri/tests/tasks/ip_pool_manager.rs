@@ -1179,7 +1179,7 @@ mod section_preheat {
     };
     use fireworks_collaboration_lib::core::ip_pool::history::IpHistoryStore;
     use fireworks_collaboration_lib::core::ip_pool::preheat::{
-        builtin_lookup, collect_candidates, current_epoch_ms, next_due_schedule, probe_latency,
+        builtin_lookup, collect_candidates, current_epoch_ms, next_due_schedule, probe_latency_tcp,
         update_cache_and_history, user_static_lookup, AggregatedCandidate, DomainSchedule,
     };
     use fireworks_collaboration_lib::core::ip_pool::IpSource;
@@ -1309,7 +1309,7 @@ mod section_preheat {
             let start = std::time::Instant::now();
             let ip_probe: IpAddr = "198.51.100.1".parse().unwrap();
             let timeout_ms = 150;
-            let result = rt.block_on(async { probe_latency(ip_probe, 9, timeout_ms).await });
+            let result = rt.block_on(async { probe_latency_tcp(ip_probe, 9, timeout_ms).await });
             let elapsed_ms = start.elapsed().as_millis() as u64;
             assert!(elapsed_ms <= timeout_ms * 2 + 50);
             if let Ok(lat) = result {

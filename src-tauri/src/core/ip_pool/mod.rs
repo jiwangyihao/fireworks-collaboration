@@ -16,7 +16,8 @@ pub use cache::{IpCacheKey, IpCacheSlot, IpCandidate, IpScoreCache, IpSource, Ip
 pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState};
 pub use config::{
     DnsResolverConfig, DnsResolverProtocol, DnsRuntimeConfig, EffectiveIpPoolConfig,
-    IpPoolFileConfig, IpPoolRuntimeConfig, IpPoolSourceToggle, PreheatDomain, UserStaticIp,
+    IpPoolFileConfig, IpPoolRuntimeConfig, IpPoolSourceToggle, PreheatDomain, ProbeMethod,
+    UserStaticIp,
 };
 pub use history::{IpHistoryRecord, IpHistoryStore};
 

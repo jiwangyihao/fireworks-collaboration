@@ -10,10 +10,11 @@ interface OAuthCallbackData {
 // 创建 OAuth 回调服务器
 export async function createCallbackServer(): Promise<{
   server: { close: () => void };
+  port: number;
   getCallbackData: () => Promise<OAuthCallbackData>;
 }> {
-  // 启动 Tauri 后端的 OAuth 服务器
-  await invoke("start_oauth_server");
+  // 启动 Tauri 后端的 OAuth 服务器，返回动态分配的端口
+  const port = await invoke<number>("start_oauth_server");
 
   return {
     server: {
@@ -22,6 +23,7 @@ export async function createCallbackServer(): Promise<{
         invoke("clear_oauth_state").catch(() => {});
       },
     },
+    port,
     getCallbackData: async () => {
       // 轮询获取 OAuth 回调数据
       return new Promise<OAuthCallbackData>((resolve, reject) => {
@@ -30,7 +32,7 @@ export async function createCallbackServer(): Promise<{
             let data;
             try {
               data = await invoke<OAuthCallbackData | null>(
-                "get_oauth_callback_data",
+                "get_oauth_callback_data"
               );
             } catch (invokeError) {
               // 添加更详细的错误处理

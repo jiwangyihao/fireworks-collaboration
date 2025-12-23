@@ -10,24 +10,30 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
+use hyper::{Body, Request, Version};
+use rustls::ServerName;
 use tokio::{
     net::TcpStream,
     sync::{Notify, Semaphore},
     task::JoinSet,
     time::{sleep, timeout, Duration, Instant},
 };
+use tokio_rustls::TlsConnector;
 
 use super::{
     cache::{IpCacheKey, IpCacheSlot, IpScoreCache, IpStat},
     config::{
         DnsRuntimeConfig, EffectiveIpPoolConfig, IpPoolFileConfig, IpPoolRuntimeConfig,
-        PreheatDomain, UserStaticIp,
+        PreheatDomain, ProbeMethod, UserStaticIp,
     },
     dns::{self, DnsResolvedIp},
     history::{IpHistoryRecord, IpHistoryStore},
     IpCandidate, IpSource,
 };
+use crate::core::tls::verifier::create_client_config_with_expected_name;
+use crate::core::config::model::TlsCfg;
 use ipnet::IpNet;
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CandidateChannel {
@@ -1116,11 +1122,19 @@ pub(super) async fn measure_candidates(
         .clamp(100, MAX_PROBE_TIMEOUT_MS);
     let semaphore = Arc::new(Semaphore::new(max_parallel));
     let mut join_set = JoinSet::new();
+    
+    // 获取探测配置
+    let probe_method = runtime_cfg.probe_method;
+    let probe_path = runtime_cfg.probe_path.clone();
 
     for candidate in candidates {
         let permit = semaphore.clone();
         let timeout_ms = timeout;
         let host_label = host.to_string();
+        let host_for_probe = host.to_string();
+        let sni_host = host.to_string(); // 对于延迟测试，使用真实 host 作为 SNI
+        let path = probe_path.clone();
+        let method = probe_method;
         join_set.spawn(async move {
             let _permit = permit
                 .acquire_owned()
@@ -1129,7 +1143,11 @@ pub(super) async fn measure_candidates(
             let latency = probe_latency(
                 candidate.candidate.address,
                 candidate.candidate.port,
+                &host_for_probe,
+                &sni_host,
+                &path,
                 timeout_ms,
+                method,
             )
             .await?;
             tracing::debug!(
@@ -1138,6 +1156,7 @@ pub(super) async fn measure_candidates(
                 port = candidate.candidate.port,
                 ip = %candidate.candidate.address,
                 latency_ms = latency,
+                method = ?method,
                 "probe success"
             );
             Ok::<IpStat, anyhow::Error>(candidate.to_stat(latency, ttl_secs))
@@ -1197,7 +1216,8 @@ pub(super) async fn measure_candidates(
     stats
 }
 
-pub async fn probe_latency(ip: IpAddr, port: u16, timeout_ms: u64) -> Result<u32> {
+/// TCP 握手延迟测试（传统方式，TUN 模式下可能返回本地延迟）
+pub async fn probe_latency_tcp(ip: IpAddr, port: u16, timeout_ms: u64) -> Result<u32> {
     let addr = SocketAddr::new(ip, port);
     let timeout = Duration::from_millis(timeout_ms);
     let start = Instant::now();
@@ -1205,6 +1225,108 @@ pub async fn probe_latency(ip: IpAddr, port: u16, timeout_ms: u64) -> Result<u32
     let elapsed = start.elapsed();
     drop(stream);
     Ok(elapsed.as_millis().min(u128::from(u32::MAX)) as u32)
+}
+
+/// HTTPing 延迟测试：使用 HTTPS HEAD 请求测量应用层延迟
+/// 
+/// 此方法通过发送实际的 HTTP 请求来测量延迟，可以在 TUN 模式下获得真实的延迟值，
+/// 而不会被代理软件的本地 TCP 握手劫持。
+/// 
+/// # Arguments
+/// * `ip` - 目标 IP 地址
+/// * `port` - 目标端口（通常是 443）
+/// * `host` - 用于 Host 头和 TLS 证书验证的主机名
+/// * `sni_host` - 用于 TLS SNI 的主机名（可以是伪装的 SNI）
+/// * `path` - HTTP 请求路径（默认 "/"）
+/// * `timeout_ms` - 超时时间（毫秒）
+pub async fn probe_latency_http(
+    ip: IpAddr,
+    port: u16,
+    host: &str,
+    sni_host: &str,
+    path: &str,
+    timeout_ms: u64,
+) -> Result<u32> {
+    let addr = SocketAddr::new(ip, port);
+    let timeout_duration = Duration::from_millis(timeout_ms);
+    
+    // 1. 建立 TCP 连接
+    let tcp_stream = timeout(timeout_duration, TcpStream::connect(addr))
+        .await
+        .context("tcp connect timeout")?
+        .context("tcp connect failed")?;
+    
+    // 2. 配置 TLS，使用指定的 SNI 但验证真实主机名的证书
+    let tls_cfg = TlsCfg {
+        spki_pins: Vec::new(),
+        metrics_enabled: true,
+        cert_fp_log_enabled: false, // 探测时不需要记录证书指纹
+        cert_fp_max_bytes: 0,
+    };
+    let tls_config = Arc::new(create_client_config_with_expected_name(&tls_cfg, host));
+    let connector = TlsConnector::from(tls_config);
+    
+    let server_name = ServerName::try_from(sni_host)
+        .map_err(|_| anyhow!("invalid sni hostname: {}", sni_host))?;
+    
+    // 3. TLS 握手
+    let tls_stream = timeout(timeout_duration, connector.connect(server_name, tcp_stream))
+        .await
+        .context("tls handshake timeout")?
+        .context("tls handshake failed")?;
+    
+    // 4. HTTP/1.1 握手
+    let (mut sender, conn) = timeout(
+        timeout_duration,
+        hyper::client::conn::handshake(tls_stream),
+    )
+    .await
+    .context("http handshake timeout")?
+    .context("http handshake failed")?;
+    
+    // 后台驱动连接
+    tokio::spawn(async move {
+        if let Err(e) = conn.await {
+            tracing::trace!(target = "ip_pool", "httping conn ended: {:?}", e);
+        }
+    });
+    
+    // 5. 发送 HEAD 请求并计时
+    let uri = format!("https://{}{}", host, path);
+    let req = Request::builder()
+        .method("HEAD")
+        .uri(&uri)
+        .version(Version::HTTP_11)
+        .header("Host", host)
+        .header("User-Agent", "fireworks-httping/1.0")
+        .header("Connection", "close")
+        .body(Body::empty())
+        .context("build http request")?;
+    
+    let start = Instant::now();
+    let _resp = timeout(timeout_duration, sender.send_request(req))
+        .await
+        .context("http request timeout")?
+        .context("http request failed")?;
+    let elapsed = start.elapsed();
+    
+    Ok(elapsed.as_millis().min(u128::from(u32::MAX)) as u32)
+}
+
+/// 根据配置选择的探测方法测量延迟
+pub async fn probe_latency(
+    ip: IpAddr,
+    port: u16,
+    host: &str,
+    sni_host: &str,
+    path: &str,
+    timeout_ms: u64,
+    method: ProbeMethod,
+) -> Result<u32> {
+    match method {
+        ProbeMethod::Http => probe_latency_http(ip, port, host, sni_host, path, timeout_ms).await,
+        ProbeMethod::Tcp => probe_latency_tcp(ip, port, timeout_ms).await,
+    }
 }
 
 pub fn update_cache_and_history(

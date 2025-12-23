@@ -56,11 +56,11 @@ async function authenticateGitHub() {
   loginLabel.value = "请在浏览器中完成登录";
 
   // 启动 OAuth 流程
-  // 创建本地回调服务器
-  const { server, getCallbackData } = await createCallbackServer();
+  // 创建本地回调服务器（返回动态分配的端口）
+  const { server, port, getCallbackData } = await createCallbackServer();
 
-  // 开始 OAuth 流程
-  const { codeVerifier, state } = await startOAuthFlow();
+  // 开始 OAuth 流程，传入动态端口
+  const { codeVerifier, state } = await startOAuthFlow(port);
 
   // 等待回调
   const callbackData = await getCallbackData();
@@ -70,7 +70,7 @@ async function authenticateGitHub() {
 
   if (callbackData.error) {
     throw new Error(
-      `GitHub 授权失败: ${callbackData.error_description || callbackData.error}`,
+      `GitHub 授权失败: ${callbackData.error_description || callbackData.error}`
     );
   }
 
@@ -90,10 +90,11 @@ async function authenticateGitHub() {
 
   loginLabel.value = "正在交换访问令牌...";
 
-  // 使用授权码换取访问令牌
+  // 使用授权码换取访问令牌，传入动态端口
   const accessToken = await exchangeCodeForToken(
     callbackData.code,
     codeVerifier,
+    port
   );
 
   // 保存访问令牌
@@ -173,9 +174,10 @@ onMounted(async () => {
       const warmup = await waitForIpPoolWarmup(activation.preheatTargets);
       if (warmup.state === "ready") {
         const { completedTargets, totalTargets } = warmup;
-        const summary = totalTargets > 0
-          ? `已覆盖 ${completedTargets}/${totalTargets} 个预热目标`
-          : "无需加载预热目标";
+        const summary =
+          totalTargets > 0
+            ? `已覆盖 ${completedTargets}/${totalTargets} 个预热目标`
+            : "无需加载预热目标";
         statusList.value[idx] = {
           ...statusList.value[idx],
           type: "success",
@@ -189,9 +191,10 @@ onMounted(async () => {
         };
       } else if (warmup.state === "inactive") {
         const { completedTargets, totalTargets } = warmup;
-        const summary = totalTargets > 0
-          ? `当前已加载 ${completedTargets}/${totalTargets} 个预热目标`
-          : "当前无预热目标";
+        const summary =
+          totalTargets > 0
+            ? `当前已加载 ${completedTargets}/${totalTargets} 个预热目标`
+            : "当前无预热目标";
         statusList.value[idx] = {
           ...statusList.value[idx],
           type: "success",
