@@ -69,7 +69,7 @@ pub struct IpSelectionDto {
     pub outcome: Option<OutcomeMetricsDto>,
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn ip_pool_get_snapshot(
     pool: State<'_, SharedIpPool>,
 ) -> Result<IpPoolSnapshotDto, String> {
@@ -82,7 +82,7 @@ pub async fn ip_pool_get_snapshot(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn ip_pool_update_config(
     runtime: IpPoolRuntimeConfig,
     file: IpPoolFileConfig,
@@ -114,7 +114,7 @@ pub async fn ip_pool_update_config(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn ip_pool_request_refresh(pool: State<'_, SharedIpPool>) -> Result<bool, String> {
     let pool_arc = pool.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -125,7 +125,7 @@ pub async fn ip_pool_request_refresh(pool: State<'_, SharedIpPool>) -> Result<bo
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn ip_pool_start_preheater(
     pool: State<'_, SharedIpPool>,
 ) -> Result<IpPoolPreheatActivationDto, String> {
@@ -148,7 +148,7 @@ pub async fn ip_pool_start_preheater(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn ip_pool_clear_auto_disabled(pool: State<'_, SharedIpPool>) -> Result<bool, String> {
     let pool_arc = pool.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -159,7 +159,7 @@ pub async fn ip_pool_clear_auto_disabled(pool: State<'_, SharedIpPool>) -> Resul
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn ip_pool_pick_best(
     host: String,
     port: u16,

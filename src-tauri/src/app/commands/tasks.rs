@@ -7,13 +7,13 @@ use crate::core::tasks::{TaskKind, TaskSnapshot};
 use super::super::types::TaskRegistryState;
 
 /// List all tasks in the registry.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn task_list(reg: State<'_, TaskRegistryState>) -> Result<Vec<TaskSnapshot>, String> {
     Ok(reg.list())
 }
 
 /// Get a snapshot of a specific task by ID.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn task_snapshot(
     id: String,
     reg: State<'_, TaskRegistryState>,
@@ -23,7 +23,7 @@ pub async fn task_snapshot(
 }
 
 /// Cancel a running task by ID.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn task_cancel(id: String, reg: State<'_, TaskRegistryState>) -> Result<bool, String> {
     let uuid = uuid::Uuid::parse_str(&id).map_err(|e| e.to_string())?;
     Ok(reg.cancel(&uuid))
@@ -32,7 +32,7 @@ pub async fn task_cancel(id: String, reg: State<'_, TaskRegistryState>) -> Resul
 /// Start a sleep task for testing purposes.
 ///
 /// Creates a task that sleeps for the specified duration in milliseconds.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn task_start_sleep(
     ms: u64,
     reg: State<'_, TaskRegistryState>,

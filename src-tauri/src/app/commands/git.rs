@@ -20,7 +20,7 @@ fn parse_depth(depth: Option<serde_json::Value>) -> Option<u32> {
 /// - `filter`: Optional object filter (e.g., "blob:none")
 /// - `strategy_override`: Optional strategy configuration override
 /// - `recurse_submodules`: Whether to recursively clone submodules (P7.1)
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_clone(
     repo: String,
     dest: String,
@@ -68,7 +68,7 @@ pub async fn git_clone(
 /// - `depth`: Optional fetch depth
 /// - `filter`: Optional object filter
 /// - `strategy_override`: Optional strategy configuration override
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_fetch(
     repo: String,
     dest: String,
@@ -115,7 +115,7 @@ pub async fn git_fetch(
 /// - `password`: Optional password/token for authentication
 /// - `use_stored_credential`: Whether to attempt to use stored credentials
 /// - `strategy_override`: Optional strategy configuration override
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_push(
     dest: String,
     remote: Option<String>,
@@ -128,15 +128,7 @@ pub async fn git_push(
     credential_factory: State<'_, SharedCredentialFactory>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    // Entry log - confirm function is called and show parameters
-    tracing::info!(
-        target="git",
-        dest=%dest,
-        use_stored_credential=?use_stored_credential,
-        has_username=username.is_some(),
-        has_password=password.is_some(),
-        "git_push command received"
-    );
+
     
     // Determine final username and password
     let (final_username, final_password) =
@@ -316,7 +308,7 @@ pub(crate) fn parse_git_host(url: &str) -> Result<String, String> {
 }
 
 /// Initialize a new Git repository.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_init(
     dest: String,
     reg: State<'_, TaskRegistryState>,
@@ -332,7 +324,7 @@ pub async fn git_init(
 /// # Parameters
 /// - `dest`: Repository path
 /// - `paths`: List of file paths to stage (relative to repository root)
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_add(
     dest: String,
     paths: Vec<String>,
@@ -358,7 +350,7 @@ pub async fn git_add(
 /// - `allow_empty`: Whether to allow empty commits
 /// - `author_name`: Optional author name override
 /// - `author_email`: Optional author email override
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_commit(
     dest: String,
     message: String,
@@ -399,7 +391,7 @@ pub async fn git_commit(
 /// - `name`: Branch name
 /// - `checkout`: Whether to immediately checkout the branch
 /// - `force`: Whether to force update if branch exists
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_branch(
     dest: String,
     name: String,
@@ -430,7 +422,7 @@ pub async fn git_branch(
 /// - `dest`: Repository path
 /// - `reference`: Branch name or commit reference
 /// - `create`: Whether to create the branch if it doesn't exist
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_checkout(
     dest: String,
     reference: String,
@@ -460,7 +452,7 @@ pub async fn git_checkout(
 /// - `message`: Optional tag message (for annotated tags)
 /// - `annotated`: Whether to create an annotated tag
 /// - `force`: Whether to force update if tag exists
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_tag(
     dest: String,
     name: String,
@@ -501,7 +493,7 @@ pub async fn git_tag(
 /// - `dest`: Repository path
 /// - `name`: Remote name
 /// - `url`: New remote URL
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_remote_set(
     dest: String,
     name: String,
@@ -527,7 +519,7 @@ pub async fn git_remote_set(
 /// - `dest`: Repository path
 /// - `name`: Remote name
 /// - `url`: Remote URL
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_remote_add(
     dest: String,
     name: String,
@@ -552,7 +544,7 @@ pub async fn git_remote_add(
 /// # Parameters
 /// - `dest`: Repository path
 /// - `name`: Remote name to remove
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_remote_remove(
     dest: String,
     name: String,
@@ -609,7 +601,7 @@ pub struct RepoStatus {
 /// # Parameters
 /// - `dest`: Repository path
 /// - `include_remote`: Whether to include remote branches
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_list_branches(
     dest: String,
     include_remote: Option<bool>,
@@ -695,7 +687,7 @@ pub async fn git_list_branches(
 ///
 /// # Parameters
 /// - `dest`: Repository path
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_repo_status(dest: String) -> Result<RepoStatus, String> {
     let path = Path::new(&dest);
     if !path.exists() || !path.join(".git").exists() {
@@ -801,7 +793,7 @@ pub async fn git_repo_status(dest: String) -> Result<RepoStatus, String> {
 /// - `dest`: Repository path
 /// - `name`: Branch name to delete
 /// - `force`: Whether to force delete (even if not merged)
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_delete_branch(
     dest: String,
     name: String,
@@ -834,7 +826,7 @@ pub async fn git_delete_branch(
 /// - `dest`: Repository path
 /// - `remote`: Remote name (defaults to "origin")
 /// - `fetch_first`: Whether to fetch before listing (defaults to false)
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_remote_branches(
     dest: String,
     remote: Option<String>,
@@ -900,7 +892,7 @@ pub struct WorktreeInfo {
 ///
 /// # Parameters
 /// - `dest`: Repository path (main worktree or any linked worktree)
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_worktree_list(dest: String) -> Result<Vec<WorktreeInfo>, String> {
     let path = Path::new(&dest);
     if !path.exists() {
@@ -991,7 +983,7 @@ pub async fn git_worktree_list(dest: String) -> Result<Vec<WorktreeInfo>, String
 /// - `branch`: Branch to checkout (will be created if it doesn't exist)
 /// - `create_branch`: Whether to create a new branch
 /// - `from_remote`: If provided, create branch from this remote ref (e.g. "origin/feature-x")
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_worktree_add(
     dest: String,
     path: String,
@@ -1074,7 +1066,7 @@ pub async fn git_worktree_add(
 /// - `delete_remote_branch`: Whether to also delete the remote branch
 /// - `remote`: Remote name for branch deletion (defaults to "origin")
 /// - `use_stored_credential`: Whether to use stored credentials for remote operations
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_worktree_remove(
     dest: String,
     path: String,

@@ -19,7 +19,7 @@ pub struct MetricsSnapshotRequest {
     pub max_series: Option<usize>,
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn metrics_snapshot(
     options: Option<MetricsSnapshotRequest>,
     cfg: State<'_, SharedConfig>,

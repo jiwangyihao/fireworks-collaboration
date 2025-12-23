@@ -111,7 +111,7 @@ export async function startGitClone(
   if (opts) {
     if (opts.depth !== undefined) args.depth = opts.depth;
     if (opts.filter !== undefined) args.filter = opts.filter;
-    if (opts.strategyOverride) args.strategy_override = opts.strategyOverride; // snake_case for backend
+    if (opts.strategyOverride) args.strategyOverride = opts.strategyOverride; // camelCase for backend
   }
   return invoke<string>("git_clone", args);
 }
@@ -138,7 +138,7 @@ export async function startGitFetch(
     if (preset && preset !== "remote") args.preset = preset;
     if (depth !== undefined) args.depth = depth;
     if (filter !== undefined) args.filter = filter;
-    if (strategyOverride) args.strategy_override = strategyOverride;
+    if (strategyOverride) args.strategyOverride = strategyOverride;
   }
   return invoke<string>("git_fetch", args);
 }
@@ -174,9 +174,9 @@ export async function startGitPush(params: {
   if (username) args.username = username;
   if (password) args.password = password;
   if (useStoredCredential !== undefined)
-    args.use_stored_credential = useStoredCredential; // snake_case for Tauri invoke
-  if (strategyOverride) args.strategy_override = strategyOverride; // snake_case for Tauri invoke
-  console.log("[DEBUG] tasks.ts invoke git_push args:", JSON.stringify(args));
+    args.useStoredCredential = useStoredCredential;
+  if (strategyOverride) args.strategyOverride = strategyOverride;
+
   return invoke<string>("git_push", args);
 }
 
@@ -200,9 +200,9 @@ export async function startGitCommit(params: {
 }) {
   const { dest, message, allowEmpty, authorName, authorEmail } = params;
   const args: Record<string, unknown> = { dest, message };
-  if (allowEmpty !== undefined) args.allow_empty = allowEmpty; // snake_case 兼容
-  if (authorName) args.author_name = authorName;
-  if (authorEmail) args.author_email = authorEmail;
+  if (allowEmpty !== undefined) args.allowEmpty = allowEmpty;
+  if (authorName) args.authorName = authorName;
+  if (authorEmail) args.authorEmail = authorEmail;
   return invoke<string>("git_commit", args);
 }
 
@@ -310,7 +310,7 @@ export async function getGitBranches(
 ): Promise<BranchInfo[]> {
   return invoke<BranchInfo[]>("git_list_branches", {
     dest,
-    include_remote: includeRemote ?? false,
+    includeRemote: includeRemote ?? false,
   });
 }
 
@@ -365,8 +365,8 @@ export async function addWorktree(
     dest,
     path,
     branch,
-    create_branch: createBranch ?? true,
-    from_remote: fromRemote,
+    createBranch: createBranch ?? true,
+    fromRemote: fromRemote,
   });
 }
 
@@ -383,9 +383,9 @@ export async function removeWorktree(
     dest,
     path,
     force: force ?? false,
-    delete_remote_branch: deleteRemoteBranch,
+    deleteRemoteBranch: deleteRemoteBranch,
     remote,
-    use_stored_credential: useStoredCredential,
+    useStoredCredential: useStoredCredential,
   });
 }
 
@@ -398,6 +398,6 @@ export async function getRemoteBranches(
   return invoke<string[]>("git_remote_branches", {
     dest,
     remote: remote ?? "origin",
-    fetch_first: fetchFirst ?? false,
+    fetchFirst: fetchFirst ?? false,
   });
 }

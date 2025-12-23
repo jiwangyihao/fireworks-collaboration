@@ -15,7 +15,7 @@ use super::super::types::{OAuthCallbackData, OAuthState};
 /// The server listens for incoming OAuth callback requests
 /// and stores the authorization code or error in the shared state.
 /// Returns the actual port number that was allocated.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn start_oauth_server(state: State<'_, OAuthState>) -> Result<u16, String> {
     let oauth_state = Arc::clone(&*state);
 
@@ -127,7 +127,7 @@ fn parse_oauth_callback(req: &str) -> OAuthCallbackData {
 /// Get and clear the OAuth callback data.
 ///
 /// This returns the stored callback data (if any) and clears it from state.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn get_oauth_callback_data(
     state: State<'_, OAuthState>,
 ) -> Result<Option<OAuthCallbackData>, String> {
@@ -138,7 +138,7 @@ pub async fn get_oauth_callback_data(
 }
 
 /// Clear the OAuth callback state without returning data.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn clear_oauth_state(state: State<'_, OAuthState>) -> Result<(), String> {
     state
         .lock()

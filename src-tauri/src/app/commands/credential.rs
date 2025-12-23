@@ -97,7 +97,7 @@ pub struct UpdateCredentialRequest {
 /// # Returns
 ///
 /// Returns Ok(()) on success, or an error message on failure.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn add_credential(
     request: AddCredentialRequest,
     factory: State<'_, SharedCredentialFactory>,
@@ -167,7 +167,7 @@ pub async fn add_credential(
 /// # Returns
 ///
 /// Returns the credential info if found, or None if not found.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn get_credential(
     host: String,
     username: Option<String>,
@@ -212,7 +212,7 @@ pub async fn get_credential(
 /// # Returns
 ///
 /// Returns Ok(()) on success, or an error message on failure.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn update_credential(
     request: UpdateCredentialRequest,
     factory: State<'_, SharedCredentialFactory>,
@@ -287,7 +287,7 @@ pub async fn update_credential(
 /// # Returns
 ///
 /// Returns Ok(()) on success, or an error message on failure.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn delete_credential(
     host: String,
     username: String,
@@ -337,7 +337,7 @@ pub async fn delete_credential(
 /// # Returns
 ///
 /// Returns a list of credential info (with masked passwords).
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn list_credentials(
     factory: State<'_, SharedCredentialFactory>,
     audit: State<'_, SharedAuditLogger>,
@@ -382,7 +382,7 @@ pub async fn list_credentials(
 /// # Returns
 ///
 /// Returns Ok(()) on success, or an error message on failure.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn set_master_password(
     _password: String,
     config: CredentialConfig,
@@ -430,7 +430,7 @@ pub async fn set_master_password(
 /// # Returns
 ///
 /// Returns Ok(()) on success, or an error message on failure.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn unlock_store(
     password: String,
     config: CredentialConfig,
@@ -493,7 +493,7 @@ pub async fn unlock_store(
 /// # Returns
 ///
 /// Returns the audit log as a JSON string.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn export_audit_log(audit: State<'_, SharedAuditLogger>) -> Result<String, String> {
     let logger = audit
         .lock()
@@ -516,7 +516,7 @@ pub async fn export_audit_log(audit: State<'_, SharedAuditLogger>) -> Result<Str
 /// # Returns
 ///
 /// Returns the number of credentials removed.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn cleanup_expired_credentials(
     factory: State<'_, SharedCredentialFactory>,
     audit: State<'_, SharedAuditLogger>,
@@ -595,7 +595,7 @@ pub fn initialize_credential_store(
 /// # Returns
 ///
 /// Returns the number of logs removed.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn cleanup_audit_logs(
     retention_days: u64,
     audit: State<'_, SharedAuditLogger>,
@@ -620,7 +620,7 @@ pub async fn cleanup_audit_logs(
 /// # Returns
 ///
 /// Returns true if the store is locked, false otherwise.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn is_credential_locked(audit: State<'_, SharedAuditLogger>) -> Result<bool, String> {
     let logger = audit
         .lock()
@@ -638,7 +638,7 @@ pub async fn is_credential_locked(audit: State<'_, SharedAuditLogger>) -> Result
 /// # Returns
 ///
 /// Returns Ok(()) on success.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn reset_credential_lock(audit: State<'_, SharedAuditLogger>) -> Result<(), String> {
     let logger = audit
         .lock()

@@ -9,7 +9,7 @@ use super::super::types::{SharedConfig, SystemProxy, SystemProxyResult};
 /// Detect system proxy settings.
 ///
 /// Returns the configured system proxy (if any) including its type and URL.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn detect_system_proxy() -> Result<SystemProxyResult, String> {
     tracing::info!(target = "proxy", "Detecting system proxy");
 
@@ -48,7 +48,7 @@ pub async fn detect_system_proxy() -> Result<SystemProxyResult, String> {
 ///
 /// Triggers an immediate fallback from proxy to direct connection,
 /// optionally with a custom reason message.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn force_proxy_fallback(
     reason: Option<String>,
     cfg: State<'_, SharedConfig>,
@@ -75,7 +75,7 @@ pub async fn force_proxy_fallback(
 /// Force proxy recovery from fallback.
 ///
 /// Attempts to restore proxy functionality after a fallback.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn force_proxy_recovery(cfg: State<'_, SharedConfig>) -> Result<bool, String> {
     tracing::info!(target = "proxy", "Force proxy recovery requested");
 
@@ -98,7 +98,7 @@ pub async fn force_proxy_recovery(cfg: State<'_, SharedConfig>) -> Result<bool, 
 ///
 /// This is a legacy command that returns basic system proxy information.
 /// Consider using `detect_system_proxy` for more detailed information.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub fn get_system_proxy() -> Result<SystemProxy, String> {
     #[cfg(windows)]
     {

@@ -121,7 +121,7 @@ fn update_request_for_redirect(input: &mut HttpRequestInput, status: u16, next_u
 ///
 /// # Returns
 /// Response data including status, headers, body, and redirect chain (if any)
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn http_fake_request(
     input: HttpRequestInput,
     cfg: State<'_, SharedConfig>,

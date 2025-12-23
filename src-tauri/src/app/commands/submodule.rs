@@ -48,7 +48,7 @@ impl SubmoduleCommandResult {
 }
 
 /// 列出仓库中的所有子模块
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn list_submodules(
     repo_path: String,
     manager: State<'_, SharedSubmoduleManager>,
@@ -70,7 +70,7 @@ pub async fn list_submodules(
 }
 
 /// 检查仓库是否有子模块
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn has_submodules(
     repo_path: String,
     manager: State<'_, SharedSubmoduleManager>,
@@ -92,7 +92,7 @@ pub async fn has_submodules(
 }
 
 /// 初始化所有子模块
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn init_all_submodules(
     repo_path: String,
     manager: State<'_, SharedSubmoduleManager>,
@@ -124,7 +124,7 @@ pub async fn init_all_submodules(
 }
 
 /// 初始化指定子模块
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn init_submodule(
     repo_path: String,
     submodule_name: String,
@@ -156,7 +156,7 @@ pub async fn init_submodule(
 }
 
 /// 更新所有子模块
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn update_all_submodules(
     repo_path: String,
     manager: State<'_, SharedSubmoduleManager>,
@@ -188,7 +188,7 @@ pub async fn update_all_submodules(
 }
 
 /// 更新指定子模块
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn update_submodule(
     repo_path: String,
     submodule_name: String,
@@ -220,7 +220,7 @@ pub async fn update_submodule(
 }
 
 /// 同步所有子模块的 URL
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn sync_all_submodules(
     repo_path: String,
     manager: State<'_, SharedSubmoduleManager>,
@@ -252,7 +252,7 @@ pub async fn sync_all_submodules(
 }
 
 /// 同步指定子模块的 URL
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn sync_submodule(
     repo_path: String,
     submodule_name: String,
@@ -284,7 +284,7 @@ pub async fn sync_submodule(
 }
 
 /// 获取子模块配置
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn get_submodule_config(
     manager: State<'_, SharedSubmoduleManager>,
 ) -> Result<SubmoduleConfig, String> {

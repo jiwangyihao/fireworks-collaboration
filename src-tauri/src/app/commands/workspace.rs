@@ -156,7 +156,7 @@ pub struct WorkspaceBatchPushRequest {
 }
 
 /// Create a new workspace.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn create_workspace(
     request: CreateWorkspaceRequest,
     manager: State<'_, SharedWorkspaceManager>,
@@ -183,7 +183,7 @@ pub async fn create_workspace(
 }
 
 /// Load workspace from file.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn load_workspace(
     path: String,
     manager: State<'_, SharedWorkspaceManager>,
@@ -212,7 +212,7 @@ pub async fn load_workspace(
 }
 
 /// Save current workspace to file.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn save_workspace(
     path: String,
     manager: State<'_, SharedWorkspaceManager>,
@@ -242,7 +242,7 @@ pub async fn save_workspace(
 }
 
 /// Get current workspace information.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn get_workspace(
     manager: State<'_, SharedWorkspaceManager>,
 ) -> Result<WorkspaceInfo, String> {
@@ -260,7 +260,7 @@ pub async fn get_workspace(
 }
 
 /// Close current workspace.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn close_workspace(manager: State<'_, SharedWorkspaceManager>) -> Result<(), String> {
     info!("Closing workspace");
 
@@ -276,7 +276,7 @@ pub async fn close_workspace(manager: State<'_, SharedWorkspaceManager>) -> Resu
 }
 
 /// Add a repository to the workspace.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn add_repository(
     request: AddRepositoryRequest,
     manager: State<'_, SharedWorkspaceManager>,
@@ -312,7 +312,7 @@ pub async fn add_repository(
 }
 
 /// Remove a repository from the workspace.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn remove_repository(
     repo_id: String,
     manager: State<'_, SharedWorkspaceManager>,
@@ -339,7 +339,7 @@ pub async fn remove_repository(
 }
 
 /// Get a specific repository by ID.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn get_repository(
     repo_id: String,
     manager: State<'_, SharedWorkspaceManager>,
@@ -363,7 +363,7 @@ pub async fn get_repository(
 }
 
 /// List all repositories in the workspace.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn list_repositories(
     manager: State<'_, SharedWorkspaceManager>,
 ) -> Result<Vec<RepositoryInfo>, String> {
@@ -388,7 +388,7 @@ pub async fn list_repositories(
 }
 
 /// List enabled repositories in the workspace.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn list_enabled_repositories(
     manager: State<'_, SharedWorkspaceManager>,
 ) -> Result<Vec<RepositoryInfo>, String> {
@@ -412,7 +412,7 @@ pub async fn list_enabled_repositories(
 }
 
 /// Reorder repositories according to the provided sequence of repository IDs.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn reorder_repositories(
     ordered_ids: Vec<String>,
     manager: State<'_, SharedWorkspaceManager>,
@@ -557,7 +557,7 @@ mod tests {
 }
 
 /// Query cached workspace repository statuses.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn get_workspace_statuses(
     request: Option<StatusQuery>,
     manager: State<'_, SharedWorkspaceManager>,
@@ -589,7 +589,7 @@ pub async fn get_workspace_statuses(
 }
 
 /// Clear the workspace status cache.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn clear_workspace_status_cache(
     status_service: State<'_, SharedWorkspaceStatusService>,
 ) -> Result<(), String> {
@@ -602,7 +602,7 @@ pub async fn clear_workspace_status_cache(
 }
 
 /// Invalidate cached status for a specific repository.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn invalidate_workspace_status_entry(
     repo_id: String,
     status_service: State<'_, SharedWorkspaceStatusService>,
@@ -625,7 +625,7 @@ pub async fn invalidate_workspace_status_entry(
 }
 
 /// Start a batch clone task for workspace repositories.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn workspace_batch_clone(
     request: WorkspaceBatchCloneRequest,
     manager: State<'_, SharedWorkspaceManager>,
@@ -703,7 +703,7 @@ pub async fn workspace_batch_clone(
 }
 
 /// Start a batch fetch task for workspace repositories.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn workspace_batch_fetch(
     request: WorkspaceBatchFetchRequest,
     manager: State<'_, SharedWorkspaceManager>,
@@ -783,7 +783,7 @@ pub async fn workspace_batch_fetch(
 }
 
 /// Start a batch push task for workspace repositories.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn workspace_batch_push(
     request: WorkspaceBatchPushRequest,
     manager: State<'_, SharedWorkspaceManager>,
@@ -970,7 +970,7 @@ fn path_to_string(path: &Path) -> Result<String, String> {
 }
 
 /// Update repository tags.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn update_repository_tags(
     repo_id: String,
     tags: Vec<String>,
@@ -1006,7 +1006,7 @@ pub async fn update_repository_tags(
 }
 
 /// Toggle repository enabled state.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn toggle_repository_enabled(
     repo_id: String,
     manager: State<'_, SharedWorkspaceManager>,
@@ -1044,13 +1044,13 @@ pub async fn toggle_repository_enabled(
 }
 
 /// Get workspace configuration.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn get_workspace_config() -> Result<WorkspaceConfig, String> {
     Ok(WorkspaceConfig::default())
 }
 
 /// Validate workspace file.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn validate_workspace_file(path: String) -> Result<bool, String> {
     info!("Validating workspace file: {}", path);
 
@@ -1070,7 +1070,7 @@ pub async fn validate_workspace_file(path: String) -> Result<bool, String> {
 }
 
 /// Create backup of workspace file.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn backup_workspace(path: String) -> Result<String, String> {
     info!("Creating backup of workspace file: {}", path);
 
@@ -1088,7 +1088,7 @@ pub async fn backup_workspace(path: String) -> Result<String, String> {
 }
 
 /// Restore workspace from backup.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn restore_workspace(backup_path: String, workspace_path: String) -> Result<(), String> {
     info!("Restoring workspace from backup: {}", backup_path);
 

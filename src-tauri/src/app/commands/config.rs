@@ -22,7 +22,7 @@ use super::super::types::{
 };
 
 /// Get the current application configuration.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn get_config(cfg: State<'_, SharedConfig>) -> Result<AppConfig, String> {
     cfg.lock().map(|c| c.clone()).map_err(|e| e.to_string())
 }
@@ -31,10 +31,10 @@ pub async fn get_config(cfg: State<'_, SharedConfig>) -> Result<AppConfig, Strin
 ///
 /// This command updates the configuration in memory, saves it to disk,
 /// and refreshes the IP pool configuration if needed.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 #[allow(non_snake_case)]
 pub async fn set_config(
-    newCfg: AppConfig,
+    new_config: AppConfig,
     cfg: State<'_, SharedConfig>,
     base: State<'_, ConfigBaseDir>,
     pool: State<'_, SharedIpPool>,
@@ -43,17 +43,17 @@ pub async fn set_config(
     // Update in-memory configuration
     {
         let mut guard = cfg.lock().map_err(|e| e.to_string())?;
-        *guard = newCfg.clone();
+        *guard = new_config.clone();
     }
 
     // Update workspace status service configuration
-    status_service.update_from_config(&newCfg.workspace);
+    status_service.update_from_config(&new_config.workspace);
 
     // Save configuration to disk
-    cfg_loader::save_at(&newCfg, &*base).map_err(|e| e.to_string())?;
+    cfg_loader::save_at(&new_config, &*base).map_err(|e| e.to_string())?;
 
     // Refresh IP pool configuration
-    match ip_pool::load_effective_config_at(&newCfg, base.as_path()) {
+    match ip_pool::load_effective_config_at(&new_config, base.as_path()) {
         Ok(effective) => {
             if let Ok(mut guard) = pool.inner().lock() {
                 guard.update_config(effective);
@@ -81,7 +81,7 @@ pub async fn set_config(
 }
 
 /// Export the current configuration into a team template file.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn export_team_config_template(
     destination: Option<String>,
     options: Option<TemplateExportOptions>,
@@ -106,7 +106,7 @@ pub async fn export_team_config_template(
 }
 
 /// Import configuration from a team template file.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn import_team_config_template(
     source: Option<String>,
     options: Option<TemplateImportOptions>,
@@ -172,7 +172,7 @@ pub async fn import_team_config_template(
 }
 
 /// Simple greeting command for testing purposes.
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
