@@ -19,6 +19,10 @@ pub(super) fn get_fresh_cached(
     now_ms: i64,
 ) -> Option<IpCacheSlot> {
     if let Some(mut slot) = pool.cache.get(host, port) {
+        // Filter out tripped IPs from alternatives
+        slot.alternatives
+            .retain(|alt| !alt.is_expired(now_ms) && !pool.is_ip_tripped(alt.candidate.address));
+
         match slot.best.clone() {
             Some(best) => {
                 if best.is_expired(now_ms) {
@@ -27,7 +31,17 @@ pub(super) fn get_fresh_cached(
                     }
                     return None;
                 }
-                slot.alternatives.retain(|alt| !alt.is_expired(now_ms));
+                if pool.is_ip_tripped(best.candidate.address) {
+                    // Best is tripped, fall back to alternatives or refresh
+                    if !slot.alternatives.is_empty() {
+                        return Some(IpCacheSlot {
+                            best: None,
+                            alternatives: slot.alternatives,
+                        });
+                    }
+                    return None;
+                }
+                // Alternatives are already filtered above
                 return Some(IpCacheSlot {
                     best: Some(best),
                     alternatives: slot.alternatives,
@@ -96,13 +110,16 @@ async fn sample_once(pool: &IpPool, host: &str, port: u16) -> Result<Option<IpCa
     let history = pool.history.clone();
     let cache = pool.cache.clone();
 
-    let candidates = preheat::collect_candidates(host, port, &config, history.clone()).await;
+    let mut candidates = preheat::collect_candidates(host, port, &config, history.clone()).await;
+    // Filter out tripped IPs to prevent re-probing known bad IPs unnecessarily
+    candidates.retain(|c| !pool.is_ip_tripped(c.candidate.address));
+
     if candidates.is_empty() {
         tracing::warn!(
             target = "ip_pool",
             host,
             port,
-            "no candidates collected for on-demand sampling"
+            "no candidates collected for on-demand sampling (or all tripped)"
         );
         maintenance::expire_entry(pool, host, port);
         // Emit failure refresh event for observability (on-demand path)
@@ -143,6 +160,11 @@ async fn sample_once(pool: &IpPool, host: &str, port: u16) -> Result<Option<IpCa
             "all_probes_failed".to_string(),
         );
         return Ok(None);
+    }
+
+    // Report success for measured candidates to reset their circuit breaker logic if needed
+    for stat in &stats {
+        pool.report_candidate_outcome(host, port, stat, super::IpOutcome::Success);
     }
 
     let best = stats.first().cloned();
