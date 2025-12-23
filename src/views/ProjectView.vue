@@ -6,6 +6,13 @@ import { useProjectStore } from "../stores/project";
 import { useToastStore } from "../stores/toast";
 import { invoke } from "../api/tauri";
 
+// 导入可复用组件
+import StatusCard from "../components/StatusCard.vue";
+import SyncStatusBadge from "../components/SyncStatusBadge.vue";
+import LanguageBar from "../components/LanguageBar.vue";
+import ConfirmModal from "../components/ConfirmModal.vue";
+import { formatNumber, relativeTime } from "../utils/format";
+
 const projectStore = useProjectStore();
 const {
   upstreamRepo,
@@ -34,7 +41,6 @@ watch(lastError, (error) => {
 
 // 计算属性
 const isLoading = computed(() => loadingState.value !== "idle");
-const languagePercentages = computed(() => projectStore.languagePercentages);
 
 // 工作区创建表单
 const showWorktreeForm = ref(false);
@@ -75,7 +81,7 @@ function extractBranchName(remoteBranch: string): string {
 }
 
 // 删除确认对话框
-const deleteModalRef = ref<HTMLDialogElement | null>(null);
+const showDeleteModal = ref(false);
 const pendingDeletePath = ref<string>("");
 
 // 创建工作区
@@ -143,7 +149,7 @@ async function handleCreateWorktree() {
 function showDeleteConfirm(worktreePath: string) {
   pendingDeletePath.value = worktreePath;
   deleteRemoteBranch.value = false; // 重置选项
-  deleteModalRef.value?.showModal();
+  showDeleteModal.value = true;
 }
 
 // 删除远端分支选项
@@ -196,31 +202,8 @@ async function confirmDeleteWorktree() {
   } finally {
     pendingDeletePath.value = "";
     deleteRemoteBranch.value = false;
-    deleteModalRef.value?.close();
+    showDeleteModal.value = false;
   }
-}
-
-// 格式化数字
-function formatNumber(num: number): string {
-  if (num >= 1000) {
-    return (num / 1000).toFixed(1) + "k";
-  }
-  return num.toString();
-}
-
-// 相对时间
-function relativeTime(dateStr: string): string {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-  if (days === 0) return "今天";
-  if (days === 1) return "昨天";
-  if (days < 7) return `${days} 天前`;
-  if (days < 30) return `${Math.floor(days / 7)} 周前`;
-  if (days < 365) return `${Math.floor(days / 30)} 个月前`;
-  return `${Math.floor(days / 365)} 年前`;
 }
 
 // Fork仓库
@@ -476,364 +459,295 @@ onMounted(async () => {
       <!-- 左栏：远端仓库 -->
       <div class="w-1/2 flex flex-col gap-3 overflow-auto">
         <!-- 上游仓库卡片 -->
-        <div class="card border-2 border-base-content/15 bg-base-100 flex-1">
-          <div class="card-body p-4 flex-1 gap-3">
-            <!-- 卡片头部 -->
-            <div class="flex items-center justify-between">
-              <h4 class="font-semibold text-sm flex items-center gap-2">
-                📦 上游仓库
-                <span
-                  v-if="loadingState === 'loading-upstream'"
-                  class="loading loading-spinner loading-xs"
-                ></span>
-              </h4>
-              <span class="badge badge-primary badge-sm">Upstream</span>
+        <StatusCard
+          title="上游仓库"
+          icon="📦"
+          badge="Upstream"
+          badge-variant="primary"
+          :loading="loadingState === 'loading-upstream'"
+          :flex="true"
+        >
+          <!-- 内容 -->
+          <template v-if="upstreamRepo">
+            <div class="flex items-start gap-3">
+              <div class="avatar">
+                <div
+                  class="w-12 rounded-full ring-2 ring-primary ring-offset-base-100 ring-offset-1"
+                >
+                  <img
+                    :src="upstreamRepo.owner.avatar_url"
+                    :alt="upstreamRepo.owner.login"
+                  />
+                </div>
+              </div>
+              <div class="flex-1 min-w-0">
+                <h3 class="text-base font-bold">
+                  <a
+                    :href="upstreamRepo.html_url"
+                    target="_blank"
+                    class="link link-hover"
+                    >{{ upstreamRepo.full_name }}</a
+                  >
+                </h3>
+                <p
+                  v-if="upstreamRepo.description"
+                  class="text-sm text-base-content/70 mt-1"
+                >
+                  {{ upstreamRepo.description }}
+                </p>
+              </div>
             </div>
 
-            <!-- 内容 -->
-            <template v-if="upstreamRepo">
-              <div class="flex items-start gap-3">
-                <div class="avatar">
-                  <div
-                    class="w-12 rounded-full ring-2 ring-primary ring-offset-base-100 ring-offset-1"
-                  >
-                    <img
-                      :src="upstreamRepo.owner.avatar_url"
-                      :alt="upstreamRepo.owner.login"
-                    />
-                  </div>
-                </div>
-                <div class="flex-1 min-w-0">
-                  <h3 class="text-base font-bold">
-                    <a
-                      :href="upstreamRepo.html_url"
-                      target="_blank"
-                      class="link link-hover"
-                      >{{ upstreamRepo.full_name }}</a
-                    >
-                  </h3>
-                  <p
-                    v-if="upstreamRepo.description"
-                    class="text-sm text-base-content/70 mt-1"
-                  >
-                    {{ upstreamRepo.description }}
-                  </p>
-                </div>
-              </div>
-
-              <!-- 统计信息 - 更紧凑 -->
-              <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                <span class="flex items-center gap-1"
-                  ><span class="text-warning">⭐</span
-                  ><strong>{{
-                    formatNumber(upstreamRepo.stargazers_count)
-                  }}</strong></span
-                >
-                <span class="flex items-center gap-1"
-                  >🔀<strong>{{
-                    formatNumber(upstreamRepo.forks_count)
-                  }}</strong></span
-                >
-                <span class="flex items-center gap-1"
-                  >👁️<strong>{{
-                    formatNumber(upstreamRepo.watchers_count)
-                  }}</strong></span
-                >
-                <span class="flex items-center gap-1"
-                  >🐛<strong>{{ upstreamRepo.open_issues_count }}</strong></span
-                >
-                <span
-                  v-if="upstreamRepo.language"
-                  class="flex items-center gap-1"
-                  ><span class="w-2 h-2 rounded-full bg-primary"></span
-                  >{{ upstreamRepo.language }}</span
-                >
-                <span v-if="upstreamRepo.license" class="text-base-content/60"
-                  >📜 {{ upstreamRepo.license.spdx_id }}</span
-                >
-              </div>
-
-              <!-- 语言分布 -->
-              <div v-if="Object.keys(languages).length">
-                <div class="flex h-2 rounded-full overflow-hidden bg-base-300">
-                  <div
-                    v-for="(percent, lang) in languagePercentages"
-                    :key="lang"
-                    :style="{ width: `${percent}%` }"
-                    class="h-full"
-                    :title="`${lang}: ${percent}%`"
-                    :class="{
-                      'bg-blue-500': lang === 'TypeScript',
-                      'bg-yellow-400': lang === 'JavaScript',
-                      'bg-purple-500': lang === 'Vue',
-                      'bg-orange-500': lang === 'Rust',
-                      'bg-emerald-500': lang === 'CSS',
-                      'bg-primary': ![
-                        'TypeScript',
-                        'JavaScript',
-                        'Vue',
-                        'Rust',
-                        'CSS',
-                      ].includes(lang as string),
-                    }"
-                  ></div>
-                </div>
-                <div
-                  class="flex flex-wrap gap-2 mt-1 text-[10px] text-base-content/60"
-                >
-                  <span
-                    v-for="(percent, lang) in languagePercentages"
-                    :key="lang"
-                    class="flex items-center gap-1"
-                  >
-                    <span
-                      class="w-1.5 h-1.5 rounded-full"
-                      :class="{
-                        'bg-blue-500': lang === 'TypeScript',
-                        'bg-yellow-400': lang === 'JavaScript',
-                        'bg-purple-500': lang === 'Vue',
-                        'bg-orange-500': lang === 'Rust',
-                        'bg-emerald-500': lang === 'CSS',
-                        'bg-primary': ![
-                          'TypeScript',
-                          'JavaScript',
-                          'Vue',
-                          'Rust',
-                          'CSS',
-                        ].includes(lang as string),
-                      }"
-                    ></span>
-                    {{ lang }} {{ percent }}%
-                  </span>
-                </div>
-              </div>
-
-              <!-- 贡献者 + 时间 + 版本 同一行 -->
-              <div class="flex items-center justify-between">
-                <div v-if="contributors.length" class="flex items-center gap-2">
-                  <span class="text-xs text-base-content/50">贡献者</span>
-                  <div class="avatar-group -space-x-3">
-                    <div
-                      v-for="contrib in contributors.slice(0, 5)"
-                      :key="contrib.login"
-                      class="avatar"
-                    >
-                      <a
-                        :href="contrib.html_url"
-                        target="_blank"
-                        :title="contrib.login"
-                        class="w-6 rounded-full ring ring-base-100 hover:ring-primary hover:z-10"
-                      >
-                        <img :src="contrib.avatar_url" :alt="contrib.login" />
-                      </a>
-                    </div>
-                    <div
-                      v-if="contributors.length > 5"
-                      class="avatar placeholder"
-                    >
-                      <div
-                        class="bg-neutral text-neutral-content w-6 rounded-full text-[9px]"
-                      >
-                        +{{ contributors.length - 5 }}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div class="flex items-center gap-2 text-xs">
-                  <a
-                    v-if="latestRelease"
-                    :href="latestRelease.html_url"
-                    target="_blank"
-                    class="badge badge-success badge-xs"
-                    >🏷️ {{ latestRelease.tag_name }}</a
-                  >
-                  <span class="text-base-content/50">{{
-                    relativeTime(upstreamRepo.pushed_at)
-                  }}</span>
-                </div>
-              </div>
-
-              <!-- Topics标签 -->
-              <div
-                v-if="upstreamRepo.topics?.length"
-                class="flex flex-wrap gap-1"
+            <!-- 统计信息 - 更紧凑 -->
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+              <span class="flex items-center gap-1"
+                ><span class="text-warning">⭐</span
+                ><strong>{{
+                  formatNumber(upstreamRepo.stargazers_count)
+                }}</strong></span
               >
-                <span
-                  v-for="topic in upstreamRepo.topics"
-                  :key="topic"
-                  class="badge badge-outline badge-xs hover:badge-primary cursor-pointer"
-                  >{{ topic }}</span
-                >
-              </div>
-            </template>
-            <template v-else>
-              <div class="flex gap-3">
-                <div class="skeleton h-14 w-14 rounded-xl"></div>
-                <div class="flex-1">
-                  <div class="skeleton h-5 w-3/4 mb-2"></div>
-                  <div class="skeleton h-3 w-full"></div>
+              <span class="flex items-center gap-1"
+                >🔀<strong>{{
+                  formatNumber(upstreamRepo.forks_count)
+                }}</strong></span
+              >
+              <span class="flex items-center gap-1"
+                >👁️<strong>{{
+                  formatNumber(upstreamRepo.watchers_count)
+                }}</strong></span
+              >
+              <span class="flex items-center gap-1"
+                >🐛<strong>{{ upstreamRepo.open_issues_count }}</strong></span
+              >
+              <span v-if="upstreamRepo.language" class="flex items-center gap-1"
+                ><span class="w-2 h-2 rounded-full bg-primary"></span
+                >{{ upstreamRepo.language }}</span
+              >
+              <span v-if="upstreamRepo.license" class="text-base-content/60"
+                >📜 {{ upstreamRepo.license.spdx_id }}</span
+              >
+            </div>
+
+            <!-- 语言分布 -->
+            <LanguageBar :languages="languages" :show-legend="true" />
+
+            <!-- 贡献者 + 时间 + 版本 同一行 -->
+            <div class="flex items-center justify-between">
+              <div v-if="contributors.length" class="flex items-center gap-2">
+                <span class="text-xs text-base-content/50">贡献者</span>
+                <div class="avatar-group -space-x-3">
+                  <div
+                    v-for="contrib in contributors.slice(0, 5)"
+                    :key="contrib.login"
+                    class="avatar"
+                  >
+                    <a
+                      :href="contrib.html_url"
+                      target="_blank"
+                      :title="contrib.login"
+                      class="w-6 rounded-full ring ring-base-100 hover:ring-primary hover:z-10"
+                    >
+                      <img :src="contrib.avatar_url" :alt="contrib.login" />
+                    </a>
+                  </div>
+                  <div
+                    v-if="contributors.length > 5"
+                    class="avatar placeholder"
+                  >
+                    <div
+                      class="bg-neutral text-neutral-content w-6 rounded-full text-[9px]"
+                    >
+                      +{{ contributors.length - 5 }}
+                    </div>
+                  </div>
                 </div>
               </div>
-            </template>
-          </div>
-        </div>
+              <div class="flex items-center gap-2 text-xs">
+                <a
+                  v-if="latestRelease"
+                  :href="latestRelease.html_url"
+                  target="_blank"
+                  class="badge badge-success badge-xs"
+                  >🏷️ {{ latestRelease.tag_name }}</a
+                >
+                <span class="text-base-content/50">{{
+                  relativeTime(upstreamRepo.pushed_at)
+                }}</span>
+              </div>
+            </div>
+
+            <!-- Topics标签 -->
+            <div
+              v-if="upstreamRepo.topics?.length"
+              class="flex flex-wrap gap-1"
+            >
+              <span
+                v-for="topic in upstreamRepo.topics"
+                :key="topic"
+                class="badge badge-outline badge-xs hover:badge-primary cursor-pointer"
+                >{{ topic }}</span
+              >
+            </div>
+          </template>
+          <template v-else>
+            <div class="flex gap-3">
+              <div class="skeleton h-14 w-14 rounded-xl"></div>
+              <div class="flex-1">
+                <div class="skeleton h-5 w-3/4 mb-2"></div>
+                <div class="skeleton h-3 w-full"></div>
+              </div>
+            </div>
+          </template>
+        </StatusCard>
 
         <!-- Fork 卡片 -->
-        <div
-          class="card border-2 border-base-content/15 bg-gradient-to-r from-secondary/5 to-primary/5"
+        <StatusCard
+          title="你的 Fork"
+          icon="🔀"
+          :loading="loadingState === 'loading-fork'"
+          variant="gradient"
         >
-          <div class="card-body p-4">
-            <div class="flex items-center justify-between">
-              <h4 class="font-semibold text-sm flex items-center gap-2">
-                🔀 你的 Fork
-                <span
-                  v-if="loadingState === 'loading-fork'"
-                  class="loading loading-spinner loading-xs"
-                ></span>
-              </h4>
-              <div class="flex items-center gap-2">
+          <template #header-actions>
+            <a
+              v-if="hasFork && forkRepo"
+              :href="forkRepo.html_url"
+              target="_blank"
+              class="btn btn-ghost btn-xs"
+            >
+              打开 ↗
+            </a>
+            <button
+              v-if="!hasFork"
+              class="btn btn-primary btn-sm"
+              :disabled="loadingState === 'forking' || !authenticated"
+              @click="handleFork"
+            >
+              <span
+                v-if="loadingState === 'forking'"
+                class="loading loading-spinner loading-xs"
+              ></span>
+              <span v-else>创建 Fork</span>
+            </button>
+          </template>
+
+          <template v-if="hasFork && forkRepo">
+            <!-- Fork信息和同步状态 -->
+            <div class="flex items-center gap-3">
+              <div class="avatar">
+                <div class="w-8 rounded-full">
+                  <img
+                    :src="forkRepo.owner.avatar_url"
+                    :alt="forkRepo.owner.login"
+                  />
+                </div>
+              </div>
+              <div class="flex-1 min-w-0">
                 <a
-                  v-if="hasFork && forkRepo"
                   :href="forkRepo.html_url"
                   target="_blank"
-                  class="btn btn-ghost btn-xs"
+                  class="font-medium link link-hover text-sm"
+                  >{{ forkRepo.full_name }}</a
                 >
-                  打开 ↗
-                </a>
-                <button
-                  v-if="!hasFork"
-                  class="btn btn-primary btn-sm"
-                  :disabled="loadingState === 'forking' || !authenticated"
-                  @click="handleFork"
-                >
-                  <span
-                    v-if="loadingState === 'forking'"
-                    class="loading loading-spinner loading-xs"
-                  ></span>
-                  <span v-else>创建 Fork</span>
-                </button>
+                <div class="flex items-center gap-2 mt-1">
+                  <template v-if="forkRepo.syncStatus?.isSynced">
+                    <span class="badge badge-success badge-sm">✓ 已同步</span>
+                  </template>
+                  <template v-else>
+                    <span
+                      v-if="forkRepo.syncStatus?.aheadBy"
+                      class="badge badge-info badge-sm"
+                      >↑{{ forkRepo.syncStatus.aheadBy }} ahead</span
+                    >
+                    <span
+                      v-if="forkRepo.syncStatus?.behindBy"
+                      class="badge badge-warning badge-sm"
+                      >↓{{ forkRepo.syncStatus.behindBy }} behind</span
+                    >
+                    <!-- 同步按钮 -->
+                    <button
+                      class="btn btn-warning btn-xs"
+                      :disabled="loadingState === 'syncing-fork'"
+                      @click="handleSyncFork"
+                    >
+                      <span
+                        v-if="loadingState === 'syncing-fork'"
+                        class="loading loading-spinner loading-xs"
+                      ></span>
+                      <span v-else>同步</span>
+                    </button>
+                    <!-- 强制同步按钮 -->
+                    <button
+                      class="btn btn-error btn-xs"
+                      :disabled="loadingState === 'syncing-fork'"
+                      @click="handleForceSyncFork"
+                      title="丢弃fork变更，完全与上游同步"
+                    >
+                      强制
+                    </button>
+                  </template>
+                </div>
               </div>
             </div>
 
-            <template v-if="hasFork && forkRepo">
-              <!-- Fork信息和同步状态 -->
-              <div class="flex items-center gap-3">
-                <div class="avatar">
-                  <div class="w-8 rounded-full">
-                    <img
-                      :src="forkRepo.owner.avatar_url"
-                      :alt="forkRepo.owner.login"
-                    />
-                  </div>
-                </div>
-                <div class="flex-1 min-w-0">
-                  <a
-                    :href="forkRepo.html_url"
-                    target="_blank"
-                    class="font-medium link link-hover text-sm"
-                    >{{ forkRepo.full_name }}</a
-                  >
-                  <div class="flex items-center gap-2 mt-1">
-                    <template v-if="forkRepo.syncStatus?.isSynced">
-                      <span class="badge badge-success badge-sm">✓ 已同步</span>
-                    </template>
-                    <template v-else>
-                      <span
-                        v-if="forkRepo.syncStatus?.aheadBy"
-                        class="badge badge-info badge-sm"
-                        >↑{{ forkRepo.syncStatus.aheadBy }} ahead</span
-                      >
-                      <span
-                        v-if="forkRepo.syncStatus?.behindBy"
-                        class="badge badge-warning badge-sm"
-                        >↓{{ forkRepo.syncStatus.behindBy }} behind</span
-                      >
-                      <!-- 同步按钮 -->
-                      <button
-                        class="btn btn-warning btn-xs"
-                        :disabled="loadingState === 'syncing-fork'"
-                        @click="handleSyncFork"
-                      >
-                        <span
-                          v-if="loadingState === 'syncing-fork'"
-                          class="loading loading-spinner loading-xs"
-                        ></span>
-                        <span v-else>同步</span>
-                      </button>
-                      <!-- 强制同步按钮 -->
-                      <button
-                        class="btn btn-error btn-xs"
-                        :disabled="loadingState === 'syncing-fork'"
-                        @click="handleForceSyncFork"
-                        title="丢弃fork变更，完全与上游同步"
-                      >
-                        强制
-                      </button>
-                    </template>
-                  </div>
-                </div>
+            <!-- 分支列表 -->
+            <div v-if="forkBranches.length">
+              <div class="text-xs text-base-content/60 mb-1">
+                分支 ({{ forkBranches.length }})
               </div>
-
-              <!-- 分支列表 -->
-              <div v-if="forkBranches.length">
-                <div class="text-xs text-base-content/60 mb-1">
-                  分支 ({{ forkBranches.length }})
-                </div>
-                <div class="flex flex-wrap gap-1">
-                  <span
-                    v-for="branch in forkBranches.slice(0, 5)"
-                    :key="branch.name"
-                    class="badge badge-outline badge-xs"
-                    :class="{
-                      'badge-primary': branch.name === forkRepo.default_branch,
-                    }"
-                  >
-                    🌿 {{ branch.name }}
-                  </span>
-                  <span
-                    v-if="forkBranches.length > 5"
-                    class="badge badge-ghost badge-xs"
-                    >+{{ forkBranches.length - 5 }}</span
-                  >
-                </div>
+              <div class="flex flex-wrap gap-1">
+                <span
+                  v-for="branch in forkBranches.slice(0, 5)"
+                  :key="branch.name"
+                  class="badge badge-outline badge-xs"
+                  :class="{
+                    'badge-primary': branch.name === forkRepo.default_branch,
+                  }"
+                >
+                  🌿 {{ branch.name }}
+                </span>
+                <span
+                  v-if="forkBranches.length > 5"
+                  class="badge badge-ghost badge-xs"
+                  >+{{ forkBranches.length - 5 }}</span
+                >
               </div>
+            </div>
 
-              <!-- 最近Commits -->
-              <div v-if="forkCommits.length">
-                <div class="text-xs text-base-content/60 mb-1">最近提交</div>
-                <div class="space-y-1">
-                  <a
-                    v-for="commit in forkCommits.slice(0, 3)"
-                    :key="commit.sha"
-                    :href="commit.html_url"
-                    target="_blank"
-                    class="flex items-center gap-2 text-xs hover:text-primary transition-colors"
-                  >
-                    <div v-if="commit.author" class="avatar">
-                      <div class="w-4 rounded-full">
-                        <img
-                          :src="commit.author.avatar_url"
-                          :alt="commit.author.login"
-                        />
-                      </div>
+            <!-- 最近Commits -->
+            <div v-if="forkCommits.length">
+              <div class="text-xs text-base-content/60 mb-1">最近提交</div>
+              <div class="space-y-1">
+                <a
+                  v-for="commit in forkCommits.slice(0, 3)"
+                  :key="commit.sha"
+                  :href="commit.html_url"
+                  target="_blank"
+                  class="flex items-center gap-2 text-xs hover:text-primary transition-colors"
+                >
+                  <div v-if="commit.author" class="avatar">
+                    <div class="w-4 rounded-full">
+                      <img
+                        :src="commit.author.avatar_url"
+                        :alt="commit.author.login"
+                      />
                     </div>
-                    <span class="truncate flex-1">{{
-                      commit.commit.message.split("\n")[0]
-                    }}</span>
-                    <span class="text-[10px] text-base-content/40 shrink-0">{{
-                      commit.sha.slice(0, 7)
-                    }}</span>
-                  </a>
-                </div>
+                  </div>
+                  <span class="truncate flex-1">{{
+                    commit.commit.message.split("\n")[0]
+                  }}</span>
+                  <span class="text-[10px] text-base-content/40 shrink-0">{{
+                    commit.sha.slice(0, 7)
+                  }}</span>
+                </a>
               </div>
-            </template>
-            <template v-else-if="!hasFork">
-              <p class="text-sm text-base-content/60 mt-2">
-                Fork 后可在自己的仓库中修改，然后通过 Pull Request 贡献代码
-              </p>
-            </template>
-          </div>
-        </div>
+            </div>
+          </template>
+          <template v-else-if="!hasFork">
+            <p class="text-sm text-base-content/60 mt-2">
+              Fork 后可在自己的仓库中修改，然后通过 Pull Request 贡献代码
+            </p>
+          </template>
+        </StatusCard>
       </div>
 
       <!-- 分隔线 -->
@@ -842,518 +756,457 @@ onMounted(async () => {
       <!-- 右栏：本地仓库/工作区 -->
       <div class="w-1/2 flex flex-col gap-3 overflow-auto">
         <!-- 本地仓库卡片 -->
-        <div class="card border-2 border-base-content/15 bg-base-100">
-          <div class="card-body p-4 gap-3">
-            <div class="flex items-center justify-between">
-              <h4 class="font-semibold text-sm flex items-center gap-2">
-                💾 本地仓库
-                <span
-                  v-if="loadingState === 'loading-local'"
-                  class="loading loading-spinner loading-xs"
-                ></span>
-              </h4>
-              <span class="badge badge-accent badge-sm">Local</span>
+        <StatusCard
+          title="本地仓库"
+          icon="💾"
+          badge="Local"
+          badge-variant="accent"
+          :loading="loadingState === 'loading-local'"
+        >
+          <template v-if="localStatus?.exists">
+            <!-- 本地仓库信息 -->
+            <div class="flex items-center gap-3">
+              <div
+                class="w-10 h-10 rounded-lg bg-base-200 flex items-center justify-center text-base-content/70"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  class="w-5 h-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                  />
+                </svg>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div
+                  class="font-medium text-sm truncate"
+                  :title="localStatus.path || ''"
+                >
+                  {{ localStatus.path?.split(/[/\\]/).pop() || "repository" }}
+                </div>
+                <div class="flex items-center gap-2 mt-1">
+                  <!-- 分支 -->
+                  <span class="badge badge-outline badge-sm">
+                    🌿 {{ localStatus.currentBranch || "main" }}
+                  </span>
+                  <!-- 状态 -->
+                  <span
+                    v-if="localStatus.workingTreeClean"
+                    class="badge badge-success badge-sm"
+                    >✓ 干净</span
+                  >
+                  <span v-else class="badge badge-warning badge-sm"
+                    >⚠ 有改动</span
+                  >
+                </div>
+              </div>
             </div>
 
-            <template v-if="localStatus?.exists">
-              <!-- 本地仓库信息 -->
-              <div class="flex items-center gap-3">
-                <div
-                  class="w-10 h-10 rounded-lg bg-base-200 flex items-center justify-center text-base-content/70"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    class="w-5 h-5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    stroke-width="2"
+            <!-- 同步状态和操作按钮 -->
+            <div class="flex items-center gap-2 mt-3 flex-wrap">
+              <!-- 跟踪分支 -->
+              <span
+                v-if="localStatus.trackingBranch"
+                class="text-xs text-base-content/60 mr-1 flex items-center gap-1"
+                :title="'跟踪远端分支: ' + localStatus.trackingBranch"
+              >
+                🔗 {{ localStatus.trackingBranch }}
+              </span>
+
+              <!-- ahead/behind 状态 -->
+              <SyncStatusBadge
+                :ahead="localStatus.ahead"
+                :behind="localStatus.behind"
+                :tracking-branch="localStatus.trackingBranch"
+              />
+
+              <!-- 操作按钮 -->
+              <div class="flex-1"></div>
+              <button
+                class="btn btn-xs btn-outline"
+                :disabled="loadingState !== 'idle'"
+                @click="handleFetch"
+                title="从远程拉取更新"
+              >
+                <span
+                  v-if="loadingState === 'fetching'"
+                  class="loading loading-spinner loading-xs"
+                ></span>
+                <span v-else>同步</span>
+              </button>
+              <button
+                class="btn btn-xs btn-primary"
+                :disabled="loadingState !== 'idle' || localStatus.ahead === 0"
+                @click="handlePush"
+                title="推送本地提交到远程"
+              >
+                <span
+                  v-if="loadingState === 'pushing'"
+                  class="loading loading-spinner loading-xs"
+                ></span>
+                <span v-else>推送</span>
+              </button>
+            </div>
+          </template>
+          <template v-else>
+            <!-- 未克隆时的 Hero 样式提示 -->
+            <div class="hero bg-base-200 rounded-lg mt-3">
+              <div class="hero-content text-center py-6">
+                <div>
+                  <p
+                    class="text-base-content/60 mb-4 h-12 flex flex-col items-center justify-center"
                   >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-                    />
-                  </svg>
-                </div>
-                <div class="flex-1 min-w-0">
-                  <div
-                    class="font-medium text-sm truncate"
-                    :title="localStatus.path || ''"
+                    <template
+                      v-if="loadingState === 'cloning' && cloneProgressDetails"
+                    >
+                      <progress
+                        class="progress progress-primary w-56"
+                        :value="cloneProgressDetails.percent"
+                        max="100"
+                      ></progress>
+                      <div class="text-xs mt-1 opacity-70">
+                        {{ cloneProgressDetails.phase }} ({{
+                          cloneProgressDetails.percent
+                        }}%)
+                      </div>
+                    </template>
+                    <template v-else>
+                      尚未克隆到本地{{ !hasFork ? "，请先 Fork 仓库" : "" }}
+                    </template>
+                  </p>
+                  <button
+                    class="btn btn-primary"
+                    :disabled="!hasFork || loadingState === 'cloning'"
+                    @click="handleClone"
                   >
-                    {{ localStatus.path?.split(/[/\\]/).pop() || "repository" }}
-                  </div>
-                  <div class="flex items-center gap-2 mt-1">
-                    <!-- 分支 -->
-                    <span class="badge badge-outline badge-sm">
-                      🌿 {{ localStatus.currentBranch || "main" }}
-                    </span>
-                    <!-- 状态 -->
                     <span
-                      v-if="localStatus.workingTreeClean"
-                      class="badge badge-success badge-sm"
-                      >✓ 干净</span
-                    >
-                    <span v-else class="badge badge-warning badge-sm"
-                      >⚠ 有改动</span
-                    >
-                  </div>
+                      v-if="loadingState === 'cloning'"
+                      class="loading loading-spinner loading-sm"
+                    ></span>
+                    <span v-else>📥 克隆仓库</span>
+                  </button>
                 </div>
               </div>
+            </div>
+          </template>
+        </StatusCard>
 
-              <!-- 同步状态和操作按钮 -->
-              <div class="flex items-center gap-2 mt-3 flex-wrap">
-                <!-- 跟踪分支 -->
-                <span
-                  v-if="localStatus.trackingBranch"
-                  class="text-xs text-base-content/60 mr-1 flex items-center gap-1"
-                  :title="'跟踪远端分支: ' + localStatus.trackingBranch"
-                >
-                  🔗 {{ localStatus.trackingBranch }}
-                </span>
+        <!-- 工作区卡片 -->
+        <StatusCard title="工作区" icon="⚙️" :flex="true">
+          <template #header-actions>
+            <span class="badge badge-ghost badge-xs"
+              >{{
+                localStatus?.worktrees?.filter((w) => !w.isMainWorktree)
+                  ?.length || 0
+              }}
+              个</span
+            >
+            <button
+              class="btn btn-primary btn-sm"
+              :disabled="!localStatus?.exists"
+              @click="showWorktreeForm = !showWorktreeForm"
+            >
+              {{ showWorktreeForm ? "取消" : "+ 新建" }}
+            </button>
+          </template>
 
-                <!-- ahead/behind 状态 -->
-                <span
-                  v-if="localStatus.ahead > 0"
-                  class="badge badge-info badge-sm"
-                  >↑{{ localStatus.ahead }} ahead</span
-                >
-                <span
-                  v-if="localStatus.behind > 0"
-                  class="badge badge-warning badge-sm"
-                  >↓{{ localStatus.behind }} behind</span
-                >
-                <span
-                  v-if="
-                    localStatus.trackingBranch &&
-                    localStatus.ahead === 0 &&
-                    localStatus.behind === 0
-                  "
-                  class="badge badge-success badge-sm"
-                  >✓ 已同步</span
-                >
+          <!-- 创建工作区表单 -->
+          <form
+            v-if="showWorktreeForm"
+            class="space-y-3 mt-2 p-4 bg-base-200 rounded-xl"
+            @submit.prevent="handleCreateWorktree"
+          >
+            <!-- 模式切换 -->
+            <div class="flex gap-2">
+              <button
+                type="button"
+                class="btn btn-sm flex-1"
+                :class="
+                  worktreeCreateMode === 'new' ? 'btn-primary' : 'btn-ghost'
+                "
+                @click="worktreeCreateMode = 'new'"
+              >
+                📝 新建分支
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm flex-1"
+                :class="
+                  worktreeCreateMode === 'remote' ? 'btn-primary' : 'btn-ghost'
+                "
+                @click="
+                  worktreeCreateMode = 'remote';
+                  loadRemoteBranches();
+                "
+              >
+                🔄 从远端拉取
+              </button>
+            </div>
 
-                <!-- 操作按钮 -->
-                <div class="flex-1"></div>
-                <button
-                  class="btn btn-xs btn-outline"
-                  :disabled="loadingState !== 'idle'"
-                  @click="handleFetch"
-                  title="从远程拉取更新"
-                >
-                  <span
-                    v-if="loadingState === 'fetching'"
-                    class="loading loading-spinner loading-xs"
-                  ></span>
-                  <span v-else>同步</span>
-                </button>
-                <button
-                  class="btn btn-xs btn-primary"
-                  :disabled="loadingState !== 'idle' || localStatus.ahead === 0"
-                  @click="handlePush"
-                  title="推送本地提交到远程"
-                >
-                  <span
-                    v-if="loadingState === 'pushing'"
-                    class="loading loading-spinner loading-xs"
-                  ></span>
-                  <span v-else>推送</span>
-                </button>
+            <!-- 新建模式：输入分支名 -->
+            <div v-if="worktreeCreateMode === 'new'" class="form-control">
+              <label class="label py-1">
+                <span class="label-text text-xs font-medium">分支名称</span>
+              </label>
+              <input
+                v-model="worktreeForm.branch"
+                type="text"
+                class="input input-bordered input-sm"
+                placeholder="feature/my-feature"
+              />
+            </div>
+
+            <!-- 远端模式：选择远端分支 -->
+            <div v-else class="form-control">
+              <label class="label py-1">
+                <span class="label-text text-xs font-medium">选择远端分支</span>
+              </label>
+              <div
+                v-if="loadingRemoteBranches"
+                class="flex items-center gap-2 text-sm text-base-content/60"
+              >
+                <span class="loading loading-spinner loading-xs"></span>
+                正在加载远端分支...
               </div>
-            </template>
-            <template v-else>
-              <!-- 未克隆时的 Hero 样式提示 -->
-              <div class="hero bg-base-200 rounded-lg mt-3">
-                <div class="hero-content text-center py-6">
-                  <div>
-                    <p
-                      class="text-base-content/60 mb-4 h-12 flex flex-col items-center justify-center"
+              <select
+                v-else
+                v-model="worktreeForm.selectedRemoteBranch"
+                class="select select-bordered select-sm"
+              >
+                <option value="" disabled>请选择远端分支</option>
+                <option
+                  v-for="branch in remoteBranches.filter(
+                    (b) => !b.includes('/main') && !b.includes('/master')
+                  )"
+                  :key="branch"
+                  :value="branch"
+                >
+                  {{ branch }}
+                </option>
+              </select>
+              <label
+                v-if="worktreeForm.selectedRemoteBranch"
+                class="label py-0"
+              >
+                <span class="label-text-alt text-xs text-success">
+                  将创建本地分支：{{
+                    extractBranchName(worktreeForm.selectedRemoteBranch)
+                  }}
+                </span>
+              </label>
+            </div>
+
+            <div class="flex justify-end">
+              <button
+                type="submit"
+                class="btn btn-primary btn-sm"
+                :disabled="
+                  worktreeCreateMode === 'new'
+                    ? !worktreeForm.branch
+                    : !worktreeForm.selectedRemoteBranch
+                "
+              >
+                创建工作区
+              </button>
+            </div>
+          </form>
+
+          <!-- 工作区列表（只显示非主分支） -->
+          <div
+            v-if="
+              localStatus?.worktrees?.filter((w) => !w.isMainWorktree).length
+            "
+            class="space-y-1.5 mt-2"
+          >
+            <div
+              v-for="wt in localStatus.worktrees.filter(
+                (w) => !w.isMainWorktree
+              )"
+              :key="wt.path"
+              class="group flex flex-col gap-1.5 px-3 py-2.5 rounded-xl border border-base-content/10 bg-base-200/30 hover:border-primary/50 transition-all"
+            >
+              <!-- 第一行：分支 & PR & 操作 -->
+              <div class="flex items-center justify-between w-full">
+                <div class="flex items-center gap-2 min-w-0">
+                  <!-- 分支名称 (普通标题样式) -->
+                  <div class="flex items-center gap-2">
+                    <span class="font-bold text-sm select-all">{{
+                      wt.branch
+                    }}</span>
+                  </div>
+
+                  <!-- PR状态 -->
+                  <a
+                    v-if="wt.linkedPR"
+                    :href="wt.linkedPRUrl || '#'"
+                    target="_blank"
+                    class="badge badge-success badge-xs gap-1 hover:badge-outline h-5 font-normal text-white"
+                    title="已关联PR"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 16 16"
+                      fill="currentColor"
+                      class="w-3 h-3"
                     >
-                      <template
-                        v-if="
-                          loadingState === 'cloning' && cloneProgressDetails
-                        "
-                      >
-                        <progress
-                          class="progress progress-primary w-56"
-                          :value="cloneProgressDetails.percent"
-                          max="100"
-                        ></progress>
-                        <div class="text-xs mt-1 opacity-70">
-                          {{ cloneProgressDetails.phase }} ({{
-                            cloneProgressDetails.percent
-                          }}%)
-                        </div>
-                      </template>
-                      <template v-else>
-                        尚未克隆到本地{{ !hasFork ? "，请先 Fork 仓库" : "" }}
-                      </template>
-                    </p>
+                      <path
+                        fill-rule="evenodd"
+                        d="M4.5 2A2.5 2.5 0 0 0 2 4.5v2.879a2.5 2.5 0 0 0 .732 1.767l4.5 4.5a2.5 2.5 0 0 0 3.536 0l2.878-2.878a2.5 2.5 0 0 0 0-3.536l-4.5-4.5A2.5 2.5 0 0 0 7.38 2H4.5ZM5 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"
+                        clip-rule="evenodd"
+                      />
+                    </svg>
+                    #{{ wt.linkedPR }}
+                  </a>
+                  <span
+                    v-else
+                    class="badge badge-ghost badge-xs h-5 font-normal text-base-content/60"
+                  >
+                    无PR
+                  </span>
+
+                  <!-- 路径 (移到这里) -->
+                  <span
+                    class="text-xs text-base-content/40 font-mono truncate max-w-[150px] ml-1"
+                    :title="wt.path"
+                  >
+                    {{ wt.path.split(/[/\\]/).slice(-2).join("/") }}
+                  </span>
+                </div>
+
+                <!-- 操作按钮组 (右侧仅保留按钮) -->
+                <div class="flex items-center gap-2 ml-auto">
+                  <div
+                    class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
                     <button
-                      class="btn btn-primary"
-                      :disabled="!hasFork || loadingState === 'cloning'"
-                      @click="handleClone"
+                      class="btn btn-ghost btn-xs btn-square text-primary"
+                      title="推送变更"
+                      @click="handlePushWorktree(wt.path)"
+                      :disabled="pushingWorktreePaths.has(wt.path)"
                     >
                       <span
-                        v-if="loadingState === 'cloning'"
-                        class="loading loading-spinner loading-sm"
+                        v-if="pushingWorktreePaths.has(wt.path)"
+                        class="loading loading-spinner loading-xs"
                       ></span>
-                      <span v-else>📥 克隆仓库</span>
+                      <svg
+                        v-else
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                        class="w-4 h-4"
+                      >
+                        <path
+                          fill-rule="evenodd"
+                          d="M10 17a.75.75 0 0 1-.75-.75V5.612L5.29 9.77a.75.75 0 0 1-1.08-1.04l5.25-5.5a.75.75 0 0 1 1.08 0l5.25 5.5a.75.75 0 1 1-1.08 1.04l-3.96-4.158V16.25A.75.75 0 0 1 10 17Z"
+                          clip-rule="evenodd"
+                        />
+                      </svg>
+                    </button>
+
+                    <button
+                      class="btn btn-ghost btn-xs btn-square text-error"
+                      title="删除工作区"
+                      @click="showDeleteConfirm(wt.path)"
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                        class="w-4 h-4"
+                      >
+                        <path
+                          fill-rule="evenodd"
+                          d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 0 0 1.5.06l.3-7.5Z"
+                          clip-rule="evenodd"
+                        />
+                      </svg>
                     </button>
                   </div>
                 </div>
               </div>
-            </template>
-          </div>
-        </div>
 
-        <!-- 工作区卡片 -->
-        <div
-          class="card border-2 border-base-content/15 bg-base-100 flex-1 overflow-y-auto"
-        >
-          <div class="card-body p-4 gap-3">
-            <div class="flex items-center justify-between">
-              <h4 class="font-semibold text-sm flex items-center gap-2">
-                ⚙️ 工作区
-                <span class="badge badge-ghost badge-xs"
-                  >{{
-                    localStatus?.worktrees?.filter((w) => !w.isMainWorktree)
-                      ?.length || 0
-                  }}
-                  个</span
+              <!-- 第二行：状态详情 (Tracking & Status badges) -->
+              <div class="flex items-center gap-2 text-xs w-full">
+                <!-- 跟踪分支 (Badge style) -->
+                <span
+                  v-if="wt.trackingBranch"
+                  class="badge badge-ghost badge-xs gap-1.5 min-h-[20px] h-auto border-base-content/20"
+                  :title="'跟踪远端: ' + wt.trackingBranch"
                 >
-              </h4>
-              <button
-                class="btn btn-primary btn-sm"
-                :disabled="!localStatus?.exists"
-                @click="showWorktreeForm = !showWorktreeForm"
-              >
-                {{ showWorktreeForm ? "取消" : "+ 新建" }}
-              </button>
-            </div>
+                  <span class="text-[10px]">🔗</span>
+                  <span class="font-mono">{{ wt.trackingBranch }}</span>
+                </span>
 
-            <!-- 创建工作区表单 -->
-            <form
-              v-if="showWorktreeForm"
-              class="space-y-3 mt-2 p-4 bg-base-200 rounded-xl"
-              @submit.prevent="handleCreateWorktree"
-            >
-              <!-- 模式切换 -->
-              <div class="flex gap-2">
-                <button
-                  type="button"
-                  class="btn btn-sm flex-1"
-                  :class="
-                    worktreeCreateMode === 'new' ? 'btn-primary' : 'btn-ghost'
-                  "
-                  @click="worktreeCreateMode = 'new'"
-                >
-                  📝 新建分支
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-sm flex-1"
-                  :class="
-                    worktreeCreateMode === 'remote'
-                      ? 'btn-primary'
-                      : 'btn-ghost'
-                  "
-                  @click="
-                    worktreeCreateMode = 'remote';
-                    loadRemoteBranches();
-                  "
-                >
-                  🔄 从远端拉取
-                </button>
-              </div>
-
-              <!-- 新建模式：输入分支名 -->
-              <div v-if="worktreeCreateMode === 'new'" class="form-control">
-                <label class="label py-1">
-                  <span class="label-text text-xs font-medium">分支名称</span>
-                </label>
-                <input
-                  v-model="worktreeForm.branch"
-                  type="text"
-                  class="input input-bordered input-sm"
-                  placeholder="feature/my-feature"
+                <!-- 状态徽章 -->
+                <SyncStatusBadge
+                  :ahead="wt.ahead"
+                  :behind="wt.behind"
+                  :tracking-branch="wt.trackingBranch"
                 />
               </div>
-
-              <!-- 远端模式：选择远端分支 -->
-              <div v-else class="form-control">
-                <label class="label py-1">
-                  <span class="label-text text-xs font-medium"
-                    >选择远端分支</span
-                  >
-                </label>
-                <div
-                  v-if="loadingRemoteBranches"
-                  class="flex items-center gap-2 text-sm text-base-content/60"
-                >
-                  <span class="loading loading-spinner loading-xs"></span>
-                  正在加载远端分支...
-                </div>
-                <select
-                  v-else
-                  v-model="worktreeForm.selectedRemoteBranch"
-                  class="select select-bordered select-sm"
-                >
-                  <option value="" disabled>请选择远端分支</option>
-                  <option
-                    v-for="branch in remoteBranches.filter(
-                      (b) => !b.includes('/main') && !b.includes('/master')
-                    )"
-                    :key="branch"
-                    :value="branch"
-                  >
-                    {{ branch }}
-                  </option>
-                </select>
-                <label
-                  v-if="worktreeForm.selectedRemoteBranch"
-                  class="label py-0"
-                >
-                  <span class="label-text-alt text-xs text-success">
-                    将创建本地分支：{{
-                      extractBranchName(worktreeForm.selectedRemoteBranch)
-                    }}
-                  </span>
-                </label>
-              </div>
-
-              <div class="flex justify-end">
-                <button
-                  type="submit"
-                  class="btn btn-primary btn-sm"
-                  :disabled="
-                    worktreeCreateMode === 'new'
-                      ? !worktreeForm.branch
-                      : !worktreeForm.selectedRemoteBranch
-                  "
-                >
-                  创建工作区
-                </button>
-              </div>
-            </form>
-
-            <!-- 工作区列表（只显示非主分支） -->
-            <div
-              v-if="
-                localStatus?.worktrees?.filter((w) => !w.isMainWorktree).length
-              "
-              class="space-y-1.5 mt-2"
-            >
-              <div
-                v-for="wt in localStatus.worktrees.filter(
-                  (w) => !w.isMainWorktree
-                )"
-                :key="wt.path"
-                class="group flex flex-col gap-1.5 px-3 py-2.5 rounded-xl border border-base-content/10 bg-base-200/30 hover:border-primary/50 transition-all"
-              >
-                <!-- 第一行：分支 & PR & 操作 -->
-                <div class="flex items-center justify-between w-full">
-                  <div class="flex items-center gap-2 min-w-0">
-                    <!-- 分支名称 (普通标题样式) -->
-                    <div class="flex items-center gap-2">
-                      <span class="font-bold text-sm select-all">{{
-                        wt.branch
-                      }}</span>
-                    </div>
-
-                    <!-- PR状态 -->
-                    <a
-                      v-if="wt.linkedPR"
-                      :href="wt.linkedPRUrl || '#'"
-                      target="_blank"
-                      class="badge badge-success badge-xs gap-1 hover:badge-outline h-5 font-normal text-white"
-                      title="已关联PR"
-                    >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 16 16"
-                        fill="currentColor"
-                        class="w-3 h-3"
-                      >
-                        <path
-                          fill-rule="evenodd"
-                          d="M4.5 2A2.5 2.5 0 0 0 2 4.5v2.879a2.5 2.5 0 0 0 .732 1.767l4.5 4.5a2.5 2.5 0 0 0 3.536 0l2.878-2.878a2.5 2.5 0 0 0 0-3.536l-4.5-4.5A2.5 2.5 0 0 0 7.38 2H4.5ZM5 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"
-                          clip-rule="evenodd"
-                        />
-                      </svg>
-                      #{{ wt.linkedPR }}
-                    </a>
-                    <span
-                      v-else
-                      class="badge badge-ghost badge-xs h-5 font-normal text-base-content/60"
-                    >
-                      无PR
-                    </span>
-
-                    <!-- 路径 (移到这里) -->
-                    <span
-                      class="text-xs text-base-content/40 font-mono truncate max-w-[150px] ml-1"
-                      :title="wt.path"
-                    >
-                      {{ wt.path.split(/[/\\]/).slice(-2).join("/") }}
-                    </span>
-                  </div>
-
-                  <!-- 操作按钮组 (右侧仅保留按钮) -->
-                  <div class="flex items-center gap-2 ml-auto">
-                    <div
-                      class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      <button
-                        class="btn btn-ghost btn-xs btn-square text-primary"
-                        title="推送变更"
-                        @click="handlePushWorktree(wt.path)"
-                        :disabled="pushingWorktreePaths.has(wt.path)"
-                      >
-                        <span
-                          v-if="pushingWorktreePaths.has(wt.path)"
-                          class="loading loading-spinner loading-xs"
-                        ></span>
-                        <svg
-                          v-else
-                          xmlns="http://www.w3.org/2000/svg"
-                          viewBox="0 0 20 20"
-                          fill="currentColor"
-                          class="w-4 h-4"
-                        >
-                          <path
-                            fill-rule="evenodd"
-                            d="M10 17a.75.75 0 0 1-.75-.75V5.612L5.29 9.77a.75.75 0 0 1-1.08-1.04l5.25-5.5a.75.75 0 0 1 1.08 0l5.25 5.5a.75.75 0 1 1-1.08 1.04l-3.96-4.158V16.25A.75.75 0 0 1 10 17Z"
-                            clip-rule="evenodd"
-                          />
-                        </svg>
-                      </button>
-
-                      <button
-                        class="btn btn-ghost btn-xs btn-square text-error"
-                        title="删除工作区"
-                        @click="showDeleteConfirm(wt.path)"
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          viewBox="0 0 20 20"
-                          fill="currentColor"
-                          class="w-4 h-4"
-                        >
-                          <path
-                            fill-rule="evenodd"
-                            d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 0 0 1.5.06l.3-7.5Z"
-                            clip-rule="evenodd"
-                          />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 第二行：状态详情 (Tracking & Status badges) -->
-                <div class="flex items-center gap-2 text-xs w-full">
-                  <!-- 跟踪分支 (Badge style) -->
-                  <span
-                    v-if="wt.trackingBranch"
-                    class="badge badge-ghost badge-xs gap-1.5 min-h-[20px] h-auto border-base-content/20"
-                    :title="'跟踪远端: ' + wt.trackingBranch"
-                  >
-                    <span class="text-[10px]">🔗</span>
-                    <span class="font-mono">{{ wt.trackingBranch }}</span>
-                  </span>
-
-                  <!-- 状态徽章 (Regular badges) -->
-                  <span
-                    v-if="
-                      wt.trackingBranch && wt.ahead === 0 && wt.behind === 0
-                    "
-                    class="badge badge-success badge-sm"
-                  >
-                    ✓ 已同步
-                  </span>
-                  <span
-                    v-if="wt.ahead > 0"
-                    class="badge badge-info badge-sm"
-                    title="领先提交数"
-                  >
-                    ↑ {{ wt.ahead }} ahead
-                  </span>
-                  <span
-                    v-if="wt.behind > 0"
-                    class="badge badge-warning badge-sm"
-                    title="落后提交数"
-                  >
-                    ↓ {{ wt.behind }} behind
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <!-- 空状态 -->
-            <div
-              v-else-if="localStatus?.exists && !isLoading"
-              class="text-center py-6 text-base-content/50"
-            >
-              <div class="text-3xl mb-2">📁</div>
-              <p class="text-sm">暂无分支工作区</p>
-              <p class="text-xs mt-1">点击"+ 新建"创建分支工作区</p>
-            </div>
-
-            <!-- 未克隆提示 -->
-            <div
-              v-else-if="!localStatus?.exists && !isLoading"
-              class="text-center py-6 text-base-content/50"
-            >
-              <div class="text-3xl mb-2">📭</div>
-              <p class="text-sm">请先克隆仓库</p>
             </div>
           </div>
-        </div>
+
+          <!-- 空状态 -->
+          <div
+            v-else-if="localStatus?.exists && !isLoading"
+            class="text-center py-6 text-base-content/50"
+          >
+            <div class="text-3xl mb-2">📁</div>
+            <p class="text-sm">暂无分支工作区</p>
+            <p class="text-xs mt-1">点击"+ 新建"创建分支工作区</p>
+          </div>
+
+          <!-- 未克隆提示 -->
+          <div
+            v-else-if="!localStatus?.exists && !isLoading"
+            class="text-center py-6 text-base-content/50"
+          >
+            <div class="text-3xl mb-2">📭</div>
+            <p class="text-sm">请先克隆仓库</p>
+          </div>
+        </StatusCard>
       </div>
     </div>
   </main>
 
   <!-- 删除确认对话框 -->
-  <dialog ref="deleteModalRef" class="modal">
-    <div class="modal-box">
-      <h3 class="font-bold text-lg">☸️ 确认删除</h3>
-      <p class="py-4">
-        确定要删除这个工作区吗？<br />
-        <code class="text-sm text-error break-all">{{
-          pendingDeletePath
-        }}</code>
+  <ConfirmModal
+    v-model="showDeleteModal"
+    title="☸️ 确认删除"
+    confirm-text="删除"
+    confirm-variant="error"
+    @confirm="confirmDeleteWorktree"
+  >
+    <p class="py-2">
+      确定要删除这个工作区吗？<br />
+      <code class="text-sm text-error break-all">{{ pendingDeletePath }}</code>
+    </p>
+
+    <!-- 删除远端分支选项 -->
+    <div class="form-control mb-4">
+      <label class="label cursor-pointer justify-start gap-3">
+        <input
+          v-model="deleteRemoteBranch"
+          type="checkbox"
+          class="checkbox checkbox-warning"
+        />
+        <span class="label-text">同时删除远端分支</span>
+      </label>
+      <p v-if="deleteRemoteBranch" class="text-xs text-warning ml-9">
+        将执行 git push origin --delete &lt;branch&gt;
       </p>
-
-      <!-- 删除远端分支选项 -->
-      <div class="form-control mb-4">
-        <label class="label cursor-pointer justify-start gap-3">
-          <input
-            v-model="deleteRemoteBranch"
-            type="checkbox"
-            class="checkbox checkbox-warning"
-          />
-          <span class="label-text">同时删除远端分支</span>
-        </label>
-        <p v-if="deleteRemoteBranch" class="text-xs text-warning ml-9">
-          将执行 git push origin --delete &lt;branch&gt;
-        </p>
-      </div>
-
-      <p class="text-warning text-sm">此操作不可撤销！</p>
-      <div class="modal-action">
-        <form method="dialog">
-          <button class="btn btn-ghost">取消</button>
-        </form>
-        <button class="btn btn-error" @click="confirmDeleteWorktree">
-          删除
-        </button>
-      </div>
     </div>
-    <form method="dialog" class="modal-backdrop">
-      <button>关闭</button>
-    </form>
-  </dialog>
+
+    <p class="text-warning text-sm">此操作不可撤销！</p>
+  </ConfirmModal>
 </template>
 
 <style scoped>

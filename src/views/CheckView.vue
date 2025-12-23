@@ -22,6 +22,9 @@ import { useRouter } from "vue-router";
 import { startIpPoolPreheater } from "../api/ip-pool";
 import { waitForIpPoolWarmup } from "../utils/check-preheat";
 
+// 导入可复用组件
+import StatusList from "../components/StatusList.vue";
+
 const router = useRouter();
 
 const statusList = ref<Status[]>([
@@ -317,23 +320,7 @@ onMounted(async () => {
   <main class="page items-center justify-center">
     <h1>薪火笔记社 · 文档贡献工具</h1>
 
-    <TransitionGroup name="list" tag="ul" class="max-w-1/2">
-      <li
-        v-for="status in statusList"
-        class="flex items-center gap-2 font-bold my-2!"
-        :key="status.id"
-      >
-        <span class="inline-grid *:[grid-area:1/1]">
-          <span
-            v-if="status.type !== 'success'"
-            class="status animate-ping"
-            :class="`status-${status.type}`"
-          ></span>
-          <span class="status" :class="`status-${status.type}`"></span>
-        </span>
-        {{ status.message }}
-      </li>
-    </TransitionGroup>
+    <StatusList :items="statusList" />
     <button
       class="btn btn-primary"
       :disabled="

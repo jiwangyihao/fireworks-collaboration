@@ -71,7 +71,12 @@ describe("views/CheckView", () => {
       global: {
         plugins: [router],
         provide: { authenticated, user },
-        stubs: { TransitionGroup: false },
+        stubs: {
+          StatusList: {
+            template: "<ul><slot /></ul>",
+            props: ["items"],
+          },
+        },
       },
     });
 
