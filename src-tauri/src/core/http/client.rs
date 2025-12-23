@@ -85,8 +85,8 @@ impl HttpClient {
 
         let mut errors: Vec<String> = Vec::new();
         let mut success_out: Option<HttpResponseOutput> = None;
-        let mut used_ip_pool = false;
-        let mut used_candidate_stat: Option<crate::core::ip_pool::IpStat> = None;
+        let mut _used_ip_pool = false;
+        let mut _used_candidate_stat: Option<crate::core::ip_pool::IpStat> = None;
 
         // Candidate targets: from IP pool, then try System if pool fails or is empty
         let candidates: Vec<crate::core::ip_pool::IpStat> = sel.iter_candidates().cloned().collect();
@@ -290,8 +290,8 @@ impl HttpClient {
                         redirects: vec![],
                         body_size,
                     });
-                    used_ip_pool = is_pool_candidate;
-                    used_candidate_stat = current_stat;
+                    _used_ip_pool = is_pool_candidate;
+                    _used_candidate_stat = current_stat;
                     break;
                 }
                 Err(e) => {

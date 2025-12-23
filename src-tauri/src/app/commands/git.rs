@@ -594,6 +594,7 @@ pub struct RepoStatus {
     pub ahead: u32,
     pub behind: u32,
     pub branches: Vec<BranchInfo>,
+    pub tracking_branch: Option<String>,
 }
 
 /// List all branches in a Git repository.
@@ -771,6 +772,26 @@ pub async fn git_repo_status(dest: String) -> Result<RepoStatus, String> {
         }
     }
 
+    // Get upstream tracking branch
+    let tracking_branch = if let Some(ref _branch) = current_branch {
+        let tb_output = Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+            .current_dir(&dest)
+            .output();
+
+        if let Ok(output) = tb_output {
+            if output.status.success() {
+                Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Get branches
     let branches = git_list_branches(dest.clone(), Some(false)).await.unwrap_or_default();
 
@@ -784,6 +805,7 @@ pub async fn git_repo_status(dest: String) -> Result<RepoStatus, String> {
         ahead,
         behind,
         branches,
+        tracking_branch,
     })
 }
 
@@ -886,6 +908,9 @@ pub struct WorktreeInfo {
     pub is_detached: bool,
     pub locked: bool,
     pub prunable: bool,
+    pub tracking_branch: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
 }
 
 /// List all worktrees in a Git repository.
@@ -947,6 +972,9 @@ pub async fn git_worktree_list(dest: String) -> Result<Vec<WorktreeInfo>, String
                 is_detached: false,
                 locked: false,
                 prunable: false,
+                tracking_branch: None,
+                ahead: 0,
+                behind: 0,
             });
             is_first = false;
         } else if let Some(ref mut wt) = current_wt {
@@ -970,6 +998,88 @@ pub async fn git_worktree_list(dest: String) -> Result<Vec<WorktreeInfo>, String
     // Don't forget the last entry
     if let Some(wt) = current_wt.take() {
         worktrees.push(wt);
+    }
+
+    // Enhance worktrees with tracking info
+    // We do this after parsing all worktrees to minimize git commands during parsing
+    for wt in &mut worktrees {
+        if let Some(ref branch) = wt.branch {
+            // Get upstream tracking branch
+            // Note: We need to run this command within the worktree path or separate the logic
+            // Using the worktree path is safer as it respects that worktree's config/HEAD
+            let wt_path = Path::new(&wt.path);
+            
+            if wt_path.exists() {
+                let mut tracking_branch_name: Option<String> = None;
+
+                 tracing::info!(target="git", "Checking tracking info for worktree: {:?}, branch: {:?}", wt_path, branch);
+                 
+                 // 1. Try configured upstream
+                 let tb_output = Command::new("git")
+                    .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+                    .current_dir(wt_path)
+                    .output();
+
+                if let Ok(output) = tb_output {
+                    if output.status.success() {
+                        let tb = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        if !tb.is_empty() {
+                            tracing::info!(target="git", "Found configured tracking branch for {:?}: {}", wt_path, tb);
+                            tracking_branch_name = Some(tb);
+                        }
+                    } else {
+                         tracing::warn!(target="git", "No configured upstream for {:?}: {}", wt_path, String::from_utf8_lossy(&output.stderr));
+                    }
+                }
+
+                // 2. Fallback to origin/<branch> if no configured upstream
+                if tracking_branch_name.is_none() {
+                     let implicit_tracking = format!("origin/{}", branch);
+                     tracing::info!(target="git", "Checking implicit tracking branch: {}", implicit_tracking);
+                     
+                     let verify_output = Command::new("git")
+                        .args(["rev-parse", "--verify", &implicit_tracking])
+                        .current_dir(wt_path)
+                        .output();
+                     
+                     if let Ok(output) = verify_output {
+                         if output.status.success() {
+                             tracing::info!(target="git", "Found implicit tracking branch: {}", implicit_tracking);
+                             tracking_branch_name = Some(implicit_tracking);
+                         } else {
+                             tracing::warn!(target="git", "Implicit tracking branch {} not found", implicit_tracking);
+                         }
+                     }
+                }
+
+                if let Some(tb) = tracking_branch_name {
+                    wt.tracking_branch = Some(tb.clone());
+
+                     // Get ahead/behind
+                     // Use the resolved tracking branch name explicitly
+                     let ab_output = Command::new("git")
+                        .args(["rev-list", "--left-right", "--count", &format!("HEAD...{}", tb)])
+                        .current_dir(wt_path)
+                        .output();
+
+                    if let Ok(ab_out) = ab_output {
+                        if ab_out.status.success() {
+                            let ab_text = String::from_utf8_lossy(&ab_out.stdout);
+                            let parts: Vec<&str> = ab_text.trim().split_whitespace().collect();
+                            if parts.len() == 2 {
+                                wt.ahead = parts[0].parse().unwrap_or(0);
+                                wt.behind = parts[1].parse().unwrap_or(0);
+                                tracing::info!(target="git", "Counts for {:?} against {}: +{}/-{}", wt_path, tb, wt.ahead, wt.behind);
+                            }
+                        } else {
+                            tracing::warn!(target="git", "Failed to get counts for {:?}: {}", wt_path, String::from_utf8_lossy(&ab_out.stderr));
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!(target="git", "Worktree path does not exist: {:?}", wt_path);
+            }
+        }
     }
 
     Ok(worktrees)

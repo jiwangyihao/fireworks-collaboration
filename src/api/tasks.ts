@@ -301,6 +301,7 @@ export interface RepoStatus {
   ahead: number;
   behind: number;
   branches: BranchInfo[];
+  trackingBranch?: string | null;
 }
 
 // 获取分支列表
@@ -346,6 +347,9 @@ export interface WorktreeInfo {
   isDetached: boolean;
   locked: boolean;
   prunable: boolean;
+  trackingBranch?: string | null;
+  ahead: number;
+  behind: number;
 }
 
 // 获取所有worktree

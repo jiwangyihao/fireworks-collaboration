@@ -429,6 +429,12 @@ export const useProjectStore = defineStore("project", {
               branch: wt.branch || "(detached)",
               isMainWorktree: wt.isMain,
               head: wt.head,
+              trackingBranch: wt.trackingBranch,
+              ahead: wt.ahead,
+              behind: wt.behind,
+              locked: wt.locked,
+              prunable: wt.prunable,
+              isDetached: wt.isDetached,
             }));
 
           this.localStatus = {
@@ -441,6 +447,7 @@ export const useProjectStore = defineStore("project", {
             untracked: status.untracked,
             ahead: status.ahead,
             behind: status.behind,
+            trackingBranch: status.trackingBranch,
             worktrees,
           };
         } else {
@@ -454,6 +461,7 @@ export const useProjectStore = defineStore("project", {
             untracked: 0,
             ahead: 0,
             behind: 0,
+            trackingBranch: null,
             worktrees: [],
           };
         }
@@ -470,6 +478,7 @@ export const useProjectStore = defineStore("project", {
           untracked: 0,
           ahead: 0,
           behind: 0,
+          trackingBranch: null,
           worktrees: [],
         };
       } finally {

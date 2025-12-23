@@ -172,6 +172,10 @@ export interface WorktreeInfo {
   linkedPRUrl?: string;
   linkedPRTitle?: string;
   createdAt?: string;
+  trackingBranch?: string | null;
+  ahead: number;
+  behind: number;
+  isDetached?: boolean;
 }
 
 // 本地仓库状态
@@ -186,6 +190,7 @@ export interface LocalRepoStatus {
   ahead: number;
   behind: number;
   worktrees: WorktreeInfo[];
+  trackingBranch?: string | null;
 }
 
 // 项目状态枚举
