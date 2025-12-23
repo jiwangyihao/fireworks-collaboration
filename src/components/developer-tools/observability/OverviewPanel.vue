@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import type { MetricsSnapshot } from "../../api/metrics";
+import type { MetricsSnapshot } from "../../../api/metrics";
 import MetricCard from "./MetricCard.vue";
 import MetricChart, { type ChartSeries } from "./MetricChart.vue";
 import LoadingState from "./LoadingState.vue";
@@ -16,7 +16,7 @@ import {
   getQuantile,
   getSeries,
   sumCounters,
-} from "../../utils/observability";
+} from "../../../utils/observability";
 
 const props = defineProps<{
   snapshot: MetricsSnapshot | null;
@@ -26,22 +26,33 @@ const props = defineProps<{
 }>();
 
 const taskSeries = computed(() => getSeries(props.snapshot, "git_tasks_total"));
-const completedTasks = computed(() => sumCounters(filterSeries(taskSeries.value, { state: "completed" })));
-const failedTasks = computed(() =>
-  sumCounters(filterSeries(taskSeries.value, { state: "failed" })) +
-  sumCounters(filterSeries(taskSeries.value, { state: "canceled" })),
+const completedTasks = computed(() =>
+  sumCounters(filterSeries(taskSeries.value, { state: "completed" }))
+);
+const failedTasks = computed(
+  () =>
+    sumCounters(filterSeries(taskSeries.value, { state: "failed" })) +
+    sumCounters(filterSeries(taskSeries.value, { state: "canceled" }))
 );
 const totalTasks = computed(() => completedTasks.value + failedTasks.value);
-const successRate = computed(() => computeRate(completedTasks.value, totalTasks.value));
+const successRate = computed(() =>
+  computeRate(completedTasks.value, totalTasks.value)
+);
 
-const durationSeries = computed(() => getSeries(props.snapshot, "git_task_duration_ms"));
-const durationTotals = computed(() => combinedHistogramTotals(durationSeries.value));
+const durationSeries = computed(() =>
+  getSeries(props.snapshot, "git_task_duration_ms")
+);
+const durationTotals = computed(() =>
+  combinedHistogramTotals(durationSeries.value)
+);
 const averageTaskDuration = computed(() => {
   const totals = durationTotals.value;
   return totals.count > 0 ? totals.sum / totals.count : null;
 });
 
-const tlsSeries = computed(() => filterSeries(getSeries(props.snapshot, "tls_handshake_ms"), { outcome: "ok" }));
+const tlsSeries = computed(() =>
+  filterSeries(getSeries(props.snapshot, "tls_handshake_ms"), { outcome: "ok" })
+);
 const tlsP95 = computed(() => {
   const values = tlsSeries.value
     .map((series) => getQuantile(series, "p95"))
@@ -53,12 +64,24 @@ const tlsP95 = computed(() => {
 });
 const tlsTotals = computed(() => combinedHistogramTotals(tlsSeries.value));
 
-const ipRefreshSeries = computed(() => getSeries(props.snapshot, "ip_pool_refresh_total"));
-const ipRefreshSuccess = computed(() => sumCounters(filterSeries(ipRefreshSeries.value, { success: "true" })));
-const ipRefreshTotal = computed(() => ipRefreshSuccess.value + sumCounters(filterSeries(ipRefreshSeries.value, { success: "false" })));
-const ipRefreshRate = computed(() => computeRate(ipRefreshSuccess.value, ipRefreshTotal.value));
+const ipRefreshSeries = computed(() =>
+  getSeries(props.snapshot, "ip_pool_refresh_total")
+);
+const ipRefreshSuccess = computed(() =>
+  sumCounters(filterSeries(ipRefreshSeries.value, { success: "true" }))
+);
+const ipRefreshTotal = computed(
+  () =>
+    ipRefreshSuccess.value +
+    sumCounters(filterSeries(ipRefreshSeries.value, { success: "false" }))
+);
+const ipRefreshRate = computed(() =>
+  computeRate(ipRefreshSuccess.value, ipRefreshTotal.value)
+);
 
-const alertsTotal = computed(() => sumCounters(getSeries(props.snapshot, "alerts_fired_total")));
+const alertsTotal = computed(() =>
+  sumCounters(getSeries(props.snapshot, "alerts_fired_total"))
+);
 
 const throughputSeries = computed<ChartSeries[]>(() => {
   const completed = filterSeries(taskSeries.value, { state: "completed" });
@@ -81,10 +104,14 @@ const throughputSeries = computed<ChartSeries[]>(() => {
   ];
 });
 
-const showEmpty = computed(() => !props.snapshot && !props.loading && !props.error);
+const showEmpty = computed(
+  () => !props.snapshot && !props.loading && !props.error
+);
 
 const successRateDisplay = computed(() => formatPercent(successRate.value));
-const averageDurationDisplay = computed(() => formatDurationMs(averageTaskDuration.value, 1));
+const averageDurationDisplay = computed(() =>
+  formatDurationMs(averageTaskDuration.value, 1)
+);
 const tlsP95Display = computed(() => formatDurationMs(tlsP95.value, 0));
 const ipRefreshDisplay = computed(() => formatPercent(ipRefreshRate.value));
 const alertsDisplay = computed(() => formatNumber(alertsTotal.value));
@@ -93,16 +120,32 @@ const alertsDisplay = computed(() => formatNumber(alertsTotal.value));
 <template>
   <div class="overview-panel flex flex-col gap-4">
     <LoadingState v-if="loading && !snapshot" />
-    <div v-else-if="error && !snapshot" class="overview-panel__error rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error">
+    <div
+      v-else-if="error && !snapshot"
+      class="overview-panel__error rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error"
+    >
       <span>加载指标失败：{{ error }}</span>
     </div>
     <EmptyState v-else-if="showEmpty" message="暂无指标数据" />
     <div v-else class="overview-panel__content flex flex-col gap-6">
-      <div class="overview-panel__meta flex items-center gap-3 text-xs text-base-content/60" v-if="snapshot">
-        <span>生成时间：{{ new Date(snapshot.generatedAtMs).toLocaleTimeString() }}</span>
-        <span v-if="stale" class="overview-panel__badge rounded-full bg-warning/10 px-2 py-0.5 text-warning">数据为缓存</span>
+      <div
+        class="overview-panel__meta flex items-center gap-3 text-xs text-base-content/60"
+        v-if="snapshot"
+      >
+        <span
+          >生成时间：{{
+            new Date(snapshot.generatedAtMs).toLocaleTimeString()
+          }}</span
+        >
+        <span
+          v-if="stale"
+          class="overview-panel__badge rounded-full bg-warning/10 px-2 py-0.5 text-warning"
+          >数据为缓存</span
+        >
       </div>
-      <div class="overview-panel__cards grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <div
+        class="overview-panel__cards grid gap-4 md:grid-cols-2 xl:grid-cols-3"
+      >
         <MetricCard
           title="任务成功率"
           :value="successRateDisplay"
@@ -143,9 +186,15 @@ const alertsDisplay = computed(() => formatNumber(alertsTotal.value));
       </div>
       <section class="overview-panel__chart flex flex-col gap-2">
         <header class="flex items-center justify-between">
-          <h4 class="text-sm font-semibold text-base-content/80">任务吞吐趋势</h4>
+          <h4 class="text-sm font-semibold text-base-content/80">
+            任务吞吐趋势
+          </h4>
         </header>
-        <MetricChart :series="throughputSeries" :value-formatter="formatNumber" empty-message="暂无任务事件" />
+        <MetricChart
+          :series="throughputSeries"
+          :value-formatter="formatNumber"
+          empty-message="暂无任务事件"
+        />
       </section>
     </div>
   </div>

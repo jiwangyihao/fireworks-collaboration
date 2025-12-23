@@ -2,74 +2,143 @@
   <div class="p-4 pt-16 space-y-3">
     <!-- Tabs for HTTP Tester and Proxy Config -->
     <div class="tabs tabs-boxed">
-      <a class="tab" :class="{ 'tab-active': activeTab === 'http' }" @click="activeTab = 'http'">HTTP 测试</a>
-      <a class="tab" :class="{ 'tab-active': activeTab === 'proxy' }" @click="activeTab = 'proxy'">代理配置</a>
+      <a
+        class="tab"
+        :class="{ 'tab-active': activeTab === 'http' }"
+        @click="activeTab = 'http'"
+        >HTTP 测试</a
+      >
+      <a
+        class="tab"
+        :class="{ 'tab-active': activeTab === 'proxy' }"
+        @click="activeTab = 'proxy'"
+        >代理配置</a
+      >
     </div>
 
     <!-- HTTP Tester Tab -->
     <div v-show="activeTab === 'http'" class="space-y-3">
-    <div class="flex gap-2">
-      <select v-model="method" class="select select-bordered select-sm w-28">
-        <option>GET</option>
-        <option>POST</option>
-        <option>PUT</option>
-        <option>DELETE</option>
-      </select>
-      <input v-model="url" placeholder="https://github.com/" class="input input-bordered input-sm flex-1" />
-      <button class="btn btn-primary btn-sm" @click="send">Send</button>
-    </div>
-    <div class="grid grid-cols-2 gap-3">
-      <div>
-        <h3 class="font-semibold">Headers</h3>
-        <textarea v-model="headersText" class="textarea textarea-bordered w-full h-40" placeholder='{"User-Agent":"P0Test"}' />
-        <h3 class="font-semibold mt-2">Body (text)</h3>
-        <textarea v-model="bodyText" class="textarea textarea-bordered w-full h-36" placeholder="optional body" />
-        <div class="flex gap-2 mt-2">
-          <label class="label cursor-pointer gap-2"><span>Force Real SNI</span><input type="checkbox" v-model="forceRealSni" class="checkbox checkbox-sm" /></label>
-          <label class="label cursor-pointer gap-2"><span>Follow Redirects</span><input type="checkbox" v-model="followRedirects" class="checkbox checkbox-sm" /></label>
-        </div>
-        <div class="mt-2 p-2 border rounded space-y-2">
-          <div class="grid grid-cols-2 gap-2">
-            <label class="label cursor-pointer gap-2"><span>启用 Fake SNI</span><input type="checkbox" v-model="fakeSniEnabled" class="checkbox checkbox-sm" /></label>
-            <label class="label cursor-pointer gap-2"><span>403 时自动轮换 SNI</span><input type="checkbox" v-model="sniRotateOn403" class="checkbox checkbox-sm" /></label>
-            <textarea v-model="fakeSniHostsText" class="textarea textarea-bordered w-full col-span-2" rows="3" placeholder="多个候选域名：每行一个，或用逗号分隔，例如\nbaidu.com\nqq.com\nweibo.com"></textarea>
-          </div>
-          <div class="flex items-center gap-2">
-            <button class="btn btn-sm" @click="applyHttpStrategy">保存 HTTP 策略</button>
-            <span class="text-xs opacity-70">仅允许内置 GitHub 域名使用伪装 SNI，目标列表已固化。</span>
-          </div>
-        </div>
-        <div class="mt-3">
-          <h3 class="font-semibold">最近请求</h3>
-          <div class="text-xs opacity-60 mb-1">保留最近 10 条，点击可回填</div>
-          <ul class="menu bg-base-200 rounded-box text-sm">
-            <li v-for="h in history" :key="h.key">
-              <a @click="applyHistory(h)">{{ h.method }} {{ h.url }}</a>
-            </li>
-            <li v-if="history.length===0" class="opacity-60 p-2">暂无历史</li>
-          </ul>
-        </div>
+      <div class="flex gap-2">
+        <select v-model="method" class="select select-bordered select-sm w-28">
+          <option>GET</option>
+          <option>POST</option>
+          <option>PUT</option>
+          <option>DELETE</option>
+        </select>
+        <input
+          v-model="url"
+          placeholder="https://github.com/"
+          class="input input-bordered input-sm flex-1"
+        />
+        <button class="btn btn-primary btn-sm" @click="send">Send</button>
       </div>
-      <div>
-        <h3 class="font-semibold">Response</h3>
-        <div v-if="resp">
-          <div class="text-sm">Status: <b>{{ resp.status }}</b> | usedFakeSni: {{ resp.usedFakeSni }}</div>
-          <div class="text-sm">Timing: connect {{ resp.timing.connectMs }}ms, tls {{ resp.timing.tlsMs }}ms, firstByte {{ resp.timing.firstByteMs }}ms, total {{ resp.timing.totalMs }}ms</div>
-          <div class="text-sm">Size: {{ resp.bodySize }} bytes</div>
-          <div class="text-sm" v-if="resp.redirects.length>0">Redirects:
-            <ul class="list-disc ml-6">
-              <li v-for="r in resp.redirects" :key="r.count">#{{ r.count }} {{ r.status }} -> {{ r.location }}</li>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <h3 class="font-semibold">Headers</h3>
+          <textarea
+            v-model="headersText"
+            class="textarea textarea-bordered w-full h-40"
+            placeholder='{"User-Agent":"P0Test"}'
+          />
+          <h3 class="font-semibold mt-2">Body (text)</h3>
+          <textarea
+            v-model="bodyText"
+            class="textarea textarea-bordered w-full h-36"
+            placeholder="optional body"
+          />
+          <div class="flex gap-2 mt-2">
+            <label class="label cursor-pointer gap-2"
+              ><span>Force Real SNI</span
+              ><input
+                type="checkbox"
+                v-model="forceRealSni"
+                class="checkbox checkbox-sm"
+            /></label>
+            <label class="label cursor-pointer gap-2"
+              ><span>Follow Redirects</span
+              ><input
+                type="checkbox"
+                v-model="followRedirects"
+                class="checkbox checkbox-sm"
+            /></label>
+          </div>
+          <div class="mt-2 p-2 border rounded space-y-2">
+            <div class="grid grid-cols-2 gap-2">
+              <label class="label cursor-pointer gap-2"
+                ><span>启用 Fake SNI</span
+                ><input
+                  type="checkbox"
+                  v-model="fakeSniEnabled"
+                  class="checkbox checkbox-sm"
+              /></label>
+              <label class="label cursor-pointer gap-2"
+                ><span>403 时自动轮换 SNI</span
+                ><input
+                  type="checkbox"
+                  v-model="sniRotateOn403"
+                  class="checkbox checkbox-sm"
+              /></label>
+              <textarea
+                v-model="fakeSniHostsText"
+                class="textarea textarea-bordered w-full col-span-2"
+                rows="3"
+                placeholder="多个候选域名：每行一个，或用逗号分隔，例如\nbaidu.com\nqq.com\nweibo.com"
+              ></textarea>
+            </div>
+            <div class="flex items-center gap-2">
+              <button class="btn btn-sm" @click="applyHttpStrategy">
+                保存 HTTP 策略
+              </button>
+              <span class="text-xs opacity-70"
+                >仅允许内置 GitHub 域名使用伪装 SNI，目标列表已固化。</span
+              >
+            </div>
+          </div>
+          <div class="mt-3">
+            <h3 class="font-semibold">最近请求</h3>
+            <div class="text-xs opacity-60 mb-1">
+              保留最近 10 条，点击可回填
+            </div>
+            <ul class="menu bg-base-200 rounded-box text-sm">
+              <li v-for="h in history" :key="h.key">
+                <a @click="applyHistory(h)">{{ h.method }} {{ h.url }}</a>
+              </li>
+              <li v-if="history.length === 0" class="opacity-60 p-2">
+                暂无历史
+              </li>
             </ul>
           </div>
-          <h4 class="font-semibold mt-2">Headers</h4>
-          <pre class="text-xs whitespace-pre-wrap">{{ resp.headers }}</pre>
-          <h4 class="font-semibold mt-2">Body (utf-8)</h4>
-          <pre class="text-xs whitespace-pre-wrap">{{ decodedText }}</pre>
         </div>
-        <div v-else class="opacity-60">No response yet</div>
-        <div v-if="err" class="text-red-600 mt-2">Error: {{ err }}</div>
+        <div>
+          <h3 class="font-semibold">Response</h3>
+          <div v-if="resp">
+            <div class="text-sm">
+              Status: <b>{{ resp.status }}</b> | usedFakeSni:
+              {{ resp.usedFakeSni }}
+            </div>
+            <div class="text-sm">
+              Timing: connect {{ resp.timing.connectMs }}ms, tls
+              {{ resp.timing.tlsMs }}ms, firstByte
+              {{ resp.timing.firstByteMs }}ms, total {{ resp.timing.totalMs }}ms
+            </div>
+            <div class="text-sm">Size: {{ resp.bodySize }} bytes</div>
+            <div class="text-sm" v-if="resp.redirects.length > 0">
+              Redirects:
+              <ul class="list-disc ml-6">
+                <li v-for="r in resp.redirects" :key="r.count">
+                  #{{ r.count }} {{ r.status }} -> {{ r.location }}
+                </li>
+              </ul>
+            </div>
+            <h4 class="font-semibold mt-2">Headers</h4>
+            <pre class="text-xs whitespace-pre-wrap">{{ resp.headers }}</pre>
+            <h4 class="font-semibold mt-2">Body (utf-8)</h4>
+            <pre class="text-xs whitespace-pre-wrap">{{ decodedText }}</pre>
+          </div>
+          <div v-else class="opacity-60">No response yet</div>
+          <div v-if="err" class="text-red-600 mt-2">Error: {{ err }}</div>
+        </div>
       </div>
-    </div>
     </div>
 
     <!-- Proxy Config Tab -->
@@ -84,11 +153,15 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { httpFakeRequest, type HttpRequestInput, type HttpResponseOutput } from "../../api/http";
+import {
+  httpFakeRequest,
+  type HttpRequestInput,
+  type HttpResponseOutput,
+} from "../../api/http";
 import { getConfig, setConfig, type AppConfig } from "../../api/config";
 import { useLogsStore } from "../../stores/logs";
-import ProxyConfig from "../../components/ProxyConfig.vue";
-import ProxyStatusPanel from "../../components/ProxyStatusPanel.vue";
+import ProxyConfig from "../../components/developer-tools/ProxyConfig.vue";
+import ProxyStatusPanel from "../../components/developer-tools/ProxyStatusPanel.vue";
 
 type HistoryItem = {
   key: string;
@@ -131,7 +204,7 @@ const parseList = (input: string) => {
     new Set(
       (input || "")
         .split(/[\n,]/)
-        .map(item => item.trim())
+        .map((item) => item.trim())
         .filter(Boolean)
     )
   );
@@ -226,5 +299,4 @@ function applyHistory(item: HistoryItem) {
 }
 </script>
 
-<style scoped>
-</style>
+<style scoped></style>

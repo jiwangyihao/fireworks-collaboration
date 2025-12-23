@@ -1,7 +1,7 @@
 <template>
   <div class="proxy-status-panel">
     <h3>代理状态</h3>
-    
+
     <div class="status-grid">
       <div class="status-item">
         <span class="label">当前模式:</span>
@@ -9,7 +9,7 @@
           {{ proxyModeText }}
         </span>
       </div>
-      
+
       <div class="status-item">
         <span class="label">运行状态:</span>
         <span class="value" :class="`state-${proxyState}`">
@@ -17,16 +17,19 @@
           {{ proxyStateText }}
         </span>
       </div>
-      
+
       <div class="status-item" v-if="proxyUrl">
         <span class="label">代理服务器:</span>
         <span class="value">{{ proxyUrl }}</span>
       </div>
-      
+
       <div class="status-item">
         <span class="label">自定义传输层:</span>
-        <span class="value" :class="customTransportDisabled ? 'disabled' : 'enabled'">
-          {{ customTransportDisabled ? '已禁用' : '已启用' }}
+        <span
+          class="value"
+          :class="customTransportDisabled ? 'disabled' : 'enabled'"
+        >
+          {{ customTransportDisabled ? "已禁用" : "已启用" }}
         </span>
       </div>
     </div>
@@ -34,7 +37,7 @@
     <!-- Fallback Info -->
     <div v-if="proxyState === 'fallback'" class="fallback-info alert-warning">
       <strong>降级信息:</strong>
-      <p>{{ fallbackReason || '代理连接失败，已自动切换到直连模式' }}</p>
+      <p>{{ fallbackReason || "代理连接失败，已自动切换到直连模式" }}</p>
       <p v-if="failureCount"><strong>失败次数:</strong> {{ failureCount }}</p>
     </div>
 
@@ -51,28 +54,30 @@
     <div v-if="healthCheckSuccessRate !== null" class="health-check-stats">
       <span class="label">健康检查成功率:</span>
       <div class="progress-bar">
-        <div 
-          class="progress-fill" 
+        <div
+          class="progress-fill"
           :style="{ width: `${(healthCheckSuccessRate || 0) * 100}%` }"
           :class="getHealthCheckClass(healthCheckSuccessRate)"
         ></div>
       </div>
-      <span class="value">{{ ((healthCheckSuccessRate || 0) * 100).toFixed(1) }}%</span>
+      <span class="value"
+        >{{ ((healthCheckSuccessRate || 0) * 100).toFixed(1) }}%</span
+      >
     </div>
 
     <!-- Manual Control -->
     <div class="manual-control">
-      <button 
-        v-if="proxyState === 'enabled'" 
+      <button
+        v-if="proxyState === 'enabled'"
         @click="forceFallback"
         class="control-btn fallback-btn"
         :disabled="controlling"
       >
         强制降级
       </button>
-      
-      <button 
-        v-if="proxyState === 'fallback' || proxyState === 'recovering'" 
+
+      <button
+        v-if="proxyState === 'fallback' || proxyState === 'recovering'"
         @click="forceRecovery"
         class="control-btn recovery-btn"
         :disabled="controlling"
@@ -84,170 +89,175 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { useConfigStore } from '../stores/config'
+import { ref, computed, onMounted, onUnmounted } from "vue";
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { useConfigStore } from "../../stores/config";
 
-const configStore = useConfigStore()
-const controlling = ref(false)
+const configStore = useConfigStore();
+const controlling = ref(false);
 
 // State data populated from proxy events
-const proxyMode = computed(() => configStore.cfg?.proxy?.mode || 'off')
-const proxyState = ref<'enabled' | 'disabled' | 'fallback' | 'recovering'>('disabled')
+const proxyMode = computed(() => configStore.cfg?.proxy?.mode || "off");
+const proxyState = ref<"enabled" | "disabled" | "fallback" | "recovering">(
+  "disabled"
+);
 const proxyUrl = computed(() => {
-  const url = configStore.cfg?.proxy?.url
-  if (!url) return null
+  const url = configStore.cfg?.proxy?.url;
+  if (!url) return null;
   // Sanitize URL to hide credentials
   try {
-    const urlObj = new URL(url)
-    return `${urlObj.protocol}//${urlObj.host}`
+    const urlObj = new URL(url);
+    return `${urlObj.protocol}//${urlObj.host}`;
   } catch {
-    return url
+    return url;
   }
-})
-const customTransportDisabled = computed(() => 
-  configStore.cfg?.proxy?.disableCustomTransport || false
-)
-const fallbackReason = ref<string | null>(null)
-const failureCount = ref<number | null>(null)
-const healthCheckSuccessRate = ref<number | null>(null)
-const nextHealthCheckIn = ref<number | null>(null)
+});
+const customTransportDisabled = computed(
+  () => configStore.cfg?.proxy?.disableCustomTransport || false
+);
+const fallbackReason = ref<string | null>(null);
+const failureCount = ref<number | null>(null);
+const healthCheckSuccessRate = ref<number | null>(null);
+const nextHealthCheckIn = ref<number | null>(null);
 
 const proxyModeText = computed(() => {
   const modes = {
-    off: '关闭',
-    http: 'HTTP/HTTPS',
-    socks5: 'SOCKS5',
-    system: '系统代理'
-  }
-  return modes[proxyMode.value as keyof typeof modes] || '未知'
-})
+    off: "关闭",
+    http: "HTTP/HTTPS",
+    socks5: "SOCKS5",
+    system: "系统代理",
+  };
+  return modes[proxyMode.value as keyof typeof modes] || "未知";
+});
 
 const proxyStateText = computed(() => {
   const states = {
-    enabled: '已启用',
-    disabled: '已禁用',
-    fallback: '已降级',
-    recovering: '恢复中'
-  }
-  return states[proxyState.value] || '未知'
-})
+    enabled: "已启用",
+    disabled: "已禁用",
+    fallback: "已降级",
+    recovering: "恢复中",
+  };
+  return states[proxyState.value] || "未知";
+});
 
 const getHealthCheckClass = (rate: number | null) => {
-  if (rate === null) return ''
-  if (rate >= 0.8) return 'success'
-  if (rate >= 0.5) return 'warning'
-  return 'error'
-}
+  if (rate === null) return "";
+  if (rate >= 0.8) return "success";
+  if (rate >= 0.5) return "warning";
+  return "error";
+};
 
 const forceFallback = async () => {
-  controlling.value = true
+  controlling.value = true;
   try {
-    await invoke('force_proxy_fallback', { 
-      reason: '用户手动触发降级' 
-    })
-    proxyState.value = 'fallback'
-    fallbackReason.value = '用户手动触发降级'
+    await invoke("force_proxy_fallback", {
+      reason: "用户手动触发降级",
+    });
+    proxyState.value = "fallback";
+    fallbackReason.value = "用户手动触发降级";
   } catch (error) {
-    console.error('Failed to force fallback:', error)
-    alert(`降级失败: ${error}`)
+    console.error("Failed to force fallback:", error);
+    alert(`降级失败: ${error}`);
   } finally {
-    controlling.value = false
+    controlling.value = false;
   }
-}
+};
 
 const forceRecovery = async () => {
-  controlling.value = true
+  controlling.value = true;
   try {
-    await invoke('force_proxy_recovery')
-    proxyState.value = 'enabled'
-    fallbackReason.value = null
-    failureCount.value = null
+    await invoke("force_proxy_recovery");
+    proxyState.value = "enabled";
+    fallbackReason.value = null;
+    failureCount.value = null;
   } catch (error) {
-    console.error('Failed to force recovery:', error)
-    alert(`恢复失败: ${error}`)
+    console.error("Failed to force recovery:", error);
+    alert(`恢复失败: ${error}`);
   } finally {
-    controlling.value = false
+    controlling.value = false;
   }
-}
+};
 
 // Update state based on proxy mode
 const updateStateFromConfig = () => {
-  if (proxyMode.value === 'off') {
-    proxyState.value = 'disabled'
+  if (proxyMode.value === "off") {
+    proxyState.value = "disabled";
   } else if (configStore.cfg?.proxy?.url) {
-    proxyState.value = 'enabled'
+    proxyState.value = "enabled";
   }
-}
+};
 
 // Watch for config changes
 configStore.$subscribe(() => {
-  updateStateFromConfig()
-})
+  updateStateFromConfig();
+});
 
-updateStateFromConfig()
+updateStateFromConfig();
 
 // Event listener handles
-let unlistenProxyState: UnlistenFn | null = null
+let unlistenProxyState: UnlistenFn | null = null;
 
 // Proxy event payload interface
 interface ProxyStateEvent {
-  proxy_mode?: string
-  proxy_state?: string
-  fallback_reason?: string
-  failure_count?: number
-  health_check_success_rate?: number
-  next_health_check_in?: number
-  custom_transport_disabled?: boolean
+  proxy_mode?: string;
+  proxy_state?: string;
+  fallback_reason?: string;
+  failure_count?: number;
+  health_check_success_rate?: number;
+  next_health_check_in?: number;
+  custom_transport_disabled?: boolean;
 }
 
 // Setup event listeners
 onMounted(async () => {
   try {
     // Listen for proxy state events
-    unlistenProxyState = await listen<ProxyStateEvent>('proxy://state', (event) => {
-      const payload = event.payload
-      console.log('Received proxy state event:', payload)
-      
-      // Update local state from event
-      if (payload.proxy_state) {
-        const stateMap: Record<string, typeof proxyState.value> = {
-          'Enabled': 'enabled',
-          'Disabled': 'disabled',
-          'Fallback': 'fallback',
-          'Recovering': 'recovering'
+    unlistenProxyState = await listen<ProxyStateEvent>(
+      "proxy://state",
+      (event) => {
+        const payload = event.payload;
+        console.log("Received proxy state event:", payload);
+
+        // Update local state from event
+        if (payload.proxy_state) {
+          const stateMap: Record<string, typeof proxyState.value> = {
+            Enabled: "enabled",
+            Disabled: "disabled",
+            Fallback: "fallback",
+            Recovering: "recovering",
+          };
+          proxyState.value = stateMap[payload.proxy_state] || "disabled";
         }
-        proxyState.value = stateMap[payload.proxy_state] || 'disabled'
+
+        if (payload.fallback_reason !== undefined) {
+          fallbackReason.value = payload.fallback_reason;
+        }
+
+        if (payload.failure_count !== undefined) {
+          failureCount.value = payload.failure_count;
+        }
+
+        if (payload.health_check_success_rate !== undefined) {
+          healthCheckSuccessRate.value = payload.health_check_success_rate;
+        }
+
+        if (payload.next_health_check_in !== undefined) {
+          nextHealthCheckIn.value = payload.next_health_check_in;
+        }
       }
-      
-      if (payload.fallback_reason !== undefined) {
-        fallbackReason.value = payload.fallback_reason
-      }
-      
-      if (payload.failure_count !== undefined) {
-        failureCount.value = payload.failure_count
-      }
-      
-      if (payload.health_check_success_rate !== undefined) {
-        healthCheckSuccessRate.value = payload.health_check_success_rate
-      }
-      
-      if (payload.next_health_check_in !== undefined) {
-        nextHealthCheckIn.value = payload.next_health_check_in
-      }
-    })
+    );
   } catch (error) {
-    console.error('Failed to setup proxy event listeners:', error)
+    console.error("Failed to setup proxy event listeners:", error);
   }
-})
+});
 
 // Cleanup event listeners
 onUnmounted(() => {
   if (unlistenProxyState) {
-    unlistenProxyState()
+    unlistenProxyState();
   }
-})
+});
 </script>
 
 <style scoped>

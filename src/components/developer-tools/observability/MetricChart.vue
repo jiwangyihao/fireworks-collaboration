@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import type { NormalizedPoint } from "../../utils/observability";
+import type { NormalizedPoint } from "../../../utils/observability";
 
 const palette = [
   "#2563eb",
@@ -26,7 +26,9 @@ const props = defineProps<{
 }>();
 
 const maxY = computed(() => {
-  const values = props.series.flatMap((entry) => entry.points.map((point) => point.y));
+  const values = props.series.flatMap((entry) =>
+    entry.points.map((point) => point.y)
+  );
   const max = Math.max(...values, 0);
   return max > 0 ? max : 1;
 });
@@ -34,10 +36,11 @@ const maxY = computed(() => {
 const lines = computed(() => {
   return props.series.map((entry, idx) => {
     const color = entry.color ?? palette[idx % palette.length];
-  const points = entry.points.length <= 1 ? extendSinglePoint(entry.points) : entry.points;
+    const points =
+      entry.points.length <= 1 ? extendSinglePoint(entry.points) : entry.points;
     const pointsAttr = buildPolyline(points, maxY.value);
-  const lastPoint = entry.points[entry.points.length - 1];
-  const latest = lastPoint ? lastPoint.y : 0;
+    const lastPoint = entry.points[entry.points.length - 1];
+    const latest = lastPoint ? lastPoint.y : 0;
     return {
       id: entry.id,
       label: entry.label,
@@ -74,9 +77,13 @@ function buildPolyline(points: NormalizedPoint[], max: number): string {
     .map((point, idx, arr) => {
       const normalizedX = (point.x ?? 0) * 100;
       const normalized = max > 0 ? point.y / max : 0;
-      const clamped = Number.isFinite(normalized) ? Math.min(Math.max(normalized, 0), 1) : 0;
+      const clamped = Number.isFinite(normalized)
+        ? Math.min(Math.max(normalized, 0), 1)
+        : 0;
       const y = bottom - clamped * scale;
-      const x = Number.isFinite(normalizedX) ? normalizedX : (idx / Math.max(1, arr.length - 1)) * 100;
+      const x = Number.isFinite(normalizedX)
+        ? normalizedX
+        : (idx / Math.max(1, arr.length - 1)) * 100;
       return `${x.toFixed(2)},${y.toFixed(2)}`;
     })
     .join(" ");
@@ -97,8 +104,13 @@ function defaultFormatter(value: number): string {
 </script>
 
 <template>
-  <div class="metric-chart flex flex-col gap-2 rounded-xl border border-base-200 bg-base-100/60 p-3 shadow-sm">
-    <div v-if="!hasAnyData" class="metric-chart__empty flex min-h-24 items-center justify-center text-sm text-base-content/50">
+  <div
+    class="metric-chart flex flex-col gap-2 rounded-xl border border-base-200 bg-base-100/60 p-3 shadow-sm"
+  >
+    <div
+      v-if="!hasAnyData"
+      class="metric-chart__empty flex min-h-24 items-center justify-center text-sm text-base-content/50"
+    >
       {{ emptyMessage ?? "暂无数据" }}
     </div>
     <div v-else class="metric-chart__canvas flex flex-col gap-2">
@@ -116,11 +128,23 @@ function defaultFormatter(value: number): string {
           />
         </template>
       </svg>
-      <div class="metric-chart__legend flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-base-content/70">
-        <div v-for="line in lines" :key="`${line.id}-legend`" class="metric-chart__legend-item flex items-center gap-1">
-          <span class="metric-chart__swatch h-2 w-2 rounded-full" :style="{ backgroundColor: line.color }" />
+      <div
+        class="metric-chart__legend flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-base-content/70"
+      >
+        <div
+          v-for="line in lines"
+          :key="`${line.id}-legend`"
+          class="metric-chart__legend-item flex items-center gap-1"
+        >
+          <span
+            class="metric-chart__swatch h-2 w-2 rounded-full"
+            :style="{ backgroundColor: line.color }"
+          />
           <span class="metric-chart__label font-medium">{{ line.label }}</span>
-          <span class="metric-chart__value font-mono text-xs text-base-content">{{ formatter(line.latest) }}</span>
+          <span
+            class="metric-chart__value font-mono text-xs text-base-content"
+            >{{ formatter(line.latest) }}</span
+          >
         </div>
       </div>
     </div>
@@ -128,5 +152,9 @@ function defaultFormatter(value: number): string {
 </template>
 
 <style scoped>
-.metric-chart__axis { stroke: var(--fallback-bc, rgba(148, 163, 184, 0.6)); stroke-width: 0.75; stroke-dasharray: 2 2; }
+.metric-chart__axis {
+  stroke: var(--fallback-bc, rgba(148, 163, 184, 0.6));
+  stroke-width: 0.75;
+  stroke-dasharray: 2 2;
+}
 </style>

@@ -1,7 +1,7 @@
 import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
 import OverviewPanel from "../observability/OverviewPanel.vue";
-import type { MetricsSnapshot } from "../../api/metrics";
+import type { MetricsSnapshot } from "../../../api/metrics";
 
 const snapshot: MetricsSnapshot = {
   generatedAtMs: Date.parse("2025-01-01T00:00:00Z"),
@@ -37,18 +37,14 @@ const snapshot: MetricsSnapshot = {
       name: "tls_handshake_ms",
       type: "histogram",
       labels: { outcome: "ok", sni_strategy: "fake" },
-      histogramPoints: [
-        { offsetSeconds: 0, count: 1, sum: 150 },
-      ],
+      histogramPoints: [{ offsetSeconds: 0, count: 1, sum: 150 }],
       quantiles: { p95: 180 },
     },
     {
       name: "tls_handshake_ms",
       type: "histogram",
       labels: { outcome: "ok", sni_strategy: "real" },
-      histogramPoints: [
-        { offsetSeconds: 0, count: 1, sum: 200 },
-      ],
+      histogramPoints: [{ offsetSeconds: 0, count: 1, sum: 200 }],
       quantiles: { p95: 160 },
     },
     {
@@ -92,7 +88,9 @@ describe("OverviewPanel", () => {
     expect(cards[4].text()).toContain("2");
 
     expect(wrapper.find(".overview-panel__badge").exists()).toBe(true);
-    expect(wrapper.findAll(".metric-chart__legend-item").length).toBeGreaterThan(0);
+    expect(
+      wrapper.findAll(".metric-chart__legend-item").length
+    ).toBeGreaterThan(0);
   });
 
   it("shows a loading indicator before the first snapshot", () => {

@@ -1,7 +1,12 @@
+<!--
+  @deprecated This component is deprecated and not currently in use.
+  It was a debug/development component for testing task management.
+  Consider removing in future cleanup.
+-->
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { useTasksStore } from "../stores/tasks";
-import { listTasks, startSleepTask, cancelTask } from "../api/tasks";
+import { useTasksStore } from "../../stores/tasks";
+import { listTasks, startSleepTask, cancelTask } from "../../api/tasks";
 
 const store = useTasksStore();
 const loading = ref(false);

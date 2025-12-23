@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import type { MetricsSnapshot } from "../../api/metrics";
+import type { MetricsSnapshot } from "../../../api/metrics";
 import MetricCard from "./MetricCard.vue";
 import MetricChart, { type ChartSeries } from "./MetricChart.vue";
 import LoadingState from "./LoadingState.vue";
@@ -15,7 +15,7 @@ import {
   getSeries,
   groupByLabel,
   sumCounters,
-} from "../../utils/observability";
+} from "../../../utils/observability";
 
 const props = defineProps<{
   snapshot: MetricsSnapshot | null;
@@ -24,11 +24,19 @@ const props = defineProps<{
   stale: boolean;
 }>();
 
-const refreshSeries = computed(() => getSeries(props.snapshot, "ip_pool_refresh_total"));
-const refreshSuccess = computed(() => sumCounters(filterSeries(refreshSeries.value, { success: "true" })));
-const refreshFail = computed(() => sumCounters(filterSeries(refreshSeries.value, { success: "false" })));
+const refreshSeries = computed(() =>
+  getSeries(props.snapshot, "ip_pool_refresh_total")
+);
+const refreshSuccess = computed(() =>
+  sumCounters(filterSeries(refreshSeries.value, { success: "true" }))
+);
+const refreshFail = computed(() =>
+  sumCounters(filterSeries(refreshSeries.value, { success: "false" }))
+);
 const refreshTotal = computed(() => refreshSuccess.value + refreshFail.value);
-const refreshRate = computed(() => computeRate(refreshSuccess.value, refreshTotal.value));
+const refreshRate = computed(() =>
+  computeRate(refreshSuccess.value, refreshTotal.value)
+);
 
 const failureReasons = computed(() => {
   const failures = filterSeries(refreshSeries.value, { success: "false" });
@@ -42,7 +50,9 @@ const failureReasons = computed(() => {
     .sort((a, b) => b.total - a.total);
 });
 
-const latencySeries = computed(() => getSeries(props.snapshot, "ip_pool_latency_ms"));
+const latencySeries = computed(() =>
+  getSeries(props.snapshot, "ip_pool_latency_ms")
+);
 const latencyChart = computed<ChartSeries[]>(() => {
   const bySource = groupByLabel(latencySeries.value, "source");
   return Object.entries(bySource).map(([source, entries]) => ({
@@ -54,29 +64,53 @@ const latencyChart = computed<ChartSeries[]>(() => {
 
 const latencyFormatter = (value: number) => formatDurationMs(value, 1);
 
-const autoDisable = computed(() => sumCounters(getSeries(props.snapshot, "ip_pool_auto_disable_total")));
-const selectionAttempts = computed(() => sumCounters(getSeries(props.snapshot, "ip_pool_selection_total")));
-const breakerTrips = computed(() => sumCounters(getSeries(props.snapshot, "circuit_breaker_trip_total")));
-const breakerRecover = computed(() => sumCounters(getSeries(props.snapshot, "circuit_breaker_recover_total")));
+const autoDisable = computed(() =>
+  sumCounters(getSeries(props.snapshot, "ip_pool_auto_disable_total"))
+);
+const selectionAttempts = computed(() =>
+  sumCounters(getSeries(props.snapshot, "ip_pool_selection_total"))
+);
+const breakerTrips = computed(() =>
+  sumCounters(getSeries(props.snapshot, "circuit_breaker_trip_total"))
+);
+const breakerRecover = computed(() =>
+  sumCounters(getSeries(props.snapshot, "circuit_breaker_recover_total"))
+);
 
-const showEmpty = computed(() => !props.snapshot && !props.loading && !props.error);
+const showEmpty = computed(
+  () => !props.snapshot && !props.loading && !props.error
+);
 
 const refreshRateDisplay = computed(() => formatPercent(refreshRate.value));
 const autoDisableDisplay = computed(() => formatNumber(autoDisable.value));
 const breakerTripDisplay = computed(() => formatNumber(breakerTrips.value));
-const breakerRecoverDisplay = computed(() => formatNumber(breakerRecover.value));
+const breakerRecoverDisplay = computed(() =>
+  formatNumber(breakerRecover.value)
+);
 const selectionDisplay = computed(() => formatNumber(selectionAttempts.value));
 </script>
 
 <template>
   <div class="ip-panel flex flex-col gap-4">
     <LoadingState v-if="loading && !snapshot" />
-    <div v-else-if="error && !snapshot" class="ip-panel__error rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error">加载 IP 池指标失败：{{ error }}</div>
+    <div
+      v-else-if="error && !snapshot"
+      class="ip-panel__error rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error"
+    >
+      加载 IP 池指标失败：{{ error }}
+    </div>
     <EmptyState v-else-if="showEmpty" message="暂无 IP 池指标" />
     <div v-else class="ip-panel__content flex flex-col gap-6">
-      <div class="ip-panel__meta flex items-center gap-3 text-xs text-base-content/60" v-if="snapshot">
+      <div
+        class="ip-panel__meta flex items-center gap-3 text-xs text-base-content/60"
+        v-if="snapshot"
+      >
         <span>刷新总次数：{{ formatNumber(refreshTotal) }}</span>
-        <span v-if="stale" class="ip-panel__badge rounded-full bg-warning/10 px-2 py-0.5 text-warning">数据为缓存</span>
+        <span
+          v-if="stale"
+          class="ip-panel__badge rounded-full bg-warning/10 px-2 py-0.5 text-warning"
+          >数据为缓存</span
+        >
       </div>
       <div class="ip-panel__cards grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
@@ -110,23 +144,42 @@ const selectionDisplay = computed(() => formatNumber(selectionAttempts.value));
       </div>
       <section class="ip-panel__chart flex flex-col gap-2">
         <header>
-          <h4 class="text-sm font-semibold text-base-content/80">各来源延迟趋势</h4>
+          <h4 class="text-sm font-semibold text-base-content/80">
+            各来源延迟趋势
+          </h4>
         </header>
-        <MetricChart :series="latencyChart" empty-message="暂无延迟样本" :value-formatter="latencyFormatter" />
+        <MetricChart
+          :series="latencyChart"
+          empty-message="暂无延迟样本"
+          :value-formatter="latencyFormatter"
+        />
       </section>
-      <section class="ip-panel__table flex flex-col gap-2" v-if="failureReasons.length">
+      <section
+        class="ip-panel__table flex flex-col gap-2"
+        v-if="failureReasons.length"
+      >
         <header>
-          <h4 class="text-sm font-semibold text-base-content/80">刷新失败原因</h4>
+          <h4 class="text-sm font-semibold text-base-content/80">
+            刷新失败原因
+          </h4>
         </header>
-        <table class="w-full table-auto overflow-hidden rounded-xl border border-base-200 text-sm">
-          <thead class="bg-base-200/60 text-left text-xs uppercase tracking-wide text-base-content/60">
+        <table
+          class="w-full table-auto overflow-hidden rounded-xl border border-base-200 text-sm"
+        >
+          <thead
+            class="bg-base-200/60 text-left text-xs uppercase tracking-wide text-base-content/60"
+          >
             <tr>
               <th class="px-3 py-2">原因</th>
               <th class="px-3 py-2">次数</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in failureReasons" :key="item.reason" class="even:bg-base-200/20">
+            <tr
+              v-for="item in failureReasons"
+              :key="item.reason"
+              class="even:bg-base-200/20"
+            >
               <td class="px-3 py-2">{{ item.reason }}</td>
               <td class="px-3 py-2">{{ formatNumber(item.total) }}</td>
             </tr>
@@ -136,4 +189,3 @@ const selectionDisplay = computed(() => formatNumber(selectionAttempts.value));
     </div>
   </div>
 </template>
-

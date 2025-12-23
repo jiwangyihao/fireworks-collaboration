@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { storeToRefs } from "pinia";
-import TimeRangeSelector from "../../components/observability/TimeRangeSelector.vue";
-import OverviewPanel from "../../components/observability/OverviewPanel.vue";
-import GitPanel from "../../components/observability/GitPanel.vue";
-import NetworkPanel from "../../components/observability/NetworkPanel.vue";
-import IpPoolPanel from "../../components/observability/IpPoolPanel.vue";
-import TlsPanel from "../../components/observability/TlsPanel.vue";
-import ProxyPanel from "../../components/observability/ProxyPanel.vue";
-import AlertsPanel from "../../components/observability/AlertsPanel.vue";
+import TimeRangeSelector from "../../components/developer-tools/observability/TimeRangeSelector.vue";
+import OverviewPanel from "../../components/developer-tools/observability/OverviewPanel.vue";
+import GitPanel from "../../components/developer-tools/observability/GitPanel.vue";
+import NetworkPanel from "../../components/developer-tools/observability/NetworkPanel.vue";
+import IpPoolPanel from "../../components/developer-tools/observability/IpPoolPanel.vue";
+import TlsPanel from "../../components/developer-tools/observability/TlsPanel.vue";
+import ProxyPanel from "../../components/developer-tools/observability/ProxyPanel.vue";
+import AlertsPanel from "../../components/developer-tools/observability/AlertsPanel.vue";
 import { useMetricsStore, type MetricsQuery } from "../../stores/metrics";
 import type { MetricsRange } from "../../api/metrics";
 import { useConfigStore } from "../../stores/config";
@@ -83,7 +83,7 @@ watch(
       activeTab.value = candidates[0];
     }
   },
-  { immediate: true },
+  { immediate: true }
 );
 
 const query = computed<MetricsQuery>(() => ({
@@ -137,12 +137,14 @@ watch(
       console.error("failed to refresh metrics", err);
     });
   },
-  { immediate: true },
+  { immediate: true }
 );
 
 const entry = computed(() => metricsStore.getEntry(query.value));
 const snapshot = computed(() => entry.value?.snapshot ?? null);
-const loading = computed(() => entry.value?.loading ?? (!entry.value || !entry.value.snapshot));
+const loading = computed(
+  () => entry.value?.loading ?? (!entry.value || !entry.value.snapshot)
+);
 const error = computed(() => entry.value?.error ?? null);
 const stale = computed(() => {
   if (!entry.value || !entry.value.snapshot) {
@@ -153,7 +155,8 @@ const stale = computed(() => {
 
 const activeComponent = computed(() => {
   const collection = visibleTabs.value;
-  const record = collection.find((tab) => tab.id === activeTab.value) ?? collection[0];
+  const record =
+    collection.find((tab) => tab.id === activeTab.value) ?? collection[0];
   return record?.component ?? OverviewPanel;
 });
 
@@ -174,16 +177,26 @@ async function refresh() {
     <header class="observability-view__header">
       <div>
         <h1>可观测性面板</h1>
-        <p class="observability-view__subtitle">汇总 Git 任务、网络、IP 池、TLS、代理与告警的关键指标</p>
+        <p class="observability-view__subtitle">
+          汇总 Git 任务、网络、IP 池、TLS、代理与告警的关键指标
+        </p>
       </div>
       <div class="observability-view__controls">
         <TimeRangeSelector v-model="selectedRange" :options="rangeOptions" />
-        <button class="btn btn-sm" type="button" data-testid="observability-refresh" @click="refresh">
+        <button
+          class="btn btn-sm"
+          type="button"
+          data-testid="observability-refresh"
+          @click="refresh"
+        >
           手动刷新
         </button>
       </div>
     </header>
-    <section class="observability-view__status" v-if="!observabilityDisabled && error">
+    <section
+      class="observability-view__status"
+      v-if="!observabilityDisabled && error"
+    >
       <span class="observability-view__error">{{ error }}</span>
     </section>
     <section v-if="observabilityDisabled" class="observability-view__disabled">

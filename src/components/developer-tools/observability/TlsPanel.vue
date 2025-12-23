@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import type { MetricsSnapshot } from "../../api/metrics";
+import type { MetricsSnapshot } from "../../../api/metrics";
 import MetricCard from "./MetricCard.vue";
 import LoadingState from "./LoadingState.vue";
 import EmptyState from "./EmptyState.vue";
@@ -13,7 +13,7 @@ import {
   getSeries,
   groupByLabel,
   labelValue,
-} from "../../utils/observability";
+} from "../../../utils/observability";
 
 const props = defineProps<{
   snapshot: MetricsSnapshot | null;
@@ -23,12 +23,20 @@ const props = defineProps<{
 }>();
 
 const tlsSeries = computed(() => getSeries(props.snapshot, "tls_handshake_ms"));
-const successSeries = computed(() => tlsSeries.value.filter((series) => labelValue(series, "outcome") === "ok"));
-const failSeries = computed(() => tlsSeries.value.filter((series) => labelValue(series, "outcome") === "fail"));
+const successSeries = computed(() =>
+  tlsSeries.value.filter((series) => labelValue(series, "outcome") === "ok")
+);
+const failSeries = computed(() =>
+  tlsSeries.value.filter((series) => labelValue(series, "outcome") === "fail")
+);
 
-const successTotals = computed(() => combinedHistogramTotals(successSeries.value));
+const successTotals = computed(() =>
+  combinedHistogramTotals(successSeries.value)
+);
 const failTotals = computed(() => combinedHistogramTotals(failSeries.value));
-const totalCount = computed(() => successTotals.value.count + failTotals.value.count);
+const totalCount = computed(
+  () => successTotals.value.count + failTotals.value.count
+);
 
 const failureRate = computed(() => {
   if (totalCount.value === 0) {
@@ -48,7 +56,9 @@ const strategyStats = computed(() => {
           p95: getQuantile(entry, "p95"),
           p99: getQuantile(entry, "p99"),
         }))
-        .find((item) => item.p50 !== null || item.p95 !== null || item.p99 !== null) ?? {
+        .find(
+          (item) => item.p50 !== null || item.p95 !== null || item.p99 !== null
+        ) ?? {
         p50: null,
         p95: null,
         p99: null,
@@ -72,23 +82,41 @@ const failAverage = computed(() => {
   return failTotals.value.sum / failTotals.value.count;
 });
 
-const showEmpty = computed(() => !props.snapshot && !props.loading && !props.error);
+const showEmpty = computed(
+  () => !props.snapshot && !props.loading && !props.error
+);
 
-const successCountDisplay = computed(() => formatNumber(successTotals.value.count));
+const successCountDisplay = computed(() =>
+  formatNumber(successTotals.value.count)
+);
 const failCountDisplay = computed(() => formatNumber(failTotals.value.count));
 const failureRateDisplay = computed(() => formatPercent(failureRate.value));
-const failAverageDisplay = computed(() => formatDurationMs(failAverage.value, 1));
+const failAverageDisplay = computed(() =>
+  formatDurationMs(failAverage.value, 1)
+);
 </script>
 
 <template>
   <div class="tls-panel flex flex-col gap-4">
     <LoadingState v-if="loading && !snapshot" />
-    <div v-else-if="error && !snapshot" class="tls-panel__error rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error">加载 TLS 指标失败：{{ error }}</div>
+    <div
+      v-else-if="error && !snapshot"
+      class="tls-panel__error rounded-xl border border-error/40 bg-error/10 px-4 py-6 text-error"
+    >
+      加载 TLS 指标失败：{{ error }}
+    </div>
     <EmptyState v-else-if="showEmpty" message="暂无 TLS 指标" />
     <div v-else class="tls-panel__content flex flex-col gap-6">
-      <div class="tls-panel__meta flex items-center gap-3 text-xs text-base-content/60" v-if="snapshot">
+      <div
+        class="tls-panel__meta flex items-center gap-3 text-xs text-base-content/60"
+        v-if="snapshot"
+      >
         <span>总握手：{{ formatNumber(totalCount) }}</span>
-        <span v-if="stale" class="tls-panel__badge rounded-full bg-warning/10 px-2 py-0.5 text-warning">数据为缓存</span>
+        <span
+          v-if="stale"
+          class="tls-panel__badge rounded-full bg-warning/10 px-2 py-0.5 text-warning"
+          >数据为缓存</span
+        >
       </div>
       <div class="tls-panel__cards grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <MetricCard
@@ -111,12 +139,21 @@ const failAverageDisplay = computed(() => formatDurationMs(failAverage.value, 1)
           description="握手失败样本的平均耗时"
         />
       </div>
-      <section class="tls-panel__table flex flex-col gap-2" v-if="strategyStats.length">
+      <section
+        class="tls-panel__table flex flex-col gap-2"
+        v-if="strategyStats.length"
+      >
         <header>
-          <h4 class="text-sm font-semibold text-base-content/80">SNI 策略分布</h4>
+          <h4 class="text-sm font-semibold text-base-content/80">
+            SNI 策略分布
+          </h4>
         </header>
-        <table class="w-full table-auto overflow-hidden rounded-xl border border-base-200 text-sm">
-          <thead class="bg-base-200/60 text-left text-xs uppercase tracking-wide text-base-content/60">
+        <table
+          class="w-full table-auto overflow-hidden rounded-xl border border-base-200 text-sm"
+        >
+          <thead
+            class="bg-base-200/60 text-left text-xs uppercase tracking-wide text-base-content/60"
+          >
             <tr>
               <th class="px-3 py-2">策略</th>
               <th class="px-3 py-2">成功次数</th>
@@ -126,7 +163,11 @@ const failAverageDisplay = computed(() => formatDurationMs(failAverage.value, 1)
             </tr>
           </thead>
           <tbody>
-            <tr v-for="stat in strategyStats" :key="stat.strategy" class="even:bg-base-200/20">
+            <tr
+              v-for="stat in strategyStats"
+              :key="stat.strategy"
+              class="even:bg-base-200/20"
+            >
               <td class="px-3 py-2">{{ stat.strategy }}</td>
               <td class="px-3 py-2">{{ formatNumber(stat.count) }}</td>
               <td class="px-3 py-2">{{ formatDurationMs(stat.p50, 1) }}</td>
@@ -139,4 +180,3 @@ const failAverageDisplay = computed(() => formatDurationMs(failAverage.value, 1)
     </div>
   </div>
 </template>
-

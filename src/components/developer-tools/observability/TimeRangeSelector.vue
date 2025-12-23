@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { MetricsRange } from "../../api/metrics";
+import type { MetricsRange } from "../../../api/metrics";
 
 interface RangeOption {
   label: string;
@@ -23,7 +23,9 @@ function select(option: RangeOption) {
 </script>
 
 <template>
-  <div class="time-range-selector inline-flex items-center gap-2 rounded-lg border border-base-200 bg-base-100/70 p-1">
+  <div
+    class="time-range-selector inline-flex items-center gap-2 rounded-lg border border-base-200 bg-base-100/70 p-1"
+  >
     <button
       v-for="option in options"
       :key="option.value"
@@ -33,7 +35,7 @@ function select(option: RangeOption) {
         'rounded-md px-3 py-1 text-sm font-medium transition-colors',
         option.value === modelValue
           ? 'bg-primary text-primary-content shadow-sm'
-          : 'text-base-content/70 hover:bg-base-200/60 hover:text-base-content'
+          : 'text-base-content/70 hover:bg-base-200/60 hover:text-base-content',
       ]"
     >
       {{ option.label }}

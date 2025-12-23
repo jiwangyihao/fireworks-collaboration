@@ -51,13 +51,19 @@
         <h3 class="font-bold">操作失败</h3>
         <div class="text-sm">{{ credentialStore.error }}</div>
       </div>
-      <button class="btn btn-sm btn-ghost" @click="credentialStore.clearError()">
+      <button
+        class="btn btn-sm btn-ghost"
+        @click="credentialStore.clearError()"
+      >
         关闭
       </button>
     </div>
 
     <!-- Unlock Prompt -->
-    <div v-if="needsUnlock" class="card bg-warning text-warning-content shadow-sm">
+    <div
+      v-if="needsUnlock"
+      class="card bg-warning text-warning-content shadow-sm"
+    >
       <div class="card-body">
         <h3 class="card-title">
           <svg
@@ -78,7 +84,10 @@
         </h3>
         <p>您的凭证存储使用主密码加密，需要解锁后才能访问。</p>
         <div class="card-actions justify-end">
-          <button class="btn btn-sm btn-primary" @click="showUnlockDialog = true">
+          <button
+            class="btn btn-sm btn-primary"
+            @click="showUnlockDialog = true"
+          >
             解锁存储
           </button>
         </div>
@@ -88,7 +97,10 @@
     <!-- Credential Manager -->
     <div v-else class="space-y-4">
       <!-- Expiring Soon Alert -->
-      <div v-if="credentialStore.expiringSoonCredentials.length > 0" class="alert alert-warning shadow-sm">
+      <div
+        v-if="credentialStore.expiringSoonCredentials.length > 0"
+        class="alert alert-warning shadow-sm"
+      >
         <svg
           xmlns="http://www.w3.org/2000/svg"
           class="stroke-current shrink-0 h-6 w-6"
@@ -105,13 +117,17 @@
         <div>
           <h3 class="font-bold">即将过期提醒</h3>
           <div class="text-sm">
-            {{ credentialStore.expiringSoonCredentials.length }} 个凭证即将在 7 天内过期，请及时更新。
+            {{ credentialStore.expiringSoonCredentials.length }} 个凭证即将在 7
+            天内过期，请及时更新。
           </div>
         </div>
       </div>
 
       <!-- Expired Credentials Alert -->
-      <div v-if="credentialStore.expiredCredentials.length > 0" class="alert alert-error shadow-sm">
+      <div
+        v-if="credentialStore.expiredCredentials.length > 0"
+        class="alert alert-error shadow-sm"
+      >
         <svg
           xmlns="http://www.w3.org/2000/svg"
           class="stroke-current shrink-0 h-6 w-6"
@@ -169,14 +185,17 @@
             <line x1="18" y1="6" x2="6" y2="18"></line>
             <line x1="6" y1="6" x2="18" y2="18"></line>
           </svg>
-          {{ showAddForm ? '取消添加' : '添加凭证' }}
+          {{ showAddForm ? "取消添加" : "添加凭证" }}
         </button>
         <button
           class="btn btn-outline btn-sm"
           @click="exportLog"
           :disabled="exporting || credentialStore.loading"
         >
-          <span v-if="exporting" class="loading loading-spinner loading-xs"></span>
+          <span
+            v-if="exporting"
+            class="loading loading-spinner loading-xs"
+          ></span>
           <svg
             v-else
             xmlns="http://www.w3.org/2000/svg"
@@ -193,7 +212,7 @@
             <polyline points="7 10 12 15 17 10"></polyline>
             <line x1="12" y1="15" x2="12" y2="3"></line>
           </svg>
-          {{ exporting ? '导出中...' : '导出审计日志' }}
+          {{ exporting ? "导出中..." : "导出审计日志" }}
         </button>
       </div>
 
@@ -227,12 +246,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
-import { useCredentialStore } from '../../stores/credential';
-import CredentialForm from '../../components/CredentialForm.vue';
-import CredentialList from '../../components/CredentialList.vue';
-import MasterPasswordDialog from '../../components/MasterPasswordDialog.vue';
-import ConfirmDialog from '../../components/ConfirmDialog.vue';
+import { ref, computed, onMounted } from "vue";
+import { useCredentialStore } from "../../stores/credential";
+import CredentialForm from "../../components/developer-tools/CredentialForm.vue";
+import CredentialList from "../../components/developer-tools/CredentialList.vue";
+import MasterPasswordDialog from "../../components/developer-tools/MasterPasswordDialog.vue";
+import ConfirmDialog from "../../components/developer-tools/ConfirmDialog.vue";
 
 const credentialStore = useCredentialStore();
 
@@ -249,7 +268,7 @@ onMounted(async () => {
     // Load credential config from app config
     // For now, use default config (you can load from actual app config)
     credentialStore.setConfig({
-      storage: 'system', // or 'file' or 'memory'
+      storage: "system", // or 'file' or 'memory'
       auditMode: true,
     });
 
@@ -261,7 +280,7 @@ onMounted(async () => {
       showUnlockDialog.value = true;
     }
   } catch (error: any) {
-    console.error('Failed to initialize credential view:', error);
+    console.error("Failed to initialize credential view:", error);
   }
 });
 
@@ -269,7 +288,7 @@ const refreshCredentials = async () => {
   try {
     await credentialStore.refresh();
   } catch (error: any) {
-    console.error('Failed to refresh credentials:', error);
+    console.error("Failed to refresh credentials:", error);
   }
 };
 
@@ -293,15 +312,15 @@ const exportLog = async () => {
   try {
     const logJson = await credentialStore.exportLog();
     // Create a download link
-    const blob = new Blob([logJson], { type: 'application/json' });
+    const blob = new Blob([logJson], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
     a.download = `credential-audit-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
   } catch (error: any) {
-    console.error('Failed to export audit log:', error);
+    console.error("Failed to export audit log:", error);
     credentialStore.error = `导出失败: ${error.message || error}`;
   } finally {
     exporting.value = false;
@@ -314,12 +333,12 @@ const cleanupExpired = async () => {
 
 const handleCleanupConfirm = async () => {
   showCleanupConfirm.value = false;
-  
+
   try {
     const count = await credentialStore.cleanupExpired();
     alert(`成功清理 ${count} 个过期凭证`);
   } catch (error: any) {
-    console.error('Failed to cleanup expired credentials:', error);
+    console.error("Failed to cleanup expired credentials:", error);
   }
 };
 </script>

@@ -1,8 +1,10 @@
 <template>
   <div class="card bg-base-100 shadow-sm">
     <div class="card-body">
-      <h4 class="card-title text-base">{{ editMode ? '编辑凭证' : '添加凭证' }}</h4>
-      
+      <h4 class="card-title text-base">
+        {{ editMode ? "编辑凭证" : "添加凭证" }}
+      </h4>
+
       <!-- Error Alert -->
       <div v-if="error" class="alert alert-error alert-sm">
         <svg
@@ -20,10 +22,12 @@
         </svg>
         <span class="text-sm">{{ error }}</span>
       </div>
-      
+
       <div class="form-control">
         <label class="label" for="host">
-          <span class="label-text">服务地址 <span class="text-error">*</span></span>
+          <span class="label-text"
+            >服务地址 <span class="text-error">*</span></span
+          >
         </label>
         <input
           id="host"
@@ -38,7 +42,9 @@
 
       <div class="form-control">
         <label class="label" for="username">
-          <span class="label-text">用户名 <span class="text-error">*</span></span>
+          <span class="label-text"
+            >用户名 <span class="text-error">*</span></span
+          >
         </label>
         <input
           id="username"
@@ -53,7 +59,9 @@
 
       <div class="form-control">
         <label class="label" for="password">
-          <span class="label-text">密码/令牌 <span class="text-error">*</span></span>
+          <span class="label-text"
+            >密码/令牌 <span class="text-error">*</span></span
+          >
         </label>
         <input
           id="password"
@@ -82,7 +90,11 @@
       </div>
 
       <div class="card-actions justify-end mt-4">
-        <button class="btn btn-sm btn-ghost" @click="cancel" :disabled="loading">
+        <button
+          class="btn btn-sm btn-ghost"
+          @click="cancel"
+          :disabled="loading"
+        >
           取消
         </button>
         <button
@@ -90,8 +102,11 @@
           @click="submit"
           :disabled="!canSubmit || loading"
         >
-          <span v-if="loading" class="loading loading-spinner loading-xs"></span>
-          {{ loading ? '保存中...' : '保存' }}
+          <span
+            v-if="loading"
+            class="loading loading-spinner loading-xs"
+          ></span>
+          {{ loading ? "保存中..." : "保存" }}
         </button>
       </div>
     </div>
@@ -99,8 +114,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import { useCredentialStore } from '../stores/credential';
+import { ref, computed } from "vue";
+import { useCredentialStore } from "../../stores/credential";
 
 const props = defineProps<{
   editMode?: boolean;
@@ -116,9 +131,9 @@ const emit = defineEmits<{
 const credentialStore = useCredentialStore();
 
 const form = ref({
-  host: props.initialHost || '',
-  username: props.initialUsername || '',
-  passwordOrToken: '',
+  host: props.initialHost || "",
+  username: props.initialUsername || "",
+  passwordOrToken: "",
   expiresInDays: undefined as number | undefined,
 });
 
@@ -151,12 +166,12 @@ const submit = async () => {
         expiresInDays: form.value.expiresInDays,
       });
     }
-    
-    emit('success');
+
+    emit("success");
     resetForm();
   } catch (e: any) {
     error.value = e.message || String(e);
-    console.error('Failed to save credential:', e);
+    console.error("Failed to save credential:", e);
   } finally {
     loading.value = false;
   }
@@ -164,15 +179,15 @@ const submit = async () => {
 
 const cancel = () => {
   resetForm();
-  emit('cancel');
+  emit("cancel");
 };
 
 const resetForm = () => {
   if (!props.editMode) {
     form.value = {
-      host: '',
-      username: '',
-      passwordOrToken: '',
+      host: "",
+      username: "",
+      passwordOrToken: "",
       expiresInDays: undefined,
     };
   }

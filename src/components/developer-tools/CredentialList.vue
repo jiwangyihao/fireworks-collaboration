@@ -2,14 +2,22 @@
   <div class="card bg-base-100 shadow-sm">
     <div class="card-body">
       <div class="flex justify-between items-center mb-4">
-        <h4 class="card-title text-base">已保存的凭证 ({{ credentials.length }})</h4>
+        <h4 class="card-title text-base">
+          已保存的凭证 ({{ credentials.length }})
+        </h4>
       </div>
 
-      <div v-if="loading && credentials.length === 0" class="flex justify-center py-12">
+      <div
+        v-if="loading && credentials.length === 0"
+        class="flex justify-center py-12"
+      >
         <span class="loading loading-spinner loading-md"></span>
       </div>
 
-      <div v-else-if="credentials.length === 0" class="text-center py-12 opacity-60">
+      <div
+        v-else-if="credentials.length === 0"
+        class="text-center py-12 opacity-60"
+      >
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="48"
@@ -35,7 +43,8 @@
           class="card bg-base-200 shadow-sm hover:shadow-md transition-shadow"
           :class="{
             'border-2 border-error': cred.isExpired,
-            'border-2 border-warning': !cred.isExpired && isExpiringSoon(cred.expiresAt),
+            'border-2 border-warning':
+              !cred.isExpired && isExpiringSoon(cred.expiresAt),
           }"
         >
           <div class="card-body p-4">
@@ -43,10 +52,7 @@
               <div class="flex-1 space-y-1">
                 <div class="flex items-center gap-2">
                   <strong class="text-base">{{ cred.host }}</strong>
-                  <div
-                    v-if="cred.isExpired"
-                    class="badge badge-error badge-sm"
-                  >
+                  <div v-if="cred.isExpired" class="badge badge-error badge-sm">
                     已过期
                   </div>
                   <div
@@ -56,7 +62,9 @@
                     即将过期
                   </div>
                 </div>
-                <div class="text-sm opacity-70">用户名: {{ cred.username }}</div>
+                <div class="text-sm opacity-70">
+                  用户名: {{ cred.username }}
+                </div>
                 <div class="text-sm opacity-70 font-mono">
                   密码: {{ cred.maskedPassword }}
                 </div>
@@ -140,11 +148,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import { useCredentialStore } from '../stores/credential';
-import { formatTimestamp, isExpiringSoon } from '../api/credential';
-import type { CredentialInfo } from '../api/credential';
-import ConfirmDialog from './ConfirmDialog.vue';
+import { computed, ref } from "vue";
+import { useCredentialStore } from "../../stores/credential";
+import { formatTimestamp, isExpiringSoon } from "../../api/credential";
+import type { CredentialInfo } from "../../api/credential";
+import ConfirmDialog from "./ConfirmDialog.vue";
 
 const credentialStore = useCredentialStore();
 
@@ -163,7 +171,7 @@ const formatDate = (timestamp: number) => {
 };
 
 const editCredential = (cred: CredentialInfo) => {
-  emit('edit', cred);
+  emit("edit", cred);
 };
 
 const deleteCredential = async (cred: CredentialInfo) => {
@@ -173,15 +181,15 @@ const deleteCredential = async (cred: CredentialInfo) => {
 
 const handleDeleteConfirm = async () => {
   if (!credentialToDelete.value) return;
-  
+
   const cred = credentialToDelete.value;
   showDeleteConfirm.value = false;
   credentialToDelete.value = null;
-  
+
   try {
     await credentialStore.delete(cred.host, cred.username);
   } catch (error: any) {
-    console.error('Failed to delete credential:', error);
+    console.error("Failed to delete credential:", error);
     alert(`删除失败: ${error.message || error}`);
   }
 };
