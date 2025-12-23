@@ -8,50 +8,29 @@ const { toasts } = storeToRefs(toastStore);
 function getAlertClass(type: string) {
   switch (type) {
     case "success":
-      return "bg-success text-success-content";
+      return "alert-success";
     case "warning":
-      return "bg-warning text-warning-content";
+      return "alert-warning";
     case "error":
-      return "bg-error text-error-content";
+      return "alert-error";
     default:
-      return "bg-info text-info-content";
-  }
-}
-
-function getIcon(type: string) {
-  switch (type) {
-    case "success":
-      return "✓";
-    case "warning":
-      return "⚠";
-    case "error":
-      return "!";
-    default:
-      return "i";
+      return "alert-info";
   }
 }
 </script>
 
 <template>
-  <div class="toast toast-end toast-bottom z-50 gap-2">
+  <div class="toast toast-end toast-bottom z-50">
     <TransitionGroup name="toast">
       <div
         v-for="toast in toasts"
         :key="toast.id"
-        class="flex items-center gap-3 px-4 py-3 rounded-lg shadow-xl max-w-md"
+        class="alert shadow-lg"
         :class="getAlertClass(toast.type)"
       >
-        <!-- 图标 -->
-        <span
-          class="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center text-sm font-bold shrink-0"
-        >
-          {{ getIcon(toast.type) }}
-        </span>
-        <!-- 消息 -->
-        <span class="text-sm flex-1">{{ toast.message }}</span>
-        <!-- 关闭按钮 -->
+        <span class="text-sm break-words">{{ toast.message }}</span>
         <button
-          class="w-6 h-6 rounded-full hover:bg-white/20 flex items-center justify-center transition-colors shrink-0"
+          class="btn btn-sm btn-ghost btn-square"
           @click="toastStore.remove(toast.id)"
         >
           ✕

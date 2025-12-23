@@ -145,7 +145,31 @@ pub fn do_push<F: FnMut(ProgressPayload)>(
         set_push_auth_header_value(None);
     }
 
-    let specs: Vec<&str> = refspecs.map(|s| s.to_vec()).unwrap_or_default();
+    // Determine refspecs: use provided or default to current branch
+    let default_refspec: Option<String>;
+    let specs: Vec<&str> = if let Some(rs) = refspecs {
+        rs.to_vec()
+    } else {
+        // Auto-detect current branch and push to same-named remote branch
+        match repo.head() {
+            Ok(head) if head.is_branch() => {
+                if let Some(branch_name) = head.shorthand() {
+                    let refspec = format!("refs/heads/{branch_name}:refs/heads/{branch_name}");
+                    tracing::info!(target="git", "No refspec provided, using default: {}", refspec);
+                    default_refspec = Some(refspec);
+                    vec![default_refspec.as_ref().unwrap().as_str()]
+                } else {
+                    tracing::warn!(target="git", "Could not get branch name, pushing with empty refspec");
+                    vec![]
+                }
+            }
+            _ => {
+                tracing::warn!(target="git", "HEAD is not a branch, pushing with empty refspec");
+                vec![]
+            }
+        }
+    };
+    
     let push_res = if specs.is_empty() {
         remote.push(&[] as &[&str], Some(&mut po))
     } else {

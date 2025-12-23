@@ -22,8 +22,10 @@ pub use credential::{
     SharedCredentialFactory,
 };
 pub use git::{
-    git_add, git_branch, git_checkout, git_clone, git_commit, git_fetch, git_init, git_push,
-    git_remote_add, git_remote_remove, git_remote_set, git_tag,
+    git_add, git_branch, git_checkout, git_clone, git_commit, git_delete_branch, git_fetch,
+    git_init, git_list_branches, git_push, git_remote_add, git_remote_branches, git_remote_remove,
+    git_remote_set, git_repo_status, git_tag, git_worktree_add, git_worktree_list,
+    git_worktree_remove,
 };
 pub use http::http_fake_request;
 pub use ip_pool::{

@@ -1,4 +1,5 @@
 import CryptoJS from "crypto-js";
+import { invoke } from "../api/tauri";
 import { fetch as tauriFetch } from "../api/tauri-fetch";
 import { openPath } from "@tauri-apps/plugin-opener";
 
@@ -108,9 +109,26 @@ export async function exchangeCodeForToken(
   }
 }
 
+export async function syncCredentialToBackend(token: string): Promise<void> {
+  try {
+    await invoke("add_credential", {
+      request: {
+        host: "github.com",
+        username: "x-access-token",
+        passwordOrToken: token,
+        expiresInDays: null,
+      },
+    });
+  } catch (error) {
+    console.error("同步凭据到后端失败:", error);
+    // 不抛出错误，以免阻断流程
+  }
+}
+
 export async function saveAccessToken(token: string): Promise<void> {
   try {
     localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    await syncCredentialToBackend(token);
   } catch (error) {
     throw new Error(`保存访问令牌失败: ${error}`);
   }

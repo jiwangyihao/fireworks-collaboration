@@ -79,6 +79,13 @@ pub fn run() {
             crate::app::commands::git::git_remote_set,
             crate::app::commands::git::git_remote_add,
             crate::app::commands::git::git_remote_remove,
+            crate::app::commands::git::git_list_branches,
+            crate::app::commands::git::git_repo_status,
+            crate::app::commands::git::git_delete_branch,
+            crate::app::commands::git::git_remote_branches,
+            crate::app::commands::git::git_worktree_list,
+            crate::app::commands::git::git_worktree_add,
+            crate::app::commands::git::git_worktree_remove,
             crate::app::commands::http::http_fake_request,
             crate::app::commands::metrics::metrics_snapshot,
             crate::app::commands::proxy::detect_system_proxy,
@@ -233,9 +240,21 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
             tracing::warn!(
                 target = "credential",
                 error = %err,
-                "Failed to initialize credential store, credentials will not be available"
+                "Failed to initialize credential store, attempting fallback to memory"
             );
-            None
+            
+            // Fallback to memory
+            let mem_config = cred_config.clone().with_storage(crate::core::credential::config::StorageType::Memory);
+            match initialize_credential_store(&mem_config) {
+                Ok(store) => {
+                    tracing::info!(target = "credential", "Fallback to memory store successful");
+                    Some(store)
+                },
+                Err(e) => {
+                    tracing::error!(target="credential", error=%e, "Memory store fallback failed");
+                    None
+                }
+            }
         }
     };
 

@@ -3,7 +3,7 @@ import { RouterView } from "vue-router";
 import { themeChange } from "theme-change";
 import { onMounted, provide, ref } from "vue";
 import { UserInfo } from "./utils/github-auth.ts";
-import GlobalErrors from "./components/GlobalErrors.vue";
+// import GlobalErrors from "./components/GlobalErrors.vue";
 import GlobalToast from "./components/GlobalToast.vue";
 
 onMounted(() => {
@@ -52,7 +52,6 @@ const authenticated = ref(false);
 provide("authenticated", authenticated);
 const user = ref<UserInfo | null>(null);
 provide("user", user);
-
 </script>
 
 <template>
@@ -60,9 +59,23 @@ provide("user", user);
   <header class="fixed top-0 right-0 p-3 flex h-14 gap-3 items-center z-10">
     <!-- 开发调试链接 -->
     <RouterLink to="/dev-tools" class="btn btn-sm btn-ghost gap-1.5">
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="m11 7-7.64 7.64c-.61.61-.94 1.44-.94 2.31V21h3.05c.87 0 1.7-.34 2.31-.95L16 13"></path>
-        <path d="m14 4 5.06 5.06c.59.59.59 1.54 0 2.12l-4 4c-.59.59-1.54.59-2.12 0L7.94 9"></path>
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path
+          d="m11 7-7.64 7.64c-.61.61-.94 1.44-.94 2.31V21h3.05c.87 0 1.7-.34 2.31-.95L16 13"
+        ></path>
+        <path
+          d="m14 4 5.06 5.06c.59.59.59 1.54 0 2.12l-4 4c-.59.59-1.54.59-2.12 0L7.94 9"
+        ></path>
       </svg>
       <span class="hidden sm:inline">开发调试</span>
     </RouterLink>
@@ -140,13 +153,26 @@ provide("user", user);
     </ul>
   </header>
   <RouterView />
-  <GlobalErrors />
+  <!-- <GlobalErrors /> -->
   <GlobalToast />
 </template>
 
 <style>
-#app { width:100%; height:100vh; }
-.list-move,.list-enter-active,.list-leave-active { transition: all .5s ease; }
-.list-enter-from,.list-leave-to { opacity:0; transform:translateX(30px); }
-.list-leave-active { position:absolute; }
+#app {
+  width: 100%;
+  height: 100vh;
+}
+.list-move,
+.list-enter-active,
+.list-leave-active {
+  transition: all 0.5s ease;
+}
+.list-enter-from,
+.list-leave-to {
+  opacity: 0;
+  transform: translateX(30px);
+}
+.list-leave-active {
+  position: absolute;
+}
 </style>

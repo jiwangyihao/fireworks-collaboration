@@ -48,25 +48,29 @@ export async function initTaskEvents() {
     });
   });
   // MP1.5: error events
-  const un3 = await listen<{ taskId: string; kind: string; category: string; code?: string; message: string; retried_times?: number }>(
-    "task://error",
-    (e) => {
-      const p = e.payload;
-      const rt = (p as any).retried_times ?? (p as any).retriedTimes;
-      store.setLastError(p.taskId, {
-        category: p.category,
-        message: p.message,
-        retried_times: rt,
-        // 同时提供 camelCase 便于内部归一
-        // @ts-ignore allow extra field for compatibility
-        retriedTimes: rt,
-        code: p.code,
-      });
-      // 也写入全局日志，便于提示
-      const prefix = p.kind ? `${p.kind}` : "Task";
-      logs.push("error", `${prefix} ${p.category}: ${p.message}`);
-    },
-  );
+  const un3 = await listen<{
+    taskId: string;
+    kind: string;
+    category: string;
+    code?: string;
+    message: string;
+    retried_times?: number;
+  }>("task://error", (e) => {
+    const p = e.payload;
+    const rt = (p as any).retried_times ?? (p as any).retriedTimes;
+    store.setLastError(p.taskId, {
+      category: p.category,
+      message: p.message,
+      retried_times: rt,
+      // 同时提供 camelCase 便于内部归一
+      // @ts-ignore allow extra field for compatibility
+      retriedTimes: rt,
+      code: p.code,
+    });
+    // 也写入全局日志，便于提示
+    const prefix = p.kind ? `${p.kind}` : "Task";
+    logs.push("error", `${prefix} ${p.category}: ${p.message}`);
+  });
   unsubs.push(un1, un2, un3);
 }
 
@@ -94,7 +98,15 @@ export interface StrategyOverride {
   // 未来可扩展其它子集（保持前端宽松，后端忽略未知并触发护栏事件）
 }
 
-export async function startGitClone(repo: string, dest: string, opts?: { depth?: number; filter?: string; strategyOverride?: StrategyOverride }) {
+export async function startGitClone(
+  repo: string,
+  dest: string,
+  opts?: {
+    depth?: number;
+    filter?: string;
+    strategyOverride?: StrategyOverride;
+  }
+) {
   const args: Record<string, unknown> = { repo, dest };
   if (opts) {
     if (opts.depth !== undefined) args.depth = opts.depth;
@@ -108,8 +120,14 @@ export async function startGitClone(repo: string, dest: string, opts?: { depth?:
 export async function startGitFetch(
   repo: string,
   dest: string,
-  options?: { preset?: "remote" | "branches" | "branches+tags" | "tags"; depth?: number; filter?: string; strategyOverride?: StrategyOverride } |
-    ("remote" | "branches" | "branches+tags" | "tags"),
+  options?:
+    | {
+        preset?: "remote" | "branches" | "branches+tags" | "tags";
+        depth?: number;
+        filter?: string;
+        strategyOverride?: StrategyOverride;
+      }
+    | ("remote" | "branches" | "branches+tags" | "tags")
 ) {
   const args: Record<string, unknown> = { repo, dest };
   // 兼容旧签名：第三参数若是字符串则视为 preset
@@ -141,14 +159,24 @@ export async function startGitPush(params: {
   useStoredCredential?: boolean;
   strategyOverride?: StrategyOverride;
 }) {
-  const { dest, remote, refspecs, username, password, useStoredCredential, strategyOverride } = params;
+  const {
+    dest,
+    remote,
+    refspecs,
+    username,
+    password,
+    useStoredCredential,
+    strategyOverride,
+  } = params;
   const args: Record<string, unknown> = { dest };
   if (remote) args.remote = remote;
   if (refspecs && refspecs.length > 0) args.refspecs = refspecs;
   if (username) args.username = username;
   if (password) args.password = password;
-  if (useStoredCredential !== undefined) args.use_stored_credential = useStoredCredential; // snake_case for Tauri invoke
+  if (useStoredCredential !== undefined)
+    args.use_stored_credential = useStoredCredential; // snake_case for Tauri invoke
   if (strategyOverride) args.strategy_override = strategyOverride; // snake_case for Tauri invoke
+  console.log("[DEBUG] tasks.ts invoke git_push args:", JSON.stringify(args));
   return invoke<string>("git_push", args);
 }
 
@@ -163,7 +191,13 @@ export async function startGitAdd(dest: string, paths: string[]) {
 }
 
 // P2.1b: 启动 Git Commit 任务
-export async function startGitCommit(params: { dest: string; message: string; allowEmpty?: boolean; authorName?: string; authorEmail?: string }) {
+export async function startGitCommit(params: {
+  dest: string;
+  message: string;
+  allowEmpty?: boolean;
+  authorName?: string;
+  authorEmail?: string;
+}) {
   const { dest, message, allowEmpty, authorName, authorEmail } = params;
   const args: Record<string, unknown> = { dest, message };
   if (allowEmpty !== undefined) args.allow_empty = allowEmpty; // snake_case 兼容
@@ -173,7 +207,12 @@ export async function startGitCommit(params: { dest: string; message: string; al
 }
 
 // P2.1c: 启动 Git Branch 任务
-export async function startGitBranch(params: { dest: string; name: string; checkout?: boolean; force?: boolean }) {
+export async function startGitBranch(params: {
+  dest: string;
+  name: string;
+  checkout?: boolean;
+  force?: boolean;
+}) {
   const { dest, name, checkout, force } = params;
   const args: Record<string, unknown> = { dest, name };
   if (checkout !== undefined) args.checkout = checkout;
@@ -182,7 +221,11 @@ export async function startGitBranch(params: { dest: string; name: string; check
 }
 
 // P2.1c: 启动 Git Checkout 任务
-export async function startGitCheckout(params: { dest: string; reference: string; create?: boolean }) {
+export async function startGitCheckout(params: {
+  dest: string;
+  reference: string;
+  create?: boolean;
+}) {
   const { dest, reference, create } = params;
   const args: Record<string, unknown> = { dest, reference };
   if (create !== undefined) args.create = create;
@@ -190,7 +233,13 @@ export async function startGitCheckout(params: { dest: string; reference: string
 }
 
 // P2.1d: 启动 Git Tag 任务
-export async function startGitTag(params: { dest: string; name: string; message?: string; annotated?: boolean; force?: boolean }) {
+export async function startGitTag(params: {
+  dest: string;
+  name: string;
+  message?: string;
+  annotated?: boolean;
+  force?: boolean;
+}) {
   const { dest, name, message, annotated, force } = params;
   const args: Record<string, unknown> = { dest, name };
   if (message !== undefined) args.message = message;
@@ -200,19 +249,155 @@ export async function startGitTag(params: { dest: string; name: string; message?
 }
 
 // P2.1d: 启动 Git Remote Set 任务
-export async function startGitRemoteSet(params: { dest: string; name: string; url: string }) {
+export async function startGitRemoteSet(params: {
+  dest: string;
+  name: string;
+  url: string;
+}) {
   const { dest, name, url } = params;
   return invoke<string>("git_remote_set", { dest, name, url });
 }
 
 // P2.1d: 启动 Git Remote Add 任务
-export async function startGitRemoteAdd(params: { dest: string; name: string; url: string }) {
+export async function startGitRemoteAdd(params: {
+  dest: string;
+  name: string;
+  url: string;
+}) {
   const { dest, name, url } = params;
   return invoke<string>("git_remote_add", { dest, name, url });
 }
 
 // P2.1d: 启动 Git Remote Remove 任务
-export async function startGitRemoteRemove(params: { dest: string; name: string }) {
+export async function startGitRemoteRemove(params: {
+  dest: string;
+  name: string;
+}) {
   const { dest, name } = params;
   return invoke<string>("git_remote_remove", { dest, name });
+}
+
+// ============================================================================
+// Sync query APIs (no task creation)
+// ============================================================================
+
+// 分支信息
+export interface BranchInfo {
+  name: string;
+  isCurrent: boolean;
+  isRemote: boolean;
+  upstream?: string;
+  commit?: string;
+}
+
+// 仓库状态
+export interface RepoStatus {
+  currentBranch: string | null;
+  isDetached: boolean;
+  isClean: boolean;
+  staged: number;
+  unstaged: number;
+  untracked: number;
+  ahead: number;
+  behind: number;
+  branches: BranchInfo[];
+}
+
+// 获取分支列表
+export async function getGitBranches(
+  dest: string,
+  includeRemote?: boolean
+): Promise<BranchInfo[]> {
+  return invoke<BranchInfo[]>("git_list_branches", {
+    dest,
+    include_remote: includeRemote ?? false,
+  });
+}
+
+// 获取仓库状态
+export async function getGitRepoStatus(dest: string): Promise<RepoStatus> {
+  return invoke<RepoStatus>("git_repo_status", { dest });
+}
+
+// 删除分支
+export async function deleteGitBranch(
+  dest: string,
+  name: string,
+  force?: boolean
+): Promise<void> {
+  return invoke<void>("git_delete_branch", {
+    dest,
+    name,
+    force: force ?? false,
+  });
+}
+
+// ============================================================================
+// Git Worktree APIs
+// ============================================================================
+
+// Worktree信息
+export interface WorktreeInfo {
+  path: string;
+  head?: string;
+  branch?: string;
+  isBare: boolean;
+  isMain: boolean;
+  isDetached: boolean;
+  locked: boolean;
+  prunable: boolean;
+}
+
+// 获取所有worktree
+export async function getWorktrees(dest: string): Promise<WorktreeInfo[]> {
+  return invoke<WorktreeInfo[]>("git_worktree_list", { dest });
+}
+
+// 添加worktree
+export async function addWorktree(
+  dest: string,
+  path: string,
+  branch: string,
+  createBranch?: boolean,
+  fromRemote?: string // 新增：从远端分支创建，如 "origin/feature-x"
+): Promise<void> {
+  return invoke<void>("git_worktree_add", {
+    dest,
+    path,
+    branch,
+    create_branch: createBranch ?? true,
+    from_remote: fromRemote,
+  });
+}
+
+// 删除worktree
+export async function removeWorktree(
+  dest: string,
+  path: string,
+  force?: boolean,
+  deleteRemoteBranch?: boolean, // 新增：是否删除远端分支
+  remote?: string, // 新增：远端名称，默认 "origin"
+  useStoredCredential?: boolean // 新增：是否使用存储的凭据
+): Promise<void> {
+  return invoke<void>("git_worktree_remove", {
+    dest,
+    path,
+    force: force ?? false,
+    delete_remote_branch: deleteRemoteBranch,
+    remote,
+    use_stored_credential: useStoredCredential,
+  });
+}
+
+// 获取远端分支列表
+export async function getRemoteBranches(
+  dest: string,
+  remote?: string,
+  fetchFirst?: boolean
+): Promise<string[]> {
+  return invoke<string[]>("git_remote_branches", {
+    dest,
+    remote: remote ?? "origin",
+    fetch_first: fetchFirst ?? false,
+  });
 }

@@ -198,6 +198,8 @@ export type ProjectLoadingState =
   | "forking"
   | "syncing-fork"
   | "cloning"
+  | "fetching"
+  | "pushing"
   | "creating-worktree";
 
 // 项目Store状态接口

@@ -9,6 +9,7 @@ import {
   startOAuthFlow,
   UserInfo,
   validateToken,
+  syncCredentialToBackend,
 } from "../utils/github-auth";
 import { createCallbackServer } from "../utils/oauth-server";
 import {
@@ -41,6 +42,8 @@ async function checkGitHubAuthentication() {
   if (existingToken) {
     const isValid = await validateToken(existingToken);
     if (isValid) {
+      // 同步凭据到后端
+      await syncCredentialToBackend(existingToken);
       user.value = await getUserInfo(existingToken);
       authenticated.value = true;
       return;

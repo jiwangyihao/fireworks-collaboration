@@ -412,18 +412,51 @@ export const useProjectStore = defineStore("project", {
         const repoPath = `${dataDir}/repository`;
         const repoExists = await exists(repoPath);
 
-        this.localStatus = {
-          exists: repoExists,
-          path: repoExists ? repoPath : null,
-          currentBranch: null, // TODO: 从Git获取
-          workingTreeClean: true,
-          staged: 0,
-          unstaged: 0,
-          untracked: 0,
-          ahead: 0,
-          behind: 0,
-          worktrees: [],
-        };
+        if (repoExists) {
+          // 调用后端获取实际仓库状态和worktree列表
+          const { getGitRepoStatus, getWorktrees } = await import(
+            "../api/tasks"
+          );
+          const [status, wtList] = await Promise.all([
+            getGitRepoStatus(repoPath),
+            getWorktrees(repoPath),
+          ]);
+
+          // 转换worktree列表格式
+          const worktrees: import("../types/project").WorktreeInfo[] =
+            wtList.map((wt) => ({
+              path: wt.path,
+              branch: wt.branch || "(detached)",
+              isMainWorktree: wt.isMain,
+              head: wt.head,
+            }));
+
+          this.localStatus = {
+            exists: true,
+            path: repoPath,
+            currentBranch: status.currentBranch,
+            workingTreeClean: status.isClean,
+            staged: status.staged,
+            unstaged: status.unstaged,
+            untracked: status.untracked,
+            ahead: status.ahead,
+            behind: status.behind,
+            worktrees,
+          };
+        } else {
+          this.localStatus = {
+            exists: false,
+            path: null,
+            currentBranch: null,
+            workingTreeClean: true,
+            staged: 0,
+            unstaged: 0,
+            untracked: 0,
+            ahead: 0,
+            behind: 0,
+            worktrees: [],
+          };
+        }
       } catch (error: any) {
         console.error("检查本地仓库失败:", error);
         this.lastError = `检查本地仓库失败: ${error.message || error}`;
