@@ -44,7 +44,9 @@ withDefaults(
     <!-- 卡片头部 -->
     <div class="flex items-center justify-between">
       <h4 class="font-semibold text-sm flex items-center gap-2">
-        <span v-if="icon">{{ icon }}</span>
+        <slot name="icon">
+          <span v-if="icon">{{ icon }}</span>
+        </slot>
         {{ title }}
         <span v-if="loading" class="loading loading-spinner loading-xs"></span>
       </h4>

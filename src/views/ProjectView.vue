@@ -13,6 +13,7 @@ import LanguageBar from "../components/LanguageBar.vue";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import EmptyState from "../components/EmptyState.vue";
 import AvatarGroup, { type AvatarItem } from "../components/AvatarGroup.vue";
+import BaseIcon from "../components/BaseIcon.vue";
 import { formatNumber, relativeTime } from "../utils/format";
 
 const projectStore = useProjectStore();
@@ -472,12 +473,14 @@ onMounted(async () => {
         <!-- 上游仓库卡片 -->
         <StatusCard
           title="上游仓库"
-          icon="📦"
           badge="Upstream"
           badge-variant="primary"
           :loading="loadingState === 'loading-upstream'"
           :flex="true"
         >
+          <template #icon>
+            <BaseIcon icon="ph--package" size="md" />
+          </template>
           <!-- 内容 -->
           <template v-if="upstreamRepo">
             <div class="flex items-start gap-3">
@@ -509,33 +512,37 @@ onMounted(async () => {
               </div>
             </div>
 
-            <!-- 统计信息 - 更紧凑 -->
             <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
               <span class="flex items-center gap-1"
-                ><span class="text-warning">⭐</span
-                ><strong>{{
+                ><BaseIcon icon="lucide--star" size="sm" class="text-warning" />
+                <strong>{{
                   formatNumber(upstreamRepo.stargazers_count)
                 }}</strong></span
               >
               <span class="flex items-center gap-1"
-                >🔀<strong>{{
+                ><BaseIcon icon="lucide--git-fork" size="sm" /><strong>{{
                   formatNumber(upstreamRepo.forks_count)
                 }}</strong></span
               >
               <span class="flex items-center gap-1"
-                >👁️<strong>{{
+                ><BaseIcon icon="lucide--eye" size="sm" /><strong>{{
                   formatNumber(upstreamRepo.watchers_count)
                 }}</strong></span
               >
               <span class="flex items-center gap-1"
-                >🐛<strong>{{ upstreamRepo.open_issues_count }}</strong></span
+                ><BaseIcon icon="lucide--bug" size="sm" /><strong>{{
+                  upstreamRepo.open_issues_count
+                }}</strong></span
               >
               <span v-if="upstreamRepo.language" class="flex items-center gap-1"
                 ><span class="w-2 h-2 rounded-full bg-primary"></span
                 >{{ upstreamRepo.language }}</span
               >
-              <span v-if="upstreamRepo.license" class="text-base-content/60"
-                >📜 {{ upstreamRepo.license.spdx_id }}</span
+              <span
+                v-if="upstreamRepo.license"
+                class="flex items-center gap-1 text-base-content/60"
+                ><BaseIcon icon="lucide--scroll-text" size="sm" />
+                {{ upstreamRepo.license.spdx_id }}</span
               >
             </div>
 
@@ -556,8 +563,9 @@ onMounted(async () => {
                   v-if="latestRelease"
                   :href="latestRelease.html_url"
                   target="_blank"
-                  class="badge badge-success badge-xs"
-                  >🏷️ {{ latestRelease.tag_name }}</a
+                  class="badge badge-success badge-xs gap-1"
+                  ><BaseIcon icon="lucide--tag" size="xs" />
+                  {{ latestRelease.tag_name }}</a
                 >
                 <span class="text-base-content/50">{{
                   relativeTime(upstreamRepo.pushed_at)
@@ -592,10 +600,12 @@ onMounted(async () => {
         <!-- Fork 卡片 -->
         <StatusCard
           title="你的 Fork"
-          icon="🔀"
           :loading="loadingState === 'loading-fork'"
           variant="gradient"
         >
+          <template #icon>
+            <BaseIcon icon="ph--git-fork" size="md" />
+          </template>
           <template #header-actions>
             <a
               v-if="hasFork && forkRepo"
@@ -603,7 +613,7 @@ onMounted(async () => {
               target="_blank"
               class="btn btn-ghost btn-xs"
             >
-              打开 ↗
+              <BaseIcon icon="lucide--external-link" size="xs" /> 打开
             </a>
             <button
               v-if="!hasFork"
@@ -639,18 +649,26 @@ onMounted(async () => {
                 >
                 <div class="flex items-center gap-2 mt-1">
                   <template v-if="forkRepo.syncStatus?.isSynced">
-                    <span class="badge badge-success badge-sm">✓ 已同步</span>
+                    <span class="badge badge-success badge-sm gap-1"
+                      ><BaseIcon icon="lucide--check" size="xs" /> 已同步</span
+                    >
                   </template>
                   <template v-else>
                     <span
                       v-if="forkRepo.syncStatus?.aheadBy"
-                      class="badge badge-info badge-sm"
-                      >↑{{ forkRepo.syncStatus.aheadBy }} ahead</span
+                      class="badge badge-info badge-sm gap-1"
+                      ><BaseIcon icon="lucide--arrow-up" size="xs" />{{
+                        forkRepo.syncStatus.aheadBy
+                      }}
+                      ahead</span
                     >
                     <span
                       v-if="forkRepo.syncStatus?.behindBy"
-                      class="badge badge-warning badge-sm"
-                      >↓{{ forkRepo.syncStatus.behindBy }} behind</span
+                      class="badge badge-warning badge-sm gap-1"
+                      ><BaseIcon icon="lucide--arrow-down" size="xs" />{{
+                        forkRepo.syncStatus.behindBy
+                      }}
+                      behind</span
                     >
                     <!-- 同步按钮 -->
                     <button
@@ -692,7 +710,8 @@ onMounted(async () => {
                     'badge-primary': branch.name === forkRepo.default_branch,
                   }"
                 >
-                  🌿 {{ branch.name }}
+                  <BaseIcon icon="lucide--git-branch" size="xs" />
+                  {{ branch.name }}
                 </span>
                 <span
                   v-if="forkBranches.length > 5"
@@ -740,38 +759,29 @@ onMounted(async () => {
       </div>
 
       <!-- 分隔线 -->
-      <div class="divider divider-horizontal m-0 text-base-content/30">→</div>
+      <div class="divider divider-horizontal m-0 text-base-content/30">
+        <BaseIcon icon="lucide--arrow-right" size="md" />
+      </div>
 
       <!-- 右栏：本地仓库/工作区 -->
       <div class="w-1/2 flex flex-col gap-3 overflow-auto">
         <!-- 本地仓库卡片 -->
         <StatusCard
           title="本地仓库"
-          icon="💾"
           badge="Local"
           badge-variant="accent"
           :loading="loadingState === 'loading-local'"
         >
+          <template #icon>
+            <BaseIcon icon="ph--hard-drives" size="md" />
+          </template>
           <template v-if="localStatus?.exists">
             <!-- 本地仓库信息 -->
             <div class="flex items-center gap-3">
               <div
                 class="w-10 h-10 rounded-lg bg-base-200 flex items-center justify-center text-base-content/70"
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  class="w-5 h-5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-                  />
-                </svg>
+                <BaseIcon icon="lucide--folder-open" size="md" />
               </div>
               <div class="flex-1 min-w-0">
                 <div
@@ -783,16 +793,18 @@ onMounted(async () => {
                 <div class="flex items-center gap-2 mt-1">
                   <!-- 分支 -->
                   <span class="badge badge-outline badge-sm">
-                    🌿 {{ localStatus.currentBranch || "main" }}
+                    <BaseIcon icon="lucide--git-branch" size="xs" />
+                    {{ localStatus.currentBranch || "main" }}
                   </span>
                   <!-- 状态 -->
                   <span
                     v-if="localStatus.workingTreeClean"
-                    class="badge badge-success badge-sm"
-                    >✓ 干净</span
+                    class="badge badge-success badge-sm gap-1"
+                    ><BaseIcon icon="lucide--check" size="xs" /> 干净</span
                   >
-                  <span v-else class="badge badge-warning badge-sm"
-                    >⚠ 有改动</span
+                  <span v-else class="badge badge-warning badge-sm gap-1"
+                    ><BaseIcon icon="lucide--alert-triangle" size="xs" />
+                    有改动</span
                   >
                 </div>
               </div>
@@ -806,7 +818,8 @@ onMounted(async () => {
                 class="text-xs text-base-content/60 mr-1 flex items-center gap-1"
                 :title="'跟踪远端分支: ' + localStatus.trackingBranch"
               >
-                🔗 {{ localStatus.trackingBranch }}
+                <BaseIcon icon="lucide--link" size="xs" />
+                {{ localStatus.trackingBranch }}
               </span>
 
               <!-- ahead/behind 状态 -->
@@ -879,7 +892,10 @@ onMounted(async () => {
                       v-if="loadingState === 'cloning'"
                       class="loading loading-spinner loading-sm"
                     ></span>
-                    <span v-else>📥 克隆仓库</span>
+                    <span v-else
+                      ><BaseIcon icon="lucide--download" size="sm" />
+                      克隆仓库</span
+                    >
                   </button>
                 </div>
               </div>
@@ -888,7 +904,10 @@ onMounted(async () => {
         </StatusCard>
 
         <!-- 工作区卡片 -->
-        <StatusCard title="工作区" icon="⚙️" :flex="true">
+        <StatusCard title="工作区" :flex="true">
+          <template #icon>
+            <BaseIcon icon="ph--tree-structure" size="md" />
+          </template>
           <template #header-actions>
             <span class="badge badge-ghost badge-xs"
               >{{
@@ -898,11 +917,14 @@ onMounted(async () => {
               个</span
             >
             <button
-              class="btn btn-primary btn-sm"
+              class="btn btn-primary btn-xs"
               :disabled="!localStatus?.exists"
               @click="showWorktreeForm = !showWorktreeForm"
             >
-              {{ showWorktreeForm ? "取消" : "+ 新建" }}
+              <template v-if="showWorktreeForm">取消</template>
+              <template v-else
+                ><BaseIcon icon="lucide--plus" size="xs" /> 新建</template
+              >
             </button>
           </template>
 
@@ -922,7 +944,7 @@ onMounted(async () => {
                 "
                 @click="worktreeCreateMode = 'new'"
               >
-                📝 新建分支
+                <BaseIcon icon="lucide--file-plus" size="sm" /> 新建分支
               </button>
               <button
                 type="button"
@@ -935,7 +957,7 @@ onMounted(async () => {
                   loadRemoteBranches();
                 "
               >
-                🔄 从远端拉取
+                <BaseIcon icon="lucide--refresh-cw" size="sm" /> 从远端拉取
               </button>
             </div>
 
@@ -1039,18 +1061,7 @@ onMounted(async () => {
                     class="badge badge-success badge-xs gap-1 hover:badge-outline h-5 font-normal text-white"
                     title="已关联PR"
                   >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 16 16"
-                      fill="currentColor"
-                      class="w-3 h-3"
-                    >
-                      <path
-                        fill-rule="evenodd"
-                        d="M4.5 2A2.5 2.5 0 0 0 2 4.5v2.879a2.5 2.5 0 0 0 .732 1.767l4.5 4.5a2.5 2.5 0 0 0 3.536 0l2.878-2.878a2.5 2.5 0 0 0 0-3.536l-4.5-4.5A2.5 2.5 0 0 0 7.38 2H4.5ZM5 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
+                    <BaseIcon icon="lucide--tag" size="xs" />
                     #{{ wt.linkedPR }}
                   </a>
                   <span
@@ -1084,19 +1095,7 @@ onMounted(async () => {
                         v-if="pushingWorktreePaths.has(wt.path)"
                         class="loading loading-spinner loading-xs"
                       ></span>
-                      <svg
-                        v-else
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                        class="w-4 h-4"
-                      >
-                        <path
-                          fill-rule="evenodd"
-                          d="M10 17a.75.75 0 0 1-.75-.75V5.612L5.29 9.77a.75.75 0 0 1-1.08-1.04l5.25-5.5a.75.75 0 0 1 1.08 0l5.25 5.5a.75.75 0 1 1-1.08 1.04l-3.96-4.158V16.25A.75.75 0 0 1 10 17Z"
-                          clip-rule="evenodd"
-                        />
-                      </svg>
+                      <BaseIcon v-else icon="lucide--arrow-up" size="sm" />
                     </button>
 
                     <button
@@ -1104,18 +1103,7 @@ onMounted(async () => {
                       title="删除工作区"
                       @click="showDeleteConfirm(wt.path)"
                     >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                        class="w-4 h-4"
-                      >
-                        <path
-                          fill-rule="evenodd"
-                          d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 0 0 1.5.06l.3-7.5Z"
-                          clip-rule="evenodd"
-                        />
-                      </svg>
+                      <BaseIcon icon="lucide--trash-2" size="sm" />
                     </button>
                   </div>
                 </div>
@@ -1129,7 +1117,7 @@ onMounted(async () => {
                   class="badge badge-ghost badge-xs gap-1.5 min-h-[20px] h-auto border-base-content/20"
                   :title="'跟踪远端: ' + wt.trackingBranch"
                 >
-                  <span class="text-[10px]">🔗</span>
+                  <BaseIcon icon="lucide--link" size="xs" />
                   <span class="font-mono">{{ wt.trackingBranch }}</span>
                 </span>
 
@@ -1146,17 +1134,23 @@ onMounted(async () => {
           <!-- 空状态 -->
           <EmptyState
             v-else-if="localStatus?.exists && !isLoading"
-            icon="📁"
             title="暂无分支工作区"
             description="点击 '+ 新建' 创建分支工作区"
-          />
+          >
+            <template #icon>
+              <BaseIcon icon="ph--folder-notch-open" size="2xl" />
+            </template>
+          </EmptyState>
 
           <!-- 未克隆提示 -->
           <EmptyState
             v-else-if="!localStatus?.exists && !isLoading"
-            icon="📭"
             title="请先克隆仓库"
-          />
+          >
+            <template #icon>
+              <BaseIcon icon="ph--mailbox" size="2xl" />
+            </template>
+          </EmptyState>
         </StatusCard>
       </div>
     </div>
@@ -1165,7 +1159,7 @@ onMounted(async () => {
   <!-- 删除确认对话框 -->
   <ConfirmModal
     v-model="showDeleteModal"
-    title="☸️ 确认删除"
+    title="确认删除"
     confirm-text="删除"
     confirm-variant="error"
     @confirm="confirmDeleteWorktree"

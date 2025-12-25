@@ -102,9 +102,9 @@
               <div class="flex items-center gap-4">
                 <span
                   v-if="forkStatus.syncStatus.isSynced"
-                  class="badge badge-success"
+                  class="badge badge-success gap-1"
                 >
-                  ✓ 已同步
+                  <BaseIcon icon="lucide--check" size="xs" /> 已同步
                 </span>
                 <span v-else class="badge badge-warning"> 需要同步 </span>
 
@@ -124,11 +124,9 @@
               </div>
 
               <!-- 同步建议 -->
-              <div
-                v-if="!forkStatus.syncStatus.isSynced"
-                class="mt-2 text-xs opacity-75"
-              >
-                💡 建议同步Fork以获取上游仓库的最新更改
+              <div class="mt-2 text-xs opacity-75 flex items-center gap-1">
+                <BaseIcon icon="lucide--lightbulb" size="sm" />
+                建议同步Fork以获取上游仓库的最新更改
               </div>
             </div>
           </div>
@@ -322,6 +320,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { getUserInfo } from "../../utils/github-auth";
+import BaseIcon from "../../components/BaseIcon.vue";
 import {
   forkRepository,
   createPullRequest,
@@ -394,7 +393,7 @@ async function checkForkStatus() {
     const result = await checkIfForked(
       targetRepo.value.owner,
       targetRepo.value.name,
-      userInfo.value.login,
+      userInfo.value.login
     );
 
     let message;
@@ -470,7 +469,7 @@ async function createPR() {
         head: pullRequest.value.head,
         base: pullRequest.value.base,
         draft: pullRequest.value.draft,
-      },
+      }
     );
 
     showResult("success", `PR创建成功！PR #${pr.number}`);

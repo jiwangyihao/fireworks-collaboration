@@ -8,11 +8,12 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-  "test": "vitest run",
-  "test:ui": "vitest",
-  "test:cov": "vitest run --coverage"
+    "test": "vitest run",
+    "test:ui": "vitest",
+    "test:cov": "vitest run --coverage"
   },
   "dependencies": {
+    "@iconify/vue": "^5.0.0",
     "@tailwindcss/vite": "^4.1.12",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-fs": "~2.4.2",

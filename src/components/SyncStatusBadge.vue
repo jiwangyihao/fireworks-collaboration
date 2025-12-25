@@ -5,6 +5,7 @@
  * 显示仓库/分支的同步状态（已同步/领先/落后）
  */
 import BaseBadge from "./BaseBadge.vue";
+import BaseIcon from "./BaseIcon.vue";
 
 const props = withDefaults(
   defineProps<{
@@ -32,17 +33,17 @@ const isSynced = () => {
 
 <template>
   <!-- 已同步状态 -->
-  <BaseBadge v-if="isSynced()" variant="success" size="sm">
-    ✓ 已同步
+  <BaseBadge v-if="isSynced()" variant="success" size="sm" class="gap-1">
+    <BaseIcon icon="lucide--check" size="xs" /> 已同步
   </BaseBadge>
 
   <!-- 领先状态 -->
-  <BaseBadge v-if="ahead > 0" variant="info" size="sm">
-    ↑{{ ahead }} ahead
+  <BaseBadge v-if="ahead > 0" variant="info" size="sm" class="gap-1">
+    <BaseIcon icon="lucide--arrow-up" size="xs" />{{ ahead }} ahead
   </BaseBadge>
 
   <!-- 落后状态 -->
-  <BaseBadge v-if="behind > 0" variant="warning" size="sm">
-    ↓{{ behind }} behind
+  <BaseBadge v-if="behind > 0" variant="warning" size="sm" class="gap-1">
+    <BaseIcon icon="lucide--arrow-down" size="xs" />{{ behind }} behind
   </BaseBadge>
 </template>
