@@ -88,7 +88,7 @@ fn publish_strategy_summary(
 }
 
 pub fn test_emit_clone_strategy_and_rollout(repo: &str, task_id: uuid::Uuid) {
-    let _app = AppHandle;
+    // let _app = AppHandle; // Removed invalid construction
     let global_cfg = runtime_config();
     let decision = transport::decide_https_to_custom(&global_cfg, repo);
     if decision.eligible {
@@ -147,6 +147,7 @@ pub fn test_emit_clone_with_override(
                 message: format!("http conflict: {msg}"),
                 retried_times: None,
             };
+            #[cfg(not(feature = "tauri-app"))]
             emit_all(&AppHandle, EV_ERROR, &evt);
             publish_global(StructuredEvent::Strategy(
                 StructuredStrategyEvent::Conflict {
