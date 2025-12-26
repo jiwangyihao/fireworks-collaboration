@@ -55,7 +55,7 @@ describe("utils/github-auth", () => {
     expect(url).toContain("client_id=");
     expect(url).toContain("code_challenge_method=S256");
     expect(url).toContain("response_type=code");
-    expect(url).toContain("localhost:3429");
+    expect(url).toMatch(/localhost%3A3429|localhost:3429/);
     expect(codeVerifier.length).toBeGreaterThanOrEqual(64);
     expect(state.length).toBeGreaterThanOrEqual(16);
   });
@@ -149,7 +149,9 @@ describe("utils/github-auth", () => {
     expect((openPath as any).mock.calls[0][0]).toContain(
       "https://github.com/login/oauth/authorize"
     );
-    expect((openPath as any).mock.calls[0][0]).toContain("localhost:3429");
+    expect((openPath as any).mock.calls[0][0]).toMatch(
+      /localhost%3A3429|localhost:3429/
+    );
     expect(codeVerifier.length).toBeGreaterThan(10);
     expect(state.length).toBeGreaterThan(10);
     expect(port).toBe(3429);
