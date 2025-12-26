@@ -24,6 +24,7 @@ vi.mock("../../utils/github-auth", () => ({
   getUserInfo: vi.fn().mockResolvedValue({ login: "u", name: "U" }),
   removeAccessToken: vi.fn(),
   startOAuthFlow: vi.fn().mockResolvedValue({ codeVerifier: "v", state: "s" }),
+  syncCredentialToBackend: vi.fn(),
 }));
 vi.mock("../../utils/oauth-server", () => ({
   createCallbackServer: vi.fn().mockResolvedValue({
