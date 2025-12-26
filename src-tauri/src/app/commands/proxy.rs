@@ -53,6 +53,14 @@ pub async fn force_proxy_fallback(
     reason: Option<String>,
     cfg: State<'_, SharedConfig>,
 ) -> Result<bool, String> {
+    force_proxy_fallback_logic(reason, cfg.inner().clone()).await
+}
+
+/// Non-command version of force_proxy_fallback for testing
+pub async fn force_proxy_fallback_logic(
+    reason: Option<String>,
+    cfg: SharedConfig,
+) -> Result<bool, String> {
     tracing::info!(target = "proxy", "Force proxy fallback requested");
 
     let config = cfg
@@ -77,6 +85,11 @@ pub async fn force_proxy_fallback(
 /// Attempts to restore proxy functionality after a fallback.
 #[tauri::command(rename_all = "camelCase")]
 pub async fn force_proxy_recovery(cfg: State<'_, SharedConfig>) -> Result<bool, String> {
+    force_proxy_recovery_logic(cfg.inner().clone()).await
+}
+
+/// Non-command version of force_proxy_recovery for testing
+pub async fn force_proxy_recovery_logic(cfg: SharedConfig) -> Result<bool, String> {
     tracing::info!(target = "proxy", "Force proxy recovery requested");
 
     let config = cfg
