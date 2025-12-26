@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   aggregatedCounterSeries,
   aggregatedHistogramSeries,
+  averageHistogram,
+  combinedHistogramTotals,
   computeRate,
   filterSeries,
   formatDurationMs,
@@ -77,7 +79,9 @@ const snapshot: MetricsSnapshot = {
 };
 
 function seriesBy(labelValueMatch: string): MetricsSnapshotSeries {
-  const series = snapshot.series.find((entry) => entry.labels.state === labelValueMatch);
+  const series = snapshot.series.find(
+    (entry) => entry.labels.state === labelValueMatch
+  );
   if (!series) {
     throw new Error("series not found");
   }
@@ -97,7 +101,10 @@ describe("observability utilities", () => {
   });
 
   it("aggregates counter series and preserves ordering", () => {
-    const completedSeries = filterSeries(getSeries(snapshot, "git_tasks_total"), { state: "completed" });
+    const completedSeries = filterSeries(
+      getSeries(snapshot, "git_tasks_total"),
+      { state: "completed" }
+    );
     const aggregated = aggregatedCounterSeries(completedSeries);
 
     expect(aggregated).toHaveLength(2);
@@ -134,8 +141,12 @@ describe("observability utilities", () => {
   it("summarizes counters and quantiles", () => {
     const series = seriesBy("completed");
     expect(sumCounter(series)).toBe(5);
-    const totals = sumCounters(filterSeries(getSeries(snapshot, "git_tasks_total"), { state: "completed" }));
-  expect(totals).toBe(17);
+    const totals = sumCounters(
+      filterSeries(getSeries(snapshot, "git_tasks_total"), {
+        state: "completed",
+      })
+    );
+    expect(totals).toBe(17);
     const quantile = getQuantile(snapshot.series[5], "p95");
     expect(quantile).toBe(150);
     expect(labelValue(series, "kind")).toBe("GitClone");
@@ -152,9 +163,163 @@ describe("observability utilities", () => {
 });
 
 function latencySeries(source: string): MetricsSnapshotSeries {
-  const series = snapshot.series.find((entry) => entry.labels.source === source);
+  const series = snapshot.series.find(
+    (entry) => entry.labels.source === source
+  );
   if (!series) {
     throw new Error(`latency series for ${source} missing`);
   }
   return series;
 }
+
+describe("observability utilities - extended", () => {
+  it("getSeries returns empty array for null snapshot", () => {
+    expect(getSeries(null, "any")).toEqual([]);
+  });
+
+  it("toNormalizedCounterPoints returns empty array for no points", () => {
+    const emptySeries: MetricsSnapshotSeries = {
+      name: "test",
+      type: "counter",
+      labels: {},
+    };
+    expect(toNormalizedCounterPoints(emptySeries)).toEqual([]);
+  });
+
+  it("toNormalizedHistogramPoints returns empty array for no histogramPoints", () => {
+    const emptySeries: MetricsSnapshotSeries = {
+      name: "test",
+      type: "histogram",
+      labels: {},
+    };
+    expect(toNormalizedHistogramPoints(emptySeries)).toEqual([]);
+  });
+
+  it("aggregatedCounterSeries returns empty for series without points", () => {
+    const noPoints: MetricsSnapshotSeries[] = [
+      { name: "test", type: "counter", labels: {} },
+    ];
+    expect(aggregatedCounterSeries(noPoints)).toEqual([]);
+  });
+
+  it("aggregatedHistogramSeries returns empty for series without histogramPoints", () => {
+    const noPoints: MetricsSnapshotSeries[] = [
+      { name: "test", type: "histogram", labels: {} },
+    ];
+    expect(aggregatedHistogramSeries(noPoints)).toEqual([]);
+  });
+
+  it("averageHistogram computes average from histogramPoints", () => {
+    const series = latencySeries("cloudflare");
+    // (40+75) / (2+3) = 115/5 = 23
+    expect(averageHistogram(series)).toBeCloseTo(23);
+  });
+
+  it("averageHistogram uses sum/count fields when histogramPoints missing", () => {
+    const series: MetricsSnapshotSeries = {
+      name: "test",
+      type: "histogram",
+      labels: {},
+      sum: 100,
+      count: 4,
+    };
+    expect(averageHistogram(series)).toBe(25);
+  });
+
+  it("averageHistogram returns null when count is zero or missing", () => {
+    const zeroCount: MetricsSnapshotSeries = {
+      name: "test",
+      type: "histogram",
+      labels: {},
+      sum: 100,
+      count: 0,
+    };
+    expect(averageHistogram(zeroCount)).toBeNull();
+
+    const noData: MetricsSnapshotSeries = {
+      name: "test",
+      type: "histogram",
+      labels: {},
+    };
+    expect(averageHistogram(noData)).toBeNull();
+  });
+
+  it("combinedHistogramTotals aggregates from histogramPoints", () => {
+    const latencySeries = getSeries(snapshot, "ip_pool_latency_ms");
+    const totals = combinedHistogramTotals(latencySeries);
+    // cloudflare: sum=40+75=115, count=2+3=5
+    // azure: sum=35+45=80, count=1+1=2
+    expect(totals.sum).toBe(195);
+    expect(totals.count).toBe(7);
+  });
+
+  it("combinedHistogramTotals uses sum/count fields when histogramPoints missing", () => {
+    const series: MetricsSnapshotSeries[] = [
+      { name: "test", type: "histogram", labels: {}, sum: 50, count: 2 },
+      { name: "test", type: "histogram", labels: {}, sum: 30, count: 3 },
+    ];
+    const totals = combinedHistogramTotals(series);
+    expect(totals.sum).toBe(80);
+    expect(totals.count).toBe(5);
+  });
+
+  it("getQuantile returns null when quantiles missing", () => {
+    const series: MetricsSnapshotSeries = {
+      name: "test",
+      type: "histogram",
+      labels: {},
+    };
+    expect(getQuantile(series, "p99")).toBeNull();
+  });
+
+  it("sumCounter falls back to value field when points missing", () => {
+    const series: MetricsSnapshotSeries = {
+      name: "test",
+      type: "counter",
+      labels: {},
+      value: 42,
+    };
+    expect(sumCounter(series)).toBe(42);
+  });
+
+  it("sumCounter returns 0 when no points and no value", () => {
+    const series: MetricsSnapshotSeries = {
+      name: "test",
+      type: "counter",
+      labels: {},
+    };
+    expect(sumCounter(series)).toBe(0);
+  });
+
+  it("formatDurationMs handles sub-second values", () => {
+    expect(formatDurationMs(500, 0)).toBe("500 ms");
+    expect(formatDurationMs(null)).toBe("N/A");
+    expect(formatDurationMs(NaN)).toBe("N/A");
+  });
+
+  it("formatNumber handles null and NaN", () => {
+    expect(formatNumber(null)).toBe("N/A");
+    expect(formatNumber(NaN)).toBe("N/A");
+  });
+
+  it("formatPercent handles NaN", () => {
+    expect(formatPercent(NaN)).toBe("N/A");
+  });
+
+  it("labelValue returns fallback when label missing", () => {
+    const series: MetricsSnapshotSeries = {
+      name: "test",
+      type: "counter",
+      labels: { a: "1" },
+    };
+    expect(labelValue(series, "missing", "default")).toBe("default");
+  });
+
+  it("groupByLabel uses 'unknown' for missing labels", () => {
+    const series: MetricsSnapshotSeries[] = [
+      { name: "test", type: "counter", labels: {} },
+    ];
+    const grouped = groupByLabel(series, "missing");
+    expect(grouped["unknown"]).toHaveLength(1);
+  });
+});
