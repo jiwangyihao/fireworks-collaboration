@@ -316,3 +316,157 @@ fn test_last_good_preferred_when_present() {
     assert!(used_fake);
     assert_eq!(sni, "y.com");
 }
+
+// ============================================================================
+// http/types 序列化测试
+// ============================================================================
+
+use fireworks_collaboration_lib::core::http::types::{
+    HttpRequestInput, HttpResponseOutput, RedirectInfo, TimingInfo,
+};
+
+#[test]
+fn test_timing_info_serde() {
+    let timing = TimingInfo {
+        connect_ms: 100,
+        tls_ms: 50,
+        first_byte_ms: 200,
+        total_ms: 350,
+    };
+
+    let json = serde_json::to_string(&timing).unwrap();
+    let deserialized: TimingInfo = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(deserialized.connect_ms, 100);
+    assert_eq!(deserialized.tls_ms, 50);
+    assert_eq!(deserialized.first_byte_ms, 200);
+    assert_eq!(deserialized.total_ms, 350);
+}
+
+#[test]
+fn test_timing_info_camel_case_deserialization() {
+    let json = r#"{
+        "connectMs": 100,
+        "tlsMs": 50,
+        "firstByteMs": 200,
+        "totalMs": 350
+    }"#;
+
+    let timing: TimingInfo = serde_json::from_str(json).unwrap();
+
+    assert_eq!(timing.connect_ms, 100);
+    assert_eq!(timing.tls_ms, 50);
+}
+
+#[test]
+fn test_redirect_info_serde() {
+    let redirect = RedirectInfo {
+        status: 301,
+        location: "https://example.com/new".to_string(),
+        count: 1,
+    };
+
+    let json = serde_json::to_string(&redirect).unwrap();
+    let deserialized: RedirectInfo = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(deserialized.status, 301);
+    assert_eq!(deserialized.location, "https://example.com/new");
+    assert_eq!(deserialized.count, 1);
+}
+
+#[test]
+fn test_http_request_input_serde() {
+    let mut headers = std::collections::HashMap::new();
+    headers.insert("Content-Type".to_string(), "application/json".to_string());
+
+    let request = HttpRequestInput {
+        url: "https://api.example.com/data".to_string(),
+        method: "POST".to_string(),
+        headers,
+        body_base64: Some("dGVzdA==".to_string()),
+        timeout_ms: 30000,
+        force_real_sni: false,
+        follow_redirects: true,
+        max_redirects: 5,
+    };
+
+    let json = serde_json::to_string(&request).unwrap();
+    let deserialized: HttpRequestInput = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(deserialized.url, "https://api.example.com/data");
+    assert_eq!(deserialized.method, "POST");
+    assert_eq!(deserialized.timeout_ms, 30000);
+    assert!(!deserialized.force_real_sni);
+    assert!(deserialized.follow_redirects);
+    assert_eq!(deserialized.max_redirects, 5);
+}
+
+#[test]
+fn test_http_response_output_serde() {
+    let timing = TimingInfo {
+        connect_ms: 100,
+        tls_ms: 50,
+        first_byte_ms: 200,
+        total_ms: 350,
+    };
+
+    let response = HttpResponseOutput {
+        ok: true,
+        status: 200,
+        headers: std::collections::HashMap::new(),
+        body_base64: "SGVsbG8gV29ybGQ=".to_string(),
+        used_fake_sni: false,
+        ip: Some("192.168.1.1".to_string()),
+        timing,
+        redirects: vec![],
+        body_size: 11,
+    };
+
+    let json = serde_json::to_string(&response).unwrap();
+    let deserialized: HttpResponseOutput = serde_json::from_str(&json).unwrap();
+
+    assert!(deserialized.ok);
+    assert_eq!(deserialized.status, 200);
+    assert_eq!(deserialized.body_size, 11);
+}
+
+#[test]
+fn test_http_response_with_redirects() {
+    let timing = TimingInfo {
+        connect_ms: 100,
+        tls_ms: 50,
+        first_byte_ms: 200,
+        total_ms: 350,
+    };
+
+    let response = HttpResponseOutput {
+        ok: true,
+        status: 200,
+        headers: std::collections::HashMap::new(),
+        body_base64: "".to_string(),
+        used_fake_sni: true,
+        ip: None,
+        timing,
+        redirects: vec![
+            RedirectInfo {
+                status: 301,
+                location: "https://example.com/step1".to_string(),
+                count: 1,
+            },
+            RedirectInfo {
+                status: 302,
+                location: "https://example.com/final".to_string(),
+                count: 2,
+            },
+        ],
+        body_size: 0,
+    };
+
+    let json = serde_json::to_string(&response).unwrap();
+    let deserialized: HttpResponseOutput = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(deserialized.redirects.len(), 2);
+    assert_eq!(deserialized.redirects[0].status, 301);
+    assert_eq!(deserialized.redirects[1].status, 302);
+    assert!(deserialized.used_fake_sni);
+}
