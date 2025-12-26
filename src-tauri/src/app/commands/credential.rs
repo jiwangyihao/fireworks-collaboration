@@ -669,3 +669,92 @@ pub async fn remaining_auth_attempts(audit: State<'_, SharedAuditLogger>) -> Res
 
     Ok(logger.remaining_attempts())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =========================================================================
+    // CredentialInfo::from tests
+    // =========================================================================
+
+    #[test]
+    fn test_credential_info_from_basic() {
+        let cred = Credential::new(
+            "github.com".to_string(),
+            "user".to_string(),
+            "secret123".to_string(),
+        );
+        let info = CredentialInfo::from(&cred);
+
+        assert_eq!(info.host, "github.com");
+        assert_eq!(info.username, "user");
+        // Password should be masked
+        assert!(!info.masked_password.contains("secret123"));
+        assert!(info.masked_password.contains("***"));
+        assert!(!info.is_expired);
+        assert!(info.expires_at.is_none());
+        assert!(info.last_used_at.is_none());
+    }
+
+    #[test]
+    fn test_credential_info_from_with_expiry() {
+        let future_time = SystemTime::now() + Duration::from_secs(86400); // 1 day
+        let cred = Credential::new_with_expiry(
+            "gitlab.com".to_string(),
+            "admin".to_string(),
+            "token".to_string(),
+            future_time,
+        );
+        let info = CredentialInfo::from(&cred);
+
+        assert_eq!(info.host, "gitlab.com");
+        assert!(!info.is_expired);
+        assert!(info.expires_at.is_some());
+        // expires_at should be a reasonable future timestamp
+        assert!(info.expires_at.unwrap() > info.created_at);
+    }
+
+    #[test]
+    fn test_credential_info_from_expired() {
+        let past_time = SystemTime::UNIX_EPOCH + Duration::from_secs(1); // Very old
+        let cred = Credential::new_with_expiry(
+            "example.com".to_string(),
+            "test".to_string(),
+            "pass".to_string(),
+            past_time,
+        );
+        let info = CredentialInfo::from(&cred);
+
+        assert!(info.is_expired);
+        assert!(info.expires_at.is_some());
+        assert_eq!(info.expires_at.unwrap(), 1); // 1 second after epoch
+    }
+
+    #[test]
+    fn test_credential_info_timestamp_conversion() {
+        let cred = Credential::new("test.com".to_string(), "u".to_string(), "p".to_string());
+        let info = CredentialInfo::from(&cred);
+
+        // created_at should be a recent timestamp (within last minute)
+        let now_secs = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(info.created_at <= now_secs);
+        assert!(info.created_at > now_secs - 60);
+    }
+
+    #[test]
+    fn test_credential_info_masked_password_short() {
+        let cred = Credential::new(
+            "host".to_string(),
+            "u".to_string(),
+            "abc".to_string(), // Very short password
+        );
+        let info = CredentialInfo::from(&cred);
+
+        // Even short passwords should be masked
+        assert!(!info.masked_password.contains("abc"));
+    }
+}

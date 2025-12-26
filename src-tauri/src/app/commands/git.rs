@@ -128,33 +128,37 @@ pub async fn git_push(
     credential_factory: State<'_, SharedCredentialFactory>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-
-    
     // Determine final username and password
-    let (final_username, final_password) =
-        if use_stored_credential.unwrap_or(false) && username.is_none() && password.is_none() {
-            // Try to get credentials from storage
-            match try_get_git_credentials(&dest, &credential_factory).await {
-                Ok(Some((u, p))) => {
-                    tracing::info!(target="git", "Using stored credentials for git push: username={}, host_in_repo=?", u);
-                    (Some(u), Some(p))
-                }
-                Ok(None) => {
-                    tracing::warn!(target="git", "No stored credentials found for {}, using provided credentials (which are likely empty)", dest);
-                    (username.clone(), password.clone())
-                }
-                Err(e) => {
-                    tracing::error!(
-                        target="git",
-                        "Failed to retrieve stored credentials: {}, using provided credentials",
-                        e
-                    );
-                    (username.clone(), password.clone())
-                }
+    let (final_username, final_password) = if use_stored_credential.unwrap_or(false)
+        && username.is_none()
+        && password.is_none()
+    {
+        // Try to get credentials from storage
+        match try_get_git_credentials(&dest, &credential_factory).await {
+            Ok(Some((u, p))) => {
+                tracing::info!(
+                    target = "git",
+                    "Using stored credentials for git push: username={}, host_in_repo=?",
+                    u
+                );
+                (Some(u), Some(p))
             }
-        } else {
-            (username.clone(), password.clone())
-        };
+            Ok(None) => {
+                tracing::warn!(target="git", "No stored credentials found for {}, using provided credentials (which are likely empty)", dest);
+                (username.clone(), password.clone())
+            }
+            Err(e) => {
+                tracing::error!(
+                    target = "git",
+                    "Failed to retrieve stored credentials: {}, using provided credentials",
+                    e
+                );
+                (username.clone(), password.clone())
+            }
+        }
+    } else {
+        (username.clone(), password.clone())
+    };
 
     let (id, token) = reg.create(TaskKind::GitPush {
         dest: dest.clone(),
@@ -188,7 +192,7 @@ async fn try_get_git_credentials(
 ) -> Result<Option<(String, String)>, String> {
     // Extract host
     let host = extract_git_host(repo_path)?;
-    tracing::info!(target="git", "Extracted host from repo: {}", host);
+    tracing::info!(target = "git", "Extracted host from repo: {}", host);
 
     // Get credential store
     let factory_guard = credential_factory
@@ -208,21 +212,36 @@ async fn try_get_git_credentials(
     };
 
     for username in usernames_to_try {
-        tracing::info!(target="git", "Looking up credentials for host: {}, username: {:?}", host, username);
+        tracing::info!(
+            target = "git",
+            "Looking up credentials for host: {}, username: {:?}",
+            host,
+            username
+        );
         match store.get(&host, username) {
             Ok(Some(cred)) => {
-                tracing::info!(target="git", "Found credential for host: {}, username: {}", host, cred.username);
+                tracing::info!(
+                    target = "git",
+                    "Found credential for host: {}, username: {}",
+                    host,
+                    cred.username
+                );
                 return Ok(Some((
                     cred.username.to_string(),
                     cred.password_or_token.to_string(),
                 )));
             }
             Ok(None) => {
-                tracing::info!(target="git", "No credential found for host: {}, username: {:?}", host, username);
+                tracing::info!(
+                    target = "git",
+                    "No credential found for host: {}, username: {:?}",
+                    host,
+                    username
+                );
                 continue;
             }
             Err(e) => {
-                tracing::warn!(target="git", "Error looking up credential: {}", e);
+                tracing::warn!(target = "git", "Error looking up credential: {}", e);
                 continue;
             }
         }
@@ -270,7 +289,10 @@ pub(crate) fn extract_git_host(repo_path: &str) -> Result<String, String> {
 pub(crate) fn parse_git_host(url: &str) -> Result<String, String> {
     // HTTPS: https://github.com/user/repo.git
     // Also handle custom transport scheme: https+custom://github.com/user/repo.git
-    if url.starts_with("https://") || url.starts_with("http://") || url.starts_with("https+custom://") {
+    if url.starts_with("https://")
+        || url.starts_with("http://")
+        || url.starts_with("https+custom://")
+    {
         let without_scheme = url
             .trim_start_matches("https+custom://")
             .trim_start_matches("https://")
@@ -652,7 +674,7 @@ pub async fn git_list_branches(
         // Parse branch name and commit
         let parts: Vec<&str> = line.splitn(2, char::is_whitespace).collect();
         let name = parts.first().unwrap_or(&"").to_string();
-        
+
         if name.is_empty() {
             continue;
         }
@@ -756,7 +778,12 @@ pub async fn git_repo_status(dest: String) -> Result<RepoStatus, String> {
 
     if let Some(ref branch) = current_branch {
         let ab_output = Command::new("git")
-            .args(["rev-list", "--left-right", "--count", &format!("{}...@{{u}}", branch)])
+            .args([
+                "rev-list",
+                "--left-right",
+                "--count",
+                &format!("{}...@{{u}}", branch),
+            ])
             .current_dir(&dest)
             .output();
 
@@ -793,7 +820,9 @@ pub async fn git_repo_status(dest: String) -> Result<RepoStatus, String> {
     };
 
     // Get branches
-    let branches = git_list_branches(dest.clone(), Some(false)).await.unwrap_or_default();
+    let branches = git_list_branches(dest.clone(), Some(false))
+        .await
+        .unwrap_or_default();
 
     Ok(RepoStatus {
         current_branch,
@@ -1008,14 +1037,19 @@ pub async fn git_worktree_list(dest: String) -> Result<Vec<WorktreeInfo>, String
             // Note: We need to run this command within the worktree path or separate the logic
             // Using the worktree path is safer as it respects that worktree's config/HEAD
             let wt_path = Path::new(&wt.path);
-            
+
             if wt_path.exists() {
                 let mut tracking_branch_name: Option<String> = None;
 
-                 tracing::info!(target="git", "Checking tracking info for worktree: {:?}, branch: {:?}", wt_path, branch);
-                 
-                 // 1. Try configured upstream
-                 let tb_output = Command::new("git")
+                tracing::info!(
+                    target = "git",
+                    "Checking tracking info for worktree: {:?}, branch: {:?}",
+                    wt_path,
+                    branch
+                );
+
+                // 1. Try configured upstream
+                let tb_output = Command::new("git")
                     .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
                     .current_dir(wt_path)
                     .output();
@@ -1024,41 +1058,68 @@ pub async fn git_worktree_list(dest: String) -> Result<Vec<WorktreeInfo>, String
                     if output.status.success() {
                         let tb = String::from_utf8_lossy(&output.stdout).trim().to_string();
                         if !tb.is_empty() {
-                            tracing::info!(target="git", "Found configured tracking branch for {:?}: {}", wt_path, tb);
+                            tracing::info!(
+                                target = "git",
+                                "Found configured tracking branch for {:?}: {}",
+                                wt_path,
+                                tb
+                            );
                             tracking_branch_name = Some(tb);
                         }
                     } else {
-                         tracing::warn!(target="git", "No configured upstream for {:?}: {}", wt_path, String::from_utf8_lossy(&output.stderr));
+                        tracing::warn!(
+                            target = "git",
+                            "No configured upstream for {:?}: {}",
+                            wt_path,
+                            String::from_utf8_lossy(&output.stderr)
+                        );
                     }
                 }
 
                 // 2. Fallback to origin/<branch> if no configured upstream
                 if tracking_branch_name.is_none() {
-                     let implicit_tracking = format!("origin/{}", branch);
-                     tracing::info!(target="git", "Checking implicit tracking branch: {}", implicit_tracking);
-                     
-                     let verify_output = Command::new("git")
+                    let implicit_tracking = format!("origin/{}", branch);
+                    tracing::info!(
+                        target = "git",
+                        "Checking implicit tracking branch: {}",
+                        implicit_tracking
+                    );
+
+                    let verify_output = Command::new("git")
                         .args(["rev-parse", "--verify", &implicit_tracking])
                         .current_dir(wt_path)
                         .output();
-                     
-                     if let Ok(output) = verify_output {
-                         if output.status.success() {
-                             tracing::info!(target="git", "Found implicit tracking branch: {}", implicit_tracking);
-                             tracking_branch_name = Some(implicit_tracking);
-                         } else {
-                             tracing::warn!(target="git", "Implicit tracking branch {} not found", implicit_tracking);
-                         }
-                     }
+
+                    if let Ok(output) = verify_output {
+                        if output.status.success() {
+                            tracing::info!(
+                                target = "git",
+                                "Found implicit tracking branch: {}",
+                                implicit_tracking
+                            );
+                            tracking_branch_name = Some(implicit_tracking);
+                        } else {
+                            tracing::warn!(
+                                target = "git",
+                                "Implicit tracking branch {} not found",
+                                implicit_tracking
+                            );
+                        }
+                    }
                 }
 
                 if let Some(tb) = tracking_branch_name {
                     wt.tracking_branch = Some(tb.clone());
 
-                     // Get ahead/behind
-                     // Use the resolved tracking branch name explicitly
-                     let ab_output = Command::new("git")
-                        .args(["rev-list", "--left-right", "--count", &format!("HEAD...{}", tb)])
+                    // Get ahead/behind
+                    // Use the resolved tracking branch name explicitly
+                    let ab_output = Command::new("git")
+                        .args([
+                            "rev-list",
+                            "--left-right",
+                            "--count",
+                            &format!("HEAD...{}", tb),
+                        ])
                         .current_dir(wt_path)
                         .output();
 
@@ -1069,15 +1130,31 @@ pub async fn git_worktree_list(dest: String) -> Result<Vec<WorktreeInfo>, String
                             if parts.len() == 2 {
                                 wt.ahead = parts[0].parse().unwrap_or(0);
                                 wt.behind = parts[1].parse().unwrap_or(0);
-                                tracing::info!(target="git", "Counts for {:?} against {}: +{}/-{}", wt_path, tb, wt.ahead, wt.behind);
+                                tracing::info!(
+                                    target = "git",
+                                    "Counts for {:?} against {}: +{}/-{}",
+                                    wt_path,
+                                    tb,
+                                    wt.ahead,
+                                    wt.behind
+                                );
                             }
                         } else {
-                            tracing::warn!(target="git", "Failed to get counts for {:?}: {}", wt_path, String::from_utf8_lossy(&ab_out.stderr));
+                            tracing::warn!(
+                                target = "git",
+                                "Failed to get counts for {:?}: {}",
+                                wt_path,
+                                String::from_utf8_lossy(&ab_out.stderr)
+                            );
                         }
                     }
                 }
             } else {
-                tracing::warn!(target="git", "Worktree path does not exist: {:?}", wt_path);
+                tracing::warn!(
+                    target = "git",
+                    "Worktree path does not exist: {:?}",
+                    wt_path
+                );
             }
         }
     }
@@ -1115,16 +1192,20 @@ pub async fn git_worktree_add(
     if let Some(ref remote_ref) = from_remote {
         // Extract remote name from ref (e.g., "origin" from "origin/feature-x")
         if let Some(remote_name) = remote_ref.split('/').next() {
-            tracing::info!(target="git", "Fetching from remote {} before creating worktree", remote_name);
+            tracing::info!(
+                target = "git",
+                "Fetching from remote {} before creating worktree",
+                remote_name
+            );
             let fetch_output = Command::new("git")
                 .args(["fetch", remote_name])
                 .current_dir(&dest)
                 .output();
-            
+
             if let Ok(output) = fetch_output {
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    tracing::warn!(target="git", "Fetch warning: {}", stderr);
+                    tracing::warn!(target = "git", "Fetch warning: {}", stderr);
                     // Don't fail on fetch error, the branch might already exist locally
                 }
             }
@@ -1132,7 +1213,7 @@ pub async fn git_worktree_add(
     }
 
     let mut args = vec!["worktree", "add"];
-    
+
     // Build command based on parameters
     if let Some(ref remote_ref) = from_remote {
         // Create new branch from remote ref: git worktree add -b <branch> <path> <remote_ref>
@@ -1151,7 +1232,7 @@ pub async fn git_worktree_add(
         args.push(&branch);
     }
 
-    tracing::info!(target="git", "Running: git {}", args.join(" "));
+    tracing::info!(target = "git", "Running: git {}", args.join(" "));
 
     let output = Command::new("git")
         .args(&args)
@@ -1238,7 +1319,7 @@ pub async fn git_worktree_remove(
     }
     args.push(&path);
 
-    tracing::info!(target="git", "Running: git {}", args.join(" "));
+    tracing::info!(target = "git", "Running: git {}", args.join(" "));
 
     let output = Command::new("git")
         .args(&args)
@@ -1255,13 +1336,21 @@ pub async fn git_worktree_remove(
     if delete_remote_branch.unwrap_or(false) {
         if let Some(ref branch) = branch_name {
             let remote_name = remote.as_deref().unwrap_or("origin");
-            tracing::info!(target="git", "Deleting remote branch: {} on {}", branch, remote_name);
+            tracing::info!(
+                target = "git",
+                "Deleting remote branch: {} on {}",
+                branch,
+                remote_name
+            );
 
             // Get credentials if needed
             let creds: Option<(String, String)> = if use_stored_credential.unwrap_or(false) {
                 match try_get_git_credentials(&dest, &credential_factory).await {
                     Ok(Some((u, p))) => {
-                        tracing::info!(target="git", "Using stored credentials for remote branch deletion");
+                        tracing::info!(
+                            target = "git",
+                            "Using stored credentials for remote branch deletion"
+                        );
                         Some((u, p))
                     }
                     _ => None,
@@ -1272,7 +1361,7 @@ pub async fn git_worktree_remove(
 
             // Build the push --delete command
             let delete_ref = format!(":refs/heads/{}", branch);
-            
+
             // Use git push with credentials in URL if available
             let push_result = if let Some((user, pass)) = creds {
                 // Get remote URL and embed credentials
@@ -1289,7 +1378,7 @@ pub async fn git_worktree_remove(
                             let _ = parsed.set_username(&user);
                             let _ = parsed.set_password(Some(&pass));
                             let auth_url = parsed.to_string();
-                            
+
                             Command::new("git")
                                 .args(["push", &auth_url, &delete_ref])
                                 .current_dir(&dest)
@@ -1324,20 +1413,167 @@ pub async fn git_worktree_remove(
                 Ok(output) => {
                     if !output.status.success() {
                         let stderr = String::from_utf8_lossy(&output.stderr);
-                        tracing::warn!(target="git", "Failed to delete remote branch: {}", stderr);
+                        tracing::warn!(
+                            target = "git",
+                            "Failed to delete remote branch: {}",
+                            stderr
+                        );
                         // Don't fail the whole operation, just log the warning
                     } else {
-                        tracing::info!(target="git", "Successfully deleted remote branch: {}/{}", remote_name, branch);
+                        tracing::info!(
+                            target = "git",
+                            "Successfully deleted remote branch: {}/{}",
+                            remote_name,
+                            branch
+                        );
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(target="git", "Failed to execute push --delete: {}", e);
+                    tracing::warn!(target = "git", "Failed to execute push --delete: {}", e);
                 }
             }
         } else {
-            tracing::warn!(target="git", "Could not determine branch name for worktree, skipping remote deletion");
+            tracing::warn!(
+                target = "git",
+                "Could not determine branch name for worktree, skipping remote deletion"
+            );
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =========================================================================
+    // parse_depth tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_depth_valid_u64() {
+        let value = Some(serde_json::json!(10));
+        assert_eq!(parse_depth(value), Some(10));
+    }
+
+    #[test]
+    fn test_parse_depth_zero() {
+        let value = Some(serde_json::json!(0));
+        assert_eq!(parse_depth(value), Some(0));
+    }
+
+    #[test]
+    fn test_parse_depth_none() {
+        assert_eq!(parse_depth(None), None);
+    }
+
+    #[test]
+    fn test_parse_depth_non_numeric() {
+        let value = Some(serde_json::json!("not a number"));
+        assert_eq!(parse_depth(value), None);
+    }
+
+    #[test]
+    fn test_parse_depth_float() {
+        // Floats are not valid u64
+        let value = Some(serde_json::json!(3.14));
+        assert_eq!(parse_depth(value), None);
+    }
+
+    #[test]
+    fn test_parse_depth_negative() {
+        // Negative numbers are not valid u64
+        let value = Some(serde_json::json!(-5));
+        assert_eq!(parse_depth(value), None);
+    }
+
+    // =========================================================================
+    // parse_git_host tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_git_host_https() {
+        assert_eq!(
+            parse_git_host("https://github.com/user/repo.git").unwrap(),
+            "github.com"
+        );
+    }
+
+    #[test]
+    fn test_parse_git_host_https_no_suffix() {
+        assert_eq!(
+            parse_git_host("https://github.com/user/repo").unwrap(),
+            "github.com"
+        );
+    }
+
+    #[test]
+    fn test_parse_git_host_http() {
+        assert_eq!(
+            parse_git_host("http://gitlab.example.com/group/project").unwrap(),
+            "gitlab.example.com"
+        );
+    }
+
+    #[test]
+    fn test_parse_git_host_https_custom() {
+        assert_eq!(
+            parse_git_host("https+custom://github.com/user/repo.git").unwrap(),
+            "github.com"
+        );
+    }
+
+    #[test]
+    fn test_parse_git_host_https_with_userinfo() {
+        assert_eq!(
+            parse_git_host("https://user:pass@github.com/user/repo.git").unwrap(),
+            "github.com"
+        );
+    }
+
+    #[test]
+    fn test_parse_git_host_https_with_port() {
+        assert_eq!(
+            parse_git_host("https://github.com:443/user/repo.git").unwrap(),
+            "github.com"
+        );
+    }
+
+    #[test]
+    fn test_parse_git_host_ssh_classic() {
+        assert_eq!(
+            parse_git_host("git@github.com:user/repo.git").unwrap(),
+            "github.com"
+        );
+    }
+
+    #[test]
+    fn test_parse_git_host_ssh_protocol() {
+        assert_eq!(
+            parse_git_host("ssh://git@gitlab.com/user/repo.git").unwrap(),
+            "gitlab.com"
+        );
+    }
+
+    #[test]
+    fn test_parse_git_host_unsupported_scheme() {
+        let result = parse_git_host("ftp://example.com/repo");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unsupported Git URL format"));
+    }
+
+    #[test]
+    fn test_parse_git_host_invalid_url() {
+        let result = parse_git_host("not a url at all");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_git_host_subdomain() {
+        assert_eq!(
+            parse_git_host("https://api.github.com/repos").unwrap(),
+            "api.github.com"
+        );
+    }
 }
