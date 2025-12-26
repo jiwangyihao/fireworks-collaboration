@@ -1,5 +1,5 @@
 use fireworks_collaboration_lib::app::commands::proxy::{
-    detect_system_proxy, force_proxy_fallback_logic, force_proxy_recovery_logic,
+    detect_system_proxy, force_proxy_fallback_logic, force_proxy_recovery_logic, get_system_proxy,
 };
 use fireworks_collaboration_lib::app::types::SharedConfig;
 use fireworks_collaboration_lib::core::config::model::AppConfig;
@@ -100,4 +100,27 @@ async fn test_detect_system_proxy_force_disable() {
         sys_proxy.proxy_type.is_none(),
         "Proxy type should be None when disabled"
     );
+}
+
+#[tokio::test]
+async fn test_force_proxy_fallback_default_reason() {
+    // Test fallback with None reason (should use default)
+    let config = create_test_config();
+    let result = force_proxy_fallback_logic(None, config).await;
+    assert!(
+        result.is_ok(),
+        "Fallback with default reason should succeed"
+    );
+    assert_eq!(result.unwrap(), true);
+}
+
+#[test]
+fn test_get_system_proxy_legacy_command() {
+    // Legacy command is synchronous and returns simple struct
+    let result = get_system_proxy();
+    assert!(result.is_ok());
+    let proxy = result.unwrap();
+    // Currently implementation returns default (empty) checks
+    // We just verify it returns successfully
+    println!("Legacy system proxy: {:?}", proxy);
 }
