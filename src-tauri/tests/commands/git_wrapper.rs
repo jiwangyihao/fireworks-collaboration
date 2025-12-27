@@ -74,7 +74,7 @@ async fn test_git_clone_wrapper_creates_task() {
     };
 
     let (id, _token) = {
-        let mut guard = reg.lock().unwrap();
+        let guard = reg.lock().unwrap();
         guard.create(task_kind)
     };
 
@@ -119,7 +119,7 @@ async fn test_git_fetch_wrapper_creates_task() {
     };
 
     let (id, _token) = {
-        let mut guard = reg.lock().unwrap();
+        let guard = reg.lock().unwrap();
         guard.create(task_kind)
     };
 
@@ -151,7 +151,7 @@ async fn test_git_init_wrapper_creates_task() {
     let task_kind = TaskKind::GitInit { dest: dest.clone() };
 
     let (id, _token) = {
-        let mut guard = reg.lock().unwrap();
+        let guard = reg.lock().unwrap();
         guard.create(task_kind)
     };
 
@@ -187,7 +187,7 @@ async fn test_git_add_wrapper_creates_task() {
     };
 
     let (id, _token) = {
-        let mut guard = reg.lock().unwrap();
+        let guard = reg.lock().unwrap();
         guard.create(task_kind)
     };
 
@@ -226,7 +226,7 @@ async fn test_git_commit_wrapper_creates_task() {
     };
 
     let (id, _token) = {
-        let mut guard = reg.lock().unwrap();
+        let guard = reg.lock().unwrap();
         guard.create(task_kind)
     };
 

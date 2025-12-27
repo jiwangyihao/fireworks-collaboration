@@ -2,7 +2,6 @@
 //!
 //! Tests for SubmoduleManager, SubmoduleConfig, and SubmoduleInfo.
 
-use std::path::PathBuf;
 use std::process::Command;
 use tempfile::tempdir;
 

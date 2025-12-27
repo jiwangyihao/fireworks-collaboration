@@ -163,6 +163,7 @@ async fn test_git_push_conflict() {
 }
 
 // Reuse wait helper
+#[allow(dead_code)]
 async fn wait_for_terminal_state(registry: Arc<TaskRegistry>, id: Uuid) -> TaskState {
     loop {
         if let Some(snapshot) = registry.snapshot(&id) {

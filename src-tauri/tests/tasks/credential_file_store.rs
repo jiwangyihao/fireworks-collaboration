@@ -1,7 +1,7 @@
 use std::fs;
 use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::Duration;
+
 use tempfile::tempdir;
 
 use fireworks_collaboration_lib::core::credential::{
