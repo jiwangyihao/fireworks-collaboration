@@ -26,15 +26,20 @@ $ErrorActionPreference = "Stop"
 # === Phase 1: Build ===
 Write-Host "==> [1/3] Building tests (using full environment)..."
 
-$cargoArgs = @("test", "--no-run")
+# Use tauri-core (no WebView2) to avoid DLL conflict on Windows
+$cargoArgs = @("test", "--no-run", "--no-default-features", "--features", "tauri-core")
 if ($TestName) {
     $cargoArgs += @("--test", $TestName)
 }
-cargo @cargoArgs 2>&1 | Out-Host
+# Temporarily allow cargo stderr (progress output) without failing
+$ErrorActionPreference = "Continue"
+cargo @cargoArgs
+$buildExitCode = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
 
-if ($LASTEXITCODE -ne 0) {
+if ($buildExitCode -ne 0) {
     Write-Error "Build failed!"
-    exit $LASTEXITCODE
+    exit $buildExitCode
 }
 
 # === Phase 2: Locate Binary ===
@@ -67,7 +72,10 @@ if (-not $TestName) {
 Write-Host "==> [3/3] Running with CLEAN PATH to avoid DLL conflicts..."
 
 $OldPath = $env:PATH
-$env:PATH = "C:\Windows\System32;C:\Windows"
+# Use sanitized PATH that includes:
+# - System32/Windows: Core Windows functionality
+# - Git\cmd: git.exe (NOT Git\usr\bin or Git\mingw64\bin which contain conflicting DLLs)
+$env:PATH = "C:\Windows\System32;C:\Windows;C:\Program Files\Git\cmd"
 
 $runArgs = @("--nocapture")
 if ($Filter) {

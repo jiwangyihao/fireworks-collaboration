@@ -13,17 +13,26 @@ default-run = "fireworks-collaboration"
 name = "fireworks_collaboration_lib"
 
 [features]
-# 调整：默认不启用 tauri 相关依赖，便于直接 cargo test
-# 运行应用时使用: cargo run --features tauri-app 或 cargo tauri dev --features tauri-app
+# 调整：默认启用完整 tauri-app（包含 WebView UI）
+# 测试时可使用 --no-default-features --features tauri-core 避免 WebView2 加载
 default = ["tauri-app"]
-# 启用 tauri-app 时自动激活相关可选依赖
+
+# 完整应用模式（包含 WebView2 UI）
 tauri-app = [
+  "tauri-core",
+  "tauri/wry",
+  "tauri/common-controls-v6"
+]
+
+# 核心模式（不含 WebView2，用于测试避免 DLL 冲突）
+tauri-core = [
   "tauri",
   "tauri-plugin-opener",
   "tauri-plugin-shell",
   "tauri-plugin-fs",
   "tauri-plugin-http"
 ]
+
 # 基准测试（需手动启用）
 bench = []
 
@@ -31,8 +40,8 @@ bench = []
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# 可选 Tauri 依赖（运行应用时启用 feature=tauri-app）
-tauri = { version = "2", features = [], optional = true }
+# Tauri 核心依赖（禁用默认的 wry/webview2，由 feature flag 控制）
+tauri = { version = "2", default-features = false, optional = true }
 tauri-plugin-opener = { version = "2", optional = true }
 tauri-plugin-shell = { version = "2", optional = true }
 tauri-plugin-fs = { version = "2", optional = true }
