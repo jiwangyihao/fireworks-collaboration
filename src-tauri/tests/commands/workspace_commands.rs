@@ -80,3 +80,76 @@ fn test_apply_repository_reorder_updates_timestamp_on_success() {
     apply_repository_reorder(&mut ws, &ids).unwrap();
     assert_ne!(ws.updated_at, before);
 }
+
+// ============================================================================
+// WorkspaceInfo 和 RepositoryInfo 类型转换测试
+// ============================================================================
+
+use fireworks_collaboration_lib::app::commands::workspace::{RepositoryInfo, WorkspaceInfo};
+
+#[test]
+fn test_workspace_info_from_basic() {
+    let ws = build_workspace();
+    let info = WorkspaceInfo::from(&ws);
+
+    assert_eq!(info.name, "demo");
+    assert!(info.root_path.contains("demo"));
+    assert_eq!(info.repositories.len(), 3);
+}
+
+#[test]
+fn test_workspace_info_from_preserves_metadata() {
+    let mut ws = Workspace::new("test".to_string(), PathBuf::from("/test"));
+    ws.metadata.insert("key".to_string(), "value".to_string());
+
+    let info = WorkspaceInfo::from(&ws);
+
+    assert_eq!(info.metadata.get("key").unwrap(), "value");
+}
+
+#[test]
+fn test_repository_info_from_basic() {
+    let repo = RepositoryEntry::new(
+        "test-id".to_string(),
+        "Test Repo".to_string(),
+        PathBuf::from("test-path"),
+        "https://github.com/test/repo.git".to_string(),
+    );
+
+    let info = RepositoryInfo::from(&repo);
+
+    assert_eq!(info.id, "test-id");
+    assert_eq!(info.name, "Test Repo");
+    assert!(info.path.contains("test-path"));
+    assert_eq!(info.remote_url, "https://github.com/test/repo.git");
+    assert!(info.enabled); // Default is true
+}
+
+#[test]
+fn test_repository_info_from_with_tags() {
+    let mut repo = RepositoryEntry::new(
+        "id".to_string(),
+        "name".to_string(),
+        PathBuf::from("path"),
+        "url".to_string(),
+    );
+    repo.tags = vec!["tag1".to_string(), "tag2".to_string()];
+
+    let info = RepositoryInfo::from(&repo);
+
+    assert_eq!(info.tags.len(), 2);
+    assert!(info.tags.contains(&"tag1".to_string()));
+    assert!(info.tags.contains(&"tag2".to_string()));
+}
+
+#[test]
+fn test_workspace_info_repositories_count_matches() {
+    let ws = build_workspace();
+    let info = WorkspaceInfo::from(&ws);
+
+    assert_eq!(info.repositories.len(), ws.repositories.len());
+
+    // Verify first repository mapping
+    assert_eq!(info.repositories[0].id, ws.repositories[0].id);
+    assert_eq!(info.repositories[0].name, ws.repositories[0].name);
+}

@@ -11,7 +11,7 @@ use crate::core::http::{
 use super::super::types::SharedConfig;
 
 /// Redact authorization headers for logging purposes.
-pub(crate) fn redact_auth_in_headers(
+pub fn redact_auth_in_headers(
     mut headers: HashMap<String, String>,
     mask: bool,
 ) -> HashMap<String, String> {
@@ -32,7 +32,7 @@ pub(crate) fn redact_auth_in_headers(
 /// Classify error messages into categories.
 ///
 /// Returns a tuple of (category, message) for better error handling.
-pub(crate) fn classify_error_msg(e: &str) -> (&'static str, String) {
+pub fn classify_error_msg(e: &str) -> (&'static str, String) {
     let msg = e.to_string();
 
     if msg.contains("SAN whitelist mismatch") {
@@ -55,7 +55,7 @@ pub(crate) fn classify_error_msg(e: &str) -> (&'static str, String) {
 }
 
 /// Validate and parse URL for HTTP requests.
-fn validate_url(url: &str) -> Result<(hyper::Uri, String), String> {
+pub fn validate_url(url: &str) -> Result<(hyper::Uri, String), String> {
     let parsed = url
         .parse::<hyper::Uri>()
         .map_err(|e| format!("Input: invalid URL - {}", e))?;
@@ -72,7 +72,7 @@ fn validate_url(url: &str) -> Result<(hyper::Uri, String), String> {
 }
 
 /// Process redirect response.
-fn process_redirect(
+pub fn process_redirect(
     headers: &HashMap<String, String>,
     current_url: &str,
 ) -> Result<String, String> {
@@ -94,7 +94,7 @@ fn process_redirect(
 }
 
 /// Update request for redirect based on status code.
-fn update_request_for_redirect(input: &mut HttpRequestInput, status: u16, next_url: String) {
+pub fn update_request_for_redirect(input: &mut HttpRequestInput, status: u16, next_url: String) {
     input.url = next_url;
 
     match status {
