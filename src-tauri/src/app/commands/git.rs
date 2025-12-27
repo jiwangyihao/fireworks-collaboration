@@ -2,14 +2,10 @@
 
 use tauri::State;
 
+use crate::core::git::utils::{parse_depth, resolve_push_credentials};
 use crate::core::tasks::TaskKind;
 
 use super::super::types::{SharedCredentialFactory, TaskRegistryState};
-
-/// Helper to parse optional depth parameter from JSON value.
-fn parse_depth(depth: Option<serde_json::Value>) -> Option<u32> {
-    depth.and_then(|v| v.as_u64().map(|x| x as u32))
-}
 
 /// Clone a Git repository.
 ///
@@ -129,11 +125,10 @@ pub async fn git_push(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     // Determine final username and password
-    let (final_username, final_password) = if use_stored_credential.unwrap_or(false)
-        && username.is_none()
-        && password.is_none()
-    {
-        // Try to get credentials from storage
+    let use_stored = use_stored_credential.unwrap_or(false);
+    let should_fetch_stored = use_stored && username.is_none() && password.is_none();
+
+    let (stored_username, stored_password) = if should_fetch_stored {
         match try_get_git_credentials(&dest, &credential_factory).await {
             Ok(Some((u, p))) => {
                 tracing::info!(
@@ -145,7 +140,7 @@ pub async fn git_push(
             }
             Ok(None) => {
                 tracing::warn!(target="git", "No stored credentials found for {}, using provided credentials (which are likely empty)", dest);
-                (username.clone(), password.clone())
+                (None, None)
             }
             Err(e) => {
                 tracing::error!(
@@ -153,12 +148,20 @@ pub async fn git_push(
                     "Failed to retrieve stored credentials: {}, using provided credentials",
                     e
                 );
-                (username.clone(), password.clone())
+                (None, None)
             }
         }
     } else {
-        (username.clone(), password.clone())
+        (None, None)
     };
+
+    let (final_username, final_password) = resolve_push_credentials(
+        use_stored,
+        username,
+        password,
+        stored_username,
+        stored_password,
+    );
 
     let (id, token) = reg.create(TaskKind::GitPush {
         dest: dest.clone(),

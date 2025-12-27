@@ -10,6 +10,7 @@
 pub mod config;
 pub mod model;
 pub mod status;
+pub mod status_utils;
 pub mod storage;
 
 // 重新导出常用类型

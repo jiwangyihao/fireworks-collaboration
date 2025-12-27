@@ -19,3 +19,4 @@ mod git_tag_and_remote;
 mod opts;
 mod submodule;
 mod transport;
+mod utils;

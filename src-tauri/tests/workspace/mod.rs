@@ -8,6 +8,7 @@
 
 #[path = "../common/mod.rs"]
 pub(crate) mod common;
+mod status_utils_tests;
 
 use common::test_env::init_test_env;
 

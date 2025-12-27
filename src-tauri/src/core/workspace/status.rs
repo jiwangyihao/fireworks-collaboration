@@ -4,12 +4,15 @@
 //! including filtering, sorting, and cache management utilities.
 
 use super::model::{RepositoryEntry, Workspace, WorkspaceConfig};
+use super::status_utils::{
+    append_error, build_summary, case_insensitive_cmp, compare_optional_strings, derive_sync_state,
+    resolve_repository_path, working_state_rank,
+};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, FixedOffset, Utc};
 use git2::{BranchType, Repository as GitRepository, Status as GitStatus, StatusOptions};
 use serde::{Deserialize, Serialize};
 use std::{
-    cmp::Ordering,
     collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::{
@@ -710,96 +713,6 @@ fn commit_time_rfc3339(commit: &git2::Commit<'_>) -> Option<(String, i64)> {
         FixedOffset::east_opt(offset_seconds).unwrap_or_else(|| FixedOffset::east_opt(0).unwrap());
     let localized = utc.with_timezone(&offset);
     Some((localized.to_rfc3339(), utc.timestamp()))
-}
-
-fn derive_sync_state(current: &SyncState, ahead: u32, behind: u32, has_branch: bool) -> SyncState {
-    if !has_branch {
-        return match current {
-            SyncState::Detached => SyncState::Detached,
-            SyncState::Unknown => SyncState::Unknown,
-            _ => SyncState::Unknown,
-        };
-    }
-    if ahead > 0 && behind > 0 {
-        SyncState::Diverged
-    } else if ahead > 0 {
-        SyncState::Ahead
-    } else if behind > 0 {
-        SyncState::Behind
-    } else if matches!(current, SyncState::Detached) {
-        SyncState::Detached
-    } else {
-        SyncState::Clean
-    }
-}
-
-fn resolve_repository_path(root: &Path, repo_path: &Path) -> PathBuf {
-    if repo_path.is_absolute() {
-        repo_path.to_path_buf()
-    } else {
-        root.join(repo_path)
-    }
-}
-
-fn append_error(status: &mut RepositoryStatus, msg: impl Into<String>) {
-    let msg = msg.into();
-    if let Some(existing) = &mut status.error {
-        existing.push_str("; ");
-        existing.push_str(&msg);
-    } else {
-        status.error = Some(msg);
-    }
-}
-
-fn case_insensitive_cmp(a: &str, b: &str) -> Ordering {
-    a.to_lowercase().cmp(&b.to_lowercase())
-}
-
-fn compare_optional_strings(a: Option<&String>, b: Option<&String>) -> Ordering {
-    match (a, b) {
-        (Some(a_val), Some(b_val)) => case_insensitive_cmp(a_val, b_val),
-        (Some(_), None) => Ordering::Less,
-        (None, Some(_)) => Ordering::Greater,
-        (None, None) => Ordering::Equal,
-    }
-}
-
-fn working_state_rank(state: &WorkingTreeState) -> u8 {
-    match state {
-        WorkingTreeState::Clean => 0,
-        WorkingTreeState::Dirty => 1,
-        WorkingTreeState::Missing => 2,
-        WorkingTreeState::Error => 3,
-    }
-}
-
-fn build_summary(statuses: &[RepositoryStatus]) -> WorkspaceStatusSummary {
-    let mut summary = WorkspaceStatusSummary::default();
-
-    for status in statuses {
-        match status.working_state {
-            WorkingTreeState::Clean => summary.working_states.clean += 1,
-            WorkingTreeState::Dirty => summary.working_states.dirty += 1,
-            WorkingTreeState::Missing => summary.working_states.missing += 1,
-            WorkingTreeState::Error => summary.working_states.error += 1,
-        }
-
-        match status.sync_state {
-            SyncState::Clean => summary.sync_states.clean += 1,
-            SyncState::Ahead => summary.sync_states.ahead += 1,
-            SyncState::Behind => summary.sync_states.behind += 1,
-            SyncState::Diverged => summary.sync_states.diverged += 1,
-            SyncState::Detached => summary.sync_states.detached += 1,
-            SyncState::Unknown => summary.sync_states.unknown += 1,
-        }
-
-        if status.error.is_some() {
-            summary.error_repositories.push(status.repo_id.clone());
-        }
-    }
-
-    summary.error_count = summary.error_repositories.len();
-    summary
 }
 
 fn sanitize_ttl(ttl: u64) -> u64 {
