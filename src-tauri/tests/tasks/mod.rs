@@ -6,7 +6,9 @@ pub(crate) mod common;
 mod credential_file_store;
 mod git_conflict;
 mod git_operations;
+mod submodule_ops;
 mod workspace_batch;
+mod workspace_model;
 
 mod helpers; // Task helpers tests (from tasks_helpers.rs)
 mod ip_pool_fault_injection;
