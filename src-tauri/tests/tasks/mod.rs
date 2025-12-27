@@ -5,6 +5,7 @@ pub(crate) mod common;
 
 mod credential_file_store;
 mod git_conflict;
+mod git_operations;
 mod workspace_batch;
 
 mod helpers; // Task helpers tests (from tasks_helpers.rs)
