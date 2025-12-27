@@ -4,5 +4,5 @@ pub mod registry;
 pub mod retry;
 pub mod workspace_batch;
 
-pub use model::{TaskKind, TaskSnapshot};
+pub use model::{TaskKind, TaskSnapshot, TaskState};
 pub use registry::{SharedTaskRegistry, TaskRegistry};
