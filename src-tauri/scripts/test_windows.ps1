@@ -26,9 +26,8 @@ $ErrorActionPreference = "Stop"
 # === Phase 1: Build ===
 Write-Host "==> [1/3] Building tests (using full environment)..."
 
-# Build with tauri-core (no WebView2) to avoid DLL conflict on Windows
-# tauri-core includes Tauri types but not wry/WebView2 runtime
-$cargoArgs = @("test", "--no-run", "--no-default-features", "--features", "tauri-core")
+# Defaults to tauri-core (set in Cargo.toml) so Windows tests run safely by default
+$cargoArgs = @("test", "--no-run", "--workspace")
 if ($TestName) {
     $cargoArgs += @("--test", $TestName)
 }

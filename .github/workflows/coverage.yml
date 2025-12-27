@@ -65,7 +65,8 @@ jobs:
         working-directory: src-tauri
         run: |
           cargo llvm-cov --version
-          # --ignore-run-fail: 允许在部分测试失败时仍生成覆盖率报告（如网络相关的IP池测试）
+          # --ignore-run-fail: 允许在部分测试失败时仍生成覆盖率报告
+          # Note: Uses default features (tauri-core) from Cargo.toml to avoid Windows DLL conflicts
           cargo llvm-cov --lcov --output-path lcov.info --ignore-filename-regex '(tests|target|/.cargo/registry)' --workspace --ignore-run-fail
 
       - name: Soft gate (coverage thresholds)

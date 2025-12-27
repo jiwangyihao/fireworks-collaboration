@@ -13,9 +13,9 @@ default-run = "fireworks-collaboration"
 name = "fireworks_collaboration_lib"
 
 [features]
-# 默认启用完整 tauri-app（包含 WebView UI）
-# Windows 测试使用 --features tauri-core 避免 WebView2 DLL 冲突
-default = ["tauri-app"]
+# 默认启用 tauri-core 以支持 Windows 下直接运行 `cargo test`
+# 运行应用时请使用 `pnpm tauri dev` (会自动读取 tauri.conf.json 中的 feature 配置)
+default = ["tauri-core"]
 
 # 完整应用模式（包含 WebView2 UI）- 用于运行应用
 tauri-app = [
