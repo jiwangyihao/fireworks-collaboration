@@ -564,3 +564,235 @@ fn test_probe_method_serialization() {
     assert_eq!(http_json, "\"http\"");
     assert_eq!(tcp_json, "\"tcp\"");
 }
+
+// ============================================================================
+// tasks/model 测试
+// ============================================================================
+
+use fireworks_collaboration_lib::core::git::errors::ErrorCategory as TaskErrorCategory;
+use fireworks_collaboration_lib::core::tasks::model::{
+    TaskErrorEvent, TaskKind, TaskState, WorkspaceBatchOperation,
+};
+use uuid::Uuid;
+
+#[test]
+fn test_task_kind_as_str_covers_all_variants() {
+    let cases = vec![
+        (
+            TaskKind::GitClone {
+                repo: "".to_string(),
+                dest: "".to_string(),
+                depth: None,
+                filter: None,
+                strategy_override: None,
+                recurse_submodules: false,
+            },
+            "GitClone",
+        ),
+        (
+            TaskKind::GitFetch {
+                repo: "".to_string(),
+                dest: "".to_string(),
+                depth: None,
+                filter: None,
+                strategy_override: None,
+            },
+            "GitFetch",
+        ),
+        (
+            TaskKind::GitInit {
+                dest: "".to_string(),
+            },
+            "GitInit",
+        ),
+        (TaskKind::Unknown, "Unknown"),
+    ];
+
+    for (kind, expected) in cases {
+        assert_eq!(kind.as_str(), expected);
+    }
+}
+
+#[test]
+fn test_task_state_serialization() {
+    let states = vec![
+        (TaskState::Pending, "\"pending\""),
+        (TaskState::Running, "\"running\""),
+        (TaskState::Completed, "\"completed\""),
+        (TaskState::Failed, "\"failed\""),
+        (TaskState::Canceled, "\"canceled\""),
+    ];
+
+    for (state, expected_json) in states {
+        let json = serde_json::to_string(&state).unwrap();
+        assert_eq!(json, expected_json);
+    }
+}
+
+#[test]
+fn test_workspace_batch_operation_serialization() {
+    let ops = vec![
+        (WorkspaceBatchOperation::Clone, "\"clone\""),
+        (WorkspaceBatchOperation::Fetch, "\"fetch\""),
+        (WorkspaceBatchOperation::Push, "\"push\""),
+    ];
+
+    for (op, expected_json) in ops {
+        let json = serde_json::to_string(&op).unwrap();
+        assert_eq!(json, expected_json);
+    }
+}
+
+#[test]
+fn test_task_error_event_from_parts_categories() {
+    let task_id = Uuid::new_v4();
+    let categories = vec![
+        (TaskErrorCategory::Network, "Network"),
+        (TaskErrorCategory::Tls, "Tls"),
+        (TaskErrorCategory::Verify, "Verify"),
+        (TaskErrorCategory::Protocol, "Protocol"),
+        (TaskErrorCategory::Proxy, "Proxy"),
+        (TaskErrorCategory::Auth, "Auth"),
+        (TaskErrorCategory::Cancel, "Cancel"),
+        (TaskErrorCategory::Internal, "Internal"),
+    ];
+
+    for (cat, expected_str) in categories {
+        let event = TaskErrorEvent::from_parts(task_id, "GitClone", cat, "test error", None);
+        assert_eq!(event.category, expected_str);
+        assert_eq!(event.task_id, task_id);
+        assert_eq!(event.kind, "GitClone");
+        assert_eq!(event.message, "test error");
+    }
+}
+
+#[test]
+fn test_task_error_event_with_retry_count() {
+    let task_id = Uuid::new_v4();
+    let event = TaskErrorEvent::from_parts(
+        task_id,
+        "GitFetch",
+        TaskErrorCategory::Network,
+        "connection refused",
+        Some(3),
+    );
+
+    assert_eq!(event.retried_times, Some(3));
+}
+
+// ============================================================================
+// submodule/model 测试
+// ============================================================================
+
+use fireworks_collaboration_lib::core::submodule::{SubmoduleConfig, SubmoduleOperation};
+
+#[test]
+fn test_submodule_config_defaults() {
+    let config = SubmoduleConfig::default();
+
+    assert!(config.auto_recurse);
+    assert_eq!(config.max_depth, 5);
+    assert!(config.auto_init_on_clone);
+    assert!(config.recursive_update);
+    assert!(!config.parallel);
+    assert_eq!(config.max_parallel, 3);
+}
+
+#[test]
+fn test_submodule_operation_as_str() {
+    assert_eq!(SubmoduleOperation::Init.as_str(), "init");
+    assert_eq!(SubmoduleOperation::Update.as_str(), "update");
+    assert_eq!(SubmoduleOperation::Sync.as_str(), "sync");
+    assert_eq!(
+        SubmoduleOperation::RecursiveClone.as_str(),
+        "recursive_clone"
+    );
+}
+
+#[test]
+fn test_submodule_operation_serialization() {
+    let ops = vec![
+        (SubmoduleOperation::Init, "\"init\""),
+        (SubmoduleOperation::Update, "\"update\""),
+        (SubmoduleOperation::Sync, "\"sync\""),
+        (SubmoduleOperation::RecursiveClone, "\"recursiveClone\""),
+    ];
+
+    for (op, expected_json) in ops {
+        let json = serde_json::to_string(&op).unwrap();
+        assert_eq!(json, expected_json, "Failed for {:?}", op);
+    }
+}
+
+// ============================================================================
+// config/model ObservabilityLayer 测试
+// ============================================================================
+
+use fireworks_collaboration_lib::core::config::model::ObservabilityLayer;
+
+#[test]
+fn test_observability_layer_as_u8() {
+    assert_eq!(ObservabilityLayer::Basic.as_u8(), 0);
+    assert_eq!(ObservabilityLayer::Aggregate.as_u8(), 1);
+    assert_eq!(ObservabilityLayer::Export.as_u8(), 2);
+    assert_eq!(ObservabilityLayer::Ui.as_u8(), 3);
+    assert_eq!(ObservabilityLayer::Alerts.as_u8(), 4);
+    assert_eq!(ObservabilityLayer::Optimize.as_u8(), 5);
+}
+
+#[test]
+fn test_observability_layer_as_str() {
+    assert_eq!(ObservabilityLayer::Basic.as_str(), "basic");
+    assert_eq!(ObservabilityLayer::Aggregate.as_str(), "aggregate");
+    assert_eq!(ObservabilityLayer::Export.as_str(), "export");
+    assert_eq!(ObservabilityLayer::Ui.as_str(), "ui");
+    assert_eq!(ObservabilityLayer::Alerts.as_str(), "alerts");
+    assert_eq!(ObservabilityLayer::Optimize.as_str(), "optimize");
+}
+
+#[test]
+fn test_observability_layer_from_u8() {
+    assert_eq!(ObservabilityLayer::from_u8(0), ObservabilityLayer::Basic);
+    assert_eq!(
+        ObservabilityLayer::from_u8(1),
+        ObservabilityLayer::Aggregate
+    );
+    assert_eq!(ObservabilityLayer::from_u8(5), ObservabilityLayer::Optimize);
+    assert_eq!(
+        ObservabilityLayer::from_u8(100),
+        ObservabilityLayer::Optimize
+    ); // clamps
+}
+
+#[test]
+fn test_observability_layer_next_lower() {
+    assert_eq!(
+        ObservabilityLayer::Optimize.next_lower(),
+        Some(ObservabilityLayer::Alerts)
+    );
+    assert_eq!(
+        ObservabilityLayer::Alerts.next_lower(),
+        Some(ObservabilityLayer::Ui)
+    );
+    assert_eq!(ObservabilityLayer::Basic.next_lower(), None);
+}
+
+#[test]
+fn test_observability_layer_next_higher() {
+    assert_eq!(
+        ObservabilityLayer::Basic.next_higher(),
+        Some(ObservabilityLayer::Aggregate)
+    );
+    assert_eq!(
+        ObservabilityLayer::Alerts.next_higher(),
+        Some(ObservabilityLayer::Optimize)
+    );
+    assert_eq!(ObservabilityLayer::Optimize.next_higher(), None);
+}
+
+#[test]
+fn test_observability_layer_ordering() {
+    assert!(ObservabilityLayer::Basic < ObservabilityLayer::Aggregate);
+    assert!(ObservabilityLayer::Aggregate < ObservabilityLayer::Export);
+    assert!(ObservabilityLayer::Optimize > ObservabilityLayer::Alerts);
+}
