@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use tracing::{debug, error, info, warn};
 
-use super::super::types::{SharedConfig, TaskRegistryState};
+use super::super::types::{AppHandle, SharedConfig, TaskRegistryState, TauriRuntime};
 use crate::core::tasks::{
     model::WorkspaceBatchOperation,
     workspace_batch::{
@@ -551,7 +551,7 @@ pub async fn workspace_batch_clone(
     manager: State<'_, SharedWorkspaceManager>,
     reg: State<'_, TaskRegistryState>,
     config: State<'_, SharedConfig>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     info!("Starting workspace batch clone");
 
@@ -611,7 +611,7 @@ pub async fn workspace_batch_clone(
     });
 
     reg.clone().spawn_workspace_batch_task(
-        Some(app),
+        Some(AppHandle::from_tauri(app.clone())),
         parent_id,
         parent_token,
         operation,
@@ -629,7 +629,7 @@ pub async fn workspace_batch_fetch(
     manager: State<'_, SharedWorkspaceManager>,
     reg: State<'_, TaskRegistryState>,
     config: State<'_, SharedConfig>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     info!("Starting workspace batch fetch");
 
@@ -691,7 +691,7 @@ pub async fn workspace_batch_fetch(
     });
 
     reg.clone().spawn_workspace_batch_task(
-        Some(app),
+        Some(AppHandle::from_tauri(app.clone())),
         parent_id,
         parent_token,
         operation,
@@ -709,7 +709,7 @@ pub async fn workspace_batch_push(
     manager: State<'_, SharedWorkspaceManager>,
     reg: State<'_, TaskRegistryState>,
     config: State<'_, SharedConfig>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     info!("Starting workspace batch push");
 
@@ -764,7 +764,7 @@ pub async fn workspace_batch_push(
     });
 
     reg.clone().spawn_workspace_batch_task(
-        Some(app),
+        Some(AppHandle::from_tauri(app.clone())),
         parent_id,
         parent_token,
         operation,

@@ -35,45 +35,33 @@ cargo llvm-cov --manifest-path src-tauri/Cargo.toml --no-report > NUL 2>&1 || ec
 
 ## Windows 测试环境
 
-Windows 平台上直接运行 `cargo test` 可能因 DLL 冲突（`0xc0000139`）导致 `git` 等测试套件崩溃。
+Windows 平台上直接运行 `cargo test` 可能因 DLL 冲突（`0xc0000139`）导致 `git` 等测试流程崩溃。该冲突主要由 Tauri 的 WebView2 组件与 Git 依赖库在加载系统 DLL 时产生冲突引起。
 
-### 原因
+### 解决方案：`tauri-core` 特性
 
-`git2-rs` 依赖的 `libgit2`/`zlib` 等库可能加载到与 Git for Windows 等工具冲突的系统 DLL。
+本项目引入了 `tauri-core` 特性，专门用于无 UI 环境下的核心逻辑测试。该特性通过禁用 Tauri 的默认 UI 依赖（如 `wry`）来彻底消除 DLL 冲突。
 
-### 解决方案
-
-**方法 A: 使用专用脚本（推荐）**
+**推荐做法：使用专用脚本**
 
 ```powershell
-# 运行所有测试
+# 该脚本会自动启用 --no-default-features --features tauri-core 并处理 PATH 环境
 ./scripts/test_windows.ps1
-
-# 运行特定测试套件
-./scripts/test_windows.ps1 -TestName commands
-./scripts/test_windows.ps1 -TestName credential
-
-# 过滤到特定测试函数
-./scripts/test_windows.ps1 -TestName git -Filter my_test_function
 ```
 
-该脚本会自动隔离 PATH 环境，确保测试二进制文件在干净环境中运行。
-
-**方法 B: 手动隔离运行**
+**手动运行测试：**
 
 ```powershell
-# 1. 构建但不运行
-cargo test --test git --no-run
+cargo test --no-default-features --features tauri-core --test <test_name>
+```
 
-# 2. 找到最新的测试 exe
-$exe = Get-ChildItem target/debug/deps/git-*.exe | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+**生成覆盖率报告：**
 
-# 3. 设置干净 PATH 并运行
-$env:PATH = "C:\Windows\System32;C:\Windows"
-& $exe.FullName --nocapture
+```powershell
+cargo llvm-cov --no-default-features --features tauri-core --workspace --lcov --output-path lcov.info
 ```
 
 ### 已知限制
 
-- 需要预先安装 `cmake`（用于静态链接 `zlib-ng`）。
-- 某些测试依赖系统上的 `git` CLI，在纯净 PATH 下会失败（这是预期行为，可在 CI 补充）。
+- **无 UI 交互**: 在 `tauri-core` 模式下，所有涉及 `tauri::Window` 或 WebView2 的操作将被跳过或 Mock。
+- **环境依赖**: 需要预先安装 `cmake`（用于静态链接底层库）。
+- **PATH 隔离**: 脚本 `test_windows.ps1` 会尝试隔离系统 PATH 以进一步提高稳定性，但仍需确保 Git 等工具在 PATH 中可用（脚本已做自动处理）。

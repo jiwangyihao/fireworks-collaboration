@@ -1,13 +1,18 @@
 //! Application setup and initialization.
 
+// Imports only needed for the full app mode (with wry/WebView2)
+#[cfg(feature = "tauri-app")]
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
 
+#[cfg(feature = "tauri-app")]
 use dirs_next as dirs;
+#[cfg(feature = "tauri-app")]
 use tauri::Manager;
 
+#[cfg(feature = "tauri-app")]
 use crate::{
     core::{
         config::{loader as cfg_loader, model::AppConfig},
@@ -19,6 +24,7 @@ use crate::{
     logging,
 };
 
+#[cfg(feature = "tauri-app")]
 use super::{
     commands::credential::initialize_credential_store,
     types::{
@@ -32,6 +38,10 @@ use super::{
 ///
 /// This function sets up logging, configures plugins, registers command handlers,
 /// and initializes application state including configuration, task registry, and IP pool.
+///
+/// Note: This function requires the `tauri-app` feature (which includes wry/WebView2).
+/// For tests without UI, use `tauri-core` feature instead.
+#[cfg(feature = "tauri-app")]
 pub fn run() {
     // Initialize logging system
     logging::init_logging();
@@ -151,6 +161,7 @@ pub fn run() {
 }
 
 /// Setup application state including configuration and IP pool.
+#[cfg(feature = "tauri-app")]
 fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Determine configuration base directory
     let base_dir: PathBuf = app
@@ -242,14 +253,16 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
                 error = %err,
                 "Failed to initialize credential store, attempting fallback to memory"
             );
-            
+
             // Fallback to memory
-            let mem_config = cred_config.clone().with_storage(crate::core::credential::config::StorageType::Memory);
+            let mem_config = cred_config
+                .clone()
+                .with_storage(crate::core::credential::config::StorageType::Memory);
             match initialize_credential_store(&mem_config) {
                 Ok(store) => {
                     tracing::info!(target = "credential", "Fallback to memory store successful");
                     Some(store)
-                },
+                }
                 Err(e) => {
                     tracing::error!(target="credential", error=%e, "Memory store fallback failed");
                     None
@@ -299,6 +312,7 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
 /// Get fallback configuration directory.
 ///
 /// This is used when the standard app config directory cannot be determined.
+#[cfg(feature = "tauri-app")]
 fn get_fallback_config_dir() -> PathBuf {
     let identifier = "top.jwyihao.fireworks-collaboration";
 

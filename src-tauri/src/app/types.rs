@@ -8,6 +8,15 @@ use crate::core::{
     config::model::AppConfig, ip_pool::IpPool, proxy::ProxyManager, tasks::SharedTaskRegistry,
 };
 
+// Re-export AppHandle from events::emitter which handles cfg conditionally
+/// Type alias for the Tauri runtime used in the application.
+#[cfg(feature = "tauri-app")]
+pub type TauriRuntime = tauri::Wry;
+#[cfg(not(feature = "tauri-app"))]
+pub type TauriRuntime = tauri::test::MockRuntime;
+
+pub use crate::events::emitter::AppHandle;
+
 // ===== OAuth Types =====
 
 /// OAuth callback data received from the authorization server.

@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::core::tasks::{TaskKind, TaskSnapshot};
 
-use super::super::types::TaskRegistryState;
+use super::super::types::{AppHandle, TaskRegistryState, TauriRuntime};
 
 /// List all tasks in the registry.
 #[tauri::command(rename_all = "camelCase")]
@@ -36,9 +36,10 @@ pub async fn task_cancel(id: String, reg: State<'_, TaskRegistryState>) -> Resul
 pub async fn task_start_sleep(
     ms: u64,
     reg: State<'_, TaskRegistryState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     let (id, token) = reg.create(TaskKind::Sleep { ms });
-    reg.clone().spawn_sleep_task(Some(app), id, token, ms);
+    reg.clone()
+        .spawn_sleep_task(Some(AppHandle::from_tauri(app.clone())), id, token, ms);
     Ok(id.to_string())
 }

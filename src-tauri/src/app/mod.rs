@@ -25,13 +25,14 @@
 //! app::run();
 //! ```
 
-#![cfg(feature = "tauri-app")]
+#![cfg(feature = "tauri-core")]
 
 pub mod commands;
 pub mod setup;
 pub mod types;
 
-// Re-export the main run function
+// Re-export the main run function (only with tauri-app since it requires wry)
+#[cfg(feature = "tauri-app")]
 pub use setup::run;
 
 // Re-export commonly used types

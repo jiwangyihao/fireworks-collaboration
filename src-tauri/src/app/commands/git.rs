@@ -5,7 +5,9 @@ use tauri::State;
 use crate::core::git::utils::{parse_depth, resolve_push_credentials};
 use crate::core::tasks::TaskKind;
 
-use super::super::types::{SharedCredentialFactory, TaskRegistryState};
+// Command functions use raw tauri::AppHandle for CommandArg trait compatibility,
+// then convert to wrapper for spawn calls
+use super::super::types::{AppHandle, SharedCredentialFactory, TaskRegistryState, TauriRuntime};
 
 /// Clone a Git repository.
 ///
@@ -25,7 +27,7 @@ pub async fn git_clone(
     strategy_override: Option<serde_json::Value>,
     recurse_submodules: Option<bool>,
     reg: State<'_, TaskRegistryState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     let depth_parsed = parse_depth(depth.clone());
     let recurse = recurse_submodules.unwrap_or(false);
@@ -40,7 +42,7 @@ pub async fn git_clone(
     });
 
     reg.clone().spawn_git_clone_task_with_opts(
-        Some(app),
+        Some(AppHandle::from_tauri(app.clone())),
         id,
         token,
         repo,
@@ -73,7 +75,7 @@ pub async fn git_fetch(
     filter: Option<String>,
     strategy_override: Option<serde_json::Value>,
     reg: State<'_, TaskRegistryState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     let depth_parsed = parse_depth(depth.clone());
 
@@ -86,7 +88,7 @@ pub async fn git_fetch(
     });
 
     reg.clone().spawn_git_fetch_task_with_opts(
-        Some(app),
+        Some(AppHandle::from_tauri(app.clone())),
         id,
         token,
         repo,
@@ -122,7 +124,7 @@ pub async fn git_push(
     strategy_override: Option<serde_json::Value>,
     reg: State<'_, TaskRegistryState>,
     credential_factory: State<'_, SharedCredentialFactory>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     // Determine final username and password
     let use_stored = use_stored_credential.unwrap_or(false);
@@ -173,7 +175,7 @@ pub async fn git_push(
     });
 
     reg.clone().spawn_git_push_task(
-        Some(app),
+        Some(AppHandle::from_tauri(app.clone())),
         id,
         token,
         dest,
@@ -337,10 +339,11 @@ pub fn parse_git_host(url: &str) -> Result<String, String> {
 pub async fn git_init(
     dest: String,
     reg: State<'_, TaskRegistryState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     let (id, token) = reg.create(TaskKind::GitInit { dest: dest.clone() });
-    reg.clone().spawn_git_init_task(Some(app), id, token, dest);
+    reg.clone()
+        .spawn_git_init_task(Some(AppHandle::from_tauri(app.clone())), id, token, dest);
     Ok(id.to_string())
 }
 
@@ -354,15 +357,20 @@ pub async fn git_add(
     dest: String,
     paths: Vec<String>,
     reg: State<'_, TaskRegistryState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     let (id, token) = reg.create(TaskKind::GitAdd {
         dest: dest.clone(),
         paths: paths.clone(),
     });
 
-    reg.clone()
-        .spawn_git_add_task(Some(app), id, token, dest, paths);
+    reg.clone().spawn_git_add_task(
+        Some(AppHandle::from_tauri(app.clone())),
+        id,
+        token,
+        dest,
+        paths,
+    );
 
     Ok(id.to_string())
 }
@@ -383,7 +391,7 @@ pub async fn git_commit(
     author_name: Option<String>,
     author_email: Option<String>,
     reg: State<'_, TaskRegistryState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     let allow_empty_flag = allow_empty.unwrap_or(false);
 
@@ -396,7 +404,7 @@ pub async fn git_commit(
     });
 
     reg.clone().spawn_git_commit_task(
-        Some(app),
+        Some(AppHandle::from_tauri(app.clone())),
         id,
         token,
         dest,
@@ -423,7 +431,7 @@ pub async fn git_branch(
     checkout: Option<bool>,
     force: Option<bool>,
     reg: State<'_, TaskRegistryState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     let checkout_flag = checkout.unwrap_or(false);
     let force_flag = force.unwrap_or(false);
@@ -435,8 +443,15 @@ pub async fn git_branch(
         force: force_flag,
     });
 
-    reg.clone()
-        .spawn_git_branch_task(Some(app), id, token, dest, name, checkout_flag, force_flag);
+    reg.clone().spawn_git_branch_task(
+        Some(AppHandle::from_tauri(app.clone())),
+        id,
+        token,
+        dest,
+        name,
+        checkout_flag,
+        force_flag,
+    );
 
     Ok(id.to_string())
 }
@@ -453,7 +468,7 @@ pub async fn git_checkout(
     reference: String,
     create: Option<bool>,
     reg: State<'_, TaskRegistryState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     let create_flag = create.unwrap_or(false);
 
@@ -463,8 +478,14 @@ pub async fn git_checkout(
         create: create_flag,
     });
 
-    reg.clone()
-        .spawn_git_checkout_task(Some(app), id, token, dest, reference, create_flag);
+    reg.clone().spawn_git_checkout_task(
+        Some(AppHandle::from_tauri(app.clone())),
+        id,
+        token,
+        dest,
+        reference,
+        create_flag,
+    );
 
     Ok(id.to_string())
 }
@@ -485,7 +506,7 @@ pub async fn git_tag(
     annotated: Option<bool>,
     force: Option<bool>,
     reg: State<'_, TaskRegistryState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     let annotated_flag = annotated.unwrap_or(false);
     let force_flag = force.unwrap_or(false);
@@ -499,7 +520,7 @@ pub async fn git_tag(
     });
 
     reg.clone().spawn_git_tag_task(
-        Some(app),
+        Some(AppHandle::from_tauri(app.clone())),
         id,
         token,
         dest,
@@ -524,7 +545,7 @@ pub async fn git_remote_set(
     name: String,
     url: String,
     reg: State<'_, TaskRegistryState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     let (id, token) = reg.create(TaskKind::GitRemoteSet {
         dest: dest.clone(),
@@ -532,8 +553,14 @@ pub async fn git_remote_set(
         url: url.clone(),
     });
 
-    reg.clone()
-        .spawn_git_remote_set_task(Some(app), id, token, dest, name, url);
+    reg.clone().spawn_git_remote_set_task(
+        Some(AppHandle::from_tauri(app.clone())),
+        id,
+        token,
+        dest,
+        name,
+        url,
+    );
 
     Ok(id.to_string())
 }
@@ -550,7 +577,7 @@ pub async fn git_remote_add(
     name: String,
     url: String,
     reg: State<'_, TaskRegistryState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     let (id, token) = reg.create(TaskKind::GitRemoteAdd {
         dest: dest.clone(),
@@ -558,8 +585,14 @@ pub async fn git_remote_add(
         url: url.clone(),
     });
 
-    reg.clone()
-        .spawn_git_remote_add_task(Some(app), id, token, dest, name, url);
+    reg.clone().spawn_git_remote_add_task(
+        Some(AppHandle::from_tauri(app.clone())),
+        id,
+        token,
+        dest,
+        name,
+        url,
+    );
 
     Ok(id.to_string())
 }
@@ -574,15 +607,20 @@ pub async fn git_remote_remove(
     dest: String,
     name: String,
     reg: State<'_, TaskRegistryState>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     let (id, token) = reg.create(TaskKind::GitRemoteRemove {
         dest: dest.clone(),
         name: name.clone(),
     });
 
-    reg.clone()
-        .spawn_git_remote_remove_task(Some(app), id, token, dest, name);
+    reg.clone().spawn_git_remote_remove_task(
+        Some(AppHandle::from_tauri(app.clone())),
+        id,
+        token,
+        dest,
+        name,
+    );
 
     Ok(id.to_string())
 }

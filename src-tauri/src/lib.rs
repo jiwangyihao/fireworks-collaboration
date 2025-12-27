@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 #![deny(unused_imports)]
 
-#[cfg(feature = "tauri-app")]
+#[cfg(any(feature = "tauri-app", feature = "tauri-core"))]
 pub mod app;
 pub mod core;
 pub mod events;
