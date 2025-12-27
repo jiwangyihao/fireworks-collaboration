@@ -33,7 +33,6 @@ pub struct CustomHttpsSubtransport {
     pub(super) pool: Arc<Mutex<IpPool>>,
 }
 
-#[cfg(not(feature = "tauri-app"))]
 pub mod testing {
     //! Wrapper that exposes the custom HTTP subtransport to integration tests.
     use super::*;

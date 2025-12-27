@@ -1,4 +1,3 @@
-#![cfg(not(feature = "tauri-app"))]
 //! Git 基础操作综合测试
 //! 合并了 `git_clone_core.rs`, `git_init_and_repo_structure.rs`,
 //! `git_clone_partial_filter.rs`, `git_fetch_partial_filter.rs`

@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! Git strategy override tests focused on HTTP and retry overrides after TLS removal.
+﻿//! Git strategy override tests focused on HTTP and retry overrides after TLS removal.
 
 use super::common::{
     event_assert::{expect_optional_tags_subsequence, expect_subsequence},

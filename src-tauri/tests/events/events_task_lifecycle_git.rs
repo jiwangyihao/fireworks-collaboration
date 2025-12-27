@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! 聚合测试：Git Task Lifecycle (简化 & 去冗余版)
+﻿//! 聚合测试：Git Task Lifecycle (简化 & 去冗余版)
 //! ------------------------------------------------------------
 //! 历史来源（多文件已聚合 -> 单文件矩阵）：
 //!   * success / failure / cancel / push diff / metrics 现合并为统一矩阵测试 + 单独 metrics。

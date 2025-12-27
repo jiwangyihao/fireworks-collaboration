@@ -1,0 +1,2 @@
+[target.x86_64-pc-windows-msvc]
+runner = "scripts/safe_test_runner.bat"

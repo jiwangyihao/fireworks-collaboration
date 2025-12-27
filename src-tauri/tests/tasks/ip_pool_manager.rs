@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! IP Pool Manager 集成测试
+﻿//! IP Pool Manager 集成测试
 //!
 //! 测试 IP 池管理器的全生命周期功能。
 

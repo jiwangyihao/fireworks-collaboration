@@ -26,7 +26,6 @@ pub use metrics::{
     FallbackEventRecord,
 };
 
-#[cfg(not(feature = "tauri-app"))]
 pub mod testing {
     //! Aggregated transport testing helpers available to integration tests.
     pub use super::runtime::testing::{auto_disable_guard, reset_auto_disable};

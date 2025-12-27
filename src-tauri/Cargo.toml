@@ -15,7 +15,7 @@ name = "fireworks_collaboration_lib"
 [features]
 # 调整：默认不启用 tauri 相关依赖，便于直接 cargo test
 # 运行应用时使用: cargo run --features tauri-app 或 cargo tauri dev --features tauri-app
-default = []
+default = ["tauri-app"]
 # 启用 tauri-app 时自动激活相关可选依赖
 tauri-app = [
   "tauri",
@@ -64,7 +64,7 @@ ipnet = "2"
 ## MP0.4: 移除 gix 依赖，统一到 git2-rs
 
 # 新增：git2-rs（MP0.1 引入，仅骨架，不改变行为）
-git2 = { version = "0.19" }
+git2 = { version = "0.19", default-features = false, features = ["https", "openssl-probe", "vendored-openssl", "vendored-libgit2", "zlib-ng-compat"] }
 dashmap = "5"
 rand = { version = "0.8" }
 dirs-next = "2"

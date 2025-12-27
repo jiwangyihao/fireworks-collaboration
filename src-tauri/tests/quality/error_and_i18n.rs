@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! 聚合测试：Error Mapping & i18n (Roadmap 12.14)
+﻿//! 聚合测试：Error Mapping & i18n (Roadmap 12.14)
 //! ------------------------------------------------------------
 //! Phase4 Metrics (属性测试集中 v1.17)：
 //!   * Added sections (props): `strategy_props` / `retry_props` / `partial_filter_props`

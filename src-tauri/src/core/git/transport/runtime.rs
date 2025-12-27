@@ -205,7 +205,6 @@ fn push_sample(state: &mut AutoDisableState, sample: Sample) {
     state.samples.push_back(sample);
 }
 
-#[cfg(any(test, not(feature = "tauri-app")))]
 pub(crate) fn reset_auto_disable_internal() {
     if let Ok(mut guard) = state().lock() {
         guard.samples.clear();
@@ -213,7 +212,6 @@ pub(crate) fn reset_auto_disable_internal() {
     }
 }
 
-#[cfg(any(test, not(feature = "tauri-app")))]
 pub(crate) fn auto_disable_guard_internal() -> &'static Mutex<()> {
     static GUARD: OnceLock<Mutex<()>> = OnceLock::new();
     GUARD.get_or_init(|| Mutex::new(()))
@@ -229,7 +227,6 @@ pub(crate) fn test_reset_auto_disable() {
     reset_auto_disable_internal();
 }
 
-#[cfg(not(feature = "tauri-app"))]
 pub mod testing {
     //! Exposes auto-disable helpers for integration tests.
     use super::*;

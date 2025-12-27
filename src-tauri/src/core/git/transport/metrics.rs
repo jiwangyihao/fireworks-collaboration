@@ -276,13 +276,10 @@ pub fn finish_and_store(rec: &mut TimingRecorder) {
     collector().record(&rec.capture);
 }
 
-// Test-only override API
-#[cfg(not(feature = "tauri-app"))]
+// Test-only override API (for integration tests)
 use std::sync::atomic::{AtomicU8, Ordering};
-#[cfg(not(feature = "tauri-app"))]
 #[no_mangle]
 pub static TEST_METRICS_OVERRIDE: AtomicU8 = AtomicU8::new(0);
-#[cfg(not(feature = "tauri-app"))]
 pub fn test_override_metrics_enabled(v: Option<bool>) {
     match v {
         None => TEST_METRICS_OVERRIDE.store(0, Ordering::Relaxed),

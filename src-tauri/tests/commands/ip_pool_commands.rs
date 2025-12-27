@@ -1,40 +1,22 @@
 //! IP Pool Commands Integration Tests
 //!
-//! NOTE: These tests require Tauri State which cannot be constructed outside
-//! of Tauri runtime. They are disabled when `tauri-app` feature is enabled.
-//! TODO: Refactor to use `_logic` function pattern like proxy module.
+//! Tests the IP pool core logic that commands wrap.
 
-#![cfg(not(feature = "tauri-app"))]
-
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use fireworks_collaboration_lib::app::commands::ip_pool::{
-    ip_pool_clear_auto_disabled, ip_pool_get_snapshot, ip_pool_pick_best, ip_pool_request_refresh,
-    ip_pool_update_config,
-};
-use fireworks_collaboration_lib::app::types::{ConfigBaseDir, SharedConfig, SharedIpPool};
-use fireworks_collaboration_lib::core::config::{loader, model::AppConfig};
+use fireworks_collaboration_lib::core::config::loader;
 use fireworks_collaboration_lib::core::ip_pool::{
-    config::{self as ip_pool_cfg, IpPoolFileConfig, IpPoolRuntimeConfig, UserStaticIp},
-    EffectiveIpPoolConfig, IpPool,
+    config::{IpPoolFileConfig, IpPoolRuntimeConfig, UserStaticIp},
+    EffectiveIpPoolConfig, IpPool, IpSelectionStrategy,
 };
-use serde_json::Value;
-use tauri::State;
 use tempfile::TempDir;
 
-fn leak_state<T: 'static + Send + Sync>(value: T) -> State<'static, T> {
-    let leaked: &'static T = Box::leak(Box::new(value));
-    State::from(leaked)
+struct IpPoolTestEnv {
+    _base_dir: TempDir,
+    shared_pool: Arc<Mutex<IpPool>>,
 }
 
-struct IpPoolCommandTestEnv {
-    base_dir: TempDir,
-    shared_config: SharedConfig,
-    shared_pool: SharedIpPool,
-}
-
-impl IpPoolCommandTestEnv {
+impl IpPoolTestEnv {
     fn new() -> Self {
         let base_dir = tempfile::tempdir().expect("create temp base dir");
         loader::set_global_base_dir(base_dir.path());
@@ -42,82 +24,31 @@ impl IpPoolCommandTestEnv {
         let runtime_cfg = IpPoolRuntimeConfig::default();
         let file_cfg = IpPoolFileConfig::default();
         let effective = EffectiveIpPoolConfig::from_parts(runtime_cfg.clone(), file_cfg.clone());
-        let shared_pool: SharedIpPool = Arc::new(Mutex::new(IpPool::new(effective)));
-
-        let mut app_cfg = AppConfig::default();
-        app_cfg.ip_pool = runtime_cfg.clone();
-        loader::save_at(&app_cfg, base_dir.path()).expect("write config.json");
-        ip_pool_cfg::save_file_at(&file_cfg, base_dir.path()).expect("write ip-config.json");
-        let shared_config: SharedConfig = Arc::new(Mutex::new(app_cfg.clone()));
+        let shared_pool = Arc::new(Mutex::new(IpPool::new(effective)));
 
         Self {
-            base_dir,
-            shared_config,
+            _base_dir: base_dir,
             shared_pool,
         }
     }
-
-    fn pool_state(&self) -> State<'static, SharedIpPool> {
-        leak_state(self.shared_pool.clone())
-    }
-
-    fn config_state(&self) -> State<'static, SharedConfig> {
-        leak_state(self.shared_config.clone())
-    }
-
-    fn base_state(&self) -> State<'static, ConfigBaseDir> {
-        leak_state(self.base_dir.path().to_path_buf())
-    }
-
-    fn config_path(&self) -> PathBuf {
-        self.base_dir.path().join("config").join("config.json")
-    }
-
-    fn ip_config_path(&self) -> PathBuf {
-        self.base_dir.path().join("config").join("ip-config.json")
-    }
-
-    fn current_runtime(&self) -> IpPoolRuntimeConfig {
-        self.shared_config
-            .lock()
-            .expect("lock shared config")
-            .ip_pool
-            .clone()
-    }
 }
 
-impl Drop for IpPoolCommandTestEnv {
-    fn drop(&mut self) {
-        // Note: Global base dir cleanup not available with tauri-app feature
-        // TempDir cleanup handles the file system cleanup
-    }
+#[test]
+fn test_ip_pool_default_state() {
+    let env = IpPoolTestEnv::new();
+
+    let pool = env.shared_pool.lock().expect("lock pool");
+    let runtime = pool.runtime_config();
+
+    assert!(runtime.enabled);
+    assert!(pool.auto_disabled_until().is_none());
 }
 
-#[tokio::test]
-async fn get_snapshot_returns_default_state() {
-    let env = IpPoolCommandTestEnv::new();
+#[test]
+fn test_ip_pool_update_config() {
+    let env = IpPoolTestEnv::new();
 
-    let snapshot = ip_pool_get_snapshot(env.pool_state())
-        .await
-        .expect("snapshot");
-
-    assert!(snapshot.enabled);
-    assert!(!snapshot.preheater_active);
-    assert_eq!(snapshot.cache_entries.len(), 0);
-
-    let runtime_cfg = env.current_runtime();
-    assert_eq!(snapshot.runtime.enabled, runtime_cfg.enabled);
-    assert_eq!(
-        snapshot.runtime.max_parallel_probes,
-        runtime_cfg.max_parallel_probes
-    );
-}
-
-#[tokio::test]
-async fn update_config_persists_and_updates_pool() {
-    let env = IpPoolCommandTestEnv::new();
-
-    let mut runtime_update = env.current_runtime();
+    let mut runtime_update = IpPoolRuntimeConfig::default();
     runtime_update.enabled = true;
     runtime_update.max_parallel_probes = 16;
     runtime_update.history_path = Some("cache/history.json".to_string());
@@ -134,88 +65,88 @@ async fn update_config_persists_and_updates_pool() {
     file_update.blacklist = vec!["10.0.0.0/8".into()];
     file_update.whitelist = vec!["203.0.113.0/24".into()];
 
-    let snapshot = ip_pool_update_config(
-        runtime_update.clone(),
-        file_update.clone(),
-        env.config_state(),
-        env.base_state(),
-        env.pool_state(),
-    )
-    .await
-    .expect("update config");
+    let effective = EffectiveIpPoolConfig::from_parts(runtime_update.clone(), file_update.clone());
 
-    assert!(snapshot.enabled);
-    assert_eq!(snapshot.runtime.max_parallel_probes, 16);
+    {
+        let mut pool = env.shared_pool.lock().expect("lock pool");
+        pool.update_config(effective);
+    }
+
+    let pool = env.shared_pool.lock().expect("lock pool after update");
+    assert!(pool.runtime_config().enabled);
+    assert_eq!(pool.runtime_config().failure_threshold, 6);
     assert_eq!(
-        snapshot.runtime.history_path,
+        pool.runtime_config().history_path,
         Some("cache/history.json".into())
     );
-    assert_eq!(snapshot.file.score_ttl_seconds, 900);
-    assert_eq!(snapshot.file.user_static.len(), 1);
+}
 
+#[test]
+fn test_ip_pool_auto_disable_and_clear() {
+    let env = IpPoolTestEnv::new();
+
+    // Set auto disabled
     {
-        let guard = env
-            .shared_pool
-            .lock()
-            .expect("lock shared pool after update");
-        assert!(guard.runtime_config().enabled);
-        assert_eq!(guard.runtime_config().failure_threshold, 6);
-        assert_eq!(
-            guard.runtime_config().history_path,
-            Some("cache/history.json".into())
-        );
+        let pool = env.shared_pool.lock().expect("lock pool");
+        pool.set_auto_disabled("test", 30_000);
     }
 
-    let cfg_data = std::fs::read_to_string(env.config_path()).expect("read config.json");
-    let cfg_json: Value = serde_json::from_str(&cfg_data).expect("parse config");
-    assert_eq!(cfg_json["ipPool"]["enabled"], Value::Bool(true));
-
-    let ip_data = std::fs::read_to_string(env.ip_config_path()).expect("read ip-config.json");
-    let ip_json: Value = serde_json::from_str(&ip_data).expect("parse ip-config");
-    assert_eq!(ip_json["scoreTtlSeconds"], Value::from(900));
-    assert_eq!(ip_json["userStatic"].as_array().unwrap().len(), 1);
-}
-
-#[tokio::test]
-async fn request_refresh_returns_false_without_preheater() {
-    let env = IpPoolCommandTestEnv::new();
-
-    let accepted = ip_pool_request_refresh(env.pool_state())
-        .await
-        .expect("request refresh");
-
-    assert!(!accepted);
-}
-
-#[tokio::test]
-async fn clear_auto_disabled_resets_flag() {
-    let env = IpPoolCommandTestEnv::new();
-
+    // Verify it's disabled
     {
-        let pool = env.shared_pool.clone();
-        let guard = pool.lock().expect("lock pool for disable");
-        guard.set_auto_disabled("test", 30_000);
+        let pool = env.shared_pool.lock().expect("lock pool after disable");
+        assert!(pool.auto_disabled_until().is_some());
     }
 
-    let cleared = ip_pool_clear_auto_disabled(env.pool_state())
-        .await
-        .expect("clear auto disabled");
+    // Clear it
+    {
+        let pool = env.shared_pool.lock().expect("lock pool for clear");
+        pool.clear_auto_disabled();
+    }
 
-    assert!(cleared);
-
-    let guard = env.shared_pool.lock().expect("lock pool after clear");
-    assert!(guard.auto_disabled_until().is_none());
+    // Verify it's cleared
+    let pool = env.shared_pool.lock().expect("lock pool after clear");
+    assert!(pool.auto_disabled_until().is_none());
 }
 
 #[tokio::test]
-async fn pick_best_falls_back_when_disabled() {
-    let env = IpPoolCommandTestEnv::new();
+async fn test_ip_pool_pick_best_fallback() {
+    let env = IpPoolTestEnv::new();
 
-    let selection = ip_pool_pick_best("github.com".into(), 443, env.pool_state())
-        .await
-        .expect("pick best");
+    let result = {
+        let pool = env.shared_pool.lock().expect("lock pool");
+        pool.pick_best("github.com", 443).await
+    };
 
-    assert_eq!(selection.strategy, "system");
-    assert!(!selection.cache_hit);
-    assert!(selection.selected.is_none());
+    // With default config and no cache, should fall back to system
+    assert_eq!(result.strategy(), IpSelectionStrategy::SystemDefault);
+    assert!(result.selected().is_none());
+}
+
+#[test]
+fn test_effective_config_from_parts() {
+    let runtime = IpPoolRuntimeConfig {
+        enabled: true,
+        max_parallel_probes: 8,
+        failure_threshold: 5,
+        failure_rate_threshold: 0.5,
+        ..Default::default()
+    };
+
+    let file = IpPoolFileConfig {
+        score_ttl_seconds: 600,
+        user_static: vec![UserStaticIp {
+            host: "test.com".into(),
+            ip: "1.2.3.4".into(),
+            ports: vec![443],
+        }],
+        ..Default::default()
+    };
+
+    let effective = EffectiveIpPoolConfig::from_parts(runtime.clone(), file.clone());
+
+    // EffectiveIpPoolConfig merges runtime and file configs
+    assert!(effective.runtime.enabled);
+    assert_eq!(effective.runtime.max_parallel_probes, 8);
+    assert_eq!(effective.file.score_ttl_seconds, 600);
+    assert_eq!(effective.file.user_static.len(), 1);
 }

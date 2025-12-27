@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! 聚合测试：Events Structure & Contract (Roadmap 12.12)
+﻿//! 聚合测试：Events Structure & Contract (Roadmap 12.12)
 //! ----------------------------------------------------
 //! 迁移来源（legacy 将保留占位）：
 //!   - `events_structured_basic.rs`

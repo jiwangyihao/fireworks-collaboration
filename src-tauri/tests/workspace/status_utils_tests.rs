@@ -2,7 +2,7 @@ use fireworks_collaboration_lib::core::workspace::status::{
     RepositoryStatus, SyncState, WorkingTreeState,
 };
 use fireworks_collaboration_lib::core::workspace::status_utils::{
-    append_error, build_summary, derive_sync_state, resolve_repository_path, working_state_rank,
+    build_summary, derive_sync_state, resolve_repository_path, working_state_rank,
 };
 use std::path::{Path, PathBuf};
 

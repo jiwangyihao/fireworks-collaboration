@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! 聚合测试：Git Preconditions & Cancellation & Timeout (Roadmap 12.11)
+﻿//! 聚合测试：Git Preconditions & Cancellation & Timeout (Roadmap 12.11)
 //! --------------------------------------------------------------------
 //! 迁移来源（legacy 将保留占位）：
 //!   - `git_preconditions_and_cancel.rs` (root old file: `clone_cancel_quick_returns_cancel` / `fetch_missing_git_dir_fails_fast` / `fetch_cancel_quick_returns_cancel`)

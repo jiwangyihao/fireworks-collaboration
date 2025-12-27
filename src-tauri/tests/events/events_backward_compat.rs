@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! Event Backward Compatibility Tests (P4.4)
+﻿//! Event Backward Compatibility Tests (P4.4)
 //! -----------------------------------------
 //! 验证新增可选字段的向后兼容性：
 //! - `ip_source`, `ip_latency_ms`, `ip_selection_stage` 在 `AdaptiveTlsTiming` 中

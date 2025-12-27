@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! 聚合测试：Git Fetch（浅克隆 + 分支合并）
+﻿//! 聚合测试：Git Fetch（浅克隆 + 分支合并）
 //!
 //! 验证点已全部合并到 `section_fetch_shallow` + `section_fetch_branches` + `section_fetch_task`，移除重复原子测试文件。
 

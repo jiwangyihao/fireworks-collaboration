@@ -9,14 +9,12 @@ use fireworks_collaboration_lib::core::git::transport::metrics::{
     metrics_enabled, tl_set_fallback_stage, tl_set_timing, tl_set_used_fake,
     tl_take_fallback_events, FallbackEventRecord, TimingCapture,
 };
-#[cfg(not(feature = "tauri-app"))]
-use fireworks_collaboration_lib::core::tasks::model::TaskErrorEvent;
+
 use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
 use fireworks_collaboration_lib::core::tasks::retry::{
     compute_retry_diff, load_retry_plan, RetryPlan,
 };
-#[cfg(not(feature = "tauri-app"))]
-use fireworks_collaboration_lib::events::emitter::{emit_all, AppHandle};
+
 use fireworks_collaboration_lib::events::structured::{
     publish_global, set_global_event_bus, Event as StructuredEvent, MemoryEventBus,
     StrategyEvent as StructuredStrategyEvent,
@@ -24,9 +22,6 @@ use fireworks_collaboration_lib::events::structured::{
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-
-#[cfg(not(feature = "tauri-app"))]
-const EV_ERROR: &str = "task://error";
 
 fn config_override_cell() -> &'static Mutex<Option<PathBuf>> {
     static CELL: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
@@ -142,18 +137,6 @@ pub fn test_emit_clone_with_override(
             applied_codes.push("http_strategy_override_applied".into());
         }
         if let Some(msg) = conflict {
-            #[cfg(not(feature = "tauri-app"))]
-            {
-                let evt = TaskErrorEvent {
-                    task_id,
-                    kind: "GitClone".into(),
-                    category: "Protocol".into(),
-                    code: Some("strategy_override_conflict".into()),
-                    message: format!("http conflict: {msg}"),
-                    retried_times: None,
-                };
-                emit_all(&AppHandle, EV_ERROR, &evt);
-            }
             publish_global(StructuredEvent::Strategy(
                 StructuredStrategyEvent::Conflict {
                     id: task_id.to_string(),

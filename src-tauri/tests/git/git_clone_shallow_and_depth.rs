@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! 聚合测试：Git Clone Shallow & Depth
+﻿//! 聚合测试：Git Clone Shallow & Depth
 //! -----------------------------------
 //! 精简后分区：
 //!   `section_basic_shallow`  -> 浅克隆 vs 全量克隆（参数化）

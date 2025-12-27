@@ -1,6 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-
-use crate::common::test_env::init_test_env;
+﻿use crate::common::test_env::init_test_env;
 
 #[ctor::ctor]
 fn __init_env() {

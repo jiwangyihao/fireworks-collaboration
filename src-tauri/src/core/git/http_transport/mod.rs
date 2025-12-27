@@ -31,7 +31,6 @@ pub(super) enum TransferKind {
     Eof,
 }
 
-#[cfg(not(feature = "tauri-app"))]
 pub mod testing {
     //! Aggregates HTTP transport testing helpers for integration tests.
     pub use super::fallback::testing::{

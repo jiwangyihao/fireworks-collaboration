@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! 聚合测试：Public Git E2E Pipeline
+﻿//! 聚合测试：Public Git E2E Pipeline
 //! 精简后版本：
 //!   * 合并原 success / read-only / failure 三个用例为参数化循环，减少重复。
 //!   * 使用 `common::pipeline` 中新增的提交计数断言辅助。

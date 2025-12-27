@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! 聚合测试：Git Tag & Remote & Refname Validation (Roadmap Phase 1 / v1.14)
+﻿//! 聚合测试：Git Tag & Remote & Refname Validation (Roadmap Phase 1 / v1.14)
 //! -------------------------------------------------------------------------
 //! 迁移来源（root-level -> 本文件 sections）：
 //!   - `git_tag_remote.rs`

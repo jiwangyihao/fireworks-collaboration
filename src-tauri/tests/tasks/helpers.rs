@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! Tasks 模块综合测试
+﻿//! Tasks 模块综合测试
 //! 合并了 `tasks/ip_pool_preheat_events.rs` 和 `tasks/registry/git/helpers_tests.rs`
 
 use crate::common::test_env::init_test_env;

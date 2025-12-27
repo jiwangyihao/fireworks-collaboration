@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! 聚合测试：TaskRegistry & Git Service Progress / Cancel (Roadmap Phase 2 / v1.15)
+﻿//! 聚合测试：TaskRegistry & Git Service Progress / Cancel (Roadmap Phase 2 / v1.15)
 //! -----------------------------------------------------------------------------
 //! 计划目的：将零散 `TaskRegistry` 与 Git Service 相关生命周期 / 并发 / 取消 / 进度
 //! 测试集中到单一模块，降低根目录测试文件数量，统一轮询辅助与结构化分区。

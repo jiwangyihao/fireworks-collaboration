@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! 聚合测试：Git Branch & Checkout
+﻿//! 聚合测试：Git Branch & Checkout
 //! --------------------------------
 //! 精简后 sections:
 //!   `section_branch_create`  -> 创建 / 无基提交 / invalid / force move / cancel

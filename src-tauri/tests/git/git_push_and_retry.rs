@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! 聚合测试：Git Push & Retry (Roadmap 12.9)
+﻿//! 聚合测试：Git Push & Retry (Roadmap 12.9)
 //! ------------------------------------------------------------
 //! 来源文件：
 //!   - `git_push.rs`

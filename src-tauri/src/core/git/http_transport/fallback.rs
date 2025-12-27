@@ -40,13 +40,11 @@ pub(super) fn classify_and_count_fallback(err_msg: &str) -> &'static str {
     }
 }
 
-#[cfg(any(test, not(feature = "tauri-app")))]
 pub(crate) fn reset_fallback_counters_internal() {
     FALLBACK_TLS_TOTAL.store(0, Ordering::Relaxed);
     FALLBACK_VERIFY_TOTAL.store(0, Ordering::Relaxed);
 }
 
-#[cfg(any(test, not(feature = "tauri-app")))]
 pub(crate) fn snapshot_fallback_counters_internal() -> (u64, u64) {
     (
         FALLBACK_TLS_TOTAL.load(Ordering::Relaxed),
@@ -54,7 +52,6 @@ pub(crate) fn snapshot_fallback_counters_internal() -> (u64, u64) {
     )
 }
 
-#[cfg(any(test, not(feature = "tauri-app")))]
 pub(super) mod injection {
     use git2::Error;
     use std::collections::VecDeque;
@@ -103,17 +100,14 @@ pub(super) mod injection {
     }
 }
 
-#[cfg(any(test, not(feature = "tauri-app")))]
 pub(crate) fn inject_fake_failure_internal(msg: impl Into<String>) {
     injection::inject(FallbackStage::Fake, msg.into());
 }
 
-#[cfg(any(test, not(feature = "tauri-app")))]
 pub(crate) fn inject_real_failure_internal(msg: impl Into<String>) {
     injection::inject(FallbackStage::Real, msg.into());
 }
 
-#[cfg(any(test, not(feature = "tauri-app")))]
 pub(crate) fn reset_injected_failures_internal() {
     injection::reset();
 }
@@ -143,7 +137,6 @@ pub(crate) fn test_snapshot_fallback_counters() -> (u64, u64) {
     snapshot_fallback_counters_internal()
 }
 
-#[cfg(not(feature = "tauri-app"))]
 pub mod testing {
     //! Helper functions for integration tests focusing on fallback behaviour.
     pub fn reset_fallback_counters() {

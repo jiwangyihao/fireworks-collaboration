@@ -69,7 +69,6 @@ fn default_stage_is_idempotent() {
 // metrics_tests.rs 的测试
 // ============================================================================
 
-#[cfg(not(feature = "tauri-app"))]
 use fireworks_collaboration_lib::core::git::transport::metrics::test_override_metrics_enabled;
 use fireworks_collaboration_lib::core::git::transport::metrics::{
     finish_and_store, metrics_enabled, tl_reset, tl_snapshot, TimingRecorder,
@@ -102,7 +101,6 @@ impl Drop for EnvGuard {
     }
 }
 
-#[cfg(not(feature = "tauri-app"))]
 #[test]
 fn finish_respects_metrics_enabled_flag() {
     let _lock = metrics_env_lock().lock().unwrap();
@@ -402,7 +400,6 @@ fn cfg(threshold: u8, cooldown: u64) -> AutoDisableConfig {
     }
 }
 
-#[cfg(not(feature = "tauri-app"))]
 #[test]
 fn auto_disable_triggers_when_ratio_exceeds_threshold() {
     // 使用 testing 模块中的公共测试辅助函数
@@ -439,7 +436,6 @@ fn auto_disable_triggers_when_ratio_exceeds_threshold() {
     assert!(is_fake_disabled(&cfg));
 }
 
-#[cfg(not(feature = "tauri-app"))]
 #[test]
 fn auto_disable_recovers_after_cooldown() {
     use fireworks_collaboration_lib::core::git::transport::testing::{
@@ -473,7 +469,6 @@ fn auto_disable_recovers_after_cooldown() {
     assert!(!is_fake_disabled(&cfg));
 }
 
-#[cfg(not(feature = "tauri-app"))]
 #[test]
 fn disabled_feature_returns_none() {
     use fireworks_collaboration_lib::core::git::transport::testing::{

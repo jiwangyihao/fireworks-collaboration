@@ -1,5 +1,4 @@
-#![cfg(not(feature = "tauri-app"))]
-//! 递归克隆子模块集成测试
+﻿//! 递归克隆子模块集成测试
 //!
 //! 测试 P7.1 `TaskKind::GitClone` 的 `recurse_submodules` 参数
 

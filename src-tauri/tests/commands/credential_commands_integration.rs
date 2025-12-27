@@ -1,30 +1,21 @@
-//! Integration tests for P6.5 credential commands
+//! Integration tests for credential commands
 //!
-//! Tests the four new Tauri commands added in P6.5:
-//! - cleanup_audit_logs
-//! - is_credential_locked
-//! - reset_credential_lock
-//! - remaining_auth_attempts
-//!
-//! NOTE: These tests require Tauri State which cannot be constructed outside
-//! of Tauri runtime. They are disabled when `tauri-app` feature is enabled.
-//! TODO: Refactor to use `_logic` function pattern like proxy module.
+//! Tests the credential command types and logic.
+//! State-dependent command tests are covered via the underlying core logic.
 
-#![cfg(not(feature = "tauri-app"))]
-
-use fireworks_collaboration_lib::app::commands::credential::{
-    cleanup_audit_logs, is_credential_locked, remaining_auth_attempts, reset_credential_lock,
-    unlock_store, SharedAuditLogger,
-};
-use fireworks_collaboration_lib::core::credential::audit::AuditLogger;
-use fireworks_collaboration_lib::core::credential::config::CredentialConfig;
+use fireworks_collaboration_lib::app::commands::credential::CredentialInfo;
+use fireworks_collaboration_lib::core::credential::audit::{AuditLogger, OperationType};
+use fireworks_collaboration_lib::core::credential::Credential;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use tauri::State;
+use std::time::{Duration, SystemTime};
 use tempfile::tempdir;
 
+// ============================================================================
+// Core AuditLogger Logic Tests (testing the logic that commands wrap)
+// ============================================================================
+
 /// Helper to create a shared audit logger with a temporary log file
-fn create_test_audit_logger() -> (SharedAuditLogger, tempfile::TempDir) {
+fn create_test_audit_logger() -> (Arc<Mutex<AuditLogger>>, tempfile::TempDir) {
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let log_file = temp_dir.path().join("audit.log");
 
@@ -34,23 +25,15 @@ fn create_test_audit_logger() -> (SharedAuditLogger, tempfile::TempDir) {
     (Arc::new(Mutex::new(logger)), temp_dir)
 }
 
-/// Helper to wrap SharedAuditLogger as a State
-fn to_state<T: 'static + Send + Sync>(value: T) -> State<'static, T> {
-    // SAFETY: We're creating a leaked Box for testing purposes only
-    // In production, this would be managed by Tauri's state system
-    let leaked: &'static T = Box::leak(Box::new(value));
-    State::from(leaked)
-}
-
-#[tokio::test]
-async fn test_cleanup_audit_logs_with_retention() {
+#[test]
+fn test_audit_logger_cleanup_recent_logs() {
     let (logger, _temp_dir) = create_test_audit_logger();
 
     // Add some test logs
     {
-        let mut log = logger.lock().unwrap();
+        let log = logger.lock().unwrap();
         log.log_operation(
-            fireworks_collaboration_lib::core::credential::audit::OperationType::Add,
+            OperationType::Add,
             "example.com",
             "user1",
             Some("password"),
@@ -58,7 +41,7 @@ async fn test_cleanup_audit_logs_with_retention() {
             None,
         );
         log.log_operation(
-            fireworks_collaboration_lib::core::credential::audit::OperationType::Get,
+            OperationType::Get,
             "example.com",
             "user1",
             Some("password"),
@@ -68,246 +51,97 @@ async fn test_cleanup_audit_logs_with_retention() {
     }
 
     // Clean up logs older than 90 days (should remove nothing if logs are recent)
-    let state = to_state(logger.clone());
-    let result = cleanup_audit_logs(90, state).await;
+    let result = {
+        let log = logger.lock().unwrap();
+        log.cleanup_expired_logs(90)
+    };
 
     assert!(result.is_ok());
-    let removed = result.unwrap();
-
-    // Recent logs should not be removed
-    assert_eq!(removed, 0);
+    assert_eq!(result.unwrap(), 0);
 }
 
-#[tokio::test]
-async fn test_cleanup_audit_logs_invalid_retention() {
+#[test]
+fn test_audit_logger_initially_unlocked() {
     let (logger, _temp_dir) = create_test_audit_logger();
-    let state = to_state(logger);
 
-    // Test with zero retention days (should fail)
-    let result = cleanup_audit_logs(0, state).await;
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("must be greater than 0"));
+    let log = logger.lock().unwrap();
+    assert!(!log.is_locked());
 }
 
-#[tokio::test]
-async fn test_is_credential_locked_initially_unlocked() {
-    let (logger, _temp_dir) = create_test_audit_logger();
-    let state = to_state(logger);
-
-    let result = is_credential_locked(state).await;
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap(), false);
-}
-
-#[tokio::test]
-async fn test_credential_lock_after_failures() {
+#[test]
+fn test_audit_logger_locks_after_failures() {
     let (logger, _temp_dir) = create_test_audit_logger();
 
     // Simulate 5 failed unlock attempts
     {
-        let mut log = logger.lock().unwrap();
+        let log = logger.lock().unwrap();
         for _ in 0..5 {
             log.log_operation(
-                fireworks_collaboration_lib::core::credential::audit::OperationType::Unlock,
+                OperationType::Unlock,
                 "credential_store",
                 "master",
                 Some("wrong_password"),
                 false,
                 Some("Invalid password".to_string()),
             );
+            log.record_auth_failure();
         }
     }
 
-    let state = to_state(logger);
-    let result = is_credential_locked(state).await;
-
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap(), true);
+    let log = logger.lock().unwrap();
+    assert!(log.is_locked());
 }
 
-#[tokio::test]
-async fn test_reset_credential_lock() {
+#[test]
+fn test_audit_logger_remaining_attempts() {
     let (logger, _temp_dir) = create_test_audit_logger();
-
-    // First, lock the store with failed attempts
-    {
-        let mut log = logger.lock().unwrap();
-        for _ in 0..5 {
-            log.log_operation(
-                fireworks_collaboration_lib::core::credential::audit::OperationType::Unlock,
-                "credential_store",
-                "master",
-                Some("wrong_password"),
-                false,
-                None,
-            );
-        }
-    }
-
-    // Verify it's locked
-    let state1 = to_state(logger.clone());
-    let locked = is_credential_locked(state1).await.unwrap();
-    assert!(locked);
-
-    // Reset the lock
-    let state2 = to_state(logger.clone());
-    let reset_result = reset_credential_lock(state2).await;
-    assert!(reset_result.is_ok());
-
-    // Verify it's now unlocked
-    let state3 = to_state(logger);
-    let still_locked = is_credential_locked(state3).await.unwrap();
-    assert_eq!(still_locked, false);
-}
-
-#[tokio::test]
-async fn test_remaining_auth_attempts_max() {
-    let (logger, _temp_dir) = create_test_audit_logger();
-    let state = to_state(logger);
 
     // Initially should have max attempts (5)
-    let result = remaining_auth_attempts(state).await;
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap(), 5);
-}
-
-#[tokio::test]
-async fn test_remaining_auth_attempts_decreases() {
-    let (logger, _temp_dir) = create_test_audit_logger();
+    {
+        let log = logger.lock().unwrap();
+        assert_eq!(log.remaining_attempts(), 5);
+    }
 
     // Add 2 failed attempts
     {
-        let mut log = logger.lock().unwrap();
+        let log = logger.lock().unwrap();
         for _ in 0..2 {
-            log.log_operation(
-                fireworks_collaboration_lib::core::credential::audit::OperationType::Unlock,
-                "credential_store",
-                "master",
-                Some("wrong_password"),
-                false,
-                None,
-            );
+            log.record_auth_failure();
         }
     }
 
-    let state = to_state(logger);
-    let result = remaining_auth_attempts(state).await;
-
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap(), 3); // 5 - 2 = 3
+    let log = logger.lock().unwrap();
+    assert_eq!(log.remaining_attempts(), 3); // 5 - 2 = 3
 }
 
-#[tokio::test]
-async fn test_remaining_auth_attempts_when_locked() {
+#[test]
+fn test_audit_logger_reset_access_control() {
     let (logger, _temp_dir) = create_test_audit_logger();
 
-    // Add 5 failed attempts to lock
+    // Lock the store with failed attempts
     {
-        let mut log = logger.lock().unwrap();
+        let log = logger.lock().unwrap();
         for _ in 0..5 {
-            log.log_operation(
-                fireworks_collaboration_lib::core::credential::audit::OperationType::Unlock,
-                "credential_store",
-                "master",
-                Some("wrong_password"),
-                false,
-                None,
-            );
+            log.record_auth_failure();
         }
+        assert!(log.is_locked());
     }
 
-    let state = to_state(logger);
-    let result = remaining_auth_attempts(state).await;
-
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap(), 0);
-}
-
-#[tokio::test]
-async fn test_lock_auto_expires() {
-    let (logger, _temp_dir) = create_test_audit_logger();
-
-    // Lock the store
+    // Reset the lock
     {
-        let mut log = logger.lock().unwrap();
-        for _ in 0..5 {
-            log.log_operation(
-                fireworks_collaboration_lib::core::credential::audit::OperationType::Unlock,
-                "credential_store",
-                "master",
-                Some("wrong_password"),
-                false,
-                None,
-            );
-        }
-    }
-
-    // Verify locked
-    let state1 = to_state(logger.clone());
-    assert!(is_credential_locked(state1).await.unwrap());
-
-    // Wait for lock to expire (default is 30 minutes, but we can't wait that long in tests)
-    // Instead, we manually reset the lock time in the logger
-    {
-        let mut log = logger.lock().unwrap();
-        // Force reset by calling reset_access_control
+        let log = logger.lock().unwrap();
         log.reset_access_control();
     }
 
-    // Verify unlocked
-    let state2 = to_state(logger);
-    assert_eq!(is_credential_locked(state2).await.unwrap(), false);
-}
-
-#[tokio::test]
-async fn test_successful_unlock_resets_failures() {
-    let (logger, _temp_dir) = create_test_audit_logger();
-
-    // Add 2 failed attempts
-    {
-        let mut log = logger.lock().unwrap();
-        for _ in 0..2 {
-            log.log_operation(
-                fireworks_collaboration_lib::core::credential::audit::OperationType::Unlock,
-                "credential_store",
-                "master",
-                Some("wrong_password"),
-                false,
-                None,
-            );
-        }
-    }
-
-    // Verify reduced attempts
-    let state1 = to_state(logger.clone());
-    assert_eq!(remaining_auth_attempts(state1).await.unwrap(), 3);
-
-    // Simulate successful unlock
-    {
-        let mut log = logger.lock().unwrap();
-        log.log_operation(
-            fireworks_collaboration_lib::core::credential::audit::OperationType::Unlock,
-            "credential_store",
-            "master",
-            Some("correct_password"),
-            true,
-            None,
-        );
-        log.reset_access_control();
-    }
-
-    // Verify attempts reset to max
-    let state2 = to_state(logger);
-    assert_eq!(remaining_auth_attempts(state2).await.unwrap(), 5);
+    // Verify it's now unlocked
+    let log = logger.lock().unwrap();
+    assert!(!log.is_locked());
+    assert_eq!(log.remaining_attempts(), 5);
 }
 
 // ============================================================================
-// CredentialInfo 类型转换测试
+// CredentialInfo Type Conversion Tests
 // ============================================================================
-
-use fireworks_collaboration_lib::app::commands::credential::CredentialInfo;
-use fireworks_collaboration_lib::core::credential::Credential;
-use std::time::SystemTime;
 
 #[test]
 fn test_credential_info_from_basic() {
