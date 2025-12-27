@@ -410,3 +410,157 @@ fn test_http_response_with_redirects() {
     assert_eq!(deserialized.redirects[1].status, 302);
     assert!(deserialized.used_fake_sni);
 }
+
+// ============================================================================
+// ip_pool/config 测试
+// ============================================================================
+
+use fireworks_collaboration_lib::core::ip_pool::config::{
+    DnsResolverConfig, DnsResolverProtocol, EffectiveIpPoolConfig, IpPoolFileConfig,
+    IpPoolRuntimeConfig, IpPoolSourceToggle, PreheatDomain, ProbeMethod,
+};
+
+#[test]
+fn test_ip_pool_runtime_config_defaults() {
+    let config = IpPoolRuntimeConfig::default();
+
+    assert!(config.enabled);
+    assert_eq!(config.max_parallel_probes, 4);
+    assert_eq!(config.probe_timeout_ms, 1500);
+    assert_eq!(config.cache_prune_interval_secs, 60);
+    assert_eq!(config.max_cache_entries, 256);
+    assert_eq!(config.failure_threshold, 3);
+    assert!(config.circuit_breaker_enabled);
+    assert_eq!(config.probe_method, ProbeMethod::Http);
+    assert_eq!(config.probe_path, "/");
+}
+
+#[test]
+fn test_ip_pool_source_toggle_defaults() {
+    let toggle = IpPoolSourceToggle::default();
+
+    assert!(toggle.builtin);
+    assert!(toggle.dns);
+    assert!(toggle.history);
+    assert!(toggle.user_static);
+    assert!(toggle.fallback);
+}
+
+#[test]
+fn test_ip_pool_file_config_defaults() {
+    let config = IpPoolFileConfig::default();
+
+    assert!(config.preheat_domains.is_empty());
+    assert_eq!(config.score_ttl_seconds, 300);
+    assert!(config.user_static.is_empty());
+    assert!(config.blacklist.is_empty());
+}
+
+#[test]
+fn test_probe_method_default_is_http() {
+    assert_eq!(ProbeMethod::default(), ProbeMethod::Http);
+}
+
+#[test]
+fn test_dns_resolver_protocol_default() {
+    assert_eq!(DnsResolverProtocol::default(), DnsResolverProtocol::Udp);
+}
+
+#[test]
+fn test_dns_resolver_protocol_display_name() {
+    assert_eq!(DnsResolverProtocol::Udp.display_name(), "UDP");
+    assert_eq!(DnsResolverProtocol::Doh.display_name(), "DoH");
+    assert_eq!(DnsResolverProtocol::Dot.display_name(), "DoT");
+}
+
+#[test]
+fn test_dns_resolver_config_effective_port_udp() {
+    let config = DnsResolverConfig {
+        label: "test".to_string(),
+        protocol: DnsResolverProtocol::Udp,
+        endpoint: "8.8.8.8".to_string(),
+        port: None,
+        bootstrap_ips: Vec::new(),
+        sni: None,
+        cache_size: None,
+        description: None,
+        preset_key: None,
+    };
+    assert_eq!(config.effective_port(), 53);
+}
+
+#[test]
+fn test_dns_resolver_config_effective_port_doh() {
+    let config = DnsResolverConfig {
+        label: "test".to_string(),
+        protocol: DnsResolverProtocol::Doh,
+        endpoint: "https://dns.google/dns-query".to_string(),
+        port: None,
+        bootstrap_ips: Vec::new(),
+        sni: None,
+        cache_size: None,
+        description: None,
+        preset_key: None,
+    };
+    assert_eq!(config.effective_port(), 443);
+}
+
+#[test]
+fn test_dns_resolver_config_effective_port_dot() {
+    let config = DnsResolverConfig {
+        label: "test".to_string(),
+        protocol: DnsResolverProtocol::Dot,
+        endpoint: "tls://1.1.1.1".to_string(),
+        port: None,
+        bootstrap_ips: Vec::new(),
+        sni: None,
+        cache_size: None,
+        description: None,
+        preset_key: None,
+    };
+    assert_eq!(config.effective_port(), 853);
+}
+
+#[test]
+fn test_dns_resolver_config_display_tag() {
+    let config = DnsResolverConfig {
+        label: "test".to_string(),
+        protocol: DnsResolverProtocol::Doh,
+        endpoint: "https://dns.google/dns-query".to_string(),
+        port: None,
+        bootstrap_ips: Vec::new(),
+        sni: None,
+        cache_size: None,
+        description: None,
+        preset_key: Some("Google-DoH".to_string()),
+    };
+    assert_eq!(config.display_tag(), "Google-DoH (DoH)");
+}
+
+#[test]
+fn test_preheat_domain_new() {
+    let domain = PreheatDomain::new("github.com");
+    assert_eq!(domain.host, "github.com");
+    assert_eq!(domain.ports, vec![443]);
+}
+
+#[test]
+fn test_effective_config_from_parts() {
+    let runtime = IpPoolRuntimeConfig::default();
+    let file = IpPoolFileConfig::default();
+    let effective = EffectiveIpPoolConfig::from_parts(runtime.clone(), file.clone());
+    assert_eq!(effective.runtime, runtime);
+    assert_eq!(effective.file, file);
+}
+
+#[test]
+fn test_probe_method_serialization() {
+    let http = ProbeMethod::Http;
+    let tcp = ProbeMethod::Tcp;
+
+    let http_json = serde_json::to_string(&http).unwrap();
+    let tcp_json = serde_json::to_string(&tcp).unwrap();
+
+    assert_eq!(http_json, "\"http\"");
+    assert_eq!(tcp_json, "\"tcp\"");
+}
