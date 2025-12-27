@@ -18,7 +18,11 @@ use super::super::types::{OAuthCallbackData, OAuthState};
 #[tauri::command(rename_all = "camelCase")]
 pub async fn start_oauth_server(state: State<'_, OAuthState>) -> Result<u16, String> {
     let oauth_state = Arc::clone(&*state);
+    start_oauth_server_core(oauth_state).await
+}
 
+/// Core implementation of OAuth server startup, decoupled from Tauri State.
+pub async fn start_oauth_server_core(oauth_state: OAuthState) -> Result<u16, String> {
     // Bind to port 0 to let the OS allocate an available port
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|e| format!("Failed to bind OAuth server: {}", e))?;
