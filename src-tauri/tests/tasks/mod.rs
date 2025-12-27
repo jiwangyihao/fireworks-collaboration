@@ -3,7 +3,9 @@
 #[path = "../common/mod.rs"]
 pub(crate) mod common;
 
+mod config_model;
 mod credential_file_store;
+mod events_system;
 mod git_conflict;
 mod git_operations;
 mod metrics_aggregate;
