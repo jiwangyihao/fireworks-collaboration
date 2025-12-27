@@ -71,6 +71,10 @@ jobs:
         run: |
           echo "[soft-gate] parsing lcov.info applying soft thresholds" 
           if [ ! -f lcov.info ]; then echo "lcov.info missing"; exit 1; fi
+
+          # 关键修复: 统一将 Windows 反斜杠转换为正斜杠，确保后续 grep/awk 匹配正常
+          sed -i 's/\\/\//g' lcov.info
+
           # 总体行覆盖
           LF=$(grep -E '^LF:' lcov.info | awk -F':' '{s+=$2} END{print s+0}')
           LH=$(grep -E '^LH:' lcov.info | awk -F':' '{s+=$2} END{print s+0}')
@@ -79,12 +83,9 @@ jobs:
           # 策略模块文件聚合（registry.rs 与 opts.rs 代表核心策略/任务策略融合逻辑）
           CORE_LF=0; CORE_LH=0
           for f in core/tasks/registry.rs core/git/default_impl/opts.rs; do
-            # 兼容 Windows 反斜杠：将路径分隔符 / 转换为正则表达式 [\\/]
-            # pattern: core/tasks/registry.rs -> core[\\/]tasks[\\/]registry.rs
-            pattern=$(echo "$f" | sed 's/\//[\\\\\/]/g')
-            if grep -qE "SF:.*$pattern" lcov.info; then
-              fLF=$(awk -v pat="$pattern" '/^SF:/ {sf=$0} /^LF:/ {if (sf ~ pat) print $0}' lcov.info | awk -F':' '{s+=$2} END{print s+0}')
-              fLH=$(awk -v pat="$pattern" '/^SF:/ {sf=$0} /^LH:/ {if (sf ~ pat) print $0}' lcov.info | awk -F':' '{s+=$2} END{print s+0}')
+            if grep -q "SF:.*$f" lcov.info; then
+              fLF=$(awk -v file="$f" '/^SF:/ {sf=$0} /^LF:/ {if (sf ~ file) print $0}' lcov.info | awk -F':' '{s+=$2} END{print s+0}')
+              fLH=$(awk -v file="$f" '/^SF:/ {sf=$0} /^LH:/ {if (sf ~ file) print $0}' lcov.info | awk -F':' '{s+=$2} END{print s+0}')
               CORE_LF=$((CORE_LF+fLF)); CORE_LH=$((CORE_LH+fLH));
             fi
           done
