@@ -172,6 +172,7 @@ impl EncryptionKey {
 /// Cached key with expiration.
 struct CachedKey {
     key: EncryptionKey,
+    salt: String,
     expires_at: SystemTime,
 }
 
@@ -431,9 +432,9 @@ impl EncryptedFileStore {
     fn get_or_derive_key(&self, salt: &SaltString) -> Result<EncryptionKey, String> {
         let mut cache = self.key_cache.lock().unwrap();
 
-        // Check if cached key is still valid
+        // Check if cached key is still valid and matches salt
         if let Some(cached) = cache.as_ref() {
-            if SystemTime::now() < cached.expires_at {
+            if SystemTime::now() < cached.expires_at && cached.salt == salt.as_str() {
                 // Clone the key bytes (creates new EncryptionKey)
                 let key_bytes = cached.key.as_slice();
                 let mut new_key_bytes = [0u8; 32];
@@ -452,6 +453,7 @@ impl EncryptedFileStore {
 
         *cache = Some(CachedKey {
             key: EncryptionKey::new(cached_key_bytes),
+            salt: salt.as_str().to_string(),
             expires_at: SystemTime::now() + self.key_cache_ttl,
         });
 

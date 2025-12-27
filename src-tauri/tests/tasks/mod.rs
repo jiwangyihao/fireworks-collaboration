@@ -3,6 +3,10 @@
 #[path = "../common/mod.rs"]
 pub(crate) mod common;
 
+mod credential_file_store;
+mod git_conflict;
+mod workspace_batch;
+
 mod helpers; // Task helpers tests (from tasks_helpers.rs)
 mod ip_pool_fault_injection;
 mod ip_pool_manager;
