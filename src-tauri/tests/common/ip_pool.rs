@@ -8,7 +8,7 @@ use fireworks_collaboration_lib::core::ip_pool::cache::{
     IpCacheSlot, IpCandidate, IpScoreCache, IpStat,
 };
 use fireworks_collaboration_lib::core::ip_pool::config::{
-    EffectiveIpPoolConfig, IpPoolSourceToggle, UserStaticIp,
+    EffectiveIpPoolConfig, IpPoolSourceToggle, ProbeMethod, UserStaticIp,
 };
 use fireworks_collaboration_lib::core::ip_pool::history::IpHistoryRecord;
 use fireworks_collaboration_lib::core::ip_pool::{IpCacheKey, IpSource};
@@ -59,6 +59,7 @@ pub fn user_static_only_config(host: &str, address: IpAddr, port: u16) -> Effect
         ip: address.to_string(),
         ports: vec![port],
     });
+    cfg.runtime.probe_method = ProbeMethod::Tcp;
     cfg
 }
 
@@ -310,6 +311,7 @@ pub async fn make_user_static_pool_with_listener(
     cfg.runtime.sources.history = false;
     cfg.runtime.sources.user_static = true;
     cfg.runtime.sources.fallback = false;
+    cfg.runtime.probe_method = ProbeMethod::Tcp;
     cfg.file.user_static.push(
         fireworks_collaboration_lib::core::ip_pool::config::UserStaticIp {
             host: host.to_string(),

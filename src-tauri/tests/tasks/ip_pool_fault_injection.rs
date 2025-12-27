@@ -154,6 +154,8 @@ fn fault_config_hot_reload_disables_ip_pool() {
     let mut cfg = base_effective_config();
     cfg.runtime.probe_timeout_ms = 1_000;
     cfg.runtime.singleflight_timeout_ms = 10_000;
+    // 使用 TCP 探测，因为测试服务器只 accept 不发送 HTTP 响应
+    cfg.runtime.probe_method = fireworks_collaboration_lib::core::ip_pool::config::ProbeMethod::Tcp;
     cfg.file.user_static.push(UserStaticIp {
         host: "hotreload.test".into(),
         ip: "127.0.0.1".into(),
