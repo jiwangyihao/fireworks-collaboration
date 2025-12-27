@@ -607,3 +607,254 @@ fn test_tag_cancel_interrupts() {
     let err = result.unwrap_err();
     assert!(err.to_string().contains("canceled"));
 }
+
+// ============ Git Add Tests ============
+
+use fireworks_collaboration_lib::core::git::default_impl::add::git_add;
+
+#[test]
+fn test_add_single_file() {
+    let temp = setup_test_repo();
+    let repo_path = temp.path();
+    let interrupt = AtomicBool::new(false);
+
+    // Create a new file
+    std::fs::write(repo_path.join("newfile.txt"), "new content").unwrap();
+
+    // Add the file
+    let result = git_add(repo_path, &["newfile.txt"], &interrupt, noop_progress);
+    assert!(result.is_ok(), "Add single file should succeed");
+
+    // Verify file is staged
+    let output = Command::new("git")
+        .args(&["status", "--porcelain"])
+        .current_dir(repo_path)
+        .output()
+        .expect("git status failed");
+    let status = String::from_utf8_lossy(&output.stdout);
+    assert!(status.contains("A  newfile.txt") || status.contains("A newfile.txt"));
+}
+
+#[test]
+fn test_add_multiple_files() {
+    let temp = setup_test_repo();
+    let repo_path = temp.path();
+    let interrupt = AtomicBool::new(false);
+
+    // Create multiple files
+    std::fs::write(repo_path.join("file1.txt"), "content 1").unwrap();
+    std::fs::write(repo_path.join("file2.txt"), "content 2").unwrap();
+
+    let result = git_add(
+        repo_path,
+        &["file1.txt", "file2.txt"],
+        &interrupt,
+        noop_progress,
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_add_empty_paths() {
+    let temp = setup_test_repo();
+    let repo_path = temp.path();
+    let interrupt = AtomicBool::new(false);
+
+    let result = git_add(repo_path, &[], &interrupt, noop_progress);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("empty"));
+}
+
+#[test]
+fn test_add_nonexistent_file() {
+    let temp = setup_test_repo();
+    let repo_path = temp.path();
+    let interrupt = AtomicBool::new(false);
+
+    let result = git_add(repo_path, &["nonexistent.txt"], &interrupt, noop_progress);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("does not exist"));
+}
+
+#[test]
+fn test_add_absolute_path_rejected() {
+    let temp = setup_test_repo();
+    let repo_path = temp.path();
+    let interrupt = AtomicBool::new(false);
+
+    std::fs::write(repo_path.join("file.txt"), "content").unwrap();
+    let abs_path = repo_path.join("file.txt");
+
+    let result = git_add(
+        repo_path,
+        &[abs_path.to_str().unwrap()],
+        &interrupt,
+        noop_progress,
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("absolute path"));
+}
+
+#[test]
+fn test_add_empty_path_entry() {
+    let temp = setup_test_repo();
+    let repo_path = temp.path();
+    let interrupt = AtomicBool::new(false);
+
+    std::fs::write(repo_path.join("file.txt"), "content").unwrap();
+
+    let result = git_add(repo_path, &["file.txt", ""], &interrupt, noop_progress);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("empty path"));
+}
+
+#[test]
+fn test_add_directory() {
+    let temp = setup_test_repo();
+    let repo_path = temp.path();
+    let interrupt = AtomicBool::new(false);
+
+    // Create a directory with files
+    std::fs::create_dir(repo_path.join("subdir")).unwrap();
+    std::fs::write(repo_path.join("subdir/inner.txt"), "inner content").unwrap();
+
+    let result = git_add(repo_path, &["subdir"], &interrupt, noop_progress);
+    assert!(result.is_ok(), "Add directory should succeed");
+}
+
+#[test]
+fn test_add_cancel_interrupts() {
+    let temp = setup_test_repo();
+    let repo_path = temp.path();
+    let interrupt = AtomicBool::new(true);
+
+    std::fs::write(repo_path.join("file.txt"), "content").unwrap();
+
+    let result = git_add(repo_path, &["file.txt"], &interrupt, noop_progress);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("canceled"));
+}
+
+#[test]
+fn test_add_not_a_repo() {
+    let temp = tempdir().unwrap();
+    let interrupt = AtomicBool::new(false);
+
+    std::fs::write(temp.path().join("file.txt"), "content").unwrap();
+
+    let result = git_add(temp.path(), &["file.txt"], &interrupt, noop_progress);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("not a git repository"));
+}
+
+// ============ Opts Tests ============
+
+use fireworks_collaboration_lib::core::git::default_impl::opts::{
+    parse_depth_filter_opts, parse_strategy_override, PartialFilter,
+};
+
+#[test]
+fn test_partial_filter_parse_blob_none() {
+    let result = PartialFilter::parse("blob:none");
+    assert!(result.is_some());
+    assert_eq!(result.unwrap(), PartialFilter::BlobNone);
+}
+
+#[test]
+fn test_partial_filter_parse_tree_zero() {
+    let result = PartialFilter::parse("tree:0");
+    assert!(result.is_some());
+    assert_eq!(result.unwrap(), PartialFilter::TreeZero);
+}
+
+#[test]
+fn test_partial_filter_parse_invalid() {
+    let result = PartialFilter::parse("invalid");
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_partial_filter_as_str() {
+    assert_eq!(PartialFilter::BlobNone.as_str(), "blob:none");
+    assert_eq!(PartialFilter::TreeZero.as_str(), "tree:0");
+}
+
+#[test]
+fn test_parse_depth_filter_opts_empty() {
+    let result = parse_depth_filter_opts(None, None, None);
+    assert!(result.is_ok());
+    let opts = result.unwrap();
+    assert!(opts.depth.is_none());
+    assert!(opts.filter.is_none());
+}
+
+#[test]
+fn test_parse_depth_filter_opts_with_depth() {
+    let result = parse_depth_filter_opts(Some(serde_json::json!(5)), None, None);
+    assert!(result.is_ok());
+    let opts = result.unwrap();
+    assert_eq!(opts.depth, Some(5));
+}
+
+#[test]
+fn test_parse_depth_filter_opts_with_filter() {
+    let result = parse_depth_filter_opts(None, Some("blob:none".to_string()), None);
+    assert!(result.is_ok());
+    let opts = result.unwrap();
+    assert_eq!(opts.filter, Some(PartialFilter::BlobNone));
+}
+
+#[test]
+fn test_parse_depth_filter_opts_invalid_depth_negative() {
+    let result = parse_depth_filter_opts(Some(serde_json::json!(-1)), None, None);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_depth_filter_opts_invalid_depth_zero() {
+    let result = parse_depth_filter_opts(Some(serde_json::json!(0)), None, None);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_depth_filter_opts_invalid_filter() {
+    let result = parse_depth_filter_opts(None, Some("invalid".to_string()), None);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_strategy_override_empty() {
+    let result = parse_strategy_override(None);
+    assert!(result.is_ok());
+    let parsed = result.unwrap();
+    assert!(parsed.is_empty());
+}
+
+#[test]
+fn test_parse_strategy_override_with_http() {
+    let json = serde_json::json!({
+        "http": {
+            "connectTimeoutMs": 5000
+        }
+    });
+    let result = parse_strategy_override(Some(json));
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_parse_strategy_override_with_retry() {
+    let json = serde_json::json!({
+        "retry": {
+            "maxAttempts": 3,
+            "delayMs": 1000
+        }
+    });
+    let result = parse_strategy_override(Some(json));
+    assert!(result.is_ok());
+}
