@@ -6,6 +6,8 @@ pub(crate) mod common;
 mod credential_file_store;
 mod git_conflict;
 mod git_operations;
+mod metrics_aggregate;
+mod proxy_config;
 mod submodule_ops;
 mod workspace_batch;
 mod workspace_model;
