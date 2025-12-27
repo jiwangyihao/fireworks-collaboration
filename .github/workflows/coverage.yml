@@ -50,11 +50,7 @@ jobs:
           path: coverage
 
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install llvm-cov
         uses: taiki-e/install-action@v2
