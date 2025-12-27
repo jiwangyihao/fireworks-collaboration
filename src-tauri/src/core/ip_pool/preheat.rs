@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
+
 use hyper::{Body, Request, Version};
 use rustls::ServerName;
 use tokio::{
@@ -30,10 +31,42 @@ use super::{
     history::{IpHistoryRecord, IpHistoryStore},
     IpCandidate, IpSource,
 };
-use crate::core::tls::verifier::create_client_config_with_expected_name;
 use crate::core::config::model::TlsCfg;
+use crate::core::tls::verifier::create_client_config_with_expected_name;
 use ipnet::IpNet;
 
+pub type ResolverFn = Arc<
+    dyn Fn(&str, u16, &DnsRuntimeConfig) -> BoxFuture<'static, Result<Vec<DnsResolvedIp>>>
+        + Send
+        + Sync,
+>;
+
+pub type ProberFn = Arc<
+    dyn Fn(IpAddr, u16, &str, &str, &str, u64, ProbeMethod) -> BoxFuture<'static, Result<u32>>
+        + Send
+        + Sync,
+>;
+
+use futures::future::BoxFuture;
+
+pub fn default_dns_resolver() -> ResolverFn {
+    Arc::new(|host, port, cfg| {
+        let host = host.to_string();
+        let cfg = cfg.clone();
+        Box::pin(async move { dns::resolve(&host, port, &cfg).await })
+    })
+}
+
+pub fn default_latency_prober() -> ProberFn {
+    Arc::new(|ip, port, host, sni, path, timeout, method| {
+        let host = host.to_string();
+        let sni = sni.to_string();
+        let path = path.to_string();
+        Box::pin(
+            async move { probe_latency_impl(ip, port, &host, &sni, &path, timeout, method).await },
+        )
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CandidateChannel {
@@ -97,6 +130,8 @@ impl PreheatService {
         config: Arc<EffectiveIpPoolConfig>,
         cache: Arc<IpScoreCache>,
         history: Arc<IpHistoryStore>,
+        dns_resolver: Option<ResolverFn>,
+        latency_prober: Option<ProberFn>,
     ) -> Result<Self> {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let notify = Arc::new(Notify::new());
@@ -105,6 +140,10 @@ impl PreheatService {
         let thread_config = config.clone();
         let thread_cache = cache.clone();
         let thread_history = history.clone();
+
+        let resolver = dns_resolver.unwrap_or_else(default_dns_resolver);
+        let prober = latency_prober.unwrap_or_else(default_latency_prober);
+
         let handle = thread::Builder::new()
             .name("ip-pool-preheat".into())
             .spawn(move || {
@@ -120,6 +159,8 @@ impl PreheatService {
                             thread_history,
                             thread_flag,
                             thread_notify,
+                            resolver,
+                            prober,
                         )
                         .await;
                     }),
@@ -168,6 +209,8 @@ async fn run_preheat_loop(
     history: Arc<IpHistoryStore>,
     stop: Arc<AtomicBool>,
     notify: Arc<Notify>,
+    resolver: ResolverFn,
+    prober: ProberFn,
 ) {
     // 全局回退参数
     let preheat_failure_threshold: u32 = 5; // 连续失败阈值
@@ -247,8 +290,15 @@ async fn run_preheat_loop(
         let now = Instant::now();
         if due <= now {
             let domain = schedules[index].domain.clone();
-            let result =
-                preheat_domain(&domain, config.as_ref(), cache.clone(), history.clone()).await;
+            let result = preheat_domain(
+                &domain,
+                config.as_ref(),
+                cache.clone(),
+                history.clone(),
+                resolver.clone(),
+                prober.clone(),
+            )
+            .await;
             match result {
                 Ok(_) => {
                     let instant = Instant::now();
@@ -409,6 +459,8 @@ async fn preheat_domain(
     config: &EffectiveIpPoolConfig,
     cache: Arc<IpScoreCache>,
     history: Arc<IpHistoryStore>,
+    resolver: ResolverFn,
+    prober: ProberFn,
 ) -> Result<()> {
     let host = domain.host.as_str();
     tracing::debug!(target = "ip_pool", host, ports = ?domain.ports, "preheat domain");
@@ -464,10 +516,12 @@ async fn preheat_domain(
         if toggles.dns {
             let host_clone = host_owned.clone();
             let dns_cfg = runtime_cfg.dns.clone();
+            let resolver_clone = resolver.clone();
             join_set.spawn(async move {
                 (
                     CandidateChannel::Dns,
-                    gather_dns_candidates(host_clone.as_str(), port, &dns_cfg).await,
+                    gather_dns_candidates(host_clone.as_str(), port, &dns_cfg, resolver_clone)
+                        .await,
                 )
             });
             task_count += 1;
@@ -566,6 +620,7 @@ async fn preheat_domain(
                             cache.clone(),
                             history.clone(),
                             true,
+                            prober.clone(),
                         )
                         .await
                         {
@@ -653,6 +708,7 @@ async fn preheat_domain(
             let blacklist_bg = blacklist.clone();
             let cache_bg = cache.clone();
             let history_bg = history.clone();
+            let prober_bg = prober.clone();
             tokio::spawn(async move {
                 drain_remaining_candidates(
                     join_set,
@@ -665,6 +721,7 @@ async fn preheat_domain(
                     blacklist_bg,
                     cache_bg,
                     history_bg,
+                    prober_bg,
                 )
                 .await;
             });
@@ -870,9 +927,10 @@ async fn gather_dns_candidates(
     host: &str,
     port: u16,
     runtime_dns: &DnsRuntimeConfig,
+    resolver: ResolverFn,
 ) -> Result<Vec<AggregatedCandidate>> {
     let mut items = Vec::new();
-    for DnsResolvedIp { ip, label } in dns::resolve(host, port, runtime_dns).await? {
+    for DnsResolvedIp { ip, label } in resolver(host, port, runtime_dns).await? {
         let mut candidate = AggregatedCandidate::new(ip, port, IpSource::Dns);
         if let Some(tag) = label {
             candidate.merge_resolver_tag(tag);
@@ -899,6 +957,7 @@ async fn measure_and_update_candidates(
     cache: Arc<IpScoreCache>,
     history: Arc<IpHistoryStore>,
     with_progress: bool,
+    prober: ProberFn,
 ) -> Result<Vec<IpStat>> {
     if candidates.is_empty() {
         cache.remove(host, port);
@@ -930,10 +989,11 @@ async fn measure_and_update_candidates(
             runtime_cfg,
             ttl_secs,
             Some(&mut progress),
+            prober,
         )
         .await
     } else {
-        measure_candidates(host, port, candidates, runtime_cfg, ttl_secs, None).await
+        measure_candidates(host, port, candidates, runtime_cfg, ttl_secs, None, prober).await
     };
 
     if stats.is_empty() {
@@ -956,6 +1016,7 @@ async fn drain_remaining_candidates(
     blacklist: Vec<String>,
     cache: Arc<IpScoreCache>,
     history: Arc<IpHistoryStore>,
+    prober: ProberFn,
 ) {
     while let Some(result) = join_set.join_next().await {
         match result {
@@ -994,6 +1055,7 @@ async fn drain_remaining_candidates(
                         cache.clone(),
                         history.clone(),
                         false,
+                        prober.clone(),
                     )
                     .await
                     {
@@ -1082,7 +1144,8 @@ pub async fn collect_candidates(
     }
 
     if toggles.dns {
-        match gather_dns_candidates(host, port, &config.runtime.dns).await {
+        let resolver = default_dns_resolver();
+        match gather_dns_candidates(host, port, &config.runtime.dns, resolver).await {
             Ok(batch) => {
                 merge_candidate_map(&mut map, batch);
             }
@@ -1115,6 +1178,7 @@ pub(super) async fn measure_candidates(
     runtime_cfg: &IpPoolRuntimeConfig,
     ttl_secs: u64,
     mut progress: Option<&mut (dyn FnMut(&[IpStat]) -> Result<()> + Send)>,
+    prober: ProberFn,
 ) -> Vec<IpStat> {
     let max_parallel = runtime_cfg.max_parallel_probes.max(1);
     let timeout = runtime_cfg
@@ -1122,7 +1186,7 @@ pub(super) async fn measure_candidates(
         .clamp(100, MAX_PROBE_TIMEOUT_MS);
     let semaphore = Arc::new(Semaphore::new(max_parallel));
     let mut join_set = JoinSet::new();
-    
+
     // 获取探测配置
     let probe_method = runtime_cfg.probe_method;
     let probe_path = runtime_cfg.probe_path.clone();
@@ -1135,12 +1199,13 @@ pub(super) async fn measure_candidates(
         let sni_host = host.to_string(); // 对于延迟测试，使用真实 host 作为 SNI
         let path = probe_path.clone();
         let method = probe_method;
+        let prober_task = prober.clone();
         join_set.spawn(async move {
             let _permit = permit
                 .acquire_owned()
                 .await
                 .map_err(|_| anyhow!("semaphore closed"))?;
-            let latency = probe_latency(
+            let latency = prober_task(
                 candidate.candidate.address,
                 candidate.candidate.port,
                 &host_for_probe,
@@ -1228,10 +1293,10 @@ pub async fn probe_latency_tcp(ip: IpAddr, port: u16, timeout_ms: u64) -> Result
 }
 
 /// HTTPing 延迟测试：使用 HTTPS HEAD 请求测量应用层延迟
-/// 
+///
 /// 此方法通过发送实际的 HTTP 请求来测量延迟，可以在 TUN 模式下获得真实的延迟值，
 /// 而不会被代理软件的本地 TCP 握手劫持。
-/// 
+///
 /// # Arguments
 /// * `ip` - 目标 IP 地址
 /// * `port` - 目标端口（通常是 443）
@@ -1249,13 +1314,13 @@ pub async fn probe_latency_http(
 ) -> Result<u32> {
     let addr = SocketAddr::new(ip, port);
     let timeout_duration = Duration::from_millis(timeout_ms);
-    
+
     // 1. 建立 TCP 连接
     let tcp_stream = timeout(timeout_duration, TcpStream::connect(addr))
         .await
         .context("tcp connect timeout")?
         .context("tcp connect failed")?;
-    
+
     // 2. 配置 TLS，使用指定的 SNI 但验证真实主机名的证书
     let tls_cfg = TlsCfg {
         spki_pins: Vec::new(),
@@ -1265,32 +1330,29 @@ pub async fn probe_latency_http(
     };
     let tls_config = Arc::new(create_client_config_with_expected_name(&tls_cfg, host));
     let connector = TlsConnector::from(tls_config);
-    
+
     let server_name = ServerName::try_from(sni_host)
         .map_err(|_| anyhow!("invalid sni hostname: {}", sni_host))?;
-    
+
     // 3. TLS 握手
     let tls_stream = timeout(timeout_duration, connector.connect(server_name, tcp_stream))
         .await
         .context("tls handshake timeout")?
         .context("tls handshake failed")?;
-    
+
     // 4. HTTP/1.1 握手
-    let (mut sender, conn) = timeout(
-        timeout_duration,
-        hyper::client::conn::handshake(tls_stream),
-    )
-    .await
-    .context("http handshake timeout")?
-    .context("http handshake failed")?;
-    
+    let (mut sender, conn) = timeout(timeout_duration, hyper::client::conn::handshake(tls_stream))
+        .await
+        .context("http handshake timeout")?
+        .context("http handshake failed")?;
+
     // 后台驱动连接
     tokio::spawn(async move {
         if let Err(e) = conn.await {
             tracing::trace!(target = "ip_pool", "httping conn ended: {:?}", e);
         }
     });
-    
+
     // 5. 发送 HEAD 请求并计时
     let uri = format!("https://{}{}", host, path);
     let req = Request::builder()
@@ -1302,19 +1364,19 @@ pub async fn probe_latency_http(
         .header("Connection", "close")
         .body(Body::empty())
         .context("build http request")?;
-    
+
     let start = Instant::now();
     let _resp = timeout(timeout_duration, sender.send_request(req))
         .await
         .context("http request timeout")?
         .context("http request failed")?;
     let elapsed = start.elapsed();
-    
+
     Ok(elapsed.as_millis().min(u128::from(u32::MAX)) as u32)
 }
 
 /// 根据配置选择的探测方法测量延迟
-pub async fn probe_latency(
+pub async fn probe_latency_impl(
     ip: IpAddr,
     port: u16,
     host: &str,

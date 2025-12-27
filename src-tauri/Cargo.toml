@@ -93,6 +93,8 @@ sha2 = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 chrono = { version = "0.4.42", features = ["serde"] }
 trust-dns-resolver = { version = "0.23", default-features = false, features = ["tokio-runtime", "system-config", "dns-over-https-rustls", "dns-over-rustls"] }
+async-trait = "0.1.89"
+futures = "0.3"
 
 [dev-dependencies]
 # 与主运行时一致，测试中使用 current_thread 以减少潜在冲突
@@ -103,6 +105,7 @@ proptest = "1"
 criterion = { version = "0.5", features= ["html_reports"] }
 ctor = "0.2"
 rcgen = "0.12"
+mockall = "0.14.0"
 
 [[bin]]
 name = "adaptive_tls_soak"
@@ -198,6 +201,8 @@ required-features = []
 name = "config"
 path = "tests/config.rs"
 required-features = []
+
+
 
 # Benchmark配置
 [[bench]]

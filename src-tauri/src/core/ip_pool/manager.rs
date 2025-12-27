@@ -597,6 +597,8 @@ impl IpPool {
             self.config.clone(),
             self.cache.clone(),
             self.history.clone(),
+            None,
+            None,
         ) {
             Ok(service) => {
                 service.request_refresh();

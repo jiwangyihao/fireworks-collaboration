@@ -140,6 +140,7 @@ async fn sample_once(pool: &IpPool, host: &str, port: u16) -> Result<Option<IpCa
         &config.runtime,
         config.file.score_ttl_seconds,
         None,
+        preheat::default_latency_prober(),
     )
     .await;
 
