@@ -11,6 +11,7 @@ mod error_recovery_tests;
 mod factory_fallback_tests;
 mod file_corruption_tests;
 mod key_cache_tests;
+mod model_tests; // Credential 模型测试
 mod platform_integration;
 mod security_audit_tests;
 mod security_enhancement_tests;
