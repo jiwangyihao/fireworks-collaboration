@@ -1,110 +1,212 @@
-//! Git command integration tests (Logic Verification)
+//! Git command integration tests.
 //!
-//! Bypasses tauri::AppHandle context issues by testing the underlying
-//! spawn logic that the commands invoke.
+//! Tests the actual command functions using MockRuntime.
 
+use std::borrow::Cow;
 use std::sync::Arc;
-use tokio::time::Duration;
+use std::sync::Mutex;
+use tauri::{Assets, Manager, State};
+use tauri_utils::assets::{AssetKey, CspHash};
 
-use fireworks_collaboration_lib::app::types::AppHandle;
-use fireworks_collaboration_lib::core::tasks::model::TaskKind;
+use fireworks_collaboration_lib::app::commands::git::*;
+use fireworks_collaboration_lib::app::types::{
+    SharedConfig, SharedCredentialFactory, TaskRegistryState,
+};
+use fireworks_collaboration_lib::core::config::model::AppConfig;
 use fireworks_collaboration_lib::core::tasks::TaskRegistry;
 
-/// Test Git Clone Task Spawn Logic
-#[tokio::test]
-async fn test_git_clone_task_logic() {
-    // 1. Setup
-    let registry = Arc::new(TaskRegistry::new());
+// Mock Assets for Tauri
+struct MockAssets;
 
-    // 2. Prepare arguments
-    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
-    let dest = temp_dir.path().join("repo").to_str().unwrap().to_string();
-    let repo_url = "https://github.com/example/repo.git".to_string();
-
-    // 3. Create Task (Mimics command pre-spawn)
-    let (id, token) = registry.create(TaskKind::GitClone {
-        repo: repo_url.clone(),
-        dest: dest.clone(),
-        depth: None,
-        filter: None,
-        strategy_override: None,
-        recurse_submodules: false,
-    });
-
-    // 4. Spawn Task (Mimics command spawn)
-    // We pass a dummy string as handle for AppHandle::from_tauri(())
-    // In test mode (not(tauri-app)), this creates a no-op handle.
-    let app_handle = AppHandle::from_tauri(());
-
-    registry.spawn_git_clone_task_with_opts(
-        Some(app_handle),
-        id,
-        token,
-        repo_url,
-        dest,
-        None,  // depth
-        None,  // filter
-        None,  // strategy_override
-        false, // recurse_submodules
-        None,  // progress hook
-    );
-
-    println!("Spawned task id: {}", id);
-
-    // 5. Verify Task State
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    let snap = registry
-        .snapshot(&id)
-        .expect("Task should exist in registry");
-    println!("Task state: {:?}", snap.state);
+impl<R: tauri::Runtime> Assets<R> for MockAssets {
+    fn get(&self, _key: &AssetKey) -> Option<Cow<'_, [u8]>> {
+        None
+    }
+    fn iter(&self) -> Box<dyn Iterator<Item = (Cow<'_, str>, Cow<'_, [u8]>)> + '_> {
+        Box::new(std::iter::empty())
+    }
+    fn csp_hashes(&self, _html_path: &AssetKey) -> Box<dyn Iterator<Item = CspHash<'_>> + '_> {
+        Box::new(std::iter::empty())
+    }
 }
 
-/// Test Git Fetch Task Spawn Logic
+fn create_mock_app() -> (tauri::App<tauri::test::MockRuntime>, TaskRegistryState) {
+    let registry: TaskRegistryState = Arc::new(TaskRegistry::new());
+    let config: SharedConfig = Arc::new(Mutex::new(AppConfig::default()));
+    let credential_factory: SharedCredentialFactory = Arc::new(Mutex::new(None));
+
+    let context = tauri::test::mock_context(MockAssets);
+
+    let app = tauri::test::mock_builder()
+        .manage::<TaskRegistryState>(registry.clone())
+        .manage::<SharedConfig>(config)
+        .manage::<SharedCredentialFactory>(credential_factory)
+        .build(context)
+        .expect("Failed to build mock app");
+
+    (app, registry)
+}
+
 #[tokio::test]
-async fn test_git_fetch_task_logic() {
-    // 1. Setup
-    let registry = Arc::new(TaskRegistry::new());
+async fn test_git_clone_command() {
+    let (app, registry) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    let dest = temp.path().join("repo").to_string_lossy().to_string();
+    let repo = "https://github.com/test/repo.git".to_string();
 
-    // 2. Prepare arguments
-    let temp_dir = tempfile::tempdir().unwrap();
-    let dest = temp_dir.path().to_str().unwrap().to_string();
-    let repo_url = "https://github.com/example/repo.git".to_string();
+    let result = git_clone(
+        repo,
+        dest,
+        None,
+        None,
+        None,
+        None,
+        app.state(),
+        app.handle().clone(),
+    )
+    .await;
 
-    // 3. Create Task
-    let (id, token) = registry.create(TaskKind::GitFetch {
-        repo: repo_url.clone(),
-        dest: dest.clone(),
-        depth: None,
-        filter: None,
-        strategy_override: None,
-    });
+    assert!(result.is_ok());
+    let task_id = result.unwrap();
+    let uuid = uuid::Uuid::parse_str(&task_id).unwrap();
 
-    // 4. Spawn Task
-    let app_handle = AppHandle::from_tauri(());
+    // Allow small delay for task spawn verification
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    assert!(registry.snapshot(&uuid).is_some());
+}
 
-    registry.spawn_git_fetch_task_with_opts(
-        Some(app_handle),
-        id,
-        token,
-        repo_url,
+#[tokio::test]
+async fn test_git_fetch_command() {
+    let (app, registry) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    let dest = temp.path().to_string_lossy().to_string();
+
+    let result = git_fetch(
+        "origin".to_string(),
         dest,
         None, // preset
         None, // depth
         None, // filter
         None, // strategy
-        None, // hook
-    );
+        app.state(),
+        app.handle().clone(),
+    )
+    .await;
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(registry.snapshot(&id).is_some());
+    assert!(result.is_ok());
+    let task_id = result.unwrap();
+    let uuid = uuid::Uuid::parse_str(&task_id).unwrap();
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    assert!(registry.snapshot(&uuid).is_some());
+}
+
+#[tokio::test]
+async fn test_git_init_command() {
+    let (app, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    let dest = temp.path().join("new_repo").to_string_lossy().to_string();
+
+    let result = git_init(dest.clone(), app.state(), app.handle().clone()).await;
+
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_git_add_command() {
+    let (app, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    let dest = temp.path().to_string_lossy().to_string();
+
+    let result = git_add(
+        dest,
+        vec![".".to_string()],
+        app.state(),
+        app.handle().clone(),
+    )
+    .await;
+
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_git_commit_command() {
+    let (app, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    let dest = temp.path().to_string_lossy().to_string();
+
+    let result = git_commit(
+        dest,
+        "msg".to_string(),
+        None,
+        None,
+        None,
+        app.state(),
+        app.handle().clone(),
+    )
+    .await;
+
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_git_branch_command() {
+    let (app, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    let dest = temp.path().to_string_lossy().to_string();
+
+    let result = git_branch(
+        dest,
+        "new-branch".to_string(),
+        Some(false),
+        Some(false),
+        app.state(),
+        app.handle().clone(),
+    )
+    .await;
+
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_git_checkout_command() {
+    let (app, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    let dest = temp.path().to_string_lossy().to_string();
+
+    let result = git_checkout(
+        dest,
+        "main".to_string(),
+        None,
+        app.state(),
+        app.handle().clone(),
+    )
+    .await;
+
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_git_remote_add_command() {
+    let (app, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    let dest = temp.path().to_string_lossy().to_string();
+
+    let result = git_remote_add(
+        dest,
+        "origin".to_string(),
+        "https://github.com/test/repo.git".to_string(),
+        app.state(),
+        app.handle().clone(),
+    )
+    .await;
+
+    assert!(result.is_ok());
 }
 
 // ============================================================================
 // parse_git_host tests (pure function, easy to test directly)
 // ============================================================================
-
-use fireworks_collaboration_lib::app::commands::git::parse_git_host;
 
 #[test]
 fn test_parse_git_host_https() {
@@ -150,8 +252,9 @@ fn test_parse_git_host_bitbucket() {
 #[test]
 fn test_parse_git_host_ssh_no_git_prefix() {
     let result = parse_git_host("user@example.com:path/to/repo.git");
-    // Should handle SSH-style URLs
-    assert!(result.is_ok() || result.is_err()); // Accept either based on impl
+    // Should verify it returns host or error, not panic.
+    // Based on implementation, this returns "example.com" probably.
+    let _ = result;
 }
 
 #[test]
