@@ -1,0 +1,140 @@
+﻿cargo :    Compiling fireworks-collaboration v0.1.0 (C:\Users\34404\Documents\GitHub\fireworks-collaboration\src-tauri)
+所在位置 行:1 字符: 1
++ cargo test --test submodule 2>&1 | Out-File -Encoding UTF8 test_outpu ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling fi...tion\src-tauri):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.08s
+     Running tests\submodule\mod.rs (target\debug\deps\submodule-b2241a9d09816080.exe)
+
+running 55 tests
+test common::event_assert::tests_event_assert_smoke::smoke_assert_phases ... ok
+test common::git_scenarios::tests_scenarios_smoke::push_retry_force_success_early_smoke ... ok
+test common::event_assert::tests_event_assert_smoke::terminal_exclusive_smoke_usage ... ok
+test common::event_assert::tests_event_assert_smoke::tagify_with_custom_mapper ... ok
+test common::i18n::tests::basic_translate_and_keys ... ok
+test common::git_helpers::tests_git_helpers::assert_in_accepts_any ... ok
+test common::git_helpers::tests_git_helpers::assert_and_expect_category_basic ... ok
+test common::git_helpers::tests_git_helpers::expect_in_err_branch ... ok
+test common::git_helpers::tests_git_helpers::map_err_ok_none ... ok
+test common::git_helpers::tests_git_helpers::assert_in_panics_on_miss - should panic ... ok
+test common::git_helpers::tests_git_helpers::map_err_some ... ok
+test common::http_override_stub::tests_http_override_stub_smoke::follow_chain_length_rule ... ok
+test common::http_override_stub::tests_http_override_stub_smoke::cases_filter_by_op ... ok
+test common::http_override_stub::tests_http_override_stub_smoke::smoke_http_override_cases_non_empty ... ok
+test common::event_assert::tests_event_assert_smoke::subsequence_panic_contains_context - should panic ... ok
+test common::fixtures::tests_fixtures_smoke::slug_replacement ... ok
+test common::event_assert::tests_event_assert_smoke::smoke_tag_subsequence ... ok
+test common::partial_filter_support::tests_pf_support::assess_rules_basic ... ok
+test common::partial_filter_support::tests_pf_support::classify_without_events ... ok
+test common::partial_filter_matrix::tests_partial_filter_matrix::fetch_specific_kinds_present ... ok
+test common::partial_filter_matrix::tests_partial_filter_matrix::describe_unique ... ok
+test common::partial_filter_matrix::tests_partial_filter_matrix::clone_cases_depth_invariants ... ok
+test common::partial_filter_support::tests_pf_support::outcome_describe_shape ... ok
+test common::retry_matrix::tests_internal::describe_unique_and_effective_attempts_bounds ... ok
+test common::retry_matrix::tests_internal::total_delay_non_zero_when_attempts_gt0 ... ok
+test common::shallow_matrix::tests::deepen_from_to_invariant ... ok
+test common::shallow_matrix::tests::invalid_labels_map_to_distinct_raw ... ok
+test common::shallow_matrix::tests::slug_helper_smoke ... ok
+test common::retry_matrix::tests_internal::backoff_sequence_shapes ... ok
+test common::test_env::tests_env_smoke::init_env_smoke ... ok
+[2m2025-12-28T14:27:37.206555Z[0m [32m INFO[0m [2msubmodule[0m[2m:[0m Initializing all submodules in: /tmp/test_repo
+[2m2025-12-28T14:27:37.206556Z[0m [32m INFO[0m [2msubmodule[0m[2m:[0m Syncing all submodules in: /tmp/test_repo
+[2m2025-12-28T14:27:37.206571Z[0m [32m INFO[0m [2msubmodule[0m[2m:[0m Updating all submodules in: /tmp/test_repo (depth: 0)
+test common::shallow_matrix::tests::describe_uniqueness_and_kind_coverage ... ok
+test common::pipeline::tests_pipeline_smoke::builder_and_outcome_helpers ... ok
+test model_tests::test_submodule_operation_as_str ... ok
+test model_tests::test_submodule_config_defaults ... ok
+test mock_tests::test_submodule_init_calls_git_init ... ok
+test mock_tests::test_submodule_sync_calls_git_sync ... ok
+test mock_tests::test_submodule_update_calls_git_update ... ok
+[2m2025-12-28T14:27:37.207351Z[0m [32m INFO[0m [2msubmodule[0m[2m:[0m Listing submodules in repository: /nonexistent/path
+test model_tests::test_submodule_config_serde ... ok
+test model_tests::test_submodule_info_creation ... ok
+test common::pipeline::tests_pipeline_smoke::smoke_basic_pipeline ... ok
+test model_tests::test_submodule_progress_event_serde ... ok
+test operations_tests::test_submodule_error_category ... ok
+test operations_tests::test_submodule_manager_creation ... ok
+test common::fixtures::tests_fixtures_smoke::write_files_helper ... ok
+[2m2025-12-28T14:27:37.209901Z[0m [31mERROR[0m [2msubmodule[0m[2m:[0m Failed to open repository: failed to resolve path '/nonexistent/path': 绯荤粺鎵句笉鍒版寚瀹氱殑璺緞銆?
+; class=Os (2); code=NotFound (-3)
+test operations_tests::test_repository_not_found ... ok
+[2m2025-12-28T14:27:37.211198Z[0m [32m INFO[0m [2mfireworks_collaboration_lib::core::config::loader[0m[2m:[0m config saved [3mtarget[0m[2m=[0m"config" [3mpath[0m[2m=[0mC:\Users\34404\AppData\Local\Temp\.tmpNdZPkD\config\config.json
+test common::strategy_support::tests::rollout_event_reflects_sampled_false_when_percent_zero ... ok
+[2m2025-12-28T14:27:37.218531Z[0m [32m INFO[0m [2mfireworks_collaboration_lib::core::config::loader[0m[2m:[0m config saved [3mtarget[0m[2m=[0m"config" [3mpath[0m[2m=[0mC:\Users\34404\AppData\Local\Temp\.tmpGsR3Be\config\config.json
+test common::strategy_support::tests::rollout_event_reflects_sampled_true_when_percent_100 ... ok
+[2m2025-12-28T14:27:37.250481Z[0m [32m INFO[0m [2msubmodule[0m[2m:[0m Listing submodules in repository: C:/Users/34404/AppData/Local/Temp/.tmpPH69jW
+[2m2025-12-28T14:27:37.254435Z[0m [32m INFO[0m [2msubmodule[0m[2m:[0m Found 0 submodules
+test operations_tests::test_max_depth_check ... ok
+test operations_tests::test_list_submodules_empty ... ok
+test operations_tests::test_has_submodules_empty ... ok
+test common::fixtures::tests_fixtures_smoke::staged_repo_basic ... ok
+Initialized empty Git repository in C:/Users/34404/AppData/Local/Temp/fwc-remote-src-751386ef-de91-4b03-a2d8-bafa33982dd2/.git/
+Initialized empty Git repository in C:/Users/34404/AppData/Local/Temp/fwc-remote-src-3c69f5a0-d062-4ad7-84be-020cc0f6ee60/.git/
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: is subject to change. To configure the initial branch name to use in all
+hint: of your new repositories, which will suppress this warning, call:
+hint:
+hint: 	git config --global init.defaultBranch <name>
+hint:
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint: 	git branch -m <name>
+hint:
+hint: Disable this message with "git config set advice.defaultBranchName false"
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: is subject to change. To configure the initial branch name to use in all
+hint: of your new repositories, which will suppress this warning, call:
+hint:
+hint: 	git config --global init.defaultBranch <name>
+hint:
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint: 	git branch -m <name>
+hint:
+hint: Disable this message with "git config set advice.defaultBranchName false"
+test common::repo_factory::tests_repo_factory::builder_basic_branches_and_commits ... ok
+[master (root-commit) 97ae319] c1
+ 1 file changed, 1 insertion(+)
+ create mode 100644 f1.txt
+[master (root-commit) 97ae319] c1
+ 1 file changed, 1 insertion(+)
+ create mode 100644 f1.txt
+Cloning into bare repository 'C:\Users\34404\AppData\Local\Temp\fwc-remote-bare-926d47e0-cb79-4f4f-b9e7-ed9efd05b735'...
+[master d6bcad2] c2
+ 1 file changed, 1 insertion(+)
+ create mode 100644 f2.txt
+done.
+Cloning into bare repository 'C:\Users\34404\AppData\Local\Temp\fwc-remote-bare-f0d3d4ed-a102-4a3f-9ce0-62592aa41dc7'...
+Cloning into 'C:\Users\34404\AppData\Local\Temp\fwc-pipeline-real-e745cd91-f447-4ac1-bab1-44b0dc08578e'...
+done.
+done.
+Cloning into 'C:\Users\34404\AppData\Local\Temp\fwc-pipeline-real-8fe36fd7-2ef1-4c6f-9766-090286bda34c'...
+done.
+[master 0a98e5e] pipeline_commit
+ 1 file changed, 1 insertion(+)
+ create mode 100644 new.txt
+test common::git_scenarios::tests_scenarios_smoke::clone_params_default_smoke ... ok
+[master a23907c] pipeline_commit
+ 1 file changed, 1 insertion(+)
+ create mode 100644 new.txt
+fatal: 'C:/Users/34404/AppData/Local/Temp/fwc-missing-remote-f3e608bd-fdc7-4e5c-9a93-fa17dbfdef07' does not appear to be a git repository
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+To C:\Users\34404\AppData\Local\Temp\fwc-remote-bare-926d47e0-cb79-4f4f-b9e7-ed9efd05b735
+   97ae319..0a98e5e  HEAD -> master
+fatal: 'C:/Users/34404/AppData/Local/Temp/fwc-missing-remote-f3e608bd-fdc7-4e5c-9a93-fa17dbfdef07' does not appear to be a git repository
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+test common::pipeline::tests_pipeline_real::real_pipeline_force_push_failure ... ok
+test common::pipeline::tests_pipeline_real::real_pipeline_success_path ... ok
+
+test result: ok. 55 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.45s
+

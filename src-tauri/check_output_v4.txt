@@ -1,0 +1,99 @@
+﻿cargo :     Blocking waiting for file lock on build directory
+所在位置 行:1 字符: 1
++ cargo check --lib --tests 2>&1 | Out-File -Encoding UTF8 check_output ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Blocking wa...build directory:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   Compiling fireworks-collaboration v0.1.0 (C:\Users\34404\Documents\GitHub\fireworks-collaboration\src-tauri)
+error[E0432]: unresolved import `fireworks_collaboration_lib::core::git::runner::GitOutput`
+ --> tests\e2e\..\common\mock_runner.rs:2:54
+  |
+2 | use fireworks_collaboration_lib::core::git::runner::{GitOutput, GitRunner};
+  |                                                      ^^^^^^^^^
+  |                                                      |
+  |                                                      no `GitOutput` in `core::git::runner`
+  |                                                      help: a similar name exists in the module: `Output`
+
+error[E0432]: unresolved import `fireworks_collaboration_lib::core::git::runner::GitOutput`
+ --> tests\workspace\..\common\mock_runner.rs:2:54
+  |
+2 | use fireworks_collaboration_lib::core::git::runner::{GitOutput, GitRunner};
+  |                                                      ^^^^^^^^^
+  |                                                      |
+  |                                                      no `GitOutput` in `core::git::runner`
+  |                                                      help: a similar name exists in the module: `Output`
+
+error[E0432]: unresolved import `fireworks_collaboration_lib::core::git::runner::GitOutput`
+ --> tests\events\..\common\mock_runner.rs:2:54
+  |
+2 | use fireworks_collaboration_lib::core::git::runner::{GitOutput, GitRunner};
+  |                                                      ^^^^^^^^^
+  |                                                      |
+  |                                                      no `GitOutput` in `core::git::runner`
+  |                                                      help: a similar name exists in the module: `Output`
+
+error[E0432]: unresolved import `fireworks_collaboration_lib::core::git::runner::GitOutput`
+ --> tests\submodule\..\common\mock_runner.rs:2:54
+  |
+2 | use fireworks_collaboration_lib::core::git::runner::{GitOutput, GitRunner};
+  |                                                      ^^^^^^^^^
+  |                                                      |
+  |                                                      no `GitOutput` in `core::git::runner`
+  |                                                      help: a similar name exists in the module: `Output`
+
+error[E0432]: unresolved import `fireworks_collaboration_lib::core::git::runner::GitOutput`
+ --> tests\submodule\mock_tests.rs:2:5
+  |
+2 | use fireworks_collaboration_lib::core::git::runner::GitOutput;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^---------
+  |     |                                               |
+  |     |                                               help: a similar name exists in the module: `Output`
+  |     no `GitOutput` in `core::git::runner`
+
+error[E0432]: unresolved import `fireworks_collaboration_lib::core::git::runner::GitOutput`
+ --> tests\proxy\..\common\mock_runner.rs:2:54
+  |
+2 | use fireworks_collaboration_lib::core::git::runner::{GitOutput, GitRunner};
+  |                                                      ^^^^^^^^^
+  |                                                      |
+  |                                                      no `GitOutput` in `core::git::runner`
+  |                                                      help: a similar name exists in the module: `Output`
+
+error[E0432]: unresolved import `fireworks_collaboration_lib::core::git::runner::GitOutput`
+ --> tests\quality\..\common\mock_runner.rs:2:54
+  |
+2 | use fireworks_collaboration_lib::core::git::runner::{GitOutput, GitRunner};
+  |                                                      ^^^^^^^^^
+  |                                                      |
+  |                                                      no `GitOutput` in `core::git::runner`
+  |                                                      help: a similar name exists in the module: `Output`
+
+error[E0432]: unresolved import `fireworks_collaboration_lib::core::git::runner::GitOutput`
+ --> tests\tasks\..\common\mock_runner.rs:2:54
+  |
+2 | use fireworks_collaboration_lib::core::git::runner::{GitOutput, GitRunner};
+  |                                                      ^^^^^^^^^
+  |                                                      |
+  |                                                      no `GitOutput` in `core::git::runner`
+  |                                                      help: a similar name exists in the module: `Output`
+
+error[E0432]: unresolved import `fireworks_collaboration_lib::core::git::runner::GitOutput`
+ --> tests\git\..\common\mock_runner.rs:2:54
+  |
+2 | use fireworks_collaboration_lib::core::git::runner::{GitOutput, GitRunner};
+  |                                                      ^^^^^^^^^
+  |                                                      |
+  |                                                      no `GitOutput` in `core::git::runner`
+  |                                                      help: a similar name exists in the module: `Output`
+
+For more information about this error, try `rustc --explain E0432`.
+error: could not compile `fireworks-collaboration` (test "e2e") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `fireworks-collaboration` (test "submodule") due to 2 previous errors
+error: could not compile `fireworks-collaboration` (test "events") due to 1 previous error
+error: could not compile `fireworks-collaboration` (test "workspace") due to 1 previous error
+error: could not compile `fireworks-collaboration` (test "quality") due to 1 previous error
+error: could not compile `fireworks-collaboration` (test "proxy") due to 1 previous error
+error: could not compile `fireworks-collaboration` (test "git") due to 1 previous error
+error: could not compile `fireworks-collaboration` (test "tasks") due to 1 previous error

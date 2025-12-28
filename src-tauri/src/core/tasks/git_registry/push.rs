@@ -331,7 +331,10 @@ impl TaskRegistry {
                 let dest_path = std::path::PathBuf::from(dest.clone());
                 let res: Result<(), GitError> = {
                     use crate::core::git::service::GitService;
-                    let service = crate::core::git::DefaultGitService::new();
+                    let service = crate::core::git::DefaultGitService::new(std::sync::Arc::new(
+                        crate::core::git::CliGitRunner::new(),
+                    ));
+
                     let app_for_cb = app.clone();
                     let id_for_cb = id;
                     let hook_for_cb = progress_hook.clone();

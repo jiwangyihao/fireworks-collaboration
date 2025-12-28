@@ -13,6 +13,7 @@ pub struct MockGitRunner {
 pub struct MockExpectation {
     pub args: Option<Vec<String>>,
     pub output: Result<Output, GitError>,
+    pub output_lines: Option<Vec<(String, bool)>>,
 }
 
 impl MockGitRunner {
@@ -29,6 +30,23 @@ impl MockGitRunner {
             .push_back(MockExpectation {
                 args: args.map(|a| a.iter().map(|s| s.to_string()).collect()),
                 output,
+                output_lines: None,
+            });
+    }
+
+    pub fn expect_with_output(
+        &self,
+        args: Option<Vec<&str>>,
+        output: Result<Output, GitError>,
+        lines: Vec<(String, bool)>,
+    ) {
+        self.expectations
+            .lock()
+            .unwrap()
+            .push_back(MockExpectation {
+                args: args.map(|a| a.iter().map(|s| s.to_string()).collect()),
+                output,
+                output_lines: Some(lines),
             });
     }
 }
@@ -50,6 +68,37 @@ impl GitRunner for MockGitRunner {
         } else {
             panic!(
                 "No more expectations for GitRunner. Call was: {:?} at {:?}",
+                args, path
+            );
+        }
+    }
+
+    fn run_with_progress(
+        &self,
+        args: &[&str],
+        path: &Path,
+        on_output: &mut dyn FnMut(&str, bool),
+    ) -> Result<Output, GitError> {
+        let mut expectations = self.expectations.lock().unwrap();
+        if let Some(expectation) = expectations.pop_front() {
+            if let Some(expected_args) = &expectation.args {
+                let current_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+                if current_args != *expected_args {
+                    panic!(
+                        "Unexpected arguments. Expected: {:?}, Got: {:?}",
+                        expected_args, current_args
+                    );
+                }
+            }
+            if let Some(lines) = &expectation.output_lines {
+                for (line, is_stderr) in lines {
+                    on_output(line, *is_stderr);
+                }
+            }
+            expectation.output
+        } else {
+            panic!(
+                "No more expectations for GitRunner. Call (with progress) was: {:?} at {:?}",
                 args, path
             );
         }

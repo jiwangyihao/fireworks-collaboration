@@ -1,0 +1,202 @@
+﻿cargo :    Compiling fireworks-collaboration v0.1.0 (C:\Users\34404\Documents\GitHub\fireworks-collaboration\src-tauri)
+所在位置 行:1 字符: 1
++ cargo check --lib --tests 2>&1 | Out-File -Encoding UTF8 check_output ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling fi...tion\src-tauri):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+error[E0061]: this function takes 11 arguments but 10 arguments were supplied
+   --> tests\commands\git.rs:184:18
+    |
+184 |     let result = git_push(
+    |                  ^^^^^^^^
+...
+194 |         app.handle().clone(),
+    |         -------------------- argument #10 of type `tauri::State<'_, Box<(dyn GitRunner + 'static)>>` is missing
+    |
+note: function defined here
+   --> C:\Users\34404\Documents\GitHub\fireworks-collaboration\src-tauri\src\app\commands\git.rs:118:14
+    |
+118 | pub async fn git_push(
+    |              ^^^^^^^^
+help: provide the argument
+    |
+184 -     let result = git_push(
+185 -         dest,
+186 -         Some("origin".to_string()),
+187 -         None, // refspecs
+188 -         None, // username
+189 -         None, // password
+190 -         None, // use_stored_credential
+191 -         None, // strategy_override
+192 -         app.state(),
+193 -         app.state(), // credential_factory
+194 -         app.handle().clone(),
+195 -     )
+184 +     let result = git_push(dest, Some("origin".to_string()), None, None, None, None, None, app.state(), app.state(), /* tauri::State<'_, Box<(dyn GitRunner + 'static)>> */, app.h
+andle().clone())
+    |
+
+error[E0061]: this function takes 3 arguments but 2 arguments were supplied
+   --> tests\commands\git.rs:272:18
+    |
+272 |     let result = git_list_branches(dest, None).await;
+    |                  ^^^^^^^^^^^^^^^^^------------ argument #3 of type `tauri::State<'_, Box<(dyn GitRunner + 'static)>>` is missing
+    |
+note: function defined here
+   --> C:\Users\34404\Documents\GitHub\fireworks-collaboration\src-tauri\src\app\commands\git.rs:668:14
+    |
+668 | pub async fn git_list_branches(
+    |              ^^^^^^^^^^^^^^^^^
+help: provide the argument
+    |
+272 |     let result = git_list_branches(dest, None, /* tauri::State<'_, Box<(dyn GitRunner + 'static)>> */).await;
+    |                                              ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+   --> tests\commands\git.rs:289:18
+    |
+289 |     let result = git_repo_status(dest).await;
+    |                  ^^^^^^^^^^^^^^^------ argument #2 of type `tauri::State<'_, Box<(dyn GitRunner + 'static)>>` is missing
+    |
+note: function defined here
+   --> C:\Users\34404\Documents\GitHub\fireworks-collaboration\src-tauri\src\app\commands\git.rs:759:14
+    |
+759 | pub async fn git_repo_status(
+    |              ^^^^^^^^^^^^^^^
+help: provide the argument
+    |
+289 |     let result = git_repo_status(dest, /* tauri::State<'_, Box<(dyn GitRunner + 'static)>> */).await;
+    |                                      ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+   --> tests\commands\git.rs:307:18
+    |
+307 |     let result = git_worktree_list(dest.clone()).await;
+    |                  ^^^^^^^^^^^^^^^^^-------------- argument #2 of type `tauri::State<'_, Box<(dyn GitRunner + 'static)>>` is missing
+    |
+note: function defined here
+   --> C:\Users\34404\Documents\GitHub\fireworks-collaboration\src-tauri\src\app\commands\git.rs:990:14
+    |
+990 | pub async fn git_worktree_list(
+    |              ^^^^^^^^^^^^^^^^^
+help: provide the argument
+    |
+307 |     let result = git_worktree_list(dest.clone(), /* tauri::State<'_, Box<(dyn GitRunner + 'static)>> */).await;
+    |                                                ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0061]: this function takes 6 arguments but 5 arguments were supplied
+    --> tests\commands\git.rs:314:22
+     |
+314  |       let add_result = git_worktree_add(
+     |  ______________________^^^^^^^^^^^^^^^^-
+315  | |         dest.clone(),
+316  | |         wt_path.clone(),
+317  | |         "new-wt-branch".to_string(),
+318  | |         Some(true),
+319  | |         None,
+320  | |     )
+     | |_____- argument #6 of type `tauri::State<'_, Box<(dyn GitRunner + 'static)>>` is missing
+     |
+note: function defined here
+    --> C:\Users\34404\Documents\GitHub\fireworks-collaboration\src-tauri\src\app\commands\git.rs:1213:14
+     |
+1213 | pub async fn git_worktree_add(
+     |              ^^^^^^^^^^^^^^^^
+help: provide the argument
+     |
+314  -     let add_result = git_worktree_add(
+315  -         dest.clone(),
+316  -         wt_path.clone(),
+317  -         "new-wt-branch".to_string(),
+318  -         Some(true),
+319  -         None,
+320  -     )
+314  +     let add_result = git_worktree_add(dest.clone(), wt_path.clone(), "new-wt-branch".to_string(), Some(true), None, /* tauri::State<'_, Box<(dyn GitRunner + 'static)>> */)
+     |
+
+error[E0061]: this function takes 2 arguments but 1 argument was supplied
+   --> tests\commands\git.rs:325:19
+    |
+325 |     let result2 = git_worktree_list(dest.clone()).await;
+    |                   ^^^^^^^^^^^^^^^^^-------------- argument #2 of type `tauri::State<'_, Box<(dyn GitRunner + 'static)>>` is missing
+    |
+note: function defined here
+   --> C:\Users\34404\Documents\GitHub\fireworks-collaboration\src-tauri\src\app\commands\git.rs:990:14
+    |
+990 | pub async fn git_worktree_list(
+    |              ^^^^^^^^^^^^^^^^^
+help: provide the argument
+    |
+325 |     let result2 = git_worktree_list(dest.clone(), /* tauri::State<'_, Box<(dyn GitRunner + 'static)>> */).await;
+    |                                                 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0061]: this function takes 8 arguments but 7 arguments were supplied
+    --> tests\commands\git.rs:330:25
+     |
+330  |       let remove_result = git_worktree_remove(
+     |  _________________________^^^^^^^^^^^^^^^^^^^-
+331  | |         dest,
+332  | |         wt_path,
+333  | |         Some(true), // force
+...    |
+337  | |         app.state(),
+338  | |     )
+     | |_____- argument #8 of type `tauri::State<'_, Box<(dyn GitRunner + 'static)>>` is missing
+     |
+note: function defined here
+    --> C:\Users\34404\Documents\GitHub\fireworks-collaboration\src-tauri\src\app\commands\git.rs:1303:14
+     |
+1303 | pub async fn git_worktree_remove(
+     |              ^^^^^^^^^^^^^^^^^^^
+help: provide the argument
+     |
+330  -     let remove_result = git_worktree_remove(
+331  -         dest,
+332  -         wt_path,
+333  -         Some(true), // force
+334  -         None,
+335  -         None,
+336  -         None,
+337  -         app.state(),
+338  -     )
+330  +     let remove_result = git_worktree_remove(dest, wt_path, Some(true), None, None, None, app.state(), /* tauri::State<'_, Box<(dyn GitRunner + 'static)>> */)
+     |
+
+error[E0061]: this function takes 4 arguments but 3 arguments were supplied
+   --> tests\commands\git.rs:351:18
+    |
+351 |     let result = git_remote_branches(dest, None, None).await;
+    |                  ^^^^^^^^^^^^^^^^^^^------------------ argument #4 of type `tauri::State<'_, Box<(dyn GitRunner + 'static)>>` is missing
+    |
+note: function defined here
+   --> C:\Users\34404\Documents\GitHub\fireworks-collaboration\src-tauri\src\app\commands\git.rs:922:14
+    |
+922 | pub async fn git_remote_branches(
+    |              ^^^^^^^^^^^^^^^^^^^
+help: provide the argument
+    |
+351 |     let result = git_remote_branches(dest, None, None, /* tauri::State<'_, Box<(dyn GitRunner + 'static)>> */).await;
+    |                                                      ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+error[E0382]: borrow of moved value: `config`
+  --> tests\tasks\submodule_ops.rs:63:34
+   |
+60 |     let config = SubmoduleConfig::default();
+   |         ------ move occurs because `config` has type `SubmoduleConfig`, which does not implement the `Copy` trait
+61 |     let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+62 |     let manager = SubmoduleManager::new(config, runner);
+   |                                         ------ value moved here
+63 |     assert_eq!(manager.config(), &config);
+   |                                  ^^^^^^^ value borrowed here after move
+   |
+help: consider cloning the value if the performance cost is acceptable
+   |
+62 |     let manager = SubmoduleManager::new(config.clone(), runner);
+   |                                               ++++++++
+
+For more information about this error, try `rustc --explain E0382`.
+error: could not compile `fireworks-collaboration` (test "tasks") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+For more information about this error, try `rustc --explain E0061`.
+error: could not compile `fireworks-collaboration` (test "commands") due to 8 previous errors

@@ -24,17 +24,22 @@ pub mod refname;
 pub mod remote;
 pub mod tag; // P2.2a: depth/filter/strategyOverride parsing placeholder
 
-pub struct DefaultGitService;
+use crate::core::git::runner::{CliGitRunner, GitRunner};
+use std::sync::Arc;
+
+pub struct DefaultGitService {
+    runner: Arc<dyn GitRunner + Send + Sync>,
+}
 
 impl Default for DefaultGitService {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(CliGitRunner::new()))
     }
 }
 
 impl DefaultGitService {
-    pub fn new() -> Self {
-        Self
+    pub fn new(runner: Arc<dyn GitRunner + Send + Sync>) -> Self {
+        Self { runner }
     }
 }
 
@@ -107,6 +112,7 @@ impl GitService for DefaultGitService {
         let effective_depth = if looks_like_path { None } else { depth };
         // Bridge to dedicated module (P2.0). Internals currently delegate to ops.rs.
         let r = clone::do_clone(
+            self.runner.as_ref(),
             repo_url_final.as_str(),
             dest,
             effective_depth,
@@ -191,6 +197,7 @@ impl GitService for DefaultGitService {
             depth
         };
         fetch::do_fetch(
+            self.runner.as_ref(),
             repo_url,
             dest,
             effective_depth,

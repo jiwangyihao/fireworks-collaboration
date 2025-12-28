@@ -1,0 +1,8 @@
+﻿cargo :    Compiling fireworks-collaboration v0.1.0 (C:\Users\34404\Documents\GitHub\fireworks-collaboration\src-tauri)
+所在位置 行:1 字符: 1
++ cargo check --lib --tests 2>&1 | Out-File -Encoding UTF8 check_output ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling fi...tion\src-tauri):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.24s

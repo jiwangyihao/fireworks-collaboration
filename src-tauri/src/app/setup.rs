@@ -297,9 +297,17 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
     app.manage(Arc::new(workspace_status_service) as SharedWorkspaceStatusService);
     tracing::info!(target = "workspace", "Workspace status service initialized");
 
+    // Initialize Git Runner (P26.1)
+    let git_runner = crate::core::git::runner::CliGitRunner::new();
+    let runner_box =
+        Box::new(git_runner.clone()) as Box<dyn crate::core::git::runner::GitRunner + Send + Sync>;
+    app.manage(Box::new(git_runner) as Box<dyn crate::core::git::runner::GitRunner>);
+    tracing::info!(target = "git", "Git runner initialized");
+
     // Initialize submodule manager with default config
     let submodule_config = cfg.submodule.clone();
-    let submodule_manager = crate::core::submodule::SubmoduleManager::new(submodule_config);
+    let submodule_manager =
+        crate::core::submodule::SubmoduleManager::new(submodule_config, runner_box);
     app.manage(Arc::new(Mutex::new(submodule_manager)) as SharedSubmoduleManager);
     tracing::info!(
         target = "submodule",
