@@ -148,6 +148,16 @@ fn test_workspace_update_repository() {
     assert_eq!(ws.get_repository("repo1").unwrap().name, "Updated Name");
 }
 
+#[test]
+fn test_workspace_update_nonexistent_repository() {
+    let mut ws = Workspace::new("test-ws".to_string(), PathBuf::from("/tmp/test"));
+    let result = ws.update_repository("nonexistent", |r| {
+        r.name = "Won't happen".to_string();
+    });
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("不存在"));
+}
+
 // ============ RepositoryEntry Tests ============
 
 #[test]

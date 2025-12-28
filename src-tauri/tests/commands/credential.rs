@@ -260,3 +260,74 @@ async fn test_unlock_store() {
     );
     assert!(unlock_event.success);
 }
+
+// ============ Error Path Tests ============
+
+#[tokio::test]
+async fn test_get_credential_not_found() {
+    let (app, _, _) = create_mock_app();
+    init_store(&app).await;
+
+    let get_res = get_credential(
+        "nonexistent.com".to_string(),
+        Some("nobody".to_string()),
+        app.state(),
+        app.state(),
+    )
+    .await;
+
+    assert!(get_res.is_ok());
+    assert!(get_res.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn test_update_nonexistent_credential() {
+    let (app, _, _) = create_mock_app();
+    init_store(&app).await;
+
+    let update_req = UpdateCredentialRequest {
+        host: "nonexistent.com".to_string(),
+        username: "nobody".to_string(),
+        new_password: "newpass".to_string(),
+        expires_in_days: None,
+    };
+    let res = update_credential(update_req, app.state(), app.state()).await;
+
+    // Update of nonexistent credential should fail
+    assert!(res.is_err());
+}
+
+#[tokio::test]
+async fn test_delete_nonexistent_credential() {
+    let (app, _, _) = create_mock_app();
+    init_store(&app).await;
+
+    let del_res = delete_credential(
+        "nonexistent.com".to_string(),
+        "nobody".to_string(),
+        app.state(),
+        app.state(),
+    )
+    .await;
+
+    // Delete of nonexistent credential may succeed or fail depending on implementation
+    // but it should not panic
+    let _ = del_res; // Operation completes without panic
+}
+
+#[tokio::test]
+async fn test_add_credential_without_init() {
+    let (app, _, _) = create_mock_app();
+    // NO init_store call - store is not initialized
+
+    let req = AddCredentialRequest {
+        host: "github.com".to_string(),
+        username: "testuser".to_string(),
+        password_or_token: "secret".to_string(),
+        expires_in_days: None,
+    };
+
+    let add_res = add_credential(req, app.state(), app.state()).await;
+    // Should fail because store is not initialized
+    assert!(add_res.is_err());
+}

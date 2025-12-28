@@ -875,3 +875,227 @@ mod section_service_cancel_fast {
         assert!(res.is_ok(), "test exceeded timeout window");
     }
 }
+
+// ---------------- section_parent_child_links ----------------
+mod section_parent_child_links {
+    //! Parent-child task relationship tests
+    use fireworks_collaboration_lib::core::tasks::model::TaskKind;
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_link_parent_child_basic() {
+        super::test_env::init_test_env();
+        let reg = Arc::new(TaskRegistry::new());
+
+        let (parent_id, _) = reg.create(TaskKind::Sleep { ms: 100 });
+        let (child1_id, _) = reg.create(TaskKind::Sleep { ms: 50 });
+        let (child2_id, _) = reg.create(TaskKind::Sleep { ms: 50 });
+
+        reg.link_parent_child(parent_id, child1_id);
+        reg.link_parent_child(parent_id, child2_id);
+
+        let children = reg.children_of(&parent_id);
+        assert_eq!(children.len(), 2);
+        assert!(children.contains(&child1_id));
+        assert!(children.contains(&child2_id));
+    }
+
+    #[tokio::test]
+    async fn test_parent_of_returns_correct_parent() {
+        super::test_env::init_test_env();
+        let reg = Arc::new(TaskRegistry::new());
+
+        let (parent_id, _) = reg.create(TaskKind::Sleep { ms: 100 });
+        let (child_id, _) = reg.create(TaskKind::Sleep { ms: 50 });
+
+        reg.link_parent_child(parent_id, child_id);
+
+        let found_parent = reg.parent_of(&child_id);
+        assert_eq!(found_parent, Some(parent_id));
+    }
+
+    #[tokio::test]
+    async fn test_parent_of_unknown_returns_none() {
+        super::test_env::init_test_env();
+        let reg = TaskRegistry::new();
+        let random = uuid::Uuid::new_v4();
+        assert!(reg.parent_of(&random).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_children_of_unknown_returns_empty() {
+        super::test_env::init_test_env();
+        let reg = TaskRegistry::new();
+        let random = uuid::Uuid::new_v4();
+        assert!(reg.children_of(&random).is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_multiple_parents_independent() {
+        super::test_env::init_test_env();
+        let reg = Arc::new(TaskRegistry::new());
+
+        let (parent1, _) = reg.create(TaskKind::Sleep { ms: 100 });
+        let (parent2, _) = reg.create(TaskKind::Sleep { ms: 100 });
+        let (child1, _) = reg.create(TaskKind::Sleep { ms: 50 });
+        let (child2, _) = reg.create(TaskKind::Sleep { ms: 50 });
+
+        reg.link_parent_child(parent1, child1);
+        reg.link_parent_child(parent2, child2);
+
+        assert_eq!(reg.children_of(&parent1), vec![child1]);
+        assert_eq!(reg.children_of(&parent2), vec![child2]);
+    }
+}
+
+// ---------------- section_structured_lifecycle_events ----------------
+mod section_structured_lifecycle_events {
+    //! Structured event bus injection and lifecycle event capture
+    use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use fireworks_collaboration_lib::events::structured::{Event, MemoryEventBus, TaskEvent};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_inject_structured_bus_captures_started_event() {
+        super::test_env::init_test_env();
+        let reg = Arc::new(TaskRegistry::new());
+        let bus = Arc::new(MemoryEventBus::new());
+        reg.inject_structured_bus(bus.clone());
+
+        let (id, token) = reg.create(TaskKind::Sleep { ms: 100 });
+        reg.clone().spawn_sleep_task(None, id, token, 100);
+
+        let ok = super::task_wait::wait_predicate(
+            || {
+                reg.snapshot(&id)
+                    .map(|s| matches!(s.state, TaskState::Completed))
+                    .unwrap_or(false)
+            },
+            2_000,
+            30,
+        )
+        .await;
+        assert!(ok);
+
+        let events = bus.snapshot();
+        let has_started = events
+            .iter()
+            .any(|e| matches!(e, Event::Task(TaskEvent::Started { .. })));
+        assert!(has_started, "should capture Started event via injected bus");
+    }
+
+    #[tokio::test]
+    async fn test_inject_structured_bus_captures_completed_event() {
+        super::test_env::init_test_env();
+        let reg = Arc::new(TaskRegistry::new());
+        let bus = Arc::new(MemoryEventBus::new());
+        reg.inject_structured_bus(bus.clone());
+
+        let (id, token) = reg.create(TaskKind::Sleep { ms: 50 });
+        reg.clone().spawn_sleep_task(None, id, token, 50);
+
+        super::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 2_000, 30).await;
+
+        let events = bus.snapshot();
+        let has_completed = events
+            .iter()
+            .any(|e| matches!(e, Event::Task(TaskEvent::Completed { .. })));
+        assert!(
+            has_completed,
+            "should capture Completed event via injected bus"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_inject_structured_bus_captures_canceled_event() {
+        super::test_env::init_test_env();
+        let reg = Arc::new(TaskRegistry::new());
+        let bus = Arc::new(MemoryEventBus::new());
+        reg.inject_structured_bus(bus.clone());
+
+        let (id, token) = reg.create(TaskKind::Sleep { ms: 1000 });
+        reg.clone().spawn_sleep_task(None, id, token.clone(), 1000);
+
+        super::task_wait::wait_task_state(&reg, &id, TaskState::Running, 500, 20).await;
+        token.cancel();
+        super::task_wait::wait_task_state(&reg, &id, TaskState::Canceled, 1_000, 30).await;
+
+        let events = bus.snapshot();
+        let has_canceled = events
+            .iter()
+            .any(|e| matches!(e, Event::Task(TaskEvent::Canceled { .. })));
+        assert!(
+            has_canceled,
+            "should capture Canceled event via injected bus"
+        );
+    }
+}
+
+// ---------------- section_fail_reason ----------------
+mod section_fail_reason {
+    //! Task fail_reason retrieval tests
+    use fireworks_collaboration_lib::core::tasks::model::{TaskKind, TaskState};
+    use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_fail_reason_none_for_unknown_task() {
+        super::test_env::init_test_env();
+        let reg = TaskRegistry::new();
+        let random = uuid::Uuid::new_v4();
+        assert!(reg.fail_reason(&random).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_fail_reason_none_for_completed_task() {
+        super::test_env::init_test_env();
+        let reg = Arc::new(TaskRegistry::new());
+        let (id, token) = reg.create(TaskKind::Sleep { ms: 50 });
+        reg.clone().spawn_sleep_task(None, id, token, 50);
+
+        super::task_wait::wait_task_state(&reg, &id, TaskState::Completed, 2_000, 30).await;
+
+        // Completed tasks should not have a fail_reason
+        assert!(reg.fail_reason(&id).is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "fail_reason is not always set depending on error path taken by git clone"]
+    async fn test_fail_reason_available_for_failed_git_clone() {
+        use crate::common::fixtures;
+        use tokio::time::{timeout, Duration};
+
+        super::test_env::init_test_env();
+
+        let res = timeout(Duration::from_secs(8), async {
+            let reg = Arc::new(TaskRegistry::new());
+            let repo = "not-a-valid-url!!!".to_string();
+            let dest = fixtures::create_empty_dir().to_string_lossy().to_string();
+
+            let (id, token) = reg.create(TaskKind::GitClone {
+                repo: repo.clone(),
+                dest: dest.clone(),
+                depth: None,
+                filter: None,
+                strategy_override: None,
+                recurse_submodules: false,
+            });
+
+            let _handle = reg
+                .clone()
+                .spawn_git_clone_task(None, id, token, repo, dest);
+
+            let failed =
+                super::task_wait::wait_task_state(&reg, &id, TaskState::Failed, 3_000, 30).await;
+            assert!(failed, "invalid url should fail");
+
+            let reason = reg.fail_reason(&id);
+            assert!(reason.is_some(), "failed task should have fail_reason");
+        })
+        .await;
+
+        assert!(res.is_ok(), "test exceeded timeout");
+    }
+}

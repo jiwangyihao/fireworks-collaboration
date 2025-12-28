@@ -1164,6 +1164,65 @@ mod section_circuit_breaker {
             assert!(tripped.contains(&ip3));
             assert!(!tripped.contains(&ip2));
         }
+
+        // 场景 7: clear_all 清除所有状态
+        {
+            let breaker = CircuitBreaker::new(CircuitBreakerConfig {
+                enabled: true,
+                consecutive_failure_threshold: 2,
+                ..Default::default()
+            });
+            let ip1: IpAddr = "192.0.2.10".parse().unwrap();
+            let ip2: IpAddr = "192.0.2.11".parse().unwrap();
+            breaker.record_failure(ip1);
+            breaker.record_failure(ip1);
+            breaker.record_failure(ip2);
+            breaker.record_failure(ip2);
+            assert!(breaker.is_tripped(ip1));
+            assert!(breaker.is_tripped(ip2));
+            breaker.clear_all();
+            assert!(!breaker.is_tripped(ip1));
+            assert!(!breaker.is_tripped(ip2));
+            assert!(breaker.get_tripped_ips().is_empty());
+        }
+
+        // 场景 8: set_config 动态更新配置
+        {
+            let breaker = CircuitBreaker::new(CircuitBreakerConfig {
+                enabled: true,
+                consecutive_failure_threshold: 5,
+                ..Default::default()
+            });
+            let ip: IpAddr = "192.0.2.12".parse().unwrap();
+            breaker.record_failure(ip);
+            breaker.record_failure(ip);
+            breaker.record_failure(ip);
+            assert!(!breaker.is_tripped(ip)); // 阈值 5，3 次失败不触发
+
+            // 动态降低阈值
+            breaker.set_config(CircuitBreakerConfig {
+                enabled: true,
+                consecutive_failure_threshold: 2,
+                ..Default::default()
+            });
+            // 已有 3 次失败，新阈值 2，下次检查应该触发
+            breaker.record_failure(ip);
+            assert!(breaker.is_tripped(ip));
+        }
+
+        // 场景 9: get_config 返回当前配置
+        {
+            let initial_config = CircuitBreakerConfig {
+                enabled: true,
+                consecutive_failure_threshold: 7,
+                failure_rate_threshold: 0.6,
+                ..Default::default()
+            };
+            let breaker = CircuitBreaker::new(initial_config.clone());
+            let retrieved = breaker.get_config();
+            assert_eq!(retrieved.consecutive_failure_threshold, 7);
+            assert_eq!(retrieved.failure_rate_threshold, 0.6);
+        }
     }
 }
 
