@@ -217,6 +217,14 @@ impl GitService for DefaultGitService {
         on_progress: F,
     ) -> Result<(), GitError> {
         // Bridge to dedicated module (P2.0). Implementation migrated into push.rs.
-        push::do_push(dest, remote, refspecs, creds, should_interrupt, on_progress)
+        push::do_push(
+            self.runner.as_ref(),
+            dest,
+            remote,
+            refspecs,
+            creds,
+            should_interrupt,
+            on_progress,
+        )
     }
 }

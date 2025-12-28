@@ -327,8 +327,10 @@ fn setup_producer(origin: &Path, producer: &Path) -> Result<String> {
     let refspec_owned = format!("{branch_ref}:{branch_ref}");
     let refspecs: Vec<&str> = vec![refspec_owned.as_str()];
     let cancel_push = AtomicBool::new(false);
+    let runner = crate::core::git::CliGitRunner::new();
 
     push::do_push(
+        &runner,
         producer,
         Some("origin"),
         Some(&refspecs),
