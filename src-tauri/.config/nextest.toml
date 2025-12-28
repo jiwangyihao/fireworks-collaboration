@@ -1,0 +1,17 @@
+# nextest 配置
+# 详见: https://nexte.st/book/configuration.html
+
+[profile.default]
+# 失败时不立即停止，继续运行其他测试
+fail-fast = false
+# 测试超时 (5 分钟)
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+[profile.default.junit]
+# JUnit 报告路径 (用于 CI)
+path = "target/nextest/default/junit.xml"
+
+[profile.ci]
+# CI 专用配置：失败自动重试一次
+retries = 1
+fail-fast = false

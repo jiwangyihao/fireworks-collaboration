@@ -28,15 +28,25 @@ Windows 平台使用 `tauri-core` 特性避免 DLL 冲突（`0xc0000139`）。�
 **推荐做法：**
 
 ```powershell
-# 使用专用脚本
+# 使用专用脚本（自动安装 nextest）
 ./scripts/test_windows.ps1
 
-# 或直接运行测试（默认 tauri-core 模式）
-cargo test
+# 或直接使用 nextest
+cargo nextest run
+
+# 运行特定测试
+cargo nextest run --test commands
 
 # 覆盖率测试
 cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
 ```
+
+## nextest 配置
+
+项目配置文件位于 `src-tauri/.config/nextest.toml`：
+
+- `fail-fast = false`：失败时继续运行其他测试
+- `retries = 1` (CI)：CI 环境自动重试失败测试
 
 ## 前端覆盖率
 
