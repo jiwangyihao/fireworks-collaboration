@@ -294,6 +294,66 @@ async fn test_git_repo_status_command() {
     assert!(status.is_clean);
 }
 
+#[tokio::test]
+async fn test_git_worktree_ops() {
+    let (app, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    // Use a subdirectory for the repo to keep temp root clean for worktrees
+    let repo_path = temp.path().join("repo");
+    init_git_repo(&repo_path);
+    let dest = repo_path.to_string_lossy().to_string();
+
+    // 1. List worktrees (should be just one main one)
+    let result = git_worktree_list(dest.clone()).await;
+    assert!(result.is_ok());
+    let wts = result.unwrap();
+    assert_eq!(wts.len(), 1);
+
+    // 2. Add worktree
+    let wt_path = temp.path().join("wt1").to_string_lossy().to_string();
+    let add_result = git_worktree_add(
+        dest.clone(),
+        wt_path.clone(),
+        "new-wt-branch".to_string(),
+        Some(true),
+        None,
+    )
+    .await;
+    assert!(add_result.is_ok());
+
+    // 3. List again (should be 2)
+    let result2 = git_worktree_list(dest.clone()).await;
+    assert!(result2.is_ok());
+    assert_eq!(result2.unwrap().len(), 2);
+
+    // 4. Remove worktree
+    let remove_result = git_worktree_remove(
+        dest,
+        wt_path,
+        Some(true), // force
+        None,
+        None,
+        None,
+        app.state(),
+    )
+    .await;
+    assert!(remove_result.is_ok());
+}
+
+#[tokio::test]
+async fn test_git_remote_branches() {
+    let temp = tempfile::tempdir().unwrap();
+    init_git_repo(temp.path());
+    let dest = temp.path().to_string_lossy().to_string();
+
+    // No actual remote, so it might fail or return empty.
+    // Testing the logic path execution.
+    let result = git_remote_branches(dest, None, None).await;
+    // It might return Ok(vec![]) or Err if no remote configured?
+    // git branch -r on a repo with no remote returns empty output (success).
+    assert!(result.is_ok());
+}
+
 // ============================================================================
 // parse_git_host tests
 // ============================================================================
