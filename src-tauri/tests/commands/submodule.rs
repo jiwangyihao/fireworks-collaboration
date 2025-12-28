@@ -138,7 +138,7 @@ async fn test_get_submodule_config() {
 
     let config = result.unwrap();
     // Default config should have some sensible defaults
-    assert!(config.max_depth >= 0);
+    assert!(config.max_depth < 1000);
 }
 
 // Test with a temporary valid git repo
@@ -191,5 +191,79 @@ mod with_temp_repo {
         let cmd_result = result.unwrap();
         // For empty repo, init should succeed (no submodules to init)
         assert!(cmd_result.success);
+    }
+
+    #[tokio::test]
+    async fn test_update_all_submodules_empty_repo() {
+        let temp = init_temp_git_repo();
+        let app = create_mock_app();
+
+        let result =
+            update_all_submodules(temp.path().to_string_lossy().to_string(), app.state()).await;
+
+        assert!(result.is_ok());
+        let cmd_result = result.unwrap();
+        // For empty repo, update should succeed (no submodules to update)
+        assert!(cmd_result.success);
+    }
+
+    #[tokio::test]
+    async fn test_sync_all_submodules_empty_repo() {
+        let temp = init_temp_git_repo();
+        let app = create_mock_app();
+
+        let result =
+            sync_all_submodules(temp.path().to_string_lossy().to_string(), app.state()).await;
+
+        assert!(result.is_ok());
+        let cmd_result = result.unwrap();
+        assert!(cmd_result.success);
+    }
+
+    #[tokio::test]
+    async fn test_init_submodule_missing_in_repo() {
+        let temp = init_temp_git_repo();
+        let app = create_mock_app();
+        // Try to init a submodule that doesn't exist
+        let result = init_submodule(
+            temp.path().to_string_lossy().to_string(),
+            "nofound".to_string(),
+            app.state(),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        // Should fail gracefully
+        assert!(!result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_update_submodule_missing_in_repo() {
+        let temp = init_temp_git_repo();
+        let app = create_mock_app();
+        let result = update_submodule(
+            temp.path().to_string_lossy().to_string(),
+            "nofound".to_string(),
+            app.state(),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(!result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn test_sync_submodule_missing_in_repo() {
+        let temp = init_temp_git_repo();
+        let app = create_mock_app();
+        let result = sync_submodule(
+            temp.path().to_string_lossy().to_string(),
+            "nofound".to_string(),
+            app.state(),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert!(!result.unwrap().success);
     }
 }

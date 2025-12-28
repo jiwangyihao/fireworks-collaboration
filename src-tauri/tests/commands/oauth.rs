@@ -1,7 +1,10 @@
 //! OAuth command integration tests
 
 use std::borrow::Cow;
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::{Assets, Manager};
 use tauri_utils::assets::{AssetKey, CspHash};
 
@@ -147,4 +150,56 @@ async fn test_start_oauth_server_core() {
     assert!(result.is_ok());
     let port = result.unwrap();
     assert!(port > 0);
+}
+
+#[tokio::test]
+async fn test_oauth_server_full_workflow() {
+    let (app, _state) = create_mock_app();
+
+    // 1. Start server
+    let result = start_oauth_server(app.state()).await;
+    assert!(result.is_ok());
+    let port = result.unwrap();
+
+    // 2. Simulate browser request
+    // We need to wait a tiny bit for server to be likely listening (though spawn is fast)
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let address = format!("127.0.0.1:{}", port);
+    let mut attempt = 0;
+
+    // Connect and send
+    while attempt < 3 {
+        match TcpStream::connect(&address) {
+            Ok(mut stream) => {
+                let request = "GET /auth/callback?code=MAX_COVERAGE_CODE&state=TEST_STATE HTTP/1.1\r\nHost: localhost\r\n\r\n";
+                stream.write_all(request.as_bytes()).unwrap();
+
+                // Read response to ensure processing
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                break;
+            }
+            Err(_) => {
+                attempt += 1;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+
+    // 3. Poll for state update
+    // The server handler runs in a separate thread.
+    let mut found = false;
+    for _ in 0..10 {
+        let result = get_oauth_callback_data(app.state()).await;
+        if let Ok(Some(data)) = result {
+            assert_eq!(data.code, Some("MAX_COVERAGE_CODE".to_string()));
+            assert_eq!(data.state, Some("TEST_STATE".to_string()));
+            found = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    assert!(found, "OAuth callback data was not captured");
 }

@@ -104,7 +104,7 @@ async fn test_ip_pool_update_config() {
 #[tokio::test]
 async fn test_ip_pool_manual_actions() {
     let temp = tempfile::tempdir().unwrap();
-    let (app, pool, _, _) = create_mock_app(&temp.path().to_path_buf());
+    let (app, _pool, _, _) = create_mock_app(&temp.path().to_path_buf());
 
     // Refresh
     let res_refresh = ip_pool_request_refresh(app.state()).await;
@@ -122,7 +122,7 @@ async fn test_ip_pool_manual_actions() {
 #[tokio::test]
 async fn test_ip_pool_pick_best() {
     let temp = tempfile::tempdir().unwrap();
-    let (app, pool, _, _) = create_mock_app(&temp.path().to_path_buf());
+    let (app, _pool, _, _) = create_mock_app(&temp.path().to_path_buf());
 
     // Pick best for a random host
     let result = ip_pool_pick_best("example.com".to_string(), 443, app.state()).await;

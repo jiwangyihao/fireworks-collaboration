@@ -40,7 +40,7 @@ fn create_mock_app(
     SharedIpPool,
 ) {
     let config: SharedConfig = Arc::new(Mutex::new(AppConfig::default()));
-    let base: ConfigBaseDir = base_dir; // ConfigBaseDir is PathBuf, not Arc<PathBuf>
+    let base: ConfigBaseDir = base_dir;
     let pool: SharedIpPool = Arc::new(Mutex::new(IpPool::new(EffectiveIpPoolConfig::default())));
     let ws_config = WorkspaceConfig::default();
     let status_service: SharedWorkspaceStatusService =
@@ -201,4 +201,52 @@ async fn test_export_then_import_roundtrip() {
     let report = import_result.unwrap();
     // Report has applied and skipped Vec fields
     assert!(!report.applied.is_empty() || !report.skipped.is_empty());
+}
+
+#[tokio::test]
+async fn test_import_invalid_json() {
+    let temp = tempfile::tempdir().unwrap();
+    let (app, _, _) = create_mock_app(temp.path().to_path_buf());
+
+    let path = temp.path().join("invalid.json");
+    std::fs::write(&path, "{ bad json").unwrap();
+
+    let result = import_team_config_template(
+        Some(path.to_string_lossy().to_string()),
+        None,
+        app.state(),
+        app.state(),
+        app.state(),
+    )
+    .await;
+
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_set_config_io_error() {
+    // To trigger I/O error, we give a base path that is invalid or readonly?
+    // On Windows, tempdir is usually okay.
+    // If we deliberately pass a non-existent base path that cannot be created?
+    // ConfigBaseDir is passed in.
+    let temp = tempfile::tempdir().unwrap();
+    // It might create it.
+    // Let's create a FILE where the dir should be.
+    let block_file = temp.path().join("block");
+    std::fs::write(&block_file, "").unwrap();
+    let blocked_dir = block_file.join("config"); // This should fail as parent is file
+
+    let (app, _, _) = create_mock_app(blocked_dir);
+
+    let result = set_config(
+        AppConfig::default(),
+        app.state(),
+        app.state(),
+        app.state(),
+        app.state(),
+    )
+    .await;
+
+    // Should fail to save
+    assert!(result.is_err());
 }

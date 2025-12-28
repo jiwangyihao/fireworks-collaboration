@@ -223,7 +223,6 @@ async fn test_workspace_batch_fetch_command() {
     let (app, manager, registry, _config, _) = create_mock_app();
 
     // Pre-load workspace with repo
-    // Pre-load workspace with repo
     let temp_dir = tempfile::tempdir().unwrap();
     let root_path = temp_dir.path().to_path_buf();
     let repo_path = temp_dir.path().join("r1");
@@ -575,4 +574,39 @@ async fn test_reorder_repositories_command() {
     let repos = result.unwrap();
     assert_eq!(repos[0].id, "repo3");
     assert_eq!(repos[1].id, "repo1");
+}
+
+#[tokio::test]
+async fn test_load_workspace_invalid_json() {
+    let (app, _, _, _, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    let file_path = temp.path().join("invalid.json");
+    std::fs::write(&file_path, "{ invalid_json: ").unwrap();
+
+    let result = load_workspace(file_path.to_string_lossy().to_string(), app.state()).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_create_workspace_duplicate_path() {
+    let (app, _manager, _, _, _) = create_mock_app();
+    let state = app.state::<SharedWorkspaceManager>();
+    let temp = tempfile::tempdir().unwrap();
+
+    // Create first time
+    let req1 = CreateWorkspaceRequest {
+        name: "WS1".to_string(),
+        root_path: temp.path().to_string_lossy().to_string(),
+        metadata: None,
+    };
+    let _ = create_workspace(req1, state.clone()).await;
+
+    // Create again
+    let req2 = CreateWorkspaceRequest {
+        name: "WS1".to_string(),
+        root_path: temp.path().to_string_lossy().to_string(),
+        metadata: None,
+    };
+    let result = create_workspace(req2, state).await;
+    assert!(result.is_ok());
 }

@@ -5,7 +5,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::Mutex;
-use tauri::{Assets, Manager, State};
+use tauri::{Assets, Manager};
 use tauri_utils::assets::{AssetKey, CspHash};
 
 use fireworks_collaboration_lib::app::commands::git::*;
