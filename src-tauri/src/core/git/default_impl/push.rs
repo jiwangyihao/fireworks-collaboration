@@ -83,51 +83,61 @@ fn parse_push_progress_line(line: &str) -> Option<ProgressPayload> {
     // Push progress patterns:
     // "Enumerating objects: 5, done."
     // "Counting objects: 100% (5/5), done."
+    // "Compressing objects: 100% (4/4), done."
     // "Writing objects: 100% (3/3), 256 bytes | 256.00 KiB/s, done."
     // "Total 3 (delta 0), reused 0 (delta 0), pack-reused 0"
 
     if line.starts_with("Enumerating objects:") {
+        // "Enumerating objects: 5, done." or "Enumerating objects: 100, done."
+        let count = parse_enumerating_count(line);
         return Some(ProgressPayload {
             task_id,
             kind,
             phase: "Enumerating".to_string(),
             percent: 10,
-            objects: None,
+            objects: count,
             bytes: None,
-            total_hint: None,
+            total_hint: count,
         });
     } else if line.starts_with("Counting objects:") {
         let percent = parse_percent(line).unwrap_or(20);
+        let (objects, total_hint) = parse_object_count(line);
+
         return Some(ProgressPayload {
             task_id,
             kind,
             phase: "Counting".to_string(),
             percent: 20 + (percent / 5), // Maps 0-100% to 20-40%
-            objects: None,
+            objects,
             bytes: None,
-            total_hint: None,
+            total_hint,
         });
     } else if line.starts_with("Compressing objects:") {
         let percent = parse_percent(line).unwrap_or(40);
+        let (objects, total_hint) = parse_object_count(line);
+
         return Some(ProgressPayload {
             task_id,
             kind,
             phase: "Compressing".to_string(),
             percent: 40 + (percent / 5), // Maps 0-100% to 40-60%
-            objects: None,
+            objects,
             bytes: None,
-            total_hint: None,
+            total_hint,
         });
     } else if line.starts_with("Writing objects:") {
         let percent = parse_percent(line).unwrap_or(60);
+        let (objects, total_hint) = parse_object_count(line);
+        let bytes = parse_bytes(line);
+
         return Some(ProgressPayload {
             task_id,
             kind,
             phase: "Writing".to_string(),
             percent: 60 + (percent / 3), // Maps 0-100% to 60-93%
-            objects: None,
-            bytes: None,
-            total_hint: None,
+            objects,
+            bytes,
+            total_hint,
         });
     } else if line.contains("done.") && line.contains("Total") {
         return Some(ProgressPayload {
@@ -149,6 +159,55 @@ fn parse_percent(line: &str) -> Option<u32> {
         let content = &line[start + 2..];
         if let Some(end) = content.find('%') {
             return content[..end].trim().parse::<u32>().ok();
+        }
+    }
+    None
+}
+
+fn parse_enumerating_count(line: &str) -> Option<u64> {
+    // "Enumerating objects: 5, done." -> Some(5)
+    if let Some(start) = line.find(": ") {
+        let content = &line[start + 2..];
+        if let Some(comma) = content.find(',') {
+            return content[..comma].trim().parse::<u64>().ok();
+        }
+    }
+    None
+}
+
+fn parse_object_count(line: &str) -> (Option<u64>, Option<u64>) {
+    if let Some(start) = line.find('(') {
+        if let Some(end) = line[start..].find(')') {
+            let content = &line[start + 1..start + end];
+            if let Some(slash_pos) = content.find('/') {
+                let current = content[..slash_pos].trim().parse::<u64>().ok();
+                let total = content[slash_pos + 1..].trim().parse::<u64>().ok();
+                return (current, total);
+            }
+        }
+    }
+    (None, None)
+}
+
+fn parse_bytes(line: &str) -> Option<u64> {
+    // "Writing objects: 100% (3/3), 256 bytes | 256.00 KiB/s, done."
+    let parts: Vec<&str> = line.split('|').collect();
+    let content = parts[0];
+    let size_pattern = content.split(',').nth(1)?;
+    let trimmed = size_pattern.trim();
+    let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+
+    if tokens.len() >= 2 {
+        if let Ok(value) = tokens[0].parse::<f64>() {
+            let unit = tokens[1];
+            let multiplier = match unit {
+                "B" | "bytes" => 1,
+                "KiB" => 1024,
+                "MiB" => 1024 * 1024,
+                "GiB" => 1024 * 1024 * 1024,
+                _ => return None,
+            };
+            return Some((value * multiplier as f64) as u64);
         }
     }
     None
