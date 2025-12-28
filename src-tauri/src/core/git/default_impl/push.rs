@@ -9,7 +9,7 @@ pub fn do_push<F: FnMut(ProgressPayload)>(
     dest: &Path,
     remote: Option<&str>,
     refspecs: Option<&[&str]>,
-    creds: Option<(&str, &str)>,
+    _creds: Option<(&str, &str)>,
     should_interrupt: &AtomicBool,
     mut on_progress: F,
 ) -> Result<(), GitError> {
