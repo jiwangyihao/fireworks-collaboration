@@ -330,3 +330,249 @@ async fn test_workspace_batch_push_command() {
     let uuid = uuid::Uuid::parse_str(&task_id).unwrap();
     assert!(registry.snapshot(&uuid).is_some());
 }
+
+// ============================================================================
+// Additional workspace command tests for comprehensive coverage
+// ============================================================================
+
+#[tokio::test]
+async fn test_save_workspace_command() {
+    let (app, manager, _, _, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+
+    // Create workspace first
+    {
+        let mut guard = manager.lock().unwrap();
+        *guard = Some(Workspace::new(
+            "Test".to_string(),
+            temp.path().to_path_buf(),
+        ));
+    }
+
+    let save_path = temp.path().join("workspace.json");
+    let result = save_workspace(save_path.to_string_lossy().to_string(), app.state()).await;
+    assert!(result.is_ok());
+    assert!(save_path.exists());
+}
+
+#[tokio::test]
+async fn test_load_workspace_command() {
+    let (app, manager, _, _, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+
+    // Create and save workspace first
+    {
+        let mut guard = manager.lock().unwrap();
+        *guard = Some(Workspace::new(
+            "LoadTest".to_string(),
+            temp.path().to_path_buf(),
+        ));
+    }
+    let save_path = temp.path().join("workspace.json");
+    let _ = save_workspace(save_path.to_string_lossy().to_string(), app.state()).await;
+
+    // Close and reload
+    let _ = close_workspace(app.state()).await;
+
+    let result = load_workspace(save_path.to_string_lossy().to_string(), app.state()).await;
+    assert!(result.is_ok());
+    let info = result.unwrap();
+    assert_eq!(info.name, "LoadTest");
+}
+
+#[tokio::test]
+async fn test_get_repository_command() {
+    let (app, manager, _, _, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+
+    // Setup workspace with repo
+    {
+        let mut guard = manager.lock().unwrap();
+        let mut ws = Workspace::new("Test".to_string(), temp.path().to_path_buf());
+        ws.add_repository(
+            fireworks_collaboration_lib::core::workspace::model::RepositoryEntry::new(
+                "repo1".to_string(),
+                "Repo1".to_string(),
+                "repo1".into(),
+                "https://url.git".to_string(),
+            ),
+        )
+        .unwrap();
+        *guard = Some(ws);
+    }
+
+    let result = get_repository("repo1".to_string(), app.state()).await;
+    assert!(result.is_ok());
+    let repo = result.unwrap();
+    assert_eq!(repo.id, "repo1");
+}
+
+#[tokio::test]
+async fn test_get_repository_not_found() {
+    let (app, manager, _, _, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+
+    {
+        let mut guard = manager.lock().unwrap();
+        *guard = Some(Workspace::new(
+            "Test".to_string(),
+            temp.path().to_path_buf(),
+        ));
+    }
+
+    let result = get_repository("nonexistent".to_string(), app.state()).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_list_enabled_repositories_command() {
+    let (app, manager, _, _, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+
+    {
+        let mut guard = manager.lock().unwrap();
+        let mut ws = Workspace::new("Test".to_string(), temp.path().to_path_buf());
+        let mut repo = fireworks_collaboration_lib::core::workspace::model::RepositoryEntry::new(
+            "enabled_repo".to_string(),
+            "Enabled".to_string(),
+            "enabled".into(),
+            "https://url.git".to_string(),
+        );
+        repo.enabled = true;
+        ws.add_repository(repo).unwrap();
+        *guard = Some(ws);
+    }
+
+    let result = list_enabled_repositories(app.state()).await;
+    assert!(result.is_ok());
+    let repos = result.unwrap();
+    assert!(!repos.is_empty());
+}
+
+#[tokio::test]
+async fn test_get_workspace_config_command() {
+    let result = get_workspace_config().await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_validate_workspace_file_nonexistent() {
+    let result = validate_workspace_file("/nonexistent/path.json".to_string()).await;
+    // Should fail for non-existent file
+    assert!(result.is_err() || result.unwrap() == false);
+}
+
+#[tokio::test]
+async fn test_backup_workspace_nonexistent() {
+    let result = backup_workspace("/nonexistent/workspace.json".to_string()).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_restore_workspace_nonexistent() {
+    let result = restore_workspace(
+        "/nonexistent/backup.json".to_string(),
+        "/some/path.json".to_string(),
+    )
+    .await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_get_workspace_no_workspace() {
+    let (app, _, _, _, _) = create_mock_app();
+
+    let result = get_workspace(app.state()).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_update_repository_tags_command() {
+    let (app, manager, _, _, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+
+    {
+        let mut guard = manager.lock().unwrap();
+        let mut ws = Workspace::new("Test".to_string(), temp.path().to_path_buf());
+        ws.add_repository(
+            fireworks_collaboration_lib::core::workspace::model::RepositoryEntry::new(
+                "repo1".to_string(),
+                "Repo1".to_string(),
+                "repo1".into(),
+                "https://url.git".to_string(),
+            ),
+        )
+        .unwrap();
+        *guard = Some(ws);
+    }
+
+    let result = update_repository_tags(
+        "repo1".to_string(),
+        vec!["tag1".to_string(), "tag2".to_string()],
+        app.state(),
+    )
+    .await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_toggle_repository_enabled_command() {
+    let (app, manager, _, _, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+
+    {
+        let mut guard = manager.lock().unwrap();
+        let mut ws = Workspace::new("Test".to_string(), temp.path().to_path_buf());
+        ws.add_repository(
+            fireworks_collaboration_lib::core::workspace::model::RepositoryEntry::new(
+                "repo1".to_string(),
+                "Repo1".to_string(),
+                "repo1".into(),
+                "https://url.git".to_string(),
+            ),
+        )
+        .unwrap();
+        *guard = Some(ws);
+    }
+
+    let result = toggle_repository_enabled("repo1".to_string(), app.state()).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_reorder_repositories_command() {
+    let (app, manager, _, _, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+
+    {
+        let mut guard = manager.lock().unwrap();
+        let mut ws = Workspace::new("Test".to_string(), temp.path().to_path_buf());
+        for i in 1..=3 {
+            ws.add_repository(
+                fireworks_collaboration_lib::core::workspace::model::RepositoryEntry::new(
+                    format!("repo{}", i),
+                    format!("Repo{}", i),
+                    format!("repo{}", i).into(),
+                    format!("https://url{}.git", i),
+                ),
+            )
+            .unwrap();
+        }
+        *guard = Some(ws);
+    }
+
+    // Reorder repos
+    let result = reorder_repositories(
+        vec![
+            "repo3".to_string(),
+            "repo1".to_string(),
+            "repo2".to_string(),
+        ],
+        app.state(),
+    )
+    .await;
+    assert!(result.is_ok());
+    let repos = result.unwrap();
+    assert_eq!(repos[0].id, "repo3");
+    assert_eq!(repos[1].id, "repo1");
+}

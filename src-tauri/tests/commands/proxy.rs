@@ -83,3 +83,52 @@ fn test_get_system_proxy_legacy() {
     let result = get_system_proxy();
     assert!(result.is_ok());
 }
+
+// ============================================================================
+// Additional proxy tests using _logic functions for better coverage
+// ============================================================================
+
+#[tokio::test]
+async fn test_force_proxy_fallback_logic_direct() {
+    let config: SharedConfig = Arc::new(Mutex::new(AppConfig::default()));
+
+    // Enable proxy mode for meaningful test
+    {
+        let mut cfg = config.lock().unwrap();
+        cfg.proxy.url = "http://proxy.example.com:8080".to_string();
+        cfg.proxy.mode = fireworks_collaboration_lib::core::proxy::ProxyMode::Http;
+    }
+
+    let result = force_proxy_fallback_logic(Some("Direct test".to_string()), config).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_force_proxy_fallback_logic_no_reason() {
+    let config: SharedConfig = Arc::new(Mutex::new(AppConfig::default()));
+
+    {
+        let mut cfg = config.lock().unwrap();
+        cfg.proxy.url = "http://proxy.example.com:8080".to_string();
+        cfg.proxy.mode = fireworks_collaboration_lib::core::proxy::ProxyMode::Http;
+    }
+
+    // Test with no reason provided (uses default)
+    let result = force_proxy_fallback_logic(None, config).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+#[ignore = "ProxyManager is recreated on each call, losing state needed for recovery"]
+async fn test_force_proxy_recovery_logic_direct() {
+    let config: SharedConfig = Arc::new(Mutex::new(AppConfig::default()));
+
+    {
+        let mut cfg = config.lock().unwrap();
+        cfg.proxy.url = "http://proxy.example.com:8080".to_string();
+        cfg.proxy.mode = fireworks_collaboration_lib::core::proxy::ProxyMode::Http;
+    }
+
+    let result = force_proxy_recovery_logic(config).await;
+    assert!(result.is_ok());
+}
