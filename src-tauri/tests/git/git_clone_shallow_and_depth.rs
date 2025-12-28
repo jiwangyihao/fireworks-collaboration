@@ -19,7 +19,9 @@ mod helpers {
         repo_factory::rev_count,
         repo_factory::RepoBuilder,
     };
-    use fireworks_collaboration_lib::core::git::{service::GitService, DefaultGitService};
+    use fireworks_collaboration_lib::core::git::{
+        service::GitService, CliGitRunner, DefaultGitService,
+    };
     use fireworks_collaboration_lib::core::tasks::model::TaskState;
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
     use std::path::{Path, PathBuf};
@@ -203,7 +205,9 @@ mod section_local_ignore {
     use super::helpers::*;
     use crate::common::shallow_matrix::{ignore_cases, ShallowCase};
     use crate::common::test_env;
-    use fireworks_collaboration_lib::core::git::{service::GitService, DefaultGitService};
+    use fireworks_collaboration_lib::core::git::{
+        service::GitService, CliGitRunner, DefaultGitService,
+    };
     use std::sync::atomic::AtomicBool;
     #[test]
     fn local_ignore_depth_behaviors() {
