@@ -563,6 +563,13 @@ mod section_tls_fingerprint_log {
     #[test]
     fn cert_fp_log_disabled_suppresses_record() {
         let _lock = fp_log_guard().lock().unwrap();
+
+        // Use isolated temp directory to avoid race conditions with parallel tests
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        fireworks_collaboration_lib::core::config::loader::testing::override_global_base_dir(
+            temp_dir.path(),
+        );
+
         let mut cfg = AppConfig::default();
         cfg.tls.cert_fp_log_enabled = false;
         loader::save(&cfg).unwrap();
@@ -571,6 +578,9 @@ mod section_tls_fingerprint_log {
         let res = record_certificate("nolog.test", &[Certificate(vec![0x30, 0x01, 0x02])]);
         assert!(res.is_none(), "record should early exit when disabled");
         assert!(bus.snapshot().is_empty(), "no events when log disabled");
+
+        // Restore global base dir
+        fireworks_collaboration_lib::core::config::loader::testing::clear_global_base_dir();
     }
 }
 
