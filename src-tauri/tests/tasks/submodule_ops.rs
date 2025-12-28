@@ -58,14 +58,16 @@ fn test_submodule_config_default() {
 #[test]
 fn test_submodule_manager_new() {
     let config = SubmoduleConfig::default();
-    let manager = SubmoduleManager::new(config.clone());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let manager = SubmoduleManager::new(config.clone(), runner);
     assert_eq!(manager.config(), &config);
 }
 
 #[test]
 fn test_submodule_manager_has_submodules_no_submodules() {
     let temp = create_repo_with_commit();
-    let manager = SubmoduleManager::new(SubmoduleConfig::default());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let manager = SubmoduleManager::new(SubmoduleConfig::default(), runner);
 
     let result = manager.has_submodules(temp.path());
     assert!(result.is_ok());
@@ -75,7 +77,8 @@ fn test_submodule_manager_has_submodules_no_submodules() {
 #[test]
 fn test_submodule_manager_list_submodules_empty() {
     let temp = create_repo_with_commit();
-    let manager = SubmoduleManager::new(SubmoduleConfig::default());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let manager = SubmoduleManager::new(SubmoduleConfig::default(), runner);
 
     let result = manager.list_submodules(temp.path());
     assert!(result.is_ok());
@@ -85,7 +88,8 @@ fn test_submodule_manager_list_submodules_empty() {
 #[test]
 fn test_submodule_manager_list_not_a_repo() {
     let temp = tempdir().unwrap();
-    let manager = SubmoduleManager::new(SubmoduleConfig::default());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let manager = SubmoduleManager::new(SubmoduleConfig::default(), runner);
 
     let result = manager.list_submodules(temp.path());
     assert!(result.is_err());
@@ -94,7 +98,8 @@ fn test_submodule_manager_list_not_a_repo() {
 #[test]
 fn test_submodule_manager_init_not_a_repo() {
     let temp = tempdir().unwrap();
-    let manager = SubmoduleManager::new(SubmoduleConfig::default());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let manager = SubmoduleManager::new(SubmoduleConfig::default(), runner);
 
     let result = manager.init(temp.path(), "nonexistent-submodule");
     assert!(result.is_err());
@@ -103,7 +108,8 @@ fn test_submodule_manager_init_not_a_repo() {
 #[test]
 fn test_submodule_manager_init_all_empty() {
     let temp = create_repo_with_commit();
-    let manager = SubmoduleManager::new(SubmoduleConfig::default());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let manager = SubmoduleManager::new(SubmoduleConfig::default(), runner);
 
     let result = manager.init_all(temp.path());
     assert!(result.is_ok());
@@ -113,7 +119,8 @@ fn test_submodule_manager_init_all_empty() {
 #[test]
 fn test_submodule_manager_sync_all_empty() {
     let temp = create_repo_with_commit();
-    let manager = SubmoduleManager::new(SubmoduleConfig::default());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let manager = SubmoduleManager::new(SubmoduleConfig::default(), runner);
 
     let result = manager.sync_all(temp.path());
     assert!(result.is_ok());
@@ -123,7 +130,8 @@ fn test_submodule_manager_sync_all_empty() {
 #[test]
 fn test_submodule_manager_sync_nonexistent() {
     let temp = create_repo_with_commit();
-    let manager = SubmoduleManager::new(SubmoduleConfig::default());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let manager = SubmoduleManager::new(SubmoduleConfig::default(), runner);
 
     let result = manager.sync(temp.path(), "nonexistent-submodule");
     assert!(result.is_err());
@@ -132,7 +140,8 @@ fn test_submodule_manager_sync_nonexistent() {
 #[test]
 fn test_submodule_manager_update_all_no_submodules() {
     let temp = create_repo_with_commit();
-    let manager = SubmoduleManager::new(SubmoduleConfig::default());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let manager = SubmoduleManager::new(SubmoduleConfig::default(), runner);
 
     let result = manager.update_all(temp.path(), 1);
     assert!(result.is_ok());
@@ -142,7 +151,8 @@ fn test_submodule_manager_update_all_no_submodules() {
 #[test]
 fn test_submodule_manager_update_nonexistent() {
     let temp = create_repo_with_commit();
-    let manager = SubmoduleManager::new(SubmoduleConfig::default());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let manager = SubmoduleManager::new(SubmoduleConfig::default(), runner);
 
     let result = manager.update(temp.path(), "nonexistent-submodule");
     assert!(result.is_err());

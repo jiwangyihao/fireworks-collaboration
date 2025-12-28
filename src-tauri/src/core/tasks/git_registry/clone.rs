@@ -378,7 +378,9 @@ impl TaskRegistry {
                             }
 
                             // 初始化子模块
-                            let mgr = SubmoduleManager::new(SubmoduleConfig::default());
+                            let runner = crate::core::git::runner::CliGitRunner::new();
+                            let mgr =
+                                SubmoduleManager::new(SubmoduleConfig::default(), Box::new(runner));
                             if let Err(e) = mgr.init_all(&dest) {
                                 tracing::warn!(
                                     target = "git",

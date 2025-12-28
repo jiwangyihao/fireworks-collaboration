@@ -3,6 +3,10 @@
 #[path = "../common/mod.rs"]
 pub(crate) mod common;
 
+mod mock_tests;
+mod model_tests;
+mod operations_tests;
+
 use common::test_env::init_test_env;
 
 #[ctor::ctor]

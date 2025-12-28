@@ -1535,7 +1535,8 @@ async fn test_workspace_clone_with_submodule_and_config_roundtrip() {
         "expected submodule git directory to be populated"
     );
 
-    let submodule_manager = SubmoduleManager::new(SubmoduleConfig::default());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let submodule_manager = SubmoduleManager::new(SubmoduleConfig::default(), runner);
     let submodules = submodule_manager
         .list_submodules(&dest)
         .expect("list submodules");

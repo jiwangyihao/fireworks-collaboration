@@ -24,8 +24,10 @@ impl<R: tauri::Runtime> Assets<R> for MockAssets {
 }
 
 fn create_mock_app() -> tauri::App<tauri::test::MockRuntime> {
+    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
     let manager: SharedSubmoduleManager = Arc::new(Mutex::new(SubmoduleManager::new(
         SubmoduleConfig::default(),
+        runner,
     )));
 
     let context = tauri::test::mock_context(MockAssets);

@@ -13,6 +13,7 @@ use fireworks_collaboration_lib::app::types::{
     SharedConfig, SharedCredentialFactory, TaskRegistryState,
 };
 use fireworks_collaboration_lib::core::config::model::AppConfig;
+use fireworks_collaboration_lib::core::git::runner::{CliGitRunner, GitRunner};
 use fireworks_collaboration_lib::core::tasks::TaskRegistry;
 
 // Mock Assets for Tauri
@@ -34,6 +35,7 @@ fn create_mock_app() -> (tauri::App<tauri::test::MockRuntime>, TaskRegistryState
     let registry: TaskRegistryState = Arc::new(TaskRegistry::new());
     let config: SharedConfig = Arc::new(Mutex::new(AppConfig::default()));
     let credential_factory: SharedCredentialFactory = Arc::new(Mutex::new(None));
+    let runner = Box::new(CliGitRunner::new()) as Box<dyn GitRunner + Send + Sync>;
 
     let context = tauri::test::mock_context(MockAssets);
 
@@ -41,6 +43,7 @@ fn create_mock_app() -> (tauri::App<tauri::test::MockRuntime>, TaskRegistryState
         .manage::<TaskRegistryState>(registry.clone())
         .manage::<SharedConfig>(config)
         .manage::<SharedCredentialFactory>(credential_factory)
+        .manage::<Box<dyn GitRunner + Send + Sync>>(runner)
         .build(context)
         .expect("Failed to build mock app");
 
@@ -190,7 +193,8 @@ async fn test_git_push_command() {
         None, // use_stored_credential
         None, // strategy_override
         app.state(),
-        app.state(), // credential_factory
+        app.state(),
+        app.state(),
         app.handle().clone(),
     )
     .await;
@@ -268,8 +272,9 @@ async fn test_git_list_branches_command() {
     init_git_repo(temp.path());
     let dest = temp.path().to_string_lossy().to_string();
 
+    let (app, _) = create_mock_app();
     // Test pure function without app state
-    let result = git_list_branches(dest, None).await;
+    let result = git_list_branches(dest, None, app.state()).await;
 
     assert!(result.is_ok());
     let branches = result.unwrap();
@@ -285,8 +290,9 @@ async fn test_git_repo_status_command() {
     init_git_repo(temp.path());
     let dest = temp.path().to_string_lossy().to_string();
 
+    let (app, _) = create_mock_app();
     // Test pure function
-    let result = git_repo_status(dest).await;
+    let result = git_repo_status(dest, app.state()).await;
 
     assert!(result.is_ok());
     let status = result.unwrap();
@@ -304,7 +310,7 @@ async fn test_git_worktree_ops() {
     let dest = repo_path.to_string_lossy().to_string();
 
     // 1. List worktrees (should be just one main one)
-    let result = git_worktree_list(dest.clone()).await;
+    let result = git_worktree_list(dest.clone(), app.state()).await;
     assert!(result.is_ok());
     let wts = result.unwrap();
     assert_eq!(wts.len(), 1);
@@ -317,12 +323,13 @@ async fn test_git_worktree_ops() {
         "new-wt-branch".to_string(),
         Some(true),
         None,
+        app.state(),
     )
     .await;
     assert!(add_result.is_ok());
 
     // 3. List again (should be 2)
-    let result2 = git_worktree_list(dest.clone()).await;
+    let result2 = git_worktree_list(dest.clone(), app.state()).await;
     assert!(result2.is_ok());
     assert_eq!(result2.unwrap().len(), 2);
 
@@ -335,6 +342,7 @@ async fn test_git_worktree_ops() {
         None,
         None,
         app.state(),
+        app.state(),
     )
     .await;
     assert!(remove_result.is_ok());
@@ -346,9 +354,10 @@ async fn test_git_remote_branches() {
     init_git_repo(temp.path());
     let dest = temp.path().to_string_lossy().to_string();
 
+    let (app, _) = create_mock_app();
     // No actual remote, so it might fail or return empty.
     // Testing the logic path execution.
-    let result = git_remote_branches(dest, None, None).await;
+    let result = git_remote_branches(dest, None, None, app.state()).await;
     // It might return Ok(vec![]) or Err if no remote configured?
     // git branch -r on a repo with no remote returns empty output (success).
     assert!(result.is_ok());

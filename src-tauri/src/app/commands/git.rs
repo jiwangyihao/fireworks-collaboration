@@ -2,6 +2,7 @@
 
 use tauri::State;
 
+use crate::core::git::runner::GitRunner;
 use crate::core::git::utils::{parse_depth, resolve_push_credentials};
 use crate::core::tasks::TaskKind;
 
@@ -124,6 +125,7 @@ pub async fn git_push(
     strategy_override: Option<serde_json::Value>,
     reg: State<'_, TaskRegistryState>,
     credential_factory: State<'_, SharedCredentialFactory>,
+    runner: State<'_, Box<dyn GitRunner>>, // Inject runner
     app: tauri::AppHandle<TauriRuntime>,
 ) -> Result<String, String> {
     // Determine final username and password
@@ -131,7 +133,7 @@ pub async fn git_push(
     let should_fetch_stored = use_stored && username.is_none() && password.is_none();
 
     let (stored_username, stored_password) = if should_fetch_stored {
-        match try_get_git_credentials(&dest, &credential_factory).await {
+        match try_get_git_credentials(&dest, &credential_factory, &**runner).await {
             Ok(Some((u, p))) => {
                 tracing::info!(
                     target = "git",
@@ -194,9 +196,10 @@ pub async fn git_push(
 async fn try_get_git_credentials(
     repo_path: &str,
     credential_factory: &State<'_, SharedCredentialFactory>,
+    runner: &dyn GitRunner,
 ) -> Result<Option<(String, String)>, String> {
     // Extract host
-    let host = extract_git_host(repo_path)?;
+    let host = extract_git_host(repo_path, runner)?;
     tracing::info!(target = "git", "Extracted host from repo: {}", host);
 
     // Get credential store
@@ -259,9 +262,9 @@ async fn try_get_git_credentials(
 ///
 /// This function attempts to read the remote URL from the Git repository
 /// and extract the host part.
-pub(crate) fn extract_git_host(repo_path: &str) -> Result<String, String> {
+pub(crate) fn extract_git_host(repo_path: &str, runner: &dyn GitRunner) -> Result<String, String> {
     use std::path::Path;
-    use std::process::Command;
+    // use std::process::Command; // Replaced by CliGitRunner for testability
 
     let path = Path::new(repo_path);
     if !path.exists() || !path.join(".git").exists() {
@@ -269,12 +272,8 @@ pub(crate) fn extract_git_host(repo_path: &str) -> Result<String, String> {
     }
 
     // Try to get the origin remote URL
-    let output = Command::new("git")
-        .arg("config")
-        .arg("--get")
-        .arg("remote.origin.url")
-        .current_dir(repo_path)
-        .output()
+    let output = runner
+        .run(&["config", "--get", "remote.origin.url"], path)
         .map_err(|e| format!("Failed to run git config: {}", e))?;
 
     if !output.status.success() {
@@ -631,7 +630,7 @@ pub async fn git_remote_remove(
 
 use serde::Serialize;
 use std::path::Path;
-use std::process::Command;
+// use std::process::Command; // Replaced by GitRunner
 
 /// Branch information returned by git_list_branches.
 #[derive(Clone, Serialize, Debug)]
@@ -669,24 +668,29 @@ pub struct RepoStatus {
 pub async fn git_list_branches(
     dest: String,
     include_remote: Option<bool>,
+    runner: State<'_, Box<dyn GitRunner>>,
 ) -> Result<Vec<BranchInfo>, String> {
-    let path = Path::new(&dest);
+    list_branches_internal(&dest, include_remote.unwrap_or(false), &**runner)
+}
+
+pub(crate) fn list_branches_internal(
+    dest: &str,
+    include_remote: bool,
+    runner: &dyn GitRunner,
+) -> Result<Vec<BranchInfo>, String> {
+    let path = Path::new(dest);
     if !path.exists() || !path.join(".git").exists() {
         return Err("Not a git repository".to_string());
     }
 
-    let include_remote_flag = include_remote.unwrap_or(false);
-
     // Get all branches with details
     let mut args = vec!["branch", "-v", "--no-color"];
-    if include_remote_flag {
+    if include_remote {
         args.push("-a");
     }
 
-    let output = Command::new("git")
-        .args(&args)
-        .current_dir(&dest)
-        .output()
+    let output = runner
+        .run(&args, path)
         .map_err(|e| format!("Failed to run git branch: {}", e))?;
 
     if !output.status.success() {
@@ -752,17 +756,18 @@ pub async fn git_list_branches(
 /// # Parameters
 /// - `dest`: Repository path
 #[tauri::command(rename_all = "camelCase")]
-pub async fn git_repo_status(dest: String) -> Result<RepoStatus, String> {
+pub async fn git_repo_status(
+    dest: String,
+    runner: State<'_, Box<dyn GitRunner>>,
+) -> Result<RepoStatus, String> {
     let path = Path::new(&dest);
     if !path.exists() || !path.join(".git").exists() {
         return Err("Not a git repository".to_string());
     }
 
     // Get current branch
-    let branch_output = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(&dest)
-        .output()
+    let branch_output = runner
+        .run(&["rev-parse", "--abbrev-ref", "HEAD"], path)
         .map_err(|e| format!("Failed to get current branch: {}", e))?;
 
     let current_branch = if branch_output.status.success() {
@@ -781,10 +786,8 @@ pub async fn git_repo_status(dest: String) -> Result<RepoStatus, String> {
     let is_detached = current_branch.is_none();
 
     // Get status --porcelain for file counts
-    let status_output = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(&dest)
-        .output()
+    let status_output = runner
+        .run(&["status", "--porcelain"], path)
         .map_err(|e| format!("Failed to get status: {}", e))?;
 
     let status_text = String::from_utf8_lossy(&status_output.stdout);
@@ -818,15 +821,15 @@ pub async fn git_repo_status(dest: String) -> Result<RepoStatus, String> {
     let mut behind = 0u32;
 
     if let Some(ref branch) = current_branch {
-        let ab_output = Command::new("git")
-            .args([
+        let ab_output = runner.run(
+            &[
                 "rev-list",
                 "--left-right",
                 "--count",
                 &format!("{}...@{{u}}", branch),
-            ])
-            .current_dir(&dest)
-            .output();
+            ],
+            path,
+        );
 
         if let Ok(output) = ab_output {
             if output.status.success() {
@@ -842,10 +845,10 @@ pub async fn git_repo_status(dest: String) -> Result<RepoStatus, String> {
 
     // Get upstream tracking branch
     let tracking_branch = if let Some(ref _branch) = current_branch {
-        let tb_output = Command::new("git")
-            .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
-            .current_dir(&dest)
-            .output();
+        let tb_output = runner.run(
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+            path,
+        );
 
         if let Ok(output) = tb_output {
             if output.status.success() {
@@ -861,9 +864,7 @@ pub async fn git_repo_status(dest: String) -> Result<RepoStatus, String> {
     };
 
     // Get branches
-    let branches = git_list_branches(dest.clone(), Some(false))
-        .await
-        .unwrap_or_default();
+    let branches = list_branches_internal(&dest, false, &**runner).unwrap_or_default();
 
     Ok(RepoStatus {
         current_branch,
@@ -890,6 +891,7 @@ pub async fn git_delete_branch(
     dest: String,
     name: String,
     force: Option<bool>,
+    runner: State<'_, Box<dyn GitRunner>>,
 ) -> Result<(), String> {
     let path = Path::new(&dest);
     if !path.exists() || !path.join(".git").exists() {
@@ -898,10 +900,8 @@ pub async fn git_delete_branch(
 
     let delete_flag = if force.unwrap_or(false) { "-D" } else { "-d" };
 
-    let output = Command::new("git")
-        .args(["branch", delete_flag, &name])
-        .current_dir(&dest)
-        .output()
+    let output = runner
+        .run(&["branch", delete_flag, &name], path)
         .map_err(|e| format!("Failed to delete branch: {}", e))?;
 
     if !output.status.success() {
@@ -923,6 +923,7 @@ pub async fn git_remote_branches(
     dest: String,
     remote: Option<String>,
     fetch_first: Option<bool>,
+    runner: State<'_, Box<dyn GitRunner>>,
 ) -> Result<Vec<String>, String> {
     let path = std::path::Path::new(&dest);
     if !path.exists() || (!path.join(".git").exists() && !path.join(".git").is_file()) {
@@ -933,17 +934,15 @@ pub async fn git_remote_branches(
 
     // Optionally fetch first
     if fetch_first.unwrap_or(false) {
-        let _ = Command::new("git")
-            .args(["fetch", remote_name, "--prune"])
-            .current_dir(&dest)
-            .output();
+        let _ = runner.run(&["fetch", remote_name, "--prune"], path);
     }
 
     // Get remote branches
-    let output = Command::new("git")
-        .args(["branch", "-r", "--list", &format!("{}/*", remote_name)])
-        .current_dir(&dest)
-        .output()
+    let output = runner
+        .run(
+            &["branch", "-r", "--list", &format!("{}/*", remote_name)],
+            path,
+        )
         .map_err(|e| format!("Failed to list remote branches: {}", e))?;
 
     if !output.status.success() {
@@ -988,7 +987,10 @@ pub struct WorktreeInfo {
 /// # Parameters
 /// - `dest`: Repository path (main worktree or any linked worktree)
 #[tauri::command(rename_all = "camelCase")]
-pub async fn git_worktree_list(dest: String) -> Result<Vec<WorktreeInfo>, String> {
+pub async fn git_worktree_list(
+    dest: String,
+    runner: State<'_, Box<dyn GitRunner>>,
+) -> Result<Vec<WorktreeInfo>, String> {
     let path = Path::new(&dest);
     if !path.exists() {
         return Err("Path does not exist".to_string());
@@ -1000,10 +1002,8 @@ pub async fn git_worktree_list(dest: String) -> Result<Vec<WorktreeInfo>, String
         return Err("Not a git repository".to_string());
     }
 
-    let output = Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(&dest)
-        .output()
+    let output = runner
+        .run(&["worktree", "list", "--porcelain"], path)
         .map_err(|e| format!("Failed to list worktrees: {}", e))?;
 
     if !output.status.success() {
@@ -1090,10 +1090,10 @@ pub async fn git_worktree_list(dest: String) -> Result<Vec<WorktreeInfo>, String
                 );
 
                 // 1. Try configured upstream
-                let tb_output = Command::new("git")
-                    .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
-                    .current_dir(wt_path)
-                    .output();
+                let tb_output = runner.run(
+                    &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+                    wt_path,
+                );
 
                 if let Ok(output) = tb_output {
                     if output.status.success() {
@@ -1126,10 +1126,8 @@ pub async fn git_worktree_list(dest: String) -> Result<Vec<WorktreeInfo>, String
                         implicit_tracking
                     );
 
-                    let verify_output = Command::new("git")
-                        .args(["rev-parse", "--verify", &implicit_tracking])
-                        .current_dir(wt_path)
-                        .output();
+                    let verify_output =
+                        runner.run(&["rev-parse", "--verify", &implicit_tracking], wt_path);
 
                     if let Ok(output) = verify_output {
                         if output.status.success() {
@@ -1154,15 +1152,15 @@ pub async fn git_worktree_list(dest: String) -> Result<Vec<WorktreeInfo>, String
 
                     // Get ahead/behind
                     // Use the resolved tracking branch name explicitly
-                    let ab_output = Command::new("git")
-                        .args([
+                    let ab_output = runner.run(
+                        &[
                             "rev-list",
                             "--left-right",
                             "--count",
                             &format!("HEAD...{}", tb),
-                        ])
-                        .current_dir(wt_path)
-                        .output();
+                        ],
+                        wt_path,
+                    );
 
                     if let Ok(ab_out) = ab_output {
                         if ab_out.status.success() {
@@ -1218,6 +1216,7 @@ pub async fn git_worktree_add(
     branch: String,
     create_branch: Option<bool>,
     from_remote: Option<String>,
+    runner: State<'_, Box<dyn GitRunner>>,
 ) -> Result<(), String> {
     let repo_path = Path::new(&dest);
     if !repo_path.exists() || !repo_path.join(".git").exists() {
@@ -1238,10 +1237,12 @@ pub async fn git_worktree_add(
                 "Fetching from remote {} before creating worktree",
                 remote_name
             );
-            let fetch_output = Command::new("git")
-                .args(["fetch", remote_name])
-                .current_dir(&dest)
-                .output();
+            tracing::info!(
+                target = "git",
+                "Fetching from remote {} before creating worktree",
+                remote_name
+            );
+            let fetch_output = runner.run(&["fetch", remote_name], repo_path);
 
             if let Ok(output) = fetch_output {
                 if !output.status.success() {
@@ -1275,10 +1276,10 @@ pub async fn git_worktree_add(
 
     tracing::info!(target = "git", "Running: git {}", args.join(" "));
 
-    let output = Command::new("git")
-        .args(&args)
-        .current_dir(&dest)
-        .output()
+    tracing::info!(target = "git", "Running: git {}", args.join(" "));
+
+    let output = runner
+        .run(&args, repo_path)
         .map_err(|e| format!("Failed to add worktree: {}", e))?;
 
     if !output.status.success() {
@@ -1307,6 +1308,7 @@ pub async fn git_worktree_remove(
     remote: Option<String>,
     use_stored_credential: Option<bool>,
     credential_factory: State<'_, SharedCredentialFactory>,
+    runner: State<'_, Box<dyn GitRunner>>,
 ) -> Result<(), String> {
     let repo_path = Path::new(&dest);
     if !repo_path.exists() {
@@ -1321,10 +1323,8 @@ pub async fn git_worktree_remove(
     // Get the branch name from the worktree before removing it
     let branch_name = if delete_remote_branch.unwrap_or(false) {
         // Get worktree info to find the branch
-        let list_output = Command::new("git")
-            .args(["worktree", "list", "--porcelain"])
-            .current_dir(&dest)
-            .output()
+        let list_output = runner
+            .run(&["worktree", "list", "--porcelain"], repo_path)
             .map_err(|e| format!("Failed to list worktrees: {}", e))?;
 
         let stdout = String::from_utf8_lossy(&list_output.stdout);
@@ -1362,10 +1362,10 @@ pub async fn git_worktree_remove(
 
     tracing::info!(target = "git", "Running: git {}", args.join(" "));
 
-    let output = Command::new("git")
-        .args(&args)
-        .current_dir(&dest)
-        .output()
+    tracing::info!(target = "git", "Running: git {}", args.join(" "));
+
+    let output = runner
+        .run(&args, repo_path)
         .map_err(|e| format!("Failed to remove worktree: {}", e))?;
 
     if !output.status.success() {
@@ -1386,7 +1386,7 @@ pub async fn git_worktree_remove(
 
             // Get credentials if needed
             let creds: Option<(String, String)> = if use_stored_credential.unwrap_or(false) {
-                match try_get_git_credentials(&dest, &credential_factory).await {
+                match try_get_git_credentials(&dest, &credential_factory, &**runner).await {
                     Ok(Some((u, p))) => {
                         tracing::info!(
                             target = "git",
@@ -1406,10 +1406,7 @@ pub async fn git_worktree_remove(
             // Use git push with credentials in URL if available
             let push_result = if let Some((user, pass)) = creds {
                 // Get remote URL and embed credentials
-                let url_output = Command::new("git")
-                    .args(["remote", "get-url", remote_name])
-                    .current_dir(&dest)
-                    .output();
+                let url_output = runner.run(&["remote", "get-url", remote_name], repo_path);
 
                 if let Ok(url_out) = url_output {
                     if url_out.status.success() {
@@ -1420,34 +1417,19 @@ pub async fn git_worktree_remove(
                             let _ = parsed.set_password(Some(&pass));
                             let auth_url = parsed.to_string();
 
-                            Command::new("git")
-                                .args(["push", &auth_url, &delete_ref])
-                                .current_dir(&dest)
-                                .output()
+                            runner.run(&["push", &auth_url, &delete_ref], repo_path)
                         } else {
                             // URL parsing failed, try without auth
-                            Command::new("git")
-                                .args(["push", remote_name, "--delete", branch])
-                                .current_dir(&dest)
-                                .output()
+                            runner.run(&["push", remote_name, "--delete", branch], repo_path)
                         }
                     } else {
-                        Command::new("git")
-                            .args(["push", remote_name, "--delete", branch])
-                            .current_dir(&dest)
-                            .output()
+                        runner.run(&["push", remote_name, "--delete", branch], repo_path)
                     }
                 } else {
-                    Command::new("git")
-                        .args(["push", remote_name, "--delete", branch])
-                        .current_dir(&dest)
-                        .output()
+                    runner.run(&["push", remote_name, "--delete", branch], repo_path)
                 }
             } else {
-                Command::new("git")
-                    .args(["push", remote_name, "--delete", branch])
-                    .current_dir(&dest)
-                    .output()
+                runner.run(&["push", remote_name, "--delete", branch], repo_path)
             };
 
             match push_result {

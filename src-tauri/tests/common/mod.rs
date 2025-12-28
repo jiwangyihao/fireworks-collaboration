@@ -34,6 +34,7 @@ pub mod git_scenarios;
 pub mod http_override_stub; // 12.10: http override cases & stub
 pub mod i18n;
 pub mod ip_pool; // P4.2: IP pool helpers for selection & cache tests
+pub(crate) mod mock_runner;
 pub mod partial_filter_matrix; // 12.6: partial clone filter 矩阵
 pub mod partial_filter_support; // 支撑能力判定
 pub mod pipeline; // 12.15: pipeline DSL (e2e scaffolding)
@@ -42,7 +43,8 @@ pub mod retry_matrix; // 12.9: push & retry 矩阵
 pub mod shallow_matrix; // 12.5: 浅克隆 / 深度矩阵
 pub mod strategy_support; // 12.28: strategy & override structured helpers
 pub mod task_wait; // 12.18: 任务等待辅助
-pub mod test_env; // 12.19: 简化 i18n fixture/translate for tests
+pub(crate) mod test_env;
+// 12.19: 简化 i18n fixture/translate for tests
 
 // （移除 TEST_COMMON_VERSION / init / ensure_init 兼容层）
 
