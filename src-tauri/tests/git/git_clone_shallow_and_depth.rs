@@ -40,7 +40,7 @@ mod helpers {
             depth.map(|d| d.to_string()).unwrap_or("full".into()),
             path_slug(uuid::Uuid::new_v4().to_string())
         ));
-        let svc = DefaultGitService::new();
+        let svc = DefaultGitService::new(std::sync::Arc::new(CliGitRunner::new()));
         let cancel = AtomicBool::new(false);
         svc.clone_blocking(
             origin.to_string_lossy().as_ref(),
@@ -54,7 +54,7 @@ mod helpers {
     }
 
     pub fn deepen_once(origin: &Path, dest: &Path, to: u32) {
-        let svc = DefaultGitService::new();
+        let svc = DefaultGitService::new(std::sync::Arc::new(CliGitRunner::new()));
         let cancel = AtomicBool::new(false);
         svc.fetch_blocking(
             origin.to_string_lossy().as_ref(),
@@ -220,7 +220,7 @@ mod section_local_ignore {
                 }
                 ShallowCase::LocalIgnoreFetch { depth } => {
                     let dest = shallow_clone(&origin, None); // full clone
-                    let svc = DefaultGitService::new();
+                    let svc = DefaultGitService::new(std::sync::Arc::new(CliGitRunner::new()));
                     let cancel = AtomicBool::new(false);
                     svc.fetch_blocking(
                         origin.to_string_lossy().as_ref(),

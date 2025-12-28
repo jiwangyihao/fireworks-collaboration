@@ -3,6 +3,7 @@
 //! 后续 12.4 将在此完善远端 fixture / 事件采集 / 错误分类映射。
 
 use fireworks_collaboration_lib::core::git::service::ProgressPayload;
+use fireworks_collaboration_lib::core::git::CliGitRunner;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -173,7 +174,9 @@ pub fn run_clone(params: &CloneParams) -> CloneOutcome {
     let cancel = AtomicBool::new(false);
     let mut events = Vec::new();
     // 目前 default_impl::clone::do_clone 仅支持 depth，其余参数留作后续扩展。
+    let runner = CliGitRunner::new();
     let _res = impl_clone::do_clone(
+        &runner,
         "https://example.com/placeholder.git",
         &dest,
         params.depth,
@@ -200,7 +203,9 @@ pub fn _run_clone_with_cancel(params: &CloneParams, cancel: &AtomicBool) -> Clon
     let dest = build_clone_dest();
     std::fs::create_dir_all(&dest).expect("create clone dest temp dir");
     let mut events = Vec::new();
+    let runner = CliGitRunner::new();
     let _res = impl_clone::do_clone(
+        &runner,
         "https://example.com/placeholder.git",
         &dest,
         params.depth,
