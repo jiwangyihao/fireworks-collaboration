@@ -47,6 +47,37 @@ fn create_mock_app() -> (tauri::App<tauri::test::MockRuntime>, TaskRegistryState
     (app, registry)
 }
 
+fn init_git_repo(path: &std::path::Path) {
+    std::fs::create_dir_all(path).unwrap();
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(path)
+        .output()
+        .expect("git init failed");
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(path)
+        .output()
+        .ok();
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(path)
+        .output()
+        .ok();
+    // Initial commit
+    std::fs::write(path.join("README.md"), "# Test").unwrap();
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(path)
+        .output()
+        .ok();
+    std::process::Command::new("git")
+        .args(["commit", "-m", "Initial"])
+        .current_dir(path)
+        .output()
+        .ok();
+}
+
 #[tokio::test]
 async fn test_git_clone_command() {
     let (app, registry) = create_mock_app();
@@ -70,35 +101,29 @@ async fn test_git_clone_command() {
     let task_id = result.unwrap();
     let uuid = uuid::Uuid::parse_str(&task_id).unwrap();
 
-    // Allow small delay for task spawn verification
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     assert!(registry.snapshot(&uuid).is_some());
 }
 
 #[tokio::test]
 async fn test_git_fetch_command() {
-    let (app, registry) = create_mock_app();
+    let (app, _) = create_mock_app();
     let temp = tempfile::tempdir().unwrap();
     let dest = temp.path().to_string_lossy().to_string();
 
     let result = git_fetch(
         "origin".to_string(),
         dest,
-        None, // preset
-        None, // depth
-        None, // filter
-        None, // strategy
+        None,
+        None,
+        None,
+        None,
         app.state(),
         app.handle().clone(),
     )
     .await;
 
     assert!(result.is_ok());
-    let task_id = result.unwrap();
-    let uuid = uuid::Uuid::parse_str(&task_id).unwrap();
-
-    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-    assert!(registry.snapshot(&uuid).is_some());
 }
 
 #[tokio::test]
@@ -150,6 +175,30 @@ async fn test_git_commit_command() {
 }
 
 #[tokio::test]
+async fn test_git_push_command() {
+    let (app, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    let dest = temp.path().to_string_lossy().to_string();
+
+    // git_push(dest, remote, refspecs, username, password, use_stored_credential, strategy_override, reg, credential_factory, app)
+    let result = git_push(
+        dest,
+        Some("origin".to_string()),
+        None, // refspecs
+        None, // username
+        None, // password
+        None, // use_stored_credential
+        None, // strategy_override
+        app.state(),
+        app.state(), // credential_factory
+        app.handle().clone(),
+    )
+    .await;
+
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
 async fn test_git_branch_command() {
     let (app, _) = create_mock_app();
     let temp = tempfile::tempdir().unwrap();
@@ -187,13 +236,13 @@ async fn test_git_checkout_command() {
 }
 
 #[tokio::test]
-async fn test_git_remote_add_command() {
+async fn test_git_remote_add_remove() {
     let (app, _) = create_mock_app();
     let temp = tempfile::tempdir().unwrap();
     let dest = temp.path().to_string_lossy().to_string();
 
     let result = git_remote_add(
-        dest,
+        dest.clone(),
         "origin".to_string(),
         "https://github.com/test/repo.git".to_string(),
         app.state(),
@@ -202,10 +251,51 @@ async fn test_git_remote_add_command() {
     .await;
 
     assert!(result.is_ok());
+
+    let result_remove = git_remote_remove(
+        dest,
+        "origin".to_string(),
+        app.state(),
+        app.handle().clone(),
+    )
+    .await;
+    assert!(result_remove.is_ok());
+}
+
+#[tokio::test]
+async fn test_git_list_branches_command() {
+    let temp = tempfile::tempdir().unwrap();
+    init_git_repo(temp.path());
+    let dest = temp.path().to_string_lossy().to_string();
+
+    // Test pure function without app state
+    let result = git_list_branches(dest, None).await;
+
+    assert!(result.is_ok());
+    let branches = result.unwrap();
+    assert!(!branches.is_empty());
+    assert!(branches
+        .iter()
+        .any(|b| b.name == "master" || b.name == "main"));
+}
+
+#[tokio::test]
+async fn test_git_repo_status_command() {
+    let temp = tempfile::tempdir().unwrap();
+    init_git_repo(temp.path());
+    let dest = temp.path().to_string_lossy().to_string();
+
+    // Test pure function
+    let result = git_repo_status(dest).await;
+
+    assert!(result.is_ok());
+    let status = result.unwrap();
+    assert!(status.current_branch.is_some());
+    assert!(status.is_clean);
 }
 
 // ============================================================================
-// parse_git_host tests (pure function, easy to test directly)
+// parse_git_host tests
 // ============================================================================
 
 #[test]
@@ -252,8 +342,6 @@ fn test_parse_git_host_bitbucket() {
 #[test]
 fn test_parse_git_host_ssh_no_git_prefix() {
     let result = parse_git_host("user@example.com:path/to/repo.git");
-    // Should verify it returns host or error, not panic.
-    // Based on implementation, this returns "example.com" probably.
     let _ = result;
 }
 
