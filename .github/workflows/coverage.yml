@@ -57,13 +57,19 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Rust coverage
         working-directory: src-tauri
         run: |
           cargo llvm-cov --version
+          cargo nextest --version
+          # nextest 模式：每个测试独立进程，更快更稳定
           # --ignore-run-fail: 允许在部分测试失败时仍生成覆盖率报告
-          # Note: Uses default features (tauri-core) from Cargo.toml to avoid Windows DLL conflicts
-          cargo llvm-cov --lcov --output-path lcov.info --ignore-filename-regex '(tests|target|/.cargo/registry)' --workspace --ignore-run-fail
+          cargo llvm-cov nextest --lcov --output-path lcov.info --ignore-filename-regex '(tests|target|/.cargo/registry)' --workspace --ignore-run-fail
 
       - name: Soft gate (coverage thresholds)
         if: always()
