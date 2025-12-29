@@ -271,7 +271,7 @@ async fn test_git_list_branches_command() {
     init_git_repo(temp.path());
     let dest = temp.path().to_string_lossy().to_string();
 
-    let (app, _) = create_mock_app();
+    let (_app, _) = create_mock_app();
     // Test pure function without app state
     let result = git_list_branches(dest, None).await;
 
@@ -289,7 +289,7 @@ async fn test_git_repo_status_command() {
     init_git_repo(temp.path());
     let dest = temp.path().to_string_lossy().to_string();
 
-    let (app, _) = create_mock_app();
+    let (_app, _) = create_mock_app();
     // Test pure function
     let result = git_repo_status(dest).await;
 
@@ -352,7 +352,7 @@ async fn test_git_remote_branches() {
     init_git_repo(temp.path());
     let dest = temp.path().to_string_lossy().to_string();
 
-    let (app, _) = create_mock_app();
+    let (_app, _) = create_mock_app();
     // No actual remote, so it might fail or return empty.
     // Testing the logic path execution.
     let result = git_remote_branches(dest, None, None).await;

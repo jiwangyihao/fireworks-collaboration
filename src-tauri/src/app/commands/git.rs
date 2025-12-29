@@ -1146,7 +1146,7 @@ pub async fn git_worktree_add(
     branch: String,
     create_branch: Option<bool>,
     from_remote: Option<String>,
-    credential_factory: State<'_, SharedCredentialFactory>,
+    _credential_factory: State<'_, SharedCredentialFactory>,
 ) -> Result<(), String> {
     let repo_path = Path::new(&dest);
     if !repo_path.exists() || !repo_path.join(".git").exists() {
