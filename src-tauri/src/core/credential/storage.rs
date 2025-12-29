@@ -165,6 +165,12 @@ pub trait CredentialStore: Send + Sync {
     /// 返回所有已存储的凭证列表（不包括已过期的）
     fn list(&self) -> CredentialStoreResult<Vec<Credential>>;
 
+    /// 列出所有凭证（包括已过期的）
+    ///
+    /// # 返回
+    /// 返回所有已存储的凭证列表
+    fn list_all(&self) -> CredentialStoreResult<Vec<Credential>>;
+
     /// 更新凭证的最后使用时间
     ///
     /// # 参数
@@ -278,6 +284,15 @@ impl CredentialStore for MemoryCredentialStore {
             .collect();
 
         Ok(valid_credentials)
+    }
+
+    fn list_all(&self) -> CredentialStoreResult<Vec<Credential>> {
+        let credentials = self
+            .credentials
+            .read()
+            .map_err(|e| CredentialStoreError::AccessError(format!("读锁获取失败: {e}")))?;
+
+        Ok(credentials.values().cloned().collect())
     }
 
     fn update_last_used(&self, host: &str, username: &str) -> CredentialStoreResult<()> {

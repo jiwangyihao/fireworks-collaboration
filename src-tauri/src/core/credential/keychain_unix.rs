@@ -159,6 +159,10 @@ impl CredentialStore for UnixCredentialStore {
         Ok(Vec::new())
     }
 
+    fn list_all(&self) -> CredentialStoreResult<Vec<Credential>> {
+        self.list()
+    }
+
     fn update_last_used(&self, _host: &str, _username: &str) -> CredentialStoreResult<()> {
         // Keychain 不提供 last_used_at 元数据，这里直接返回 Ok
         Ok(())
@@ -295,6 +299,10 @@ impl CredentialStore for UnixCredentialStore {
         Ok(Vec::new())
     }
 
+    fn list_all(&self) -> CredentialStoreResult<Vec<Credential>> {
+        self.list()
+    }
+
     fn update_last_used(&self, _host: &str, _username: &str) -> CredentialStoreResult<()> {
         // No last-used metadata maintained; noop
         Ok(())
@@ -329,6 +337,10 @@ impl CredentialStore for UnixCredentialStore {
         Err(CredentialStoreError::Other(
             "Unix keychain not supported on this platform".to_string(),
         ))
+    }
+
+    fn list_all(&self) -> CredentialStoreResult<Vec<Credential>> {
+        self.list()
     }
 
     fn update_last_used(&self, _host: &str, _username: &str) -> CredentialStoreResult<()> {

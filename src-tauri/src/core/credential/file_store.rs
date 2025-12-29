@@ -688,6 +688,23 @@ impl CredentialStore for EncryptedFileStore {
         Ok(credentials)
     }
 
+    fn list_all(&self) -> CredentialStoreResult<Vec<Credential>> {
+        let _lock = self.file_lock.lock().unwrap();
+
+        let container = self
+            .load_credentials()
+            .map_err(CredentialStoreError::AccessError)?;
+
+        let credentials: Vec<Credential> = container
+            .credentials
+            .values()
+            .cloned()
+            .map(|sc| sc.into())
+            .collect();
+
+        Ok(credentials)
+    }
+
     fn update_last_used(&self, host: &str, username: &str) -> CredentialStoreResult<()> {
         let _lock = self.file_lock.lock().unwrap();
 

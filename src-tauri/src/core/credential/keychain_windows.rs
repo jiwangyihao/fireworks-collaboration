@@ -247,6 +247,10 @@ impl CredentialStore for WindowsCredentialStore {
         Ok(credentials)
     }
 
+    fn list_all(&self) -> CredentialStoreResult<Vec<Credential>> {
+        self.list()
+    }
+
     fn update_last_used(&self, _host: &str, _username: &str) -> CredentialStoreResult<()> {
         // Windows Credential Manager doesn't support updating last used time
         // This is a no-op for Windows

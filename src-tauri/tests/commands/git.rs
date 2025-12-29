@@ -16,6 +16,7 @@ use fireworks_collaboration_lib::core::config::model::AppConfig;
 use fireworks_collaboration_lib::core::git::runner::{Git2Runner, GitRunner};
 use fireworks_collaboration_lib::core::tasks::TaskRegistry;
 use fireworks_collaboration_lib::core::tasks::TaskState;
+use uuid::Uuid;
 
 // Mock Assets for Tauri
 struct MockAssets;
@@ -634,7 +635,7 @@ async fn test_git_tag_command() {
     let dest = temp.path().to_string_lossy().to_string();
 
     // 1. Create lightweight tag
-    let result_lw = git_tag(
+    let uuid_lw = git_tag(
         dest.clone(),
         "v1.0.0".to_string(),
         None,
@@ -643,11 +644,28 @@ async fn test_git_tag_command() {
         app.state(),
         app.handle().clone(),
     )
-    .await;
-    assert!(result_lw.is_ok());
+    .await
+    .unwrap();
+
+    // Poll for completion
+    let registry = app.state::<TaskRegistryState>();
+    let id_lw = uuid_lw.parse::<Uuid>().unwrap();
+    loop {
+        let snapshot = registry.snapshot(&id_lw).unwrap();
+        if snapshot.state == TaskState::Completed {
+            break;
+        }
+        if snapshot.state == TaskState::Failed {
+            panic!(
+                "Tag LW task failed: {}",
+                registry.fail_reason(&id_lw).unwrap_or_default()
+            );
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
 
     // 2. Create annotated tag
-    let result_ann = git_tag(
+    let uuid_ann = git_tag(
         dest.clone(),
         "v1.1.0".to_string(),
         Some("Release 1.1.0".to_string()),
@@ -656,8 +674,35 @@ async fn test_git_tag_command() {
         app.state(),
         app.handle().clone(),
     )
-    .await;
-    assert!(result_ann.is_ok());
+    .await
+    .unwrap();
+
+    let id_ann = uuid_ann.parse::<Uuid>().unwrap();
+    loop {
+        let snapshot = registry.snapshot(&id_ann).unwrap();
+        if snapshot.state == TaskState::Completed {
+            break;
+        }
+        if snapshot.state == TaskState::Failed {
+            panic!(
+                "Tag ANN task failed: {}",
+                registry.fail_reason(&id_ann).unwrap_or_default()
+            );
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+
+    // 3. Verify disk state
+    let repo = git2::Repository::open(temp.path()).unwrap();
+
+    // Check lightweight tag
+    let (obj_lw, _ref_lw) = repo.revparse_ext("v1.0.0").unwrap();
+    assert!(obj_lw.as_tag().is_none()); // revparse_ext on lightweight tag returns the commit
+
+    // Check annotated tag
+    let (obj_ann, _ref_ann) = repo.revparse_ext("v1.1.0").unwrap();
+    let tag = obj_ann.as_tag().expect("Should be an annotated tag object");
+    assert_eq!(tag.message(), Some("Release 1.1.0\n"));
 }
 
 #[tokio::test]
@@ -668,7 +713,7 @@ async fn test_git_remote_set_command() {
     let dest = temp.path().to_string_lossy().to_string();
 
     // Add remote first
-    git_remote_add(
+    let uuid_add = git_remote_add(
         dest.clone(),
         "upstream".to_string(),
         "https://github.com/old/repo.git".to_string(),
@@ -678,16 +723,52 @@ async fn test_git_remote_set_command() {
     .await
     .unwrap();
 
+    let registry = app.state::<TaskRegistryState>();
+    let id_add = uuid_add.parse::<Uuid>().unwrap();
+    loop {
+        let snapshot = registry.snapshot(&id_add).unwrap();
+        if snapshot.state == TaskState::Completed {
+            break;
+        }
+        if snapshot.state == TaskState::Failed {
+            panic!(
+                "Remote Add task failed: {}",
+                registry.fail_reason(&id_add).unwrap_or_default()
+            );
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+
     // Change remote URL
-    let result = git_remote_set(
-        dest,
+    let uuid_set = git_remote_set(
+        dest.clone(),
         "upstream".to_string(),
         "https://github.com/new/repo.git".to_string(),
         app.state(),
         app.handle().clone(),
     )
-    .await;
-    assert!(result.is_ok());
+    .await
+    .unwrap();
+
+    let id_set = uuid_set.parse::<Uuid>().unwrap();
+    loop {
+        let snapshot = registry.snapshot(&id_set).unwrap();
+        if snapshot.state == TaskState::Completed {
+            break;
+        }
+        if snapshot.state == TaskState::Failed {
+            panic!(
+                "Remote Set task failed: {}",
+                registry.fail_reason(&id_set).unwrap_or_default()
+            );
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+
+    // Verify disk state
+    let repo = git2::Repository::open(temp.path()).unwrap();
+    let remote = repo.find_remote("upstream").unwrap();
+    assert_eq!(remote.url(), Some("https://github.com/new/repo.git"));
 }
 
 #[tokio::test]

@@ -531,7 +531,7 @@ pub async fn cleanup_expired_credentials(
 
     // Get all credentials
     let all_credentials = store
-        .list()
+        .list_all()
         .map_err(|e| format!("Failed to list credentials: {}", e))?;
 
     // Filter expired credentials

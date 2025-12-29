@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 use tauri::{Assets, Manager};
 use tauri_utils::assets::{AssetKey, CspHash};
 
@@ -9,6 +10,7 @@ use fireworks_collaboration_lib::app::commands::credential::*;
 use fireworks_collaboration_lib::core::credential::{
     audit::AuditLogger,
     config::{CredentialConfig, StorageType},
+    Credential,
 };
 
 // Include MockAssets definition
@@ -47,12 +49,8 @@ fn create_mock_app() -> (
 
 /// Helper to initialize store with memory backend
 async fn init_store(app: &tauri::App<tauri::test::MockRuntime>) {
-    let config = CredentialConfig {
-        storage: StorageType::Memory,
-        ..Default::default()
-    };
-    let state = app.state::<SharedCredentialFactory>();
-    set_master_password("dummy".to_string(), config, state)
+    let config = CredentialConfig::default().with_storage(StorageType::Memory);
+    set_master_password("test".to_string(), config, app.state())
         .await
         .unwrap();
 }
@@ -476,4 +474,80 @@ async fn test_export_audit_log_json_format() {
     // Verify it contains expected structure
     let value = parsed.unwrap();
     assert!(value.is_array(), "Export should be an array of events");
+}
+
+#[tokio::test]
+async fn test_credential_expiry_cleanup_integration() {
+    let (app, _, _) = create_mock_app();
+    init_store(&app).await;
+
+    // 1. Manually add an expired credential (1 hour ago)
+    {
+        let factory = app.state::<SharedCredentialFactory>();
+        let store = factory
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("Store not init")
+            .clone();
+        let expired_cred = Credential::new_with_expiry(
+            "expired.com".to_string(),
+            "user1".to_string(),
+            "pass1".to_string(),
+            SystemTime::now() - Duration::from_secs(3600),
+        );
+        store.add(expired_cred).unwrap();
+    }
+
+    // 2. Add a non-expired credential via command
+    let req_valid = AddCredentialRequest {
+        host: "valid.com".to_string(),
+        username: "user2".to_string(),
+        password_or_token: "pass2".to_string(),
+        expires_in_days: Some(30),
+    };
+    add_credential(req_valid, app.state(), app.state())
+        .await
+        .unwrap();
+
+    // 3. Cleanup
+    let removed = cleanup_expired_credentials(app.state(), app.state())
+        .await
+        .unwrap();
+    assert_eq!(removed, 1, "Should have removed 1 expired credential");
+
+    // 4. Verify list
+    let list = list_credentials(app.state(), app.state()).await.unwrap();
+    assert_eq!(list.len(), 1);
+}
+
+#[tokio::test]
+async fn test_credential_info_masking() {
+    let (app, _, _) = create_mock_app();
+    init_store(&app).await;
+
+    let pass = "very_secret_password_123";
+    let req = AddCredentialRequest {
+        host: "masking.com".to_string(),
+        username: "security_user".to_string(),
+        password_or_token: pass.to_string(),
+        expires_in_days: None,
+    };
+    add_credential(req, app.state(), app.state()).await.unwrap();
+
+    // Get credential info
+    let info_opt = get_credential("masking.com".to_string(), None, app.state(), app.state())
+        .await
+        .unwrap();
+    let info = info_opt.expect("Should find credential");
+
+    // Verify masking
+    assert_ne!(
+        info.masked_password, pass,
+        "Masked password should not match original"
+    );
+    assert!(
+        info.masked_password.contains('*'),
+        "Masked password should contain asterisks"
+    );
 }
