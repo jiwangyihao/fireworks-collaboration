@@ -794,3 +794,83 @@ async fn test_git_delete_branch_command() {
     .await;
     assert!(result.is_ok());
 }
+
+#[tokio::test]
+async fn test_git_worktree_details() {
+    let (app, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    let repo_path = temp.path().join("repo");
+    init_git_repo(&repo_path);
+    let dest = repo_path.to_string_lossy().to_string();
+
+    // 1. Add worktree
+    let wt_path = temp.path().join("wt_details").to_string_lossy().to_string();
+    let add_result = git_worktree_add(
+        dest.clone(),
+        wt_path.clone(),
+        "wt-branch".to_string(),
+        Some(true),
+        None,
+        app.state(),
+    )
+    .await;
+    assert!(add_result.is_ok());
+
+    // 2. Verify details
+    let result = git_worktree_list(dest.clone()).await;
+    assert!(result.is_ok());
+    let wts = result.unwrap();
+    assert_eq!(wts.len(), 2);
+
+    let main_wt = wts
+        .iter()
+        .find(|w| w.is_main)
+        .expect("Should have a main worktree");
+    let linked_wt = wts
+        .iter()
+        .find(|w| !w.is_main)
+        .expect("Should have a linked worktree");
+
+    assert!(main_wt.path.to_lowercase().contains("repo"));
+    assert!(linked_wt.path.to_lowercase().contains("wt_details"));
+    assert_eq!(linked_wt.branch, Some("wt-branch".to_string()));
+    assert!(!linked_wt.is_bare);
+}
+
+#[tokio::test]
+async fn test_git_remote_error_handling() {
+    let (app, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    init_git_repo(temp.path());
+    let dest = temp.path().to_string_lossy().to_string();
+
+    // 1. Remove non-existent remote
+    let result = git_remote_remove(
+        dest,
+        "non-existent".to_string(),
+        app.state(),
+        app.handle().clone(),
+    )
+    .await;
+
+    assert!(result.is_ok());
+    let task_id = result.unwrap();
+    let uuid = uuid::Uuid::parse_str(&task_id).unwrap();
+
+    let registry = app.state::<TaskRegistryState>();
+    // Wait for task failure
+    let mut failed = false;
+    for _ in 0..50 {
+        if let Some(snapshot) = registry.snapshot(&uuid) {
+            if snapshot.state == TaskState::Failed {
+                failed = true;
+                break;
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+    assert!(
+        failed,
+        "Git remote remove should have failed for non-existent remote"
+    );
+}

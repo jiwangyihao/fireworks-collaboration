@@ -143,6 +143,13 @@ impl Workspace {
         if self.repositories.iter().any(|r| r.id == repo.id) {
             return Err(format!("仓库 ID '{}' 已存在", repo.id));
         }
+        // 检查路径是否已存在
+        if self.repositories.iter().any(|r| r.path == repo.path) {
+            return Err(format!(
+                "仓库路径 '{}' 已存在于工作区中",
+                repo.path.display()
+            ));
+        }
         self.repositories.push(repo);
         self.update_timestamp();
         Ok(())

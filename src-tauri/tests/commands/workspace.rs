@@ -13,8 +13,39 @@ use fireworks_collaboration_lib::app::types::{
     SharedConfig, SharedWorkspaceManager, TaskRegistryState,
 };
 use fireworks_collaboration_lib::core::config::model::AppConfig;
-use fireworks_collaboration_lib::core::tasks::TaskRegistry;
+use fireworks_collaboration_lib::core::tasks::{TaskRegistry, TaskState};
 use fireworks_collaboration_lib::core::workspace::model::Workspace;
+
+fn init_git_repo(path: &std::path::Path) {
+    std::fs::create_dir_all(path).unwrap();
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(path)
+        .output()
+        .expect("git init failed");
+    std::process::Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(path)
+        .output()
+        .ok();
+    std::process::Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(path)
+        .output()
+        .ok();
+    // Initial commit
+    std::fs::write(path.join("README.md"), "# Test").unwrap();
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(path)
+        .output()
+        .ok();
+    std::process::Command::new("git")
+        .args(["commit", "-m", "Initial"])
+        .current_dir(path)
+        .output()
+        .ok();
+}
 
 // Include MockAssets definition (duplicated from direct_command for isolation)
 struct MockAssets;
@@ -796,4 +827,106 @@ async fn test_workspace_batch_fetch_multi_repo() {
 
     // Verify task exists in registry
     assert!(registry.snapshot(&uuid).is_some());
+}
+
+#[tokio::test]
+async fn test_workspace_batch_clone_disk_verification() {
+    let (app, manager, registry, _config, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    let ws_path = temp.path().to_path_buf();
+
+    // 1. Setup a "remote" repo to clone from
+    let remote_dir = temp.path().join("remote_repo");
+    init_git_repo(&remote_dir);
+    let remote_url = remote_dir.to_string_lossy().to_string();
+
+    // 2. Pre-load workspace with repo
+    {
+        let mut guard = manager.lock().unwrap();
+        let mut ws = Workspace::new("DiskVerify".to_string(), ws_path.clone());
+        ws.add_repository(
+            fireworks_collaboration_lib::core::workspace::model::RepositoryEntry::new(
+                "repo1".to_string(),
+                "Repo 1".to_string(),
+                "repo1".into(),
+                remote_url,
+            ),
+        )
+        .unwrap();
+        *guard = Some(ws);
+    }
+
+    let req = WorkspaceBatchCloneRequest {
+        repo_ids: Some(vec!["repo1".to_string()]),
+        ..Default::default()
+    };
+
+    let result = workspace_batch_clone(
+        req,
+        app.state(),
+        app.state(),
+        app.state(),
+        app.handle().clone(),
+    )
+    .await;
+
+    assert!(result.is_ok());
+    let task_id = result.unwrap();
+    let uuid = uuid::Uuid::parse_str(&task_id).unwrap();
+
+    // Wait for task completion
+    let mut completed = false;
+    for _ in 0..100 {
+        if let Some(snapshot) = registry.snapshot(&uuid) {
+            if snapshot.state == TaskState::Completed {
+                completed = true;
+                break;
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+    assert!(completed, "Workspace batch clone task did not complete");
+
+    // 3. Verify disk state
+    let target_path = ws_path.join("repo1");
+    assert!(target_path.exists());
+    assert!(target_path.join(".git").exists());
+}
+
+#[tokio::test]
+async fn test_workspace_duplicate_repo_prevention() {
+    let (app, manager, _, _, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+
+    // 1. Initialize workspace
+    {
+        let mut guard = manager.lock().unwrap();
+        *guard = Some(Workspace::new("DupTest".into(), temp.path().into()));
+    }
+
+    // 2. Add first repo
+    let req1 = AddRepositoryRequest {
+        id: "r1".into(),
+        name: "Repo 1".into(),
+        path: "path1".into(),
+        remote_url: "url1".into(),
+        tags: None,
+        enabled: Some(true),
+    };
+    add_repository(req1, app.state()).await.unwrap();
+
+    // 3. Add same repo again (SAME PATH)
+    let req2 = AddRepositoryRequest {
+        id: "r2".into(), // Different ID
+        name: "Repo 2".into(),
+        path: "path1".into(), // SAME PATH
+        remote_url: "url2".into(),
+        tags: None,
+        enabled: Some(true),
+    };
+    let result = add_repository(req2, app.state()).await;
+
+    // Implementation should prevent duplicate paths within same workspace
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("已存在"));
 }
