@@ -485,7 +485,7 @@ async fn test_git_remote_set_command() {
 
 #[tokio::test]
 async fn test_git_delete_branch_command() {
-    let (app, _) = create_mock_app();
+    let (_app, _) = create_mock_app();
     let temp = tempfile::tempdir().unwrap();
     init_git_repo(temp.path());
     let dest = temp.path().to_string_lossy().to_string();

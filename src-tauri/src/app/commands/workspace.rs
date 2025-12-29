@@ -1205,12 +1205,14 @@ mod tests {
     #[test]
     fn test_apply_repository_reorder_duplicate_ids() {
         let mut workspace = Workspace::new("test".to_string(), PathBuf::from("/test"));
-        workspace.add_repository(RepositoryEntry::new(
-            "repo1".to_string(),
-            "Repo 1".to_string(),
-            PathBuf::from("repo1"),
-            "https://example.com/repo1".to_string(),
-        ));
+        workspace
+            .add_repository(RepositoryEntry::new(
+                "repo1".to_string(),
+                "Repo 1".to_string(),
+                PathBuf::from("repo1"),
+                "https://example.com/repo1".to_string(),
+            ))
+            .unwrap();
         let result =
             apply_repository_reorder(&mut workspace, &["repo1".to_string(), "repo1".to_string()]);
         assert!(result.is_err());
@@ -1228,18 +1230,22 @@ mod tests {
     #[test]
     fn test_apply_repository_reorder_success() {
         let mut workspace = Workspace::new("test".to_string(), PathBuf::from("/test"));
-        workspace.add_repository(RepositoryEntry::new(
-            "repo1".to_string(),
-            "Repo 1".to_string(),
-            PathBuf::from("repo1"),
-            "https://example.com/repo1".to_string(),
-        ));
-        workspace.add_repository(RepositoryEntry::new(
-            "repo2".to_string(),
-            "Repo 2".to_string(),
-            PathBuf::from("repo2"),
-            "https://example.com/repo2".to_string(),
-        ));
+        workspace
+            .add_repository(RepositoryEntry::new(
+                "repo1".to_string(),
+                "Repo 1".to_string(),
+                PathBuf::from("repo1"),
+                "https://example.com/repo1".to_string(),
+            ))
+            .unwrap();
+        workspace
+            .add_repository(RepositoryEntry::new(
+                "repo2".to_string(),
+                "Repo 2".to_string(),
+                PathBuf::from("repo2"),
+                "https://example.com/repo2".to_string(),
+            ))
+            .unwrap();
 
         // Reverse order
         let result =
