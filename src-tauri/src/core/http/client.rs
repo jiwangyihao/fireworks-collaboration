@@ -62,9 +62,10 @@ impl HttpClient {
     /// 发送单个 HTTPS 请求，支持覆盖 SNI（伪 SNI）与时序统计
     pub async fn send(&self, input: HttpRequestInput) -> Result<HttpResponseOutput> {
         let url: Uri = input.url.parse::<Uri>().context("invalid URL")?;
-        if url.scheme_str() != Some("https") {
-            return Err(anyhow!("only https is supported in P0.4"));
+        if url.scheme_str() != Some("https") && url.scheme_str() != Some("http") {
+            return Err(anyhow!("only http/https are supported"));
         }
+        let is_https = url.scheme_str() == Some("https");
 
         // 先解码 body（若无效可在未触网前失败）
         let body_bytes: Vec<u8> = if let Some(b64) = &input.body_base64 {
@@ -77,7 +78,7 @@ impl HttpClient {
             .host()
             .ok_or_else(|| anyhow!("url host missing"))?
             .to_string();
-        let port = url.port_u16().unwrap_or(443);
+        let port = url.port_u16().unwrap_or(if is_https { 443 } else { 80 });
 
         // 集成全局IP池，优先用 pick_best 选出的 IP 建立连接。
         let start_total = Instant::now();
@@ -89,7 +90,8 @@ impl HttpClient {
         let mut _used_candidate_stat: Option<crate::core::ip_pool::IpStat> = None;
 
         // Candidate targets: from IP pool, then try System if pool fails or is empty
-        let candidates: Vec<crate::core::ip_pool::IpStat> = sel.iter_candidates().cloned().collect();
+        let candidates: Vec<crate::core::ip_pool::IpStat> =
+            sel.iter_candidates().cloned().collect();
         enum Target {
             Candidate(crate::core::ip_pool::IpStat),
             System,
@@ -98,7 +100,7 @@ impl HttpClient {
             .iter()
             .map(|c| Target::Candidate(c.clone()))
             .collect();
-        
+
         // If system strategy or fallback needed, append System
         // Note: subtransport tries system after candidates. We do same.
         targets.push(Target::System);
@@ -108,25 +110,24 @@ impl HttpClient {
             // subtransport falls back to system even if Cached strategy, IF candidates fail.
             // But if pick_best returns SystemDefault, candidates is empty.
             if let Target::System = target {
-                 if !candidates.is_empty() && success_out.is_some() {
-                     break; // Should not happen if success, but logical check
-                 }
+                if !candidates.is_empty() && success_out.is_some() {
+                    break; // Should not happen if success, but logical check
+                }
             }
 
             let (connect_addr, is_pool_candidate, current_stat) = match &target {
                 Target::Candidate(stat) => {
-                     (stat.candidate.address.to_string(), true, Some(stat.clone()))
+                    (stat.candidate.address.to_string(), true, Some(stat.clone()))
                 }
-                Target::System => {
-                    (host.clone(), false, None)
-                }
+                Target::System => (host.clone(), false, None),
             };
 
             let start_connect = Instant::now();
             let tcp_res = timeout(
                 Duration::from_millis(input.timeout_ms),
                 TcpStream::connect((connect_addr.as_str(), port)),
-            ).await;
+            )
+            .await;
 
             let tcp = match tcp_res {
                 Ok(Ok(stream)) => stream,
@@ -134,7 +135,14 @@ impl HttpClient {
                     errors.push(format!("connect error to {}: {}", connect_addr, e));
                     if is_pool_candidate {
                         if let Some(c) = &current_stat {
-                           report_outcome_async(crate::core::ip_pool::IpSelection::from_cached(&host, port, c.clone()), IpOutcome::Failure);
+                            report_outcome_async(
+                                crate::core::ip_pool::IpSelection::from_cached(
+                                    &host,
+                                    port,
+                                    c.clone(),
+                                ),
+                                IpOutcome::Failure,
+                            );
                         }
                     }
                     continue;
@@ -142,8 +150,15 @@ impl HttpClient {
                 Err(_) => {
                     errors.push(format!("connect timeout to {}", connect_addr));
                     if is_pool_candidate {
-                         if let Some(c) = &current_stat {
-                           report_outcome_async(crate::core::ip_pool::IpSelection::from_cached(&host, port, c.clone()), IpOutcome::Failure);
+                        if let Some(c) = &current_stat {
+                            report_outcome_async(
+                                crate::core::ip_pool::IpSelection::from_cached(
+                                    &host,
+                                    port,
+                                    c.clone(),
+                                ),
+                                IpOutcome::Failure,
+                            );
                         }
                     }
                     continue;
@@ -151,67 +166,125 @@ impl HttpClient {
             };
             let connect_ms = start_connect.elapsed().as_millis() as u32;
 
-            // TLS Handshake
-            let (sni_host_final, fake) = self.compute_sni_host(input.force_real_sni, &host); // Use host for SNI calculation
-            let server_name = match ServerName::try_from(sni_host_final.as_str()) {
-                Ok(sn) => sn,
-                Err(e) => {
-                    errors.push(format!("invalid sni {}: {}", sni_host_final, e));
-                    continue;
-                }
-            };
+            // TLS / HTTP Handshake
+            // If HTTPS, we wrap in TLS then handshake.
+            // If HTTP, we handshake directly.
 
-            let start_tls = Instant::now();
-            let tls_config: Arc<ClientConfig> = if fake {
-                Arc::new(create_client_config_with_expected_name(
-                    &self.cfg.tls,
-                    &host,
-                ))
+            let mut tls_ms: u32 = 0;
+            let mut fake_sni = false;
+
+            let sender_opt = if is_https {
+                // TLS Handshake
+                let (sni_host_final, fake) = self.compute_sni_host(input.force_real_sni, &host);
+                fake_sni = fake;
+                let server_name = match ServerName::try_from(sni_host_final.as_str()) {
+                    Ok(sn) => sn,
+                    Err(e) => {
+                        errors.push(format!("invalid sni {}: {}", sni_host_final, e));
+                        continue;
+                    }
+                };
+
+                let start_tls = Instant::now();
+                let tls_config: Arc<ClientConfig> = if fake {
+                    Arc::new(create_client_config_with_expected_name(
+                        &self.cfg.tls,
+                        &host,
+                    ))
+                } else {
+                    self.tls_default.clone()
+                };
+                let tls = TlsConnector::from(tls_config);
+                match tls.connect(server_name, tcp).await {
+                    Ok(s) => {
+                        tls_ms = start_tls.elapsed().as_millis() as u32;
+                        match hyper::client::conn::handshake(s).await {
+                            Ok((sender, conn)) => {
+                                tokio::spawn(async move {
+                                    if let Err(e) = conn.await {
+                                        tracing::debug!(target = "http", "conn ended: {:?}", e);
+                                    }
+                                });
+                                Some(sender)
+                            }
+                            Err(e) => {
+                                errors.push(format!(
+                                    "http handshake error with {}: {}",
+                                    connect_addr, e
+                                ));
+                                if is_pool_candidate {
+                                    if let Some(c) = &current_stat {
+                                        report_outcome_async(
+                                            crate::core::ip_pool::IpSelection::from_cached(
+                                                &host,
+                                                port,
+                                                c.clone(),
+                                            ),
+                                            IpOutcome::Failure,
+                                        );
+                                    }
+                                }
+                                None
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        errors.push(format!("tls handshake error with {}: {}", connect_addr, e));
+                        if is_pool_candidate {
+                            if let Some(c) = &current_stat {
+                                report_outcome_async(
+                                    crate::core::ip_pool::IpSelection::from_cached(
+                                        &host,
+                                        port,
+                                        c.clone(),
+                                    ),
+                                    IpOutcome::Failure,
+                                );
+                            }
+                        }
+                        None // Signal fail
+                    }
+                }
             } else {
-                self.tls_default.clone()
-            };
-            let tls = TlsConnector::from(tls_config);
-            let stream = match tls.connect(server_name, tcp).await {
-                Ok(s) => s,
-                Err(e) => {
-                     errors.push(format!("tls handshake error with {}: {}", connect_addr, e));
-                     if is_pool_candidate {
-                        if let Some(c) = &current_stat {
-                           report_outcome_async(crate::core::ip_pool::IpSelection::from_cached(&host, port, c.clone()), IpOutcome::Failure);
+                match hyper::client::conn::handshake(tcp).await {
+                    Ok((sender, conn)) => {
+                        tokio::spawn(async move {
+                            if let Err(e) = conn.await {
+                                tracing::debug!(target = "http", "conn ended: {:?}", e);
+                            }
+                        });
+                        Some(sender)
+                    }
+                    Err(e) => {
+                        errors.push(format!("http handshake error with {}: {}", connect_addr, e));
+                        if is_pool_candidate {
+                            if let Some(c) = &current_stat {
+                                report_outcome_async(
+                                    crate::core::ip_pool::IpSelection::from_cached(
+                                        &host,
+                                        port,
+                                        c.clone(),
+                                    ),
+                                    IpOutcome::Failure,
+                                );
+                            }
                         }
-                     }
-                     continue;
-                }
-            };
-            let tls_ms = start_tls.elapsed().as_millis() as u32;
-
-             // HTTP Handshake
-            let (mut sender, conn) = match hyper::client::conn::handshake(stream).await {
-                Ok(res) => res,
-                Err(e) => {
-                     errors.push(format!("http handshake error with {}: {}", connect_addr, e));
-                     // Handshake failure is also a connection/protocol failure
-                     if is_pool_candidate {
-                         if let Some(c) = &current_stat {
-                           report_outcome_async(crate::core::ip_pool::IpSelection::from_cached(&host, port, c.clone()), IpOutcome::Failure);
-                        }
-                     }
-                     continue;
+                        None
+                    }
                 }
             };
 
-            tokio::spawn(async move {
-                if let Err(e) = conn.await {
-                    tracing::debug!(target = "http", "conn ended: {:?}", e);
-                }
-            });
+            let mut sender = match sender_opt {
+                Some(s) => s,
+                None => continue,
+            };
 
             // Send Request
             let mut req_builder = Request::builder()
                 .method(input.method.as_str())
                 .uri(url.clone()) // Re-use parsed URL
                 .version(Version::HTTP_11);
-            
+
             let headers_map = req_builder.headers_mut().expect("headers");
             for (k, v) in &input.headers {
                 if let Ok(name) = hyper::header::HeaderName::try_from(k) {
@@ -228,16 +301,16 @@ impl HttpClient {
 
             let start_first = Instant::now();
             let resp_res = sender.send_request(req).await;
-            
+
             match resp_res {
                 Ok(mut resp) => {
                     let first_byte_ms = start_first.elapsed().as_millis() as u32;
                     let status = resp.status().as_u16();
                     let mut headers: HashMap<String, String> = HashMap::new();
                     for (k, v) in resp.headers().iter() {
-                         if let Ok(vs) = v.to_str() {
-                             headers.insert(k.to_string(), vs.to_string());
-                         }
+                        if let Ok(vs) = v.to_str() {
+                            headers.insert(k.to_string(), vs.to_string());
+                        }
                     }
 
                     let mut buf: Vec<u8> = Vec::new();
@@ -246,31 +319,46 @@ impl HttpClient {
                         match next {
                             Ok(chunk) => buf.extend_from_slice(&chunk),
                             Err(e) => {
-                                errors.push(format!("read body error from {}: {}", connect_addr, e));
+                                errors
+                                    .push(format!("read body error from {}: {}", connect_addr, e));
                                 read_failed = true;
                                 break;
                             }
                         }
                     }
                     if read_failed {
-                         if is_pool_candidate {
-                             if let Some(c) = &current_stat {
-                               report_outcome_async(crate::core::ip_pool::IpSelection::from_cached(&host, port, c.clone()), IpOutcome::Failure);
-                             }
-                         }
+                        if is_pool_candidate {
+                            if let Some(c) = &current_stat {
+                                report_outcome_async(
+                                    crate::core::ip_pool::IpSelection::from_cached(
+                                        &host,
+                                        port,
+                                        c.clone(),
+                                    ),
+                                    IpOutcome::Failure,
+                                );
+                            }
+                        }
                         continue;
                     }
 
                     // Success!
                     if is_pool_candidate {
-                         if let Some(c) = &current_stat {
-                           report_outcome_async(crate::core::ip_pool::IpSelection::from_cached(&host, port, c.clone()), IpOutcome::Success);
-                         }
+                        if let Some(c) = &current_stat {
+                            report_outcome_async(
+                                crate::core::ip_pool::IpSelection::from_cached(
+                                    &host,
+                                    port,
+                                    c.clone(),
+                                ),
+                                IpOutcome::Success,
+                            );
+                        }
                     }
-                    
+
                     let total_ms = start_total.elapsed().as_millis() as u32;
                     let body_size = buf.len();
-                     if self.should_warn_large_body(body_size) {
+                    if self.should_warn_large_body(body_size) {
                         tracing::warn!(target = "http", size = body_size, "large body warning");
                     }
 
@@ -279,7 +367,7 @@ impl HttpClient {
                         status,
                         headers,
                         body_base64: BASE64.encode(&buf),
-                        used_fake_sni: fake,
+                        used_fake_sni: fake_sni,
                         ip: Some(connect_addr), // This might be hostname for system, or IP for candidate
                         timing: TimingInfo {
                             connect_ms,
@@ -295,13 +383,20 @@ impl HttpClient {
                     break;
                 }
                 Err(e) => {
-                     errors.push(format!("send request error to {}: {}", connect_addr, e));
-                     if is_pool_candidate {
-                         if let Some(c) = &current_stat {
-                           report_outcome_async(crate::core::ip_pool::IpSelection::from_cached(&host, port, c.clone()), IpOutcome::Failure);
-                         }
-                     }
-                     continue;
+                    errors.push(format!("send request error to {}: {}", connect_addr, e));
+                    if is_pool_candidate {
+                        if let Some(c) = &current_stat {
+                            report_outcome_async(
+                                crate::core::ip_pool::IpSelection::from_cached(
+                                    &host,
+                                    port,
+                                    c.clone(),
+                                ),
+                                IpOutcome::Failure,
+                            );
+                        }
+                    }
+                    continue;
                 }
             }
         }
@@ -310,7 +405,6 @@ impl HttpClient {
             Some(o) => o,
             None => return Err(anyhow!("All connection attempts failed: {:?}", errors)),
         };
-
 
         Ok(out)
     }

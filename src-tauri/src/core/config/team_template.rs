@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
@@ -276,50 +275,88 @@ pub fn export_template(
     Ok(template)
 }
 
-pub fn write_template_to_path(template: &TeamConfigTemplate, dest: &Path) -> Result<()> {
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create template parent dir: {}", parent.display()))?;
+use crate::core::config::fs::{FileSystem, RealFileSystem};
+use std::sync::Arc;
+
+pub struct TeamTemplateManager {
+    fs: Arc<dyn FileSystem>,
+}
+
+impl Default for TeamTemplateManager {
+    fn default() -> Self {
+        Self::new(Arc::new(RealFileSystem))
     }
-    let json = serde_json::to_string_pretty(template).context("serialize template")?;
-    fs::write(dest, json).with_context(|| format!("write template: {}", dest.display()))?;
-    Ok(())
+}
+
+impl TeamTemplateManager {
+    pub fn new(fs: Arc<dyn FileSystem>) -> Self {
+        Self { fs }
+    }
+
+    pub fn write_template_to_path(&self, template: &TeamConfigTemplate, dest: &Path) -> Result<()> {
+        if let Some(parent) = dest.parent() {
+            self.fs
+                .create_dir_all(parent)
+                .with_context(|| format!("create template parent dir: {}", parent.display()))?;
+        }
+        let json = serde_json::to_string_pretty(template).context("serialize template")?;
+        self.fs
+            .write(dest, json.as_bytes())
+            .with_context(|| format!("write template: {}", dest.display()))?;
+        Ok(())
+    }
+
+    pub fn load_template_from_path(&self, path: &Path) -> Result<TeamConfigTemplate> {
+        let data = self
+            .fs
+            .read(path)
+            .with_context(|| format!("read template: {}", path.display()))?;
+        let template: TeamConfigTemplate =
+            serde_json::from_slice(&data).context("parse team config template")?;
+        Ok(template)
+    }
+
+    pub fn backup_config_file(&self, base_dir: &Path) -> Result<Option<PathBuf>> {
+        let source = loader::config_path_at(base_dir);
+        if !self.fs.exists(&source) {
+            return Ok(None);
+        }
+
+        let timestamp = Utc::now().format("%Y%m%d%H%M%S");
+        let backup_name = format!("team-config-backup-{}.json", timestamp);
+        let mut dest = source
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| base_dir.to_path_buf());
+        dest.push(backup_name);
+
+        if let Some(parent) = dest.parent() {
+            self.fs
+                .create_dir_all(parent)
+                .with_context(|| format!("create backup directory: {}", parent.display()))?;
+        }
+        self.fs.copy(&source, &dest).with_context(|| {
+            format!(
+                "backup config from {} to {}",
+                source.display(),
+                dest.display()
+            )
+        })?;
+
+        Ok(Some(dest))
+    }
+}
+
+pub fn write_template_to_path(template: &TeamConfigTemplate, dest: &Path) -> Result<()> {
+    TeamTemplateManager::default().write_template_to_path(template, dest)
 }
 
 pub fn load_template_from_path(path: &Path) -> Result<TeamConfigTemplate> {
-    let data = fs::read(path).with_context(|| format!("read template: {}", path.display()))?;
-    let template: TeamConfigTemplate =
-        serde_json::from_slice(&data).context("parse team config template")?;
-    Ok(template)
+    TeamTemplateManager::default().load_template_from_path(path)
 }
 
 pub fn backup_config_file(base_dir: &Path) -> Result<Option<PathBuf>> {
-    let source = loader::config_path_at(base_dir);
-    if !source.exists() {
-        return Ok(None);
-    }
-
-    let timestamp = Utc::now().format("%Y%m%d%H%M%S");
-    let backup_name = format!("team-config-backup-{}.json", timestamp);
-    let mut dest = source
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| base_dir.to_path_buf());
-    dest.push(backup_name);
-
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create backup directory: {}", parent.display()))?;
-    }
-    fs::copy(&source, &dest).with_context(|| {
-        format!(
-            "backup config from {} to {}",
-            source.display(),
-            dest.display()
-        )
-    })?;
-
-    Ok(Some(dest))
+    TeamTemplateManager::default().backup_config_file(base_dir)
 }
 
 pub fn apply_template_to_config(
@@ -821,4 +858,104 @@ where
         }
     }
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockall::mock;
+    use mockall::predicate::*;
+    use std::io::{self, Error, ErrorKind};
+
+    mock! {
+        pub FileSystem {}
+        impl FileSystem for FileSystem {
+            fn create_dir_all(&self, path: &Path) -> io::Result<()>;
+            fn write(&self, path: &Path, contents: &[u8]) -> io::Result<()>;
+            fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
+            fn copy(&self, from: &Path, to: &Path) -> io::Result<u64>;
+            fn exists(&self, path: &Path) -> bool;
+        }
+    }
+
+    #[test]
+    fn test_write_template_success() {
+        let mut mock_fs = MockFileSystem::new();
+        mock_fs
+            .expect_create_dir_all()
+            .with(always())
+            .returning(|_| Ok(()));
+        mock_fs
+            .expect_write()
+            .with(always(), always())
+            .returning(|_, _| Ok(()));
+
+        let manager = TeamTemplateManager::new(Arc::new(mock_fs));
+        let template = TeamConfigTemplate::new();
+        let path = Path::new("/tmp/test.json");
+
+        assert!(manager.write_template_to_path(&template, path).is_ok());
+    }
+
+    #[test]
+    fn test_write_template_write_failure() {
+        let mut mock_fs = MockFileSystem::new();
+        mock_fs.expect_create_dir_all().returning(|_| Ok(()));
+        mock_fs
+            .expect_write()
+            .returning(|_, _| Err(Error::new(ErrorKind::PermissionDenied, "denied")));
+
+        let manager = TeamTemplateManager::new(Arc::new(mock_fs));
+        let template = TeamConfigTemplate::new();
+        let path = Path::new("/tmp/test.json");
+
+        let res = manager.write_template_to_path(&template, path);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("write template"));
+    }
+
+    #[test]
+    fn test_load_template_read_failure() {
+        let mut mock_fs = MockFileSystem::new();
+        mock_fs
+            .expect_read()
+            .returning(|_| Err(Error::new(ErrorKind::NotFound, "not found")));
+
+        let manager = TeamTemplateManager::new(Arc::new(mock_fs));
+        let path = Path::new("/tmp/test.json");
+
+        let res = manager.load_template_from_path(path);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("read template"));
+    }
+
+    #[test]
+    fn test_backup_config_file_not_exists() {
+        let mut mock_fs = MockFileSystem::new();
+        mock_fs.expect_exists().returning(|_| false);
+
+        let manager = TeamTemplateManager::new(Arc::new(mock_fs));
+        let base = Path::new("/app/config");
+
+        let res = manager.backup_config_file(base);
+        assert!(res.is_ok());
+        assert!(res.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_backup_config_file_copy_failure() {
+        let mut mock_fs = MockFileSystem::new();
+        mock_fs.expect_exists().returning(|_| true);
+        mock_fs.expect_create_dir_all().returning(|_| Ok(()));
+        mock_fs
+            .expect_copy()
+            .returning(|_, _| Err(Error::new(ErrorKind::Other, "disk full")));
+
+        let manager = TeamTemplateManager::new(Arc::new(mock_fs));
+        let base = Path::new("/app/config");
+
+        let res = manager.backup_config_file(base);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("backup config"));
+    }
 }

@@ -107,6 +107,7 @@ ctor = "0.2"
 rcgen = "0.12"
 mockall = "0.14.0"
 tauri-utils = { version = "2", default-features = false, features = ["resources"] }
+wiremock = "0.6.5"
 
 [[bin]]
 name = "adaptive_tls_soak"
@@ -215,3 +216,8 @@ required-features = ["bench"]
 name = "event_throughput"
 harness = false
 required-features = ["bench"]
+
+[[test]]
+name = "e2e_app"
+path = "tests/e2e_app/mod.rs"
+required-features = []
