@@ -165,3 +165,25 @@ async fn test_force_proxy_recovery_logic_direct() {
     // Just ensure it runs
     let _ = result;
 }
+#[tokio::test]
+async fn test_proxy_fallback_and_recovery_integration() {
+    use fireworks_collaboration_lib::core::proxy::{
+        ProxyConfig, ProxyManager, ProxyMode, ProxyState,
+    };
+
+    // 1. Setup manager with active proxy
+    let mut config = ProxyConfig::default();
+    config.url = "http://localhost:8080".to_string();
+    config.mode = ProxyMode::Http;
+
+    let manager = ProxyManager::new(config);
+    assert_eq!(manager.state(), ProxyState::Enabled);
+
+    // 2. Trigger fallback
+    manager.manual_fallback("Test reason").unwrap();
+    assert_eq!(manager.state(), ProxyState::Fallback);
+
+    // 3. Trigger recovery
+    manager.manual_recover().unwrap();
+    assert_eq!(manager.state(), ProxyState::Enabled);
+}

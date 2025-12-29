@@ -222,3 +222,78 @@ fn test_update_request_for_redirect_308_preserves_method() {
     assert_eq!(input.method, "POST");
     assert!(input.body_base64.is_some());
 }
+#[tokio::test]
+async fn test_http_fake_request_error_paths() {
+    use fireworks_collaboration_lib::app::commands::http::http_fake_request;
+    use fireworks_collaboration_lib::app::types::SharedConfig;
+    use fireworks_collaboration_lib::core::config::model::AppConfig;
+    use fireworks_collaboration_lib::core::http::types::HttpRequestInput;
+    use std::borrow::Cow;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use tauri::Assets;
+    use tauri::Manager;
+    use tauri_utils::assets::{AssetKey, CspHash};
+
+    struct MockAssets;
+    impl<R: tauri::Runtime> Assets<R> for MockAssets {
+        fn get(&self, _key: &AssetKey) -> Option<Cow<'_, [u8]>> {
+            None
+        }
+        fn iter(&self) -> Box<dyn Iterator<Item = (Cow<'_, str>, Cow<'_, [u8]>)> + '_> {
+            Box::new(std::iter::empty())
+        }
+        fn csp_hashes(&self, _html_path: &AssetKey) -> Box<dyn Iterator<Item = CspHash<'_>> + '_> {
+            Box::new(std::iter::empty())
+        }
+    }
+
+    let config: SharedConfig = Arc::new(Mutex::new(AppConfig::default()));
+    let app = tauri::test::mock_builder()
+        .manage::<SharedConfig>(config.clone())
+        .build(tauri::test::mock_context(MockAssets))
+        .expect("Failed to build mock app");
+
+    // 1. Invalid URL (not HTTPS)
+    let input_http = HttpRequestInput {
+        url: "http://example.com".to_string(),
+        method: "GET".to_string(),
+        headers: HashMap::new(),
+        body_base64: None,
+        timeout_ms: 1000,
+        force_real_sni: false,
+        follow_redirects: true,
+        max_redirects: 5,
+    };
+    let res_http = http_fake_request(input_http, app.state()).await;
+    assert!(res_http.is_err());
+    assert!(res_http.unwrap_err().contains("Input: only https"));
+
+    // 2. Non-existent domain
+    let input_nx = HttpRequestInput {
+        url: "https://this.is.a.very.unlikely.domain.that.does.not.exist.internal".to_string(),
+        method: "GET".to_string(),
+        headers: HashMap::new(),
+        body_base64: None,
+        timeout_ms: 500,
+        force_real_sni: false,
+        follow_redirects: true,
+        max_redirects: 5,
+    };
+    let res_nx = http_fake_request(input_nx, app.state()).await;
+    match res_nx {
+        Ok(_) => panic!("Expected NXDomain request to fail"),
+        Err(e) => {
+            println!("Actual Error Received: '{}'", e);
+            assert!(
+                e.contains("Network")
+                    || e.contains("Internal")
+                    || e.contains("Verify")
+                    || e.contains("Input")
+                    || e.contains("Tls"),
+                "Error should be classified: {}",
+                e
+            );
+        }
+    }
+}
