@@ -1024,3 +1024,228 @@ pub async fn restore_workspace(backup_path: String, workspace_path: String) -> R
     info!("Workspace restored from backup: {}", backup_path);
     Ok(())
 }
+
+// ============================================================================
+// Unit tests for workspace utility functions
+// ============================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // -------------------------------------------------------------------------
+    // parse_depth_option tests
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_parse_depth_option_none() {
+        let result = parse_depth_option(&None);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn test_parse_depth_option_null_value() {
+        let value = Some(serde_json::Value::Null);
+        let result = parse_depth_option(&value);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn test_parse_depth_option_valid_number() {
+        let value = Some(json!(10));
+        let result = parse_depth_option(&value);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some(10));
+    }
+
+    #[test]
+    fn test_parse_depth_option_zero() {
+        let value = Some(json!(0));
+        let result = parse_depth_option(&value);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some(0));
+    }
+
+    #[test]
+    fn test_parse_depth_option_invalid_string() {
+        let value = Some(json!("deep"));
+        let result = parse_depth_option(&value);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("non-negative integer"));
+    }
+
+    #[test]
+    fn test_parse_depth_option_invalid_negative() {
+        // JSON u64 can't represent negative, so this becomes a float/i64
+        let value = Some(json!(-5));
+        let result = parse_depth_option(&value);
+        assert!(result.is_err());
+    }
+
+    // -------------------------------------------------------------------------
+    // resolve_workspace_root tests
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_resolve_workspace_root_absolute() {
+        let abs_path = if cfg!(windows) {
+            PathBuf::from("C:\\workspace")
+        } else {
+            PathBuf::from("/workspace")
+        };
+        let result = resolve_workspace_root(&abs_path);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), abs_path);
+    }
+
+    #[test]
+    fn test_resolve_workspace_root_relative() {
+        let rel_path = PathBuf::from("my-workspace");
+        let result = resolve_workspace_root(&rel_path);
+        assert!(result.is_ok());
+        let resolved = result.unwrap();
+        assert!(resolved.is_absolute());
+        assert!(resolved.ends_with("my-workspace"));
+    }
+
+    // -------------------------------------------------------------------------
+    // resolve_repo_path tests
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_resolve_repo_path_absolute() {
+        let root = PathBuf::from("/root");
+        let abs_repo = if cfg!(windows) {
+            PathBuf::from("C:\\absolute\\repo")
+        } else {
+            PathBuf::from("/absolute/repo")
+        };
+        let result = resolve_repo_path(&root, &abs_repo);
+        assert_eq!(result, abs_repo);
+    }
+
+    #[test]
+    fn test_resolve_repo_path_relative() {
+        let root = PathBuf::from("/root");
+        let rel_repo = PathBuf::from("relative/repo");
+        let result = resolve_repo_path(&root, &rel_repo);
+        assert_eq!(result, PathBuf::from("/root/relative/repo"));
+    }
+
+    // -------------------------------------------------------------------------
+    // ensure_clone_destination tests
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_ensure_clone_destination_exists() {
+        let temp = tempfile::tempdir().unwrap();
+        let existing_dir = temp.path().to_path_buf();
+        let result = ensure_clone_destination(&existing_dir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("already exists"));
+    }
+
+    #[test]
+    fn test_ensure_clone_destination_not_exists() {
+        let temp = tempfile::tempdir().unwrap();
+        let new_path = temp.path().join("new_repo");
+        let result = ensure_clone_destination(&new_path);
+        assert!(result.is_ok());
+        // Parent should be created
+        assert!(temp.path().exists());
+    }
+
+    // -------------------------------------------------------------------------
+    // ensure_existing_repo tests
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_ensure_existing_repo_not_exists() {
+        let path = PathBuf::from("/nonexistent/repo/path");
+        let result = ensure_existing_repo(&path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_ensure_existing_repo_no_git_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let result = ensure_existing_repo(temp.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not initialized"));
+    }
+
+    #[test]
+    fn test_ensure_existing_repo_valid() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join(".git")).unwrap();
+        let result = ensure_existing_repo(temp.path());
+        assert!(result.is_ok());
+    }
+
+    // -------------------------------------------------------------------------
+    // path_to_string tests
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_path_to_string_valid() {
+        let path = PathBuf::from("/valid/utf8/path");
+        let result = path_to_string(&path);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "/valid/utf8/path");
+    }
+
+    // -------------------------------------------------------------------------
+    // apply_repository_reorder tests
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_apply_repository_reorder_empty_ids() {
+        let mut workspace = Workspace::new("test".to_string(), PathBuf::from("/test"));
+        let result = apply_repository_reorder(&mut workspace, &[]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must not be empty"));
+    }
+
+    #[test]
+    fn test_apply_repository_reorder_duplicate_ids() {
+        let mut workspace = Workspace::new("test".to_string(), PathBuf::from("/test"));
+        workspace.add_repository(RepositoryEntry::new(
+            "repo1".to_string(),
+            "Repo 1".to_string(),
+            PathBuf::from("repo1"),
+            "https://example.com/repo1".to_string(),
+        ));
+        let result =
+            apply_repository_reorder(&mut workspace, &["repo1".to_string(), "repo1".to_string()]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Duplicate"));
+    }
+
+    #[test]
+    fn test_apply_repository_reorder_not_found() {
+        let mut workspace = Workspace::new("test".to_string(), PathBuf::from("/test"));
+        let result = apply_repository_reorder(&mut workspace, &["nonexistent".to_string()]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn test_apply_repository_reorder_success() {
+        let mut workspace = Workspace::new("test".to_string(), PathBuf::from("/test"));
+        workspace.add_repository(RepositoryEntry::new(
+            "repo1".to_string(),
+            "Repo 1".to_string(),
+            PathBuf::from("repo1"),
+            "https://example.com/repo1".to_string(),
+        ));
+        workspace.add_repository(RepositoryEntry::new(
+            "repo2".to_string(),
+            "Repo 2".to_string(),
+            PathBuf::from("repo2"),
+            "https://example.com/repo2".to_string(),
+        ));
+
+        // Reverse order
+        let result =
+            apply_repository_reorder(&mut workspace, &["repo2".to_string(), "repo1".to_string()]);
+        assert!(result.is_ok());
+        assert_eq!(workspace.repositories[0].id, "repo2");
+        assert_eq!(workspace.repositories[1].id, "repo1");
+    }
+}

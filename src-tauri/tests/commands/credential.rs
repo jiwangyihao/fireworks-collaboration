@@ -422,3 +422,58 @@ async fn test_master_password_ignored_for_file_store_warning() {
 
     assert!(res.is_ok());
 }
+
+#[tokio::test]
+async fn test_cleanup_audit_logs_command() {
+    let (app, _, _) = create_mock_app();
+    init_store(&app).await;
+
+    // Add a credential to generate audit log entry
+    let req = AddCredentialRequest {
+        host: "audit.test.com".to_string(),
+        username: "user".to_string(),
+        password_or_token: "pass".to_string(),
+        expires_in_days: None,
+    };
+    add_credential(req, app.state(), app.state()).await.unwrap();
+
+    // Cleanup with 0 days should fail
+    let result_zero = cleanup_audit_logs(0, app.state()).await;
+    assert!(result_zero.is_err());
+    assert!(result_zero.unwrap_err().contains("greater than 0"));
+
+    // Cleanup with valid retention should succeed
+    let result_valid = cleanup_audit_logs(30, app.state()).await;
+    assert!(result_valid.is_ok());
+    // Fresh logs shouldn't be cleaned
+    assert_eq!(result_valid.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn test_export_audit_log_json_format() {
+    let (app, _, _) = create_mock_app();
+    init_store(&app).await;
+
+    // Add credential to generate log entry
+    let req = AddCredentialRequest {
+        host: "export.test.com".to_string(),
+        username: "test_user".to_string(),
+        password_or_token: "secret".to_string(),
+        expires_in_days: None,
+    };
+    add_credential(req, app.state(), app.state()).await.unwrap();
+
+    // Export audit log
+    let export_result = export_audit_log(app.state()).await;
+    assert!(export_result.is_ok());
+
+    let json_str = export_result.unwrap();
+
+    // Verify it's valid JSON
+    let parsed: Result<serde_json::Value, _> = serde_json::from_str(&json_str);
+    assert!(parsed.is_ok(), "Export should produce valid JSON");
+
+    // Verify it contains expected structure
+    let value = parsed.unwrap();
+    assert!(value.is_array(), "Export should be an array of events");
+}
