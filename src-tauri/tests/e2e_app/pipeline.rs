@@ -8,7 +8,7 @@ use fireworks_collaboration_lib::app::types::{
     SharedConfig, SharedCredentialFactory, TaskRegistryState,
 };
 use fireworks_collaboration_lib::core::config::model::AppConfig;
-use fireworks_collaboration_lib::core::credential::CredentialStore;
+
 use fireworks_collaboration_lib::core::git::runner::{Git2Runner, GitRunner};
 use fireworks_collaboration_lib::core::tasks::TaskRegistry;
 use std::path::PathBuf;

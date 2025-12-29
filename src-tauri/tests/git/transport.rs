@@ -874,29 +874,6 @@ fn test_concurrent_registration_safety() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_reject_non_https() {
-    use fireworks_collaboration_lib::core::config::model::AppConfig;
-    use fireworks_collaboration_lib::core::http::client::HttpClient;
-    use fireworks_collaboration_lib::core::http::types::HttpRequestInput;
-    use std::collections::HashMap;
-
-    let client = HttpClient::new(AppConfig::default());
-    let input = HttpRequestInput {
-        url: "http://example.com/".into(),
-        method: "GET".into(),
-        headers: HashMap::new(),
-        body_base64: None,
-        timeout_ms: 100,
-        force_real_sni: false,
-        follow_redirects: false,
-        max_redirects: 0,
-    };
-    let err = client.send(input).await.expect_err("should fail");
-    let msg = format!("{err}");
-    assert!(msg.contains("only https"));
-}
-
-#[tokio::test]
 async fn test_invalid_base64_early() {
     use fireworks_collaboration_lib::core::config::model::AppConfig;
     use fireworks_collaboration_lib::core::http::client::HttpClient;

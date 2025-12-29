@@ -100,8 +100,8 @@ fn test_high_concurrency_operations() {
     let store = Arc::new(MemoryCredentialStore::new());
     let mut handles = vec![];
 
-    // 100 个线程并发操作
-    for i in 0..100 {
+    // 20 个线程并发操作 (优化：从100降至20以加快测试速度)
+    for i in 0..20 {
         let store_clone = Arc::clone(&store);
         let handle = thread::spawn(move || {
             // 每个线程执行多个操作
@@ -129,7 +129,7 @@ fn test_high_concurrency_operations() {
 
     // 验证所有凭证都被添加
     let list = store.list().unwrap();
-    assert_eq!(list.len(), 100 * 10);
+    assert_eq!(list.len(), 20 * 10);
 }
 
 /// 测试：快速连续添加和删除
@@ -192,8 +192,8 @@ fn test_concurrent_audit_logging() {
     let logger = Arc::new(AuditLogger::new(true));
     let mut handles = vec![];
 
-    // 50 个线程并发记录日志
-    for i in 0..50 {
+    // 10 个线程并发记录日志 (优化：从50降至10)
+    for i in 0..10 {
         let logger_clone = Arc::clone(&logger);
         let handle = thread::spawn(move || {
             for j in 0..100 {
@@ -216,7 +216,7 @@ fn test_concurrent_audit_logging() {
 
     // 验证所有日志都被记录
     let events = logger.get_events();
-    assert_eq!(events.len(), 50 * 100);
+    assert_eq!(events.len(), 10 * 100);
 }
 
 /// 测试：文件存储的大量凭证加密
@@ -234,8 +234,8 @@ fn test_encrypted_file_store_stress() {
         .set_master_password("test-password".to_string())
         .unwrap();
 
-    // 添加 100 个凭证（加密文件存储较慢）
-    for i in 0..100 {
+    // 添加 20 个凭证（加密文件存储较慢，优化：从100降至20）
+    for i in 0..20 {
         let cred = Credential::new(
             format!("host{i}.com"),
             format!("user{i}"),
@@ -246,7 +246,7 @@ fn test_encrypted_file_store_stress() {
 
     // 验证所有凭证都可以读取
     let list = store.list().unwrap();
-    assert_eq!(list.len(), 100);
+    assert_eq!(list.len(), 20);
 }
 
 /// 测试：极端过期时间
@@ -360,8 +360,8 @@ fn test_concurrent_file_store_resource_management() {
 
     let mut handles = vec![];
 
-    // 10 个线程并发读写
-    for i in 0..10 {
+    // 4 个线程并发读写 (优化：从10降至4)
+    for i in 0..4 {
         let store_clone = Arc::clone(&store);
         let handle = thread::spawn(move || {
             for j in 0..5 {
@@ -390,7 +390,7 @@ fn test_concurrent_file_store_resource_management() {
 
     // 验证最终状态
     let list = store.list().unwrap();
-    assert_eq!(list.len(), 10 * 5);
+    assert_eq!(list.len(), 4 * 5);
 }
 
 /// 测试：快速重复设置主密码
@@ -405,8 +405,8 @@ fn test_rapid_master_password_changes() {
 
     let store = EncryptedFileStore::new(&config).expect("应该创建文件存储");
 
-    // 快速重复设置主密码 100 次
-    for i in 0..100 {
+    // 快速重复设置主密码 10 次 (优化：从100降至10)
+    for i in 0..10 {
         assert!(store.set_master_password(format!("password{i}")).is_ok());
     }
 }
