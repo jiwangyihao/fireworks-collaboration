@@ -13,7 +13,7 @@ fn create_test_repo() -> (TempDir, Repository) {
 #[test]
 fn test_submodule_manager_creation() {
     let config = SubmoduleConfig::default();
-    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::Git2Runner::new());
     let manager = SubmoduleManager::new(config.clone(), runner);
     assert_eq!(manager.config(), &config);
 }
@@ -21,7 +21,7 @@ fn test_submodule_manager_creation() {
 #[test]
 fn test_list_submodules_empty() {
     let (_temp, repo) = create_test_repo();
-    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::Git2Runner::new());
     let manager = SubmoduleManager::new(SubmoduleConfig::default(), runner);
 
     let submodules = manager
@@ -33,7 +33,7 @@ fn test_list_submodules_empty() {
 #[test]
 fn test_has_submodules_empty() {
     let (_temp, repo) = create_test_repo();
-    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::Git2Runner::new());
     let manager = SubmoduleManager::new(SubmoduleConfig::default(), runner);
 
     let has_subs = manager
@@ -44,7 +44,7 @@ fn test_has_submodules_empty() {
 
 #[test]
 fn test_repository_not_found() {
-    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::Git2Runner::new());
     let manager = SubmoduleManager::new(SubmoduleConfig::default(), runner);
     let result = manager.list_submodules("/nonexistent/path");
 
@@ -74,7 +74,7 @@ fn test_max_depth_check() {
         max_depth: 2,
         ..Default::default()
     };
-    let runner = Box::new(fireworks_collaboration_lib::core::git::CliGitRunner::new());
+    let runner = Box::new(fireworks_collaboration_lib::core::git::Git2Runner::new());
     let manager = SubmoduleManager::new(config, runner);
     let (_temp, repo) = create_test_repo();
 

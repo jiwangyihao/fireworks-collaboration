@@ -20,7 +20,7 @@ mod helpers {
         repo_factory::RepoBuilder,
     };
     use fireworks_collaboration_lib::core::git::{
-        service::GitService, CliGitRunner, DefaultGitService,
+        service::GitService, DefaultGitService, Git2Runner,
     };
     use fireworks_collaboration_lib::core::tasks::model::TaskState;
     use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
@@ -42,7 +42,7 @@ mod helpers {
             depth.map(|d| d.to_string()).unwrap_or("full".into()),
             path_slug(uuid::Uuid::new_v4().to_string())
         ));
-        let svc = DefaultGitService::new(std::sync::Arc::new(CliGitRunner::new()));
+        let svc = DefaultGitService::new(std::sync::Arc::new(Git2Runner::new()));
         let cancel = AtomicBool::new(false);
         svc.clone_blocking(
             origin.to_string_lossy().as_ref(),
@@ -56,7 +56,7 @@ mod helpers {
     }
 
     pub fn deepen_once(origin: &Path, dest: &Path, to: u32) {
-        let svc = DefaultGitService::new(std::sync::Arc::new(CliGitRunner::new()));
+        let svc = DefaultGitService::new(std::sync::Arc::new(Git2Runner::new()));
         let cancel = AtomicBool::new(false);
         svc.fetch_blocking(
             origin.to_string_lossy().as_ref(),
@@ -206,7 +206,7 @@ mod section_local_ignore {
     use crate::common::shallow_matrix::{ignore_cases, ShallowCase};
     use crate::common::test_env;
     use fireworks_collaboration_lib::core::git::{
-        service::GitService, CliGitRunner, DefaultGitService,
+        service::GitService, DefaultGitService, Git2Runner,
     };
     use std::sync::atomic::AtomicBool;
     #[test]
@@ -224,7 +224,7 @@ mod section_local_ignore {
                 }
                 ShallowCase::LocalIgnoreFetch { depth } => {
                     let dest = shallow_clone(&origin, None); // full clone
-                    let svc = DefaultGitService::new(std::sync::Arc::new(CliGitRunner::new()));
+                    let svc = DefaultGitService::new(std::sync::Arc::new(Git2Runner::new()));
                     let cancel = AtomicBool::new(false);
                     svc.fetch_blocking(
                         origin.to_string_lossy().as_ref(),

@@ -34,7 +34,7 @@ pub mod git_scenarios;
 pub mod http_override_stub; // 12.10: http override cases & stub
 pub mod i18n;
 pub mod ip_pool; // P4.2: IP pool helpers for selection & cache tests
-pub(crate) mod mock_runner;
+
 pub mod partial_filter_matrix; // 12.6: partial clone filter 矩阵
 pub mod partial_filter_support; // 支撑能力判定
 pub mod pipeline; // 12.15: pipeline DSL (e2e scaffolding)

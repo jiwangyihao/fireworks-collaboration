@@ -298,7 +298,7 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
     tracing::info!(target = "workspace", "Workspace status service initialized");
 
     // Initialize Git Runner (P26.1)
-    let git_runner = crate::core::git::runner::CliGitRunner::new();
+    let git_runner = crate::core::git::runner::Git2Runner::new();
     let runner_box =
         Box::new(git_runner.clone()) as Box<dyn crate::core::git::runner::GitRunner + Send + Sync>;
     app.manage(Box::new(git_runner) as Box<dyn crate::core::git::runner::GitRunner>);

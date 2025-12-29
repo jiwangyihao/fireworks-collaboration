@@ -12,19 +12,17 @@ use super::{
 pub mod add;
 pub mod branch;
 pub mod checkout;
-pub mod clone;
 pub mod commit;
-pub mod fetch;
 pub mod helpers; // made public for test visibility of map_git2_error (i18n classification)
 pub mod init;
-mod ops;
+pub mod ops; // Made public for GitRunner access
 pub mod opts;
 pub mod push;
 pub mod refname;
 pub mod remote;
 pub mod tag; // P2.2a: depth/filter/strategyOverride parsing placeholder
 
-use crate::core::git::runner::{CliGitRunner, GitRunner};
+use crate::core::git::runner::{Git2Runner, GitRunner};
 use std::sync::Arc;
 
 pub struct DefaultGitService {
@@ -33,7 +31,7 @@ pub struct DefaultGitService {
 
 impl Default for DefaultGitService {
     fn default() -> Self {
-        Self::new(Arc::new(CliGitRunner::new()))
+        Self::new(Arc::new(Git2Runner::new()))
     }
 }
 
@@ -110,14 +108,13 @@ impl GitService for DefaultGitService {
         let repo_url_final = rewritten.unwrap_or_else(|| repo.to_string());
         // 若是本地路径克隆，git2/libgit2 不支持 depth 参数；忽略之以保持兼容（后续可发回退事件）。
         let effective_depth = if looks_like_path { None } else { depth };
-        // Bridge to dedicated module (P2.0). Internals currently delegate to ops.rs.
-        let r = clone::do_clone(
-            self.runner.as_ref(),
+        // Call runner directly
+        let r = self.runner.clone_repo(
             repo_url_final.as_str(),
             dest,
             effective_depth,
             should_interrupt,
-            on_progress,
+            &mut on_progress,
         );
         if adaptive_used {
             tracing::debug!(
@@ -196,14 +193,13 @@ impl GitService for DefaultGitService {
         } else {
             depth
         };
-        fetch::do_fetch(
-            self.runner.as_ref(),
-            repo_url,
+        // Call runner directly
+        self.runner.fetch_repo(
             dest,
+            repo_url,
             effective_depth,
-            &cfg,
             should_interrupt,
-            on_progress,
+            &mut on_progress,
         )
     }
 
@@ -214,17 +210,16 @@ impl GitService for DefaultGitService {
         refspecs: Option<&[&str]>,
         creds: Option<(&str, &str)>,
         should_interrupt: &AtomicBool,
-        on_progress: F,
+        mut on_progress: F,
     ) -> Result<(), GitError> {
-        // Bridge to dedicated module (P2.0). Implementation migrated into push.rs.
-        push::do_push(
-            self.runner.as_ref(),
+        // Call runner directly
+        self.runner.push_repo(
             dest,
             remote,
             refspecs,
             creds,
             should_interrupt,
-            on_progress,
+            &mut on_progress,
         )
     }
 }

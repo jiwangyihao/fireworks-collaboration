@@ -3,13 +3,12 @@
 //! 后续 12.4 将在此完善远端 fixture / 事件采集 / 错误分类映射。
 
 use fireworks_collaboration_lib::core::git::service::ProgressPayload;
-use fireworks_collaboration_lib::core::git::CliGitRunner;
+use fireworks_collaboration_lib::core::git::{Git2Runner, GitRunner};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 // 移除未使用的错误分类导入（占位阶段不区分分类）
 use crate::common::retry_matrix::{compute_backoff_sequence, PolicyOverride, RetryCase};
-use fireworks_collaboration_lib::core::git::default_impl::clone as impl_clone;
 
 /// Git 操作类型（为 12.10 策略/override 与事件 DSL 预留）。
 #[allow(dead_code)]
@@ -174,16 +173,16 @@ pub fn run_clone(params: &CloneParams) -> CloneOutcome {
     let cancel = AtomicBool::new(false);
     let mut events = Vec::new();
     // 目前 default_impl::clone::do_clone 仅支持 depth，其余参数留作后续扩展。
-    let runner = CliGitRunner::new();
-    let _res = impl_clone::do_clone(
-        &runner,
+    let runner = Git2Runner::new();
+    let mut on_progress = |p: ProgressPayload| {
+        events.push(p.phase);
+    };
+    let _res = runner.clone_repo(
         "https://example.com/placeholder.git",
         &dest,
         params.depth,
         &cancel,
-        |p: ProgressPayload| {
-            events.push(p.phase);
-        },
+        &mut on_progress,
     );
     // 读取 filter 字段一次以避免未使用字段警告（未来真实实现会据此改变行为）
     if let Some(f) = &params.filter {
@@ -203,17 +202,17 @@ pub fn _run_clone_with_cancel(params: &CloneParams, cancel: &AtomicBool) -> Clon
     let dest = build_clone_dest();
     std::fs::create_dir_all(&dest).expect("create clone dest temp dir");
     let mut events = Vec::new();
-    let runner = CliGitRunner::new();
-    let _res = impl_clone::do_clone(
-        &runner,
+    let runner = Git2Runner::new();
+    let mut on_progress = |p: ProgressPayload| {
+        events.push(p.phase);
+        if cancel.load(Ordering::Relaxed) { /* early flag checked by impl */ }
+    };
+    let _res = runner.clone_repo(
         "https://example.com/placeholder.git",
         &dest,
         params.depth,
         cancel,
-        |p: ProgressPayload| {
-            events.push(p.phase);
-            if cancel.load(Ordering::Relaxed) { /* early flag checked by impl */ }
-        },
+        &mut on_progress,
     );
     CloneOutcome { dest, events }
 }

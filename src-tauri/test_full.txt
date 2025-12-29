@@ -1,0 +1,30 @@
+﻿cargo :    Compiling fireworks-collaboration v0.1.0 (C:\Users\34404\Documents\G
+itHub\fireworks-collaboration\src-tauri)
+所在位置 行:1 字符: 1
++ cargo test --lib 2>&1 | Out-File -Encoding UTF8 test_full.txt; Get-Co ...
++ ~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling fi...tion\src-tauri) 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+warning: unused variable: `creds`
+  --> src\core\git\default_impl\push.rs:12:5
+   |
+12 |     creds: Option<(&str, &str)>,
+   |     ^^^^^ help: if this is intentional, prefix it with an underscore: `_cr
+eds`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: `fireworks-collaboration` (lib test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.27s
+     Running unittests src\lib.rs (target\debug\deps\fireworks_collaboration_li
+b-9a13aa16508aed0e.exe)
+
+running 3 tests
+test core::workspace::status::tests::workspace_status_service_applies_runtime_updates ... ok
+test core::workspace::status::tests::workspace_status_service_sanitizes_config_defaults ... ok
+test core::workspace::status::tests::status_filter_matches ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

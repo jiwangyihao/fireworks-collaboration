@@ -1,4 +1,4 @@
-use base64::engine::general_purpose::STANDARD as BASE64;
+﻿use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use std::{
     path::Path,
@@ -15,7 +15,7 @@ use super::super::{
 };
 use super::helpers;
 
-pub(crate) fn do_push_internal<F: FnMut(ProgressPayload)>(
+pub fn do_push<F: FnMut(ProgressPayload)>(
     dest: &Path,
     remote: Option<&str>,
     refspecs: Option<&[&str]>,
@@ -57,7 +57,7 @@ pub(crate) fn do_push_internal<F: FnMut(ProgressPayload)>(
         callbacks.credentials(move |_url, _u, _a| git2::Cred::userpass_plaintext(&u, &p));
     }
 
-    // 传输进度（协商）
+    // 浼犺緭杩涘害锛堝崗鍟嗭級
     let cb_for_transfer = Arc::clone(&cb);
     callbacks.transfer_progress(move |stats| {
         if should_interrupt.load(Ordering::Relaxed) {
@@ -80,7 +80,7 @@ pub(crate) fn do_push_internal<F: FnMut(ProgressPayload)>(
         }
         true
     });
-    // 阶段事件
+    // 闃舵浜嬩欢
     let cb_for_phase = Arc::clone(&cb);
     callbacks.sideband_progress(move |_data| {
         helpers::push_phase_event(&cb_for_phase, "Upload", 50);
@@ -90,8 +90,7 @@ pub(crate) fn do_push_internal<F: FnMut(ProgressPayload)>(
     let mut po = git2::PushOptions::new();
     po.remote_callbacks(callbacks);
 
-    // 选择远程并发出 SNI 状态
-    let remote_name = remote.unwrap_or("origin");
+    // 閫夋嫨杩滅▼骞跺彂鍑?SNI 鐘舵€?    let remote_name = remote.unwrap_or("origin");
     let mut remote = match repo.find_remote(remote_name) {
         Ok(r) => {
             if let Some(u) = r.url() {
@@ -133,11 +132,9 @@ pub(crate) fn do_push_internal<F: FnMut(ProgressPayload)>(
         }
     };
 
-    // 发出 PreUpload 开始
-    helpers::push_phase_event(&cb, "PreUpload", 10);
+    // 鍙戝嚭 PreUpload 寮€濮?    helpers::push_phase_event(&cb, "PreUpload", 10);
 
-    // 设置线程局部 Authorization 头
-    if let Some((user, pass)) = creds {
+    // 璁剧疆绾跨▼灞€閮?Authorization 澶?    if let Some((user, pass)) = creds {
         let token = format!("{user}:{pass}");
         let enc = BASE64.encode(token.as_bytes());
         set_push_auth_header_value(Some(format!("Basic {enc}")));
@@ -155,31 +152,21 @@ pub(crate) fn do_push_internal<F: FnMut(ProgressPayload)>(
             Ok(head) if head.is_branch() => {
                 if let Some(branch_name) = head.shorthand() {
                     let refspec = format!("refs/heads/{branch_name}:refs/heads/{branch_name}");
-                    tracing::info!(
-                        target = "git",
-                        "No refspec provided, using default: {}",
-                        refspec
-                    );
+                    tracing::info!(target="git", "No refspec provided, using default: {}", refspec);
                     default_refspec = Some(refspec);
                     vec![default_refspec.as_ref().unwrap().as_str()]
                 } else {
-                    tracing::warn!(
-                        target = "git",
-                        "Could not get branch name, pushing with empty refspec"
-                    );
+                    tracing::warn!(target="git", "Could not get branch name, pushing with empty refspec");
                     vec![]
                 }
             }
             _ => {
-                tracing::warn!(
-                    target = "git",
-                    "HEAD is not a branch, pushing with empty refspec"
-                );
+                tracing::warn!(target="git", "HEAD is not a branch, pushing with empty refspec");
                 vec![]
             }
         }
     };
-
+    
     let push_res = if specs.is_empty() {
         remote.push(&[] as &[&str], Some(&mut po))
     } else {

@@ -1,138 +1,119 @@
 use super::errors::{ErrorCategory, GitError};
+use super::service::ProgressPayload;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::sync::atomic::AtomicBool;
 
-/// Abstract interface for running Git commands.
-/// This allows mocking the git CLI for testing purposes.
+/// Abstract interface for Git operations.
+/// This allows dependency injection and mocking for testing.
+///
+/// Note: The actual implementation uses git2 (libgit2), not external git CLI.
 pub trait GitRunner: Send + Sync {
-    /// Run a git command with arguments in a specific directory.
-    /// Run a git command with arguments in a specific directory.
-    fn run(&self, args: &[&str], cwd: &Path) -> Result<Output, GitError>;
-
-    /// Run a git command and stream the output (stdout and stderr) to a callback.
-    /// The callback receives the line content and a boolean indicating if it's from stderr.
-    fn run_with_progress(
+    /// Clone a repository using git2.
+    fn clone_repo(
         &self,
-        args: &[&str],
-        cwd: &Path,
-        on_output: &mut dyn FnMut(&str, bool),
-    ) -> Result<Output, GitError>;
+        url: &str,
+        dest: &Path,
+        depth: Option<u32>,
+        should_interrupt: &AtomicBool,
+        on_progress: &mut dyn FnMut(ProgressPayload),
+    ) -> Result<(), GitError>;
+
+    /// Fetch from a remote using git2.
+    fn fetch_repo(
+        &self,
+        repo_path: &Path,
+        remote_url: &str,
+        depth: Option<u32>,
+        should_interrupt: &AtomicBool,
+        on_progress: &mut dyn FnMut(ProgressPayload),
+    ) -> Result<(), GitError>;
+
+    /// Push to a remote using git2.
+    fn push_repo(
+        &self,
+        repo_path: &Path,
+        remote: Option<&str>,
+        refspecs: Option<&[&str]>,
+        creds: Option<(&str, &str)>,
+        should_interrupt: &AtomicBool,
+        on_progress: &mut dyn FnMut(ProgressPayload),
+    ) -> Result<(), GitError>;
 }
 
-/// Default implementation that runs the actual git CLI.
+/// Git2-based implementation using libgit2.
+/// This is the production implementation that does NOT depend on external git CLI.
+///
+/// The actual git operations are implemented in:
+/// - ops.rs: do_clone, do_fetch (using git2::build::RepoBuilder, git2::Remote)
+/// - push.rs: do_push_internal (using git2::Remote::push)
 #[derive(Clone, Copy)]
-pub struct CliGitRunner;
+pub struct Git2Runner;
 
-impl CliGitRunner {
+impl Git2Runner {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for CliGitRunner {
+impl Default for Git2Runner {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl GitRunner for CliGitRunner {
-    fn run(&self, args: &[&str], cwd: &Path) -> Result<Output, GitError> {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .output()
-            .map_err(|e| {
-                GitError::new(
-                    ErrorCategory::Internal,
-                    format!("failed to execute git command: {}", e),
-                )
-            })?;
-
-        Ok(output)
+impl GitRunner for Git2Runner {
+    fn clone_repo(
+        &self,
+        url: &str,
+        dest: &Path,
+        depth: Option<u32>,
+        should_interrupt: &AtomicBool,
+        on_progress: &mut dyn FnMut(ProgressPayload),
+    ) -> Result<(), GitError> {
+        // Delegate to ops::do_clone which contains the actual git2 implementation
+        super::default_impl::ops::do_clone(url, dest, depth, should_interrupt, on_progress)
     }
 
-    fn run_with_progress(
+    fn fetch_repo(
         &self,
-        args: &[&str],
-        cwd: &Path,
-        on_output: &mut dyn FnMut(&str, bool),
-    ) -> Result<Output, GitError> {
-        use std::io::{BufRead, BufReader};
-        use std::process::Stdio;
-        use std::thread;
+        repo_path: &Path,
+        remote_url: &str,
+        depth: Option<u32>,
+        should_interrupt: &AtomicBool,
+        on_progress: &mut dyn FnMut(ProgressPayload),
+    ) -> Result<(), GitError> {
+        // Load config for transport customization
+        let cfg = crate::core::config::loader::load_or_init()
+            .map_err(|e| GitError::new(ErrorCategory::Internal, format!("load config: {e}")))?;
 
-        let mut child = Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                GitError::new(
-                    ErrorCategory::Internal,
-                    format!("failed to spawn git command: {}", e),
-                )
-            })?;
+        // Delegate to ops::do_fetch which contains the actual git2 implementation
+        super::default_impl::ops::do_fetch(
+            remote_url,
+            repo_path,
+            depth,
+            &cfg,
+            should_interrupt,
+            on_progress,
+        )
+    }
 
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
-
-        // simple synchronous read for now (since this function is blocking/sync per trait)
-        // or usage of threads to read both streams concurrently to avoid deadlock?
-        // Git often writes to stderr for progress.
-        // We really should read them concurrently.
-
-        // Shared callback is tricky with threads because `FnMut` is not `Sync`.
-        // We can use channels to send lines back to the main thread.
-        let (tx, rx) = std::sync::mpsc::channel();
-        let tx_err = tx.clone();
-
-        let t_out = thread::spawn(move || {
-            let reader = BufReader::new(stdout);
-            for line in reader.lines() {
-                if let Ok(l) = line {
-                    if tx.send((l, false)).is_err() {
-                        break;
-                    }
-                }
-            }
-        });
-
-        let t_err = thread::spawn(move || {
-            let reader = BufReader::new(stderr);
-            for line in reader.lines() {
-                if let Ok(l) = line {
-                    if tx_err.send((l, true)).is_err() {
-                        break;
-                    }
-                }
-            }
-        });
-
-        // Drop tx in main thread so iteration ends when threads finish
-        // Wait, tx_err was moved. tx was moved. I need to make sure I don't hold a sender.
-        // Actually, I cloned tx. original tx is moved into t_out? No, I need to clone for t_out too if I want to keep one?
-        // Let's re-structure:
-        // tx is created.
-        // tx1 = tx.clone() -> t_out
-        // tx2 = tx.clone() -> t_err
-        // drop(tx)
-
-        // Receving loop
-        for (line, is_stderr) in rx {
-            on_output(&line, is_stderr);
-        }
-
-        let _ = t_out.join();
-        let _ = t_err.join();
-
-        let output = child.wait_with_output().map_err(|e| {
-            GitError::new(
-                ErrorCategory::Internal,
-                format!("failed to wait on git command: {}", e),
-            )
-        })?;
-
-        Ok(output)
+    fn push_repo(
+        &self,
+        repo_path: &Path,
+        remote: Option<&str>,
+        refspecs: Option<&[&str]>,
+        creds: Option<(&str, &str)>,
+        should_interrupt: &AtomicBool,
+        on_progress: &mut dyn FnMut(ProgressPayload),
+    ) -> Result<(), GitError> {
+        // Delegate to push::do_push_internal which contains the actual git2 implementation
+        super::default_impl::push::do_push_internal(
+            repo_path,
+            remote,
+            refspecs,
+            creds,
+            should_interrupt,
+            on_progress,
+        )
     }
 }

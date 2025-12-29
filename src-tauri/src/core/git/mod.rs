@@ -10,4 +10,4 @@ pub use default_impl::DefaultGitService;
 pub use errors::{ErrorCategory, GitError};
 pub use service::{GitService, ProgressPayload};
 pub mod runner;
-pub use runner::{GitRunner, CliGitRunner};
+pub use runner::{Git2Runner, GitRunner};

@@ -7,7 +7,8 @@ use std::time::{Instant, SystemTime};
 use uuid::Uuid;
 
 use crate::core::config::loader;
-use crate::core::git::default_impl::{add, commit, init, push};
+use crate::core::git::default_impl::{add, commit, init};
+use crate::core::git::runner::GitRunner;
 use crate::core::tasks::model::TaskState;
 use crate::core::tasks::TaskRegistry;
 use crate::events::structured::{self, EventBusAny, MemoryEventBus};
@@ -327,18 +328,18 @@ fn setup_producer(origin: &Path, producer: &Path) -> Result<String> {
     let refspec_owned = format!("{branch_ref}:{branch_ref}");
     let refspecs: Vec<&str> = vec![refspec_owned.as_str()];
     let cancel_push = AtomicBool::new(false);
-    let runner = crate::core::git::CliGitRunner::new();
+    let runner = crate::core::git::Git2Runner::new();
 
-    push::do_push(
-        &runner,
-        producer,
-        Some("origin"),
-        Some(&refspecs),
-        None,
-        &cancel_push,
-        |_| {},
-    )
-    .map_err(|e| anyhow!("initial push failed: {}", e))?;
+    runner
+        .push_repo(
+            producer,
+            Some("origin"),
+            Some(&refspecs),
+            None,
+            &cancel_push,
+            &mut |_| {},
+        )
+        .map_err(|e| anyhow!("initial push failed: {}", e))?;
 
     Ok(shorthand)
 }

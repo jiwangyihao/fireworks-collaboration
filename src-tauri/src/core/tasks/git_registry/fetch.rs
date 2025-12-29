@@ -345,7 +345,7 @@ impl TaskRegistry {
                 let res: Result<(), GitError> = {
                     use crate::core::git::service::GitService;
                     let service = crate::core::git::DefaultGitService::new(std::sync::Arc::new(
-                        crate::core::git::CliGitRunner::new(),
+                        crate::core::git::Git2Runner::new(),
                     ));
 
                     let app_for_cb = app.clone();

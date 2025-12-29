@@ -315,7 +315,7 @@ impl TaskRegistry {
                 let res: Result<(), GitError> = {
                     use crate::core::git::service::GitService;
                     let service = crate::core::git::DefaultGitService::new(std::sync::Arc::new(
-                        crate::core::git::CliGitRunner::new(),
+                        crate::core::git::Git2Runner::new(),
                     ));
 
                     let app_for_cb = app.clone();
@@ -381,7 +381,7 @@ impl TaskRegistry {
                             }
 
                             // 初始化子模块
-                            let runner = crate::core::git::runner::CliGitRunner::new();
+                            let runner = crate::core::git::runner::Git2Runner::new();
                             let mgr =
                                 SubmoduleManager::new(SubmoduleConfig::default(), Box::new(runner));
                             if let Err(e) = mgr.init_all(&dest) {
