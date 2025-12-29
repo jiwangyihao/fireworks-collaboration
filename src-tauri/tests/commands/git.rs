@@ -357,6 +357,156 @@ async fn test_git_repo_status_command() {
 }
 
 #[tokio::test]
+async fn test_git_repo_status_detailed_counts() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo_path = temp.path();
+    init_git_repo(repo_path);
+    let dest = repo_path.to_string_lossy().to_string();
+
+    // 1. Untracked file
+    let untracked = repo_path.join("untracked.txt");
+    std::fs::write(&untracked, "untracked").unwrap();
+
+    // 2. Staged file
+    let staged = repo_path.join("staged.txt");
+    std::fs::write(&staged, "staged").unwrap();
+
+    let repo = git2::Repository::open(repo_path).unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(std::path::Path::new("staged.txt")).unwrap();
+    index.write().unwrap();
+
+    // 3. Unstaged (Modified) file
+    // Modify existing README.md which was committed by init_git_repo
+    let readme = repo_path.join("README.md");
+    std::fs::write(&readme, "# Modified").unwrap();
+
+    // Check status
+    let result = git_repo_status(dest).await;
+    assert!(result.is_ok());
+    let status = result.unwrap();
+
+    assert_eq!(status.untracked, 1, "Should have 1 untracked file");
+    assert_eq!(status.staged, 1, "Should have 1 staged file");
+    assert_eq!(status.unstaged, 1, "Should have 1 unstaged file");
+    assert!(!status.is_clean);
+}
+
+#[tokio::test]
+async fn test_git_repo_status_ahead_behind() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let origin_path = temp_dir.path().join("origin");
+    let local_path = temp_dir.path().join("local");
+
+    // 1. Init bare origin
+    let _ = git2::Repository::init_bare(&origin_path).unwrap();
+
+    // 2. Clone to local
+    let _ = git2::Repository::clone(origin_path.to_str().unwrap(), &local_path).unwrap();
+    let local_repo = git2::Repository::open(&local_path).unwrap();
+
+    // 3. Create initial commit and push to origin
+    let file = local_path.join("file.txt");
+    std::fs::write(&file, "initial").unwrap();
+    let mut index = local_repo.index().unwrap();
+    index.add_path(std::path::Path::new("file.txt")).unwrap();
+    index.write().unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = local_repo.find_tree(tree_id).unwrap();
+    let sig = local_repo.signature().unwrap();
+    let commit_oid = local_repo
+        .commit(Some("HEAD"), &sig, &sig, "Initial", &tree, &[])
+        .unwrap();
+
+    // Push to origin
+    let mut remote = local_repo.find_remote("origin").unwrap();
+    remote.push(&["refs/heads/master"], None).unwrap();
+
+    // 4. Create 2 commits locally (Ahead 2)
+    for i in 1..=2 {
+        std::fs::write(&file, format!("change {}", i)).unwrap();
+        index.add_path(std::path::Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = local_repo.find_tree(tree_id).unwrap();
+        let parent = local_repo.head().unwrap().peel_to_commit().unwrap();
+        local_repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                &format!("Commit {}", i),
+                &tree,
+                &[&parent],
+            )
+            .unwrap();
+    }
+
+    // 5. Create 1 commit on origin (Behind 1)
+    // We can simulate this by cloning another repo, committing and pushing,
+    // OR just committing directly to origin if it wasn't bare.
+    // Since it's bare, we use another clone "other"
+    let other_path = temp_dir.path().join("other");
+    let _ = git2::Repository::clone(origin_path.to_str().unwrap(), &other_path).unwrap();
+    let other_repo = git2::Repository::open(&other_path).unwrap();
+    let other_file = other_path.join("other.txt");
+    std::fs::write(&other_file, "other").unwrap();
+    let mut other_index = other_repo.index().unwrap();
+    other_index
+        .add_path(std::path::Path::new("other.txt"))
+        .unwrap();
+    other_index.write().unwrap();
+    let other_tree_id = other_index.write_tree().unwrap();
+    let other_tree = other_repo.find_tree(other_tree_id).unwrap();
+    let other_parent_commit = other_repo.find_commit(commit_oid).unwrap(); // Initial commit
+    other_repo
+        .commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            "Remote change",
+            &other_tree,
+            &[&other_parent_commit],
+        )
+        .unwrap();
+    let mut other_remote = other_repo.find_remote("origin").unwrap();
+    other_remote.push(&["refs/heads/master"], None).unwrap();
+
+    // 6. Fetch safely in local (without merging) to update origin/master ref
+    // We need to fetch to see "behind"
+    let mut remote = local_repo.find_remote("origin").unwrap();
+    remote.fetch(&["master"], None, None).unwrap();
+
+    // 7. Verify Status
+    // Note: Ahead 2 (local commits), Behind 1 (remote change)
+    // But since local diverged from remote (both added commits from Initial),
+    // it should report Ahead 2, Behind 1 correctly if the graph logic handles divergence.
+
+    let dest = local_path.to_string_lossy().to_string();
+    let result = git_repo_status(dest).await;
+    assert!(result.is_ok());
+    let status = result.unwrap();
+
+    // assert_eq!(status.ahead, 2, "Should be ahead by 2");
+    // assert_eq!(status.behind, 1, "Should be behind by 1");
+    // Note: Due to potential race or specific graph strictness, let's verify exact counts after debug.
+    // Standard git behavior:
+    // Local: Init -> C1 -> C2 -> C3 (Head)
+    // Remote: Init -> C1 -> C4 (Origin/Head)
+    // Ideally Ahead 2 (C2, C3), Behind 1 (C4).
+
+    // Let's print for debug if it fails, but assertions are what we want.
+    if status.ahead != 2 || status.behind != 1 {
+        println!(
+            "Status mismatch: Ahead={}, Behind={}",
+            status.ahead, status.behind
+        );
+    }
+    assert_eq!(status.ahead, 2);
+    assert_eq!(status.behind, 1);
+}
+
+#[tokio::test]
 async fn test_git_worktree_ops() {
     let (app, _) = create_mock_app();
     let temp = tempfile::tempdir().unwrap();
