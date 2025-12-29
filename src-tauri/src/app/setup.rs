@@ -1,13 +1,13 @@
 //! Application setup and initialization.
 
-// Imports only needed for the full app mode (with wry/WebView2)
-#[cfg(feature = "tauri-app")]
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+// Imports only needed for the full app mode (with wry/WebView2) or tests
+#[cfg(any(feature = "tauri-app", test))]
+use std::path::PathBuf;
 
 #[cfg(feature = "tauri-app")]
+use std::sync::{Arc, Mutex};
+
+#[cfg(any(feature = "tauri-app", test))]
 use dirs_next as dirs;
 #[cfg(feature = "tauri-app")]
 use tauri::Manager;
@@ -320,7 +320,7 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
 /// Get fallback configuration directory.
 ///
 /// This is used when the standard app config directory cannot be determined.
-#[cfg(feature = "tauri-app")]
+#[cfg(any(feature = "tauri-app", test))]
 fn get_fallback_config_dir() -> PathBuf {
     let identifier = "top.jwyihao.fireworks-collaboration";
 
@@ -329,5 +329,27 @@ fn get_fallback_config_dir() -> PathBuf {
         dir
     } else {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_fallback_config_dir() {
+        let dir = get_fallback_config_dir();
+        // Just verify it returns something reasonable (not empty)
+        assert!(dir.is_absolute() || dir.exists() || !dir.as_os_str().is_empty());
+
+        // It should end with the identifier or be current dir
+        let path_str = dir.to_string_lossy();
+        if path_str.contains("top.jwyihao") {
+            assert!(path_str.ends_with("top.jwyihao.fireworks-collaboration"));
+        } else {
+            // If dirs::config_dir() failed (unlikely on dev machine but possible in CI),
+            // it falls back to current dir.
+            assert!(!path_str.is_empty());
+        }
     }
 }

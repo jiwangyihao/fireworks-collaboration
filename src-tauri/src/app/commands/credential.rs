@@ -478,6 +478,7 @@ pub async fn unlock_store(
                 false,
                 Some("Invalid master password".to_string()),
             );
+            logger.record_auth_failure(); // Record failure to trigger lockout
         }
     }
 
