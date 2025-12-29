@@ -418,3 +418,91 @@ fn test_parse_git_host_http_no_s() {
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "github.com");
 }
+
+#[tokio::test]
+async fn test_git_tag_command() {
+    let (app, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    init_git_repo(temp.path());
+    let dest = temp.path().to_string_lossy().to_string();
+
+    // 1. Create lightweight tag
+    let result_lw = git_tag(
+        dest.clone(),
+        "v1.0.0".to_string(),
+        None,
+        None,
+        None,
+        app.state(),
+        app.handle().clone(),
+    )
+    .await;
+    assert!(result_lw.is_ok());
+
+    // 2. Create annotated tag
+    let result_ann = git_tag(
+        dest.clone(),
+        "v1.1.0".to_string(),
+        Some("Release 1.1.0".to_string()),
+        Some(true),
+        None,
+        app.state(),
+        app.handle().clone(),
+    )
+    .await;
+    assert!(result_ann.is_ok());
+}
+
+#[tokio::test]
+async fn test_git_remote_set_command() {
+    let (app, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    init_git_repo(temp.path());
+    let dest = temp.path().to_string_lossy().to_string();
+
+    // Add remote first
+    git_remote_add(
+        dest.clone(),
+        "upstream".to_string(),
+        "https://github.com/old/repo.git".to_string(),
+        app.state(),
+        app.handle().clone(),
+    )
+    .await
+    .unwrap();
+
+    // Change remote URL
+    let result = git_remote_set(
+        dest,
+        "upstream".to_string(),
+        "https://github.com/new/repo.git".to_string(),
+        app.state(),
+        app.handle().clone(),
+    )
+    .await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_git_delete_branch_command() {
+    let (app, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    init_git_repo(temp.path());
+    let dest = temp.path().to_string_lossy().to_string();
+
+    // Create a branch to delete via git2 directly for synchronous setup in test
+    {
+        let repo = git2::Repository::open(temp.path()).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("to-delete", &head, false).unwrap();
+    }
+
+    // Delete it
+    let result = git_delete_branch(
+        dest,
+        "to-delete".to_string(),
+        Some(true), // force
+    )
+    .await;
+    assert!(result.is_ok());
+}
