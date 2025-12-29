@@ -7,6 +7,7 @@ use tauri_utils::assets::{AssetKey, CspHash};
 
 use fireworks_collaboration_lib::app::commands::tasks::*;
 use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
+use fireworks_collaboration_lib::core::tasks::TaskState;
 
 use fireworks_collaboration_lib::app::types::TaskRegistryState;
 
@@ -88,4 +89,43 @@ async fn test_task_cancel_invalid_uuid() {
 
     let result = task_cancel("invalid-uuid-format".to_string(), app.state()).await;
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_task_lifecycle_integration() {
+    let (app, _) = create_mock_app();
+
+    // 1. Start a sleep task (1000ms)
+    let id_result = task_start_sleep(1000, app.state(), app.handle().clone()).await;
+    assert!(id_result.is_ok());
+    let id = id_result.unwrap();
+
+    // 2. Verify it's in the list
+    let list = task_list(app.state()).await.unwrap();
+    assert!(list.iter().any(|t| t.id.to_string() == id));
+
+    // 3. Get snapshot
+    let snapshot = task_snapshot(id.clone(), app.state()).await.unwrap();
+    assert!(snapshot.is_some());
+    let s = snapshot.unwrap();
+    assert_eq!(s.id.to_string(), id);
+
+    // 4. Cancel the task
+    let cancel_result = task_cancel(id.clone(), app.state()).await;
+    assert!(cancel_result.is_ok());
+    assert!(cancel_result.unwrap());
+
+    // 5. Verify it's marked as cancelled (Retry a few times as state update is async)
+    let mut success = false;
+    for _ in 0..10 {
+        let snapshot_after = task_snapshot(id.clone(), app.state()).await.unwrap();
+        if let Some(s) = snapshot_after {
+            if s.state == TaskState::Canceled {
+                success = true;
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(success, "Task did not transition to Canceled state");
 }

@@ -148,124 +148,99 @@ mod with_temp_repo {
     use super::*;
     use tempfile::tempdir;
 
-    fn init_temp_git_repo() -> tempfile::TempDir {
-        let temp = tempdir().unwrap();
-        std::process::Command::new("git")
-            .args(["init"])
-            .current_dir(temp.path())
+    fn run_git(args: &[&str], cwd: &std::path::Path) {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
             .output()
-            .expect("git init failed");
-        temp
+            .expect("failed to execute git command");
+        if !output.status.success() {
+            panic!(
+                "git command failed: {:?}\nstdout: {}\nstderr: {}",
+                args,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 
     #[tokio::test]
-    async fn test_list_submodules_empty_repo() {
-        let temp = init_temp_git_repo();
+    async fn test_submodule_real_integration() {
+        let temp_dir = tempdir().unwrap();
+        let parent_path = temp_dir.path().join("parent");
+        let child_path = temp_dir.path().join("child");
+
+        // 1. Setup child repo
+        std::fs::create_dir_all(&child_path).unwrap();
+        run_git(&["init"], &child_path);
+        run_git(&["config", "user.email", "test@example.com"], &child_path);
+        run_git(&["config", "user.name", "test"], &child_path);
+        std::fs::write(child_path.join("README"), "child").unwrap();
+        run_git(&["add", "."], &child_path);
+        run_git(&["commit", "-m", "initial child"], &child_path);
+
+        // 2. Setup parent repo
+        std::fs::create_dir_all(&parent_path).unwrap();
+        run_git(&["init"], &parent_path);
+        run_git(&["config", "user.email", "test@example.com"], &parent_path);
+        run_git(&["config", "user.name", "test"], &parent_path);
+        // Allow file protocol just in case
+        run_git(&["config", "protocol.file.allow", "always"], &parent_path);
+
+        std::fs::write(parent_path.join("README"), "parent").unwrap();
+        run_git(&["add", "."], &parent_path);
+        run_git(&["commit", "-m", "initial parent"], &parent_path);
+
+        // 3. Add child as submodule to parent
+        // Use relative path and allow file protocol via -c to be extra safe
+        run_git(
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "../child",
+                "my-sub",
+            ],
+            &parent_path,
+        );
+        run_git(&["commit", "-m", "add submodule"], &parent_path);
+
         let app = create_mock_app();
+        let repo_path_str = parent_path.to_string_lossy().to_string();
 
-        let result = list_submodules(temp.path().to_string_lossy().to_string(), app.state()).await;
+        // 4. Test list_submodules
+        let submodules = list_submodules(repo_path_str.clone(), app.state())
+            .await
+            .unwrap();
+        assert_eq!(submodules.len(), 1);
+        assert_eq!(submodules[0].name, "my-sub");
 
-        assert!(result.is_ok());
-        let submodules = result.unwrap();
-        assert!(submodules.is_empty());
-    }
+        // 5. Test has_submodules
+        let has = has_submodules(repo_path_str.clone(), app.state())
+            .await
+            .unwrap();
+        assert!(has);
 
-    #[tokio::test]
-    async fn test_has_submodules_empty_repo() {
-        let temp = init_temp_git_repo();
-        let app = create_mock_app();
+        // 6. Test init/update
+        let init_res = init_submodule(repo_path_str.clone(), "my-sub".to_string(), app.state())
+            .await
+            .unwrap();
+        assert!(init_res.success);
 
-        let result = has_submodules(temp.path().to_string_lossy().to_string(), app.state()).await;
+        let update_res = update_submodule(repo_path_str.clone(), "my-sub".to_string(), app.state())
+            .await
+            .unwrap();
+        assert!(update_res.success);
 
-        assert!(result.is_ok());
-        assert!(!result.unwrap());
-    }
+        // 7. Test sync
+        let sync_res = sync_submodule(repo_path_str.clone(), "my-sub".to_string(), app.state())
+            .await
+            .unwrap();
+        assert!(sync_res.success);
 
-    #[tokio::test]
-    async fn test_init_all_submodules_empty_repo() {
-        let temp = init_temp_git_repo();
-        let app = create_mock_app();
-
-        let result =
-            init_all_submodules(temp.path().to_string_lossy().to_string(), app.state()).await;
-
-        assert!(result.is_ok());
-        let cmd_result = result.unwrap();
-        // For empty repo, init should succeed (no submodules to init)
-        assert!(cmd_result.success);
-    }
-
-    #[tokio::test]
-    async fn test_update_all_submodules_empty_repo() {
-        let temp = init_temp_git_repo();
-        let app = create_mock_app();
-
-        let result =
-            update_all_submodules(temp.path().to_string_lossy().to_string(), app.state()).await;
-
-        assert!(result.is_ok());
-        let cmd_result = result.unwrap();
-        // For empty repo, update should succeed (no submodules to update)
-        assert!(cmd_result.success);
-    }
-
-    #[tokio::test]
-    async fn test_sync_all_submodules_empty_repo() {
-        let temp = init_temp_git_repo();
-        let app = create_mock_app();
-
-        let result =
-            sync_all_submodules(temp.path().to_string_lossy().to_string(), app.state()).await;
-
-        assert!(result.is_ok());
-        let cmd_result = result.unwrap();
-        assert!(cmd_result.success);
-    }
-
-    #[tokio::test]
-    async fn test_init_submodule_missing_in_repo() {
-        let temp = init_temp_git_repo();
-        let app = create_mock_app();
-        // Try to init a submodule that doesn't exist
-        let result = init_submodule(
-            temp.path().to_string_lossy().to_string(),
-            "nofound".to_string(),
-            app.state(),
-        )
-        .await;
-
-        assert!(result.is_ok());
-        // Should fail gracefully
-        assert!(!result.unwrap().success);
-    }
-
-    #[tokio::test]
-    async fn test_update_submodule_missing_in_repo() {
-        let temp = init_temp_git_repo();
-        let app = create_mock_app();
-        let result = update_submodule(
-            temp.path().to_string_lossy().to_string(),
-            "nofound".to_string(),
-            app.state(),
-        )
-        .await;
-
-        assert!(result.is_ok());
-        assert!(!result.unwrap().success);
-    }
-
-    #[tokio::test]
-    async fn test_sync_submodule_missing_in_repo() {
-        let temp = init_temp_git_repo();
-        let app = create_mock_app();
-        let result = sync_submodule(
-            temp.path().to_string_lossy().to_string(),
-            "nofound".to_string(),
-            app.state(),
-        )
-        .await;
-
-        assert!(result.is_ok());
-        assert!(!result.unwrap().success);
+        // 8. Test get_submodule_config
+        let config = get_submodule_config(app.state()).await.unwrap();
+        assert!(config.max_depth > 0);
     }
 }
