@@ -688,3 +688,112 @@ async fn test_get_workspace_statuses_empty_workspace() {
     let response = result.unwrap();
     assert!(response.statuses.is_empty());
 }
+
+#[tokio::test]
+async fn test_workspace_backup_restore_lifecycle() {
+    let (app, manager, _, _, _) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    let root_path = temp.path().to_path_buf();
+    let ws_path = root_path.join("test_ws.json");
+
+    // 1. Setup workspace and save it
+    {
+        let mut guard = manager.lock().unwrap();
+        let mut ws = Workspace::new("BackupRestore".to_string(), root_path.clone());
+        ws.add_repository(
+            fireworks_collaboration_lib::core::workspace::model::RepositoryEntry::new(
+                "repo1".to_string(),
+                "Repo1".to_string(),
+                "repo1".into(),
+                "https://url.git".to_string(),
+            ),
+        )
+        .unwrap();
+        *guard = Some(ws);
+    }
+
+    let save_path_str = ws_path.to_string_lossy().to_string();
+    save_workspace(save_path_str.clone(), app.state())
+        .await
+        .expect("Initial save failed");
+    assert!(ws_path.exists());
+
+    // 2. Backup
+    let backup_path_str = backup_workspace(save_path_str.clone())
+        .await
+        .expect("Backup failed");
+    let backup_path = std::path::PathBuf::from(&backup_path_str);
+    assert!(backup_path.exists());
+
+    // 3. Delete original and Restore
+    std::fs::remove_file(&ws_path).unwrap();
+    assert!(!ws_path.exists());
+
+    restore_workspace(backup_path_str, save_path_str.clone())
+        .await
+        .expect("Restore failed");
+    assert!(ws_path.exists());
+
+    // 4. Verify reload
+    let _ = close_workspace(app.state()).await;
+    let result = load_workspace(save_path_str, app.state()).await;
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().name, "BackupRestore");
+}
+
+#[tokio::test]
+async fn test_workspace_batch_fetch_multi_repo() {
+    let (app, manager, registry, _config, _) = create_mock_app();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let root_path = temp_dir.path().to_path_buf();
+
+    // Setup 2 repos
+    for id in ["r1", "r2"] {
+        let repo_path = temp_dir.path().join(id);
+        std::fs::create_dir_all(&repo_path).unwrap();
+
+        // Minimal git init
+        let _ = std::process::Command::new("git")
+            .arg("init")
+            .current_dir(&repo_path)
+            .output();
+    }
+
+    {
+        let mut guard = manager.lock().unwrap();
+        let mut ws = Workspace::new("MultiBatch".to_string(), root_path);
+        for id in ["r1", "r2"] {
+            ws.add_repository(
+                fireworks_collaboration_lib::core::workspace::model::RepositoryEntry::new(
+                    id.to_string(),
+                    id.to_uppercase(),
+                    id.into(),
+                    format!("https://url_{}.git", id),
+                ),
+            )
+            .unwrap();
+        }
+        *guard = Some(ws);
+    }
+
+    let req = WorkspaceBatchFetchRequest {
+        repo_ids: Some(vec!["r1".to_string(), "r2".to_string()]),
+        ..Default::default()
+    };
+
+    let result = workspace_batch_fetch(
+        req,
+        app.state(),
+        app.state(),
+        app.state(),
+        app.handle().clone(),
+    )
+    .await;
+
+    assert!(result.is_ok());
+    let task_id = result.unwrap();
+    let uuid = uuid::Uuid::parse_str(&task_id).unwrap();
+
+    // Verify task exists in registry
+    assert!(registry.snapshot(&uuid).is_some());
+}

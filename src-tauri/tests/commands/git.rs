@@ -15,6 +15,7 @@ use fireworks_collaboration_lib::app::types::{
 use fireworks_collaboration_lib::core::config::model::AppConfig;
 use fireworks_collaboration_lib::core::git::runner::{Git2Runner, GitRunner};
 use fireworks_collaboration_lib::core::tasks::TaskRegistry;
+use fireworks_collaboration_lib::core::tasks::TaskState;
 
 // Mock Assets for Tauri
 struct MockAssets;
@@ -142,30 +143,67 @@ async fn test_git_init_command() {
 
 #[tokio::test]
 async fn test_git_add_command() {
-    let (app, _) = create_mock_app();
+    let (app, registry) = create_mock_app();
     let temp = tempfile::tempdir().unwrap();
-    let dest = temp.path().to_string_lossy().to_string();
+    let repo_path = temp.path().join("repo");
+    init_git_repo(&repo_path);
+    let dest = repo_path.to_string_lossy().to_string();
+
+    // Create a new untracked file
+    let untracked_file = repo_path.join("untracked.txt");
+    std::fs::write(&untracked_file, "new content").unwrap();
 
     let result = git_add(
-        dest,
-        vec![".".to_string()],
+        dest.clone(),
+        vec!["untracked.txt".to_string()],
         app.state(),
         app.handle().clone(),
     )
     .await;
 
     assert!(result.is_ok());
+    let task_id = result.unwrap();
+    let uuid = uuid::Uuid::parse_str(&task_id).unwrap();
+
+    // Wait for task completion
+    let mut completed = false;
+    for _ in 0..50 {
+        if let Some(snapshot) = registry.snapshot(&uuid) {
+            if snapshot.state == TaskState::Completed {
+                completed = true;
+                break;
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+    assert!(completed, "Git add task did not complete in time");
+
+    // Verify it is now staged using git2
+    let repo = git2::Repository::open(&repo_path).unwrap();
+    let status = repo
+        .status_file(std::path::Path::new("untracked.txt"))
+        .unwrap();
+    assert!(status.contains(git2::Status::INDEX_NEW));
 }
 
 #[tokio::test]
 async fn test_git_commit_command() {
-    let (app, _) = create_mock_app();
+    let (app, registry) = create_mock_app();
     let temp = tempfile::tempdir().unwrap();
-    let dest = temp.path().to_string_lossy().to_string();
+    let repo_path = temp.path().join("repo");
+    init_git_repo(&repo_path);
+    let dest = repo_path.to_string_lossy().to_string();
+
+    // Stage a change first
+    std::fs::write(repo_path.join("README.md"), "# Updated").unwrap();
+    let repo = git2::Repository::open(&repo_path).unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(std::path::Path::new("README.md")).unwrap();
+    index.write().unwrap();
 
     let result = git_commit(
         dest,
-        "msg".to_string(),
+        "Verify Commit".to_string(),
         None,
         None,
         None,
@@ -175,6 +213,25 @@ async fn test_git_commit_command() {
     .await;
 
     assert!(result.is_ok());
+    let task_id = result.unwrap();
+    let uuid = uuid::Uuid::parse_str(&task_id).unwrap();
+
+    // Wait for task completion
+    let mut completed = false;
+    for _ in 0..50 {
+        if let Some(snapshot) = registry.snapshot(&uuid) {
+            if snapshot.state == TaskState::Completed {
+                completed = true;
+                break;
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+    assert!(completed, "Git commit task did not complete in time");
+
+    // Verify commit exists in log
+    let head = repo.head().unwrap().peel_to_commit().unwrap();
+    assert_eq!(head.message().unwrap(), "Verify Commit");
 }
 
 #[tokio::test]
