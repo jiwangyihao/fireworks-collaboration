@@ -610,3 +610,81 @@ async fn test_create_workspace_duplicate_path() {
     let result = create_workspace(req2, state).await;
     assert!(result.is_ok());
 }
+
+// ============================================================================
+// Workspace Status Service Tests
+// ============================================================================
+
+use fireworks_collaboration_lib::app::types::SharedWorkspaceStatusService;
+use fireworks_collaboration_lib::core::workspace::model::WorkspaceConfig;
+use fireworks_collaboration_lib::core::workspace::status::WorkspaceStatusService;
+
+fn create_mock_app_with_status() -> (
+    tauri::App<tauri::test::MockRuntime>,
+    SharedWorkspaceManager,
+    SharedWorkspaceStatusService,
+) {
+    let workspace_manager: SharedWorkspaceManager = Arc::new(Mutex::new(None));
+    let ws_config = WorkspaceConfig::default();
+    let status_service: SharedWorkspaceStatusService =
+        Arc::new(WorkspaceStatusService::new(&ws_config));
+
+    let context = tauri::test::mock_context(MockAssets);
+
+    let app = tauri::test::mock_builder()
+        .manage::<SharedWorkspaceManager>(workspace_manager.clone())
+        .manage::<SharedWorkspaceStatusService>(status_service.clone())
+        .build(context)
+        .expect("Failed to build mock app");
+
+    (app, workspace_manager, status_service)
+}
+
+#[tokio::test]
+async fn test_clear_workspace_status_cache_command() {
+    let (app, _, _) = create_mock_app_with_status();
+
+    let result = clear_workspace_status_cache(app.state()).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_invalidate_workspace_status_entry_command() {
+    let (app, _, _) = create_mock_app_with_status();
+
+    // Invalidating a non-existent entry should return false
+    let result = invalidate_workspace_status_entry("nonexistent".to_string(), app.state()).await;
+    assert!(result.is_ok());
+    assert!(!result.unwrap());
+}
+
+#[tokio::test]
+async fn test_get_workspace_statuses_no_workspace() {
+    let (app, _, _) = create_mock_app_with_status();
+
+    // No workspace loaded should fail
+    let result = get_workspace_statuses(None, app.state(), app.state()).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("No workspace"));
+}
+
+#[tokio::test]
+async fn test_get_workspace_statuses_empty_workspace() {
+    let (app, manager, _) = create_mock_app_with_status();
+    let temp = tempfile::tempdir().unwrap();
+
+    // Pre-load empty workspace
+    {
+        let mut guard = manager.lock().unwrap();
+        *guard = Some(Workspace::new(
+            "StatusTest".to_string(),
+            temp.path().to_path_buf(),
+        ));
+    }
+
+    // Get statuses for empty workspace should succeed
+    let result = get_workspace_statuses(None, app.state(), app.state()).await;
+    assert!(result.is_ok());
+    let response = result.unwrap();
+    assert!(response.statuses.is_empty());
+}

@@ -65,3 +65,89 @@ fn sanitize_quantiles(mut values: Vec<f64>) -> Vec<f64> {
     values.dedup_by(|a, b| (*a - *b).abs() < f64::EPSILON);
     values
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -------------------------------------------------------------------------
+    // parse_range_token tests
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_parse_range_token_1m() {
+        assert!(matches!(
+            parse_range_token("1m"),
+            Ok(WindowRange::LastMinute)
+        ));
+        assert!(matches!(
+            parse_range_token("1minute"),
+            Ok(WindowRange::LastMinute)
+        ));
+    }
+
+    #[test]
+    fn test_parse_range_token_5m() {
+        assert!(matches!(
+            parse_range_token("5m"),
+            Ok(WindowRange::LastFiveMinutes)
+        ));
+        assert!(matches!(
+            parse_range_token("5minutes"),
+            Ok(WindowRange::LastFiveMinutes)
+        ));
+    }
+
+    #[test]
+    fn test_parse_range_token_1h() {
+        assert!(matches!(parse_range_token("1h"), Ok(WindowRange::LastHour)));
+        assert!(matches!(
+            parse_range_token("1hour"),
+            Ok(WindowRange::LastHour)
+        ));
+    }
+
+    #[test]
+    fn test_parse_range_token_24h() {
+        assert!(matches!(parse_range_token("24h"), Ok(WindowRange::LastDay)));
+        assert!(matches!(parse_range_token("1d"), Ok(WindowRange::LastDay)));
+        assert!(matches!(
+            parse_range_token("1day"),
+            Ok(WindowRange::LastDay)
+        ));
+    }
+
+    #[test]
+    fn test_parse_range_token_invalid() {
+        let result = parse_range_token("invalid");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unsupported range"));
+    }
+
+    // -------------------------------------------------------------------------
+    // sanitize_quantiles tests
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_sanitize_quantiles_valid() {
+        let result = sanitize_quantiles(vec![0.5, 0.9, 0.99]);
+        assert_eq!(result, vec![0.5, 0.9, 0.99]);
+    }
+
+    #[test]
+    fn test_sanitize_quantiles_filters_invalid() {
+        // Filters out 0.0, 1.0, negative, NaN, Infinity
+        let result = sanitize_quantiles(vec![0.0, 0.5, 1.0, -0.1, f64::NAN, f64::INFINITY, 0.9]);
+        assert_eq!(result, vec![0.5, 0.9]);
+    }
+
+    #[test]
+    fn test_sanitize_quantiles_sorts_and_dedupes() {
+        let result = sanitize_quantiles(vec![0.9, 0.5, 0.9, 0.5, 0.75]);
+        assert_eq!(result, vec![0.5, 0.75, 0.9]);
+    }
+
+    #[test]
+    fn test_sanitize_quantiles_empty() {
+        let result = sanitize_quantiles(vec![]);
+        assert!(result.is_empty());
+    }
+}
