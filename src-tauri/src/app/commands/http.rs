@@ -215,3 +215,132 @@ pub async fn http_fake_request(
 
     Err("Network: redirect loop reached without resolution".into())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_redact_auth_in_headers() {
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".to_string(), "secret".to_string());
+        headers.insert("Content-Type".to_string(), "application/json".to_string());
+        headers.insert("authorization".to_string(), "another-secret".to_string());
+
+        // Masking ON
+        let redacted = redact_auth_in_headers(headers.clone(), true);
+        assert_eq!(redacted.get("Authorization").unwrap(), "REDACTED");
+        assert_eq!(redacted.get("authorization").unwrap(), "REDACTED");
+        assert_eq!(redacted.get("Content-Type").unwrap(), "application/json");
+
+        // Masking OFF
+        let normal = redact_auth_in_headers(headers, false);
+        assert_eq!(normal.get("Authorization").unwrap(), "secret");
+        assert_eq!(normal.get("authorization").unwrap(), "another-secret");
+    }
+
+    #[test]
+    fn test_classify_error_msg() {
+        assert_eq!(
+            classify_error_msg("SAN whitelist mismatch"),
+            ("Verify", "SAN whitelist mismatch".to_string())
+        );
+        assert_eq!(
+            classify_error_msg("tls handshake error"),
+            ("Tls", "tls handshake error".to_string())
+        );
+        assert_eq!(
+            classify_error_msg("connect timeout"),
+            ("Network", "connect timeout".to_string())
+        );
+        assert_eq!(
+            classify_error_msg("only https is supported"),
+            ("Input", "only https is supported".to_string())
+        );
+        assert_eq!(
+            classify_error_msg("random unexpected error"),
+            ("Internal", "random unexpected error".to_string())
+        );
+    }
+
+    #[test]
+    fn test_validate_url() {
+        // Valid HTTPS
+        let (uri, host) = validate_url("https://github.com/test").unwrap();
+        assert_eq!(host, "github.com");
+        assert_eq!(uri.to_string(), "https://github.com/test");
+
+        // Invalid: only HTTP
+        let res_http = validate_url("http://example.com");
+        assert!(res_http.is_err());
+        assert!(res_http.unwrap_err().contains("only https"));
+
+        // Invalid URL
+        let res_invalid = validate_url("not a url");
+        assert!(res_invalid.is_err());
+        assert!(res_invalid.unwrap_err().contains("invalid URL"));
+
+        // Missing host (rejected by hyper parse or our check)
+        let res_no_host = validate_url("https:///path");
+        assert!(res_no_host.is_err());
+        let err = res_no_host.unwrap_err();
+        assert!(err.contains("invalid URL") || err.contains("host missing"));
+    }
+
+    #[test]
+    fn test_process_redirect() {
+        let mut headers = HashMap::new();
+        headers.insert("location".to_string(), "/new-path".to_string());
+        let current_url = "https://example.com/old-path";
+
+        let next = process_redirect(&headers, current_url).unwrap();
+        assert_eq!(next, "https://example.com/new-path");
+
+        // Absolute location
+        let mut headers_abs = HashMap::new();
+        headers_abs.insert(
+            "location".to_string(),
+            "https://other.com/target".to_string(),
+        );
+        let next_abs = process_redirect(&headers_abs, current_url).unwrap();
+        assert_eq!(next_abs, "https://other.com/target");
+
+        // Missing location
+        let res_missing = process_redirect(&HashMap::new(), current_url);
+        assert!(res_missing.is_err());
+        assert!(res_missing.unwrap_err().contains("without Location header"));
+    }
+
+    #[test]
+    fn test_update_request_for_redirect() {
+        let mut input = HttpRequestInput {
+            url: "https://old.com".to_string(),
+            method: "POST".to_string(),
+            headers: HashMap::new(),
+            body_base64: Some("data".to_string()),
+            timeout_ms: 5000,
+            force_real_sni: false,
+            follow_redirects: true,
+            max_redirects: 5,
+        };
+
+        // 302 should change to GET and clear body
+        update_request_for_redirect(&mut input, 302, "https://new.com".to_string());
+        assert_eq!(input.url, "https://new.com");
+        assert_eq!(input.method, "GET");
+        assert!(input.body_base64.is_none());
+
+        // 307 should keep method and body
+        let mut input_307 = HttpRequestInput {
+            url: "https://old.com".to_string(),
+            method: "POST".to_string(),
+            headers: HashMap::new(),
+            body_base64: Some("data".to_string()),
+            ..input
+        };
+        update_request_for_redirect(&mut input_307, 307, "https://new.com".to_string());
+        assert_eq!(input_307.method, "POST");
+        assert_eq!(input_307.body_base64.as_deref(), Some("data"));
+    }
+}

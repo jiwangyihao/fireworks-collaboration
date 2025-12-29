@@ -1389,3 +1389,106 @@ pub async fn git_worktree_remove(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -------------------------------------------------------------------------
+    // parse_git_host tests
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_parse_git_host_https() {
+        assert_eq!(
+            parse_git_host("https://github.com/user/repo.git").unwrap(),
+            "github.com"
+        );
+        assert_eq!(
+            parse_git_host("http://gitlab.com/user/repo").unwrap(),
+            "gitlab.com"
+        );
+        assert_eq!(
+            parse_git_host("https+custom://internal.git.com/repo").unwrap(),
+            "internal.git.com"
+        );
+    }
+
+    #[test]
+    fn test_parse_git_host_https_with_user_and_port() {
+        assert_eq!(
+            parse_git_host("https://user:pass@github.com/user/repo.git").unwrap(),
+            "github.com"
+        );
+        assert_eq!(
+            parse_git_host("https://github.com:8443/user/repo.git").unwrap(),
+            "github.com"
+        );
+        assert_eq!(
+            parse_git_host("https://user@gitlab.com:8080/repo").unwrap(),
+            "gitlab.com"
+        );
+    }
+
+    #[test]
+    fn test_parse_git_host_ssh() {
+        assert_eq!(
+            parse_git_host("git@github.com:user/repo.git").unwrap(),
+            "github.com"
+        );
+        assert_eq!(
+            parse_git_host("ssh://git@github.com/user/repo.git").unwrap(),
+            "github.com"
+        );
+        assert_eq!(
+            parse_git_host("ssh://github.com/user/repo.git").unwrap(),
+            "github.com"
+        );
+    }
+
+    #[test]
+    fn test_parse_git_host_invalid() {
+        let result = parse_git_host("not-a-git-url");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unsupported Git URL format"));
+    }
+
+    // -------------------------------------------------------------------------
+    // extract_git_host tests
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_extract_git_host_not_repo() {
+        let temp = tempfile::tempdir().unwrap();
+        let result = extract_git_host(&temp.path().to_string_lossy());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Not a git repository"));
+    }
+
+    #[test]
+    fn test_extract_git_host_valid() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path();
+
+        // Init repo
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(path)
+            .output()
+            .unwrap();
+
+        // Add remote
+        std::process::Command::new("git")
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/test/repo.git",
+            ])
+            .current_dir(path)
+            .output()
+            .unwrap();
+
+        let result = extract_git_host(&path.to_string_lossy());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "github.com");
+    }
+}
