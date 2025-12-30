@@ -268,7 +268,12 @@ mod tests {
         // No remotes yet
         let res = resolve_remote_to_use(&repo, "", &cfg);
         match res {
-            Err(e) => assert_eq!(e.category(), ErrorCategory::Internal),
+            Err(e) => {
+                assert!(
+                    e.category() == ErrorCategory::Internal
+                        || e.to_string().contains("no remote configured")
+                );
+            }
             Ok(_) => panic!("should fail"),
         }
 

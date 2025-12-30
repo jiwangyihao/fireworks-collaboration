@@ -406,6 +406,11 @@ async fn test_git_repo_status_ahead_behind() {
     let _ = git2::Repository::clone(origin_path.to_str().unwrap(), &local_path).unwrap();
     let local_repo = git2::Repository::open(&local_path).unwrap();
 
+    // Ensure user identity is set for CI environments
+    let mut config = local_repo.config().unwrap();
+    let _ = config.set_str("user.name", "Test User");
+    let _ = config.set_str("user.email", "test@example.com");
+
     // 3. Create initial commit and push to origin
     let file = local_path.join("file.txt");
     std::fs::write(&file, "initial").unwrap();
