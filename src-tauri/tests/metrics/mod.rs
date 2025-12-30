@@ -2036,6 +2036,7 @@ async fn metrics_http_server_enforces_auth() {
             Request::builder()
                 .method("GET")
                 .uri(uri.clone())
+                .header("Connection", "close")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -2049,6 +2050,7 @@ async fn metrics_http_server_enforces_auth() {
                 .method("GET")
                 .uri(uri)
                 .header("Authorization", "Bearer secret-token")
+                .header("Connection", "close")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -2062,6 +2064,7 @@ async fn metrics_http_server_enforces_auth() {
                 .method("GET")
                 .uri(format!("http://{}/metrics", addr).parse::<Uri>().unwrap())
                 .header("Authorization", "Bearer secret-token")
+                .header("Connection", "close")
                 .body(Body::empty())
                 .unwrap(),
         )

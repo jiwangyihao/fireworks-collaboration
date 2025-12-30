@@ -474,9 +474,15 @@ async fn test_git_repo_status_ahead_behind() {
     other_remote.push(&["refs/heads/master"], None).unwrap();
 
     // 6. Fetch safely in local (without merging) to update origin/master ref
-    // We need to fetch to see "behind"
+    // We specify the refspec to ensure origin/master is actually updated in tracking
     let mut remote = local_repo.find_remote("origin").unwrap();
-    remote.fetch(&["master"], None, None).unwrap();
+    remote
+        .fetch(
+            &["refs/heads/master:refs/remotes/origin/master"],
+            None,
+            None,
+        )
+        .unwrap();
 
     // 7. Verify Status
     // Note: Ahead 2 (local commits), Behind 1 (remote change)
