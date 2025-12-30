@@ -706,6 +706,192 @@ async fn test_git_tag_command() {
 }
 
 #[tokio::test]
+async fn test_git_tag_duplicate_failure() {
+    let (app, registry) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    init_git_repo(temp.path());
+    let dest = temp.path().to_string_lossy().to_string();
+
+    // 1. Create a tag
+    let uuid1 = git_tag(
+        dest.clone(),
+        "v1.0.0".to_string(),
+        None,
+        None,
+        None,
+        app.state(),
+        app.handle().clone(),
+    )
+    .await
+    .unwrap();
+    let id1 = uuid1.parse::<Uuid>().unwrap();
+
+    // Wait for completion
+    loop {
+        let snapshot = registry.snapshot(&id1).unwrap();
+        if snapshot.state == TaskState::Completed {
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+
+    // 2. Try to create SAME tag again without force
+    let uuid2 = git_tag(
+        dest.clone(),
+        "v1.0.0".to_string(),
+        None,
+        None,
+        None,
+        app.state(),
+        app.handle().clone(),
+    )
+    .await
+    .unwrap();
+    let id2 = uuid2.parse::<Uuid>().unwrap();
+
+    // Wait for failure
+    let mut failed = false;
+    for _ in 0..50 {
+        let snapshot = registry.snapshot(&id2).unwrap();
+        if snapshot.state == TaskState::Failed {
+            failed = true;
+            let reason = registry.fail_reason(&id2).unwrap_or_default();
+            assert!(
+                reason.to_lowercase().contains("exists"),
+                "Fail reason should mention existence: {}",
+                reason
+            );
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+    assert!(failed, "Duplicate tag creation should have failed");
+}
+
+#[tokio::test]
+async fn test_git_tag_force_update() {
+    let (app, registry) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    init_git_repo(temp.path());
+    let dest = temp.path().to_string_lossy().to_string();
+
+    // 1. Create initial tag "v1.0"
+    let uuid1 = git_tag(
+        dest.clone(),
+        "v1.0".to_string(),
+        None,
+        None,
+        None,
+        app.state(),
+        app.handle().clone(),
+    )
+    .await
+    .unwrap();
+
+    // Wait for completion
+    let id1 = uuid1.parse::<Uuid>().unwrap();
+    loop {
+        if registry.snapshot(&id1).unwrap().state == TaskState::Completed {
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+
+    // Move HEAD forward to distinguish the new tag location
+    // (In this mock setup we might not easily move HEAD without commit commands,
+    // but we can at least verify the command success. To verify it moved, we'd need another commit)
+    // Let's make a new commit.
+    let repo_path = temp.path();
+    std::fs::write(repo_path.join("v2.txt"), "v2").unwrap();
+    let repo = git2::Repository::open(repo_path).unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(std::path::Path::new("v2.txt")).unwrap();
+    index.write().unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = repo.find_tree(tree_id).unwrap();
+    let sig = repo.signature().unwrap();
+    let parent = repo.head().unwrap().peel_to_commit().unwrap();
+    let commit_oid = repo
+        .commit(Some("HEAD"), &sig, &sig, "v2", &tree, &[&parent])
+        .unwrap();
+
+    // 2. Force update tag "v1.0" to new HEAD
+    let uuid2 = git_tag(
+        dest.clone(),
+        "v1.0".to_string(),
+        Some("Updated tag".to_string()),
+        Some(true), // annotated
+        Some(true), // force
+        app.state(),
+        app.handle().clone(),
+    )
+    .await
+    .unwrap();
+    let id2 = uuid2.parse::<Uuid>().unwrap();
+
+    // Wait for completion
+    let mut success = false;
+    for _ in 0..50 {
+        let snapshot = registry.snapshot(&id2).unwrap();
+        if snapshot.state == TaskState::Completed {
+            success = true;
+            break;
+        }
+        if snapshot.state == TaskState::Failed {
+            panic!(
+                "Force update failed: {}",
+                registry.fail_reason(&id2).unwrap_or_default()
+            );
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+    assert!(success, "Force update tag task should complete");
+
+    // 3. Verify tag points to new commit
+    let (obj, _) = repo.revparse_ext("v1.0").unwrap();
+    // It's an annotated tag, so we peel to target
+    let target = obj.peel_to_commit().unwrap();
+    assert_eq!(target.id(), commit_oid, "Tag should point to new commit");
+}
+
+#[tokio::test]
+async fn test_git_remote_add_invalid_url() {
+    let (app, registry) = create_mock_app();
+    let temp = tempfile::tempdir().unwrap();
+    init_git_repo(temp.path());
+    let dest = temp.path().to_string_lossy().to_string();
+
+    // Attempt to add remote with clearly invalid URL
+    // Note: 'git remote add' itself only validates basic format, but fetch will fail.
+    // However, our verify logic might catch completely bogus inputs if we added validation.
+    // For now, let's verify that even if 'add' succeeds, 'fetch' fails, OR if we enforce URL format it fails earlier.
+    // Since we didn't strictly add regex validation for remote commands yet (only proxy/host parsing logic exists),
+    // let's assume standard git behavior: "git remote add origin invalid" succeeds, but fetch fails.
+    // BUT, if we want to HARDEN it, we should expect failure or at least handle the eventual failure gracefully.
+
+    // Let's test the "add" task behavior.
+    let uuid = git_remote_add(
+        dest.clone(),
+        "invalid-remote".to_string(),
+        "clearly not a url".to_string(),
+        app.state(),
+        app.handle().clone(),
+    )
+    .await
+    .unwrap();
+
+    let id = uuid.parse::<Uuid>().unwrap();
+
+    // It might complete successfully (git allows it).
+    // Let's just ensure it doesn't PANIC.
+    loop {
+        let snapshot = registry.snapshot(&id).unwrap();
+        if snapshot.state == TaskState::Completed || snapshot.state == TaskState::Failed {
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+}
 async fn test_git_remote_set_command() {
     let (app, _) = create_mock_app();
     let temp = tempfile::tempdir().unwrap();
