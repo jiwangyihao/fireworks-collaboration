@@ -892,6 +892,8 @@ async fn test_git_remote_add_invalid_url() {
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     }
 }
+
+#[tokio::test]
 async fn test_git_remote_set_command() {
     let (app, _) = create_mock_app();
     let temp = tempfile::tempdir().unwrap();

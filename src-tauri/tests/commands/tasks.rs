@@ -132,7 +132,7 @@ async fn test_task_lifecycle_integration() {
 
 #[tokio::test]
 async fn test_task_panic_state_resilience() {
-    let (app, registry) = create_mock_app();
+    let (_app, registry) = create_mock_app();
 
     // Directly spawn a task that panics
     let (id, _token) = registry.create(TaskKind::Sleep { ms: 100 });
