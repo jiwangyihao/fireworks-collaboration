@@ -70,3 +70,45 @@ pub fn validate_tag_name(name: &str) -> Result<(), GitError> {
 pub fn validate_remote_name(name: &str) -> Result<(), GitError> {
     validate_ref_name(name)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_ref_name_basics() {
+        assert!(validate_ref_name("main").is_ok());
+        assert!(validate_ref_name("feature/login-123").is_ok());
+        assert!(validate_ref_name("v1.0.0").is_ok());
+        assert!(validate_ref_name("  trimmed  ").is_ok());
+    }
+
+    #[test]
+    fn test_validate_ref_name_invalid_sequences() {
+        assert!(validate_ref_name("").is_err());
+        assert!(validate_ref_name(" ").is_err());
+        assert!(validate_ref_name("foo..bar").is_err());
+        assert!(validate_ref_name("foo//bar").is_err());
+        assert!(validate_ref_name("foo@{bar").is_err());
+    }
+
+    #[test]
+    fn test_validate_ref_name_invalid_boundaries() {
+        assert!(validate_ref_name("/foo").is_err());
+        assert!(validate_ref_name("-foo").is_err());
+        assert!(validate_ref_name("foo/").is_err());
+        assert!(validate_ref_name("foo.").is_err());
+        assert!(validate_ref_name("foo.lock").is_err());
+    }
+
+    #[test]
+    fn test_validate_ref_name_illegal_chars() {
+        assert!(validate_ref_name("foo:bar").is_err());
+        assert!(validate_ref_name("foo?bar").is_err());
+        assert!(validate_ref_name("foo*bar").is_err());
+        assert!(validate_ref_name("foo[bar").is_err());
+        assert!(validate_ref_name("foo~bar").is_err());
+        assert!(validate_ref_name("foo^bar").is_err());
+        assert!(validate_ref_name("foo\nbar").is_err());
+    }
+}

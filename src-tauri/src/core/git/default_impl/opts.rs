@@ -254,3 +254,91 @@ pub fn parse_depth_filter_opts(
 
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_partial_filter_parse() {
+        assert_eq!(
+            PartialFilter::parse("blob:none"),
+            Some(PartialFilter::BlobNone)
+        );
+        assert_eq!(
+            PartialFilter::parse("tree:0"),
+            Some(PartialFilter::TreeZero)
+        );
+        assert_eq!(PartialFilter::parse("unknown"), None);
+    }
+
+    #[test]
+    fn test_parse_strategy_override_basic() {
+        let input = json!({
+            "http": {
+                "followRedirects": true,
+                "maxRedirects": 10
+            },
+            "retry": {
+                "max": 5
+            }
+        });
+        let res = parse_strategy_override(Some(input)).unwrap();
+        let parsed = res.parsed.unwrap();
+        assert_eq!(parsed.http.unwrap().max_redirects, Some(10));
+        assert_eq!(parsed.retry.unwrap().max, Some(5));
+        assert!(res.ignored_top_level.is_empty());
+    }
+
+    #[test]
+    fn test_parse_strategy_override_unknown_fields() {
+        let input = json!({
+            "http": { "foo": 1 },
+            "unknown_section": { "bar": 2 }
+        });
+        let res = parse_strategy_override(Some(input)).unwrap();
+        assert_eq!(res.ignored_top_level, vec!["unknown_section"]);
+        assert_eq!(
+            res.ignored_nested,
+            vec![("http".to_string(), "foo".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_parse_strategy_override_validation() {
+        // max_redirects too large
+        let input_r = json!({ "http": { "maxRedirects": 21 } });
+        assert!(parse_strategy_override(Some(input_r)).is_err());
+
+        // retry max too large
+        let input_m = json!({ "retry": { "max": 21 } });
+        assert!(parse_strategy_override(Some(input_m)).is_err());
+
+        // retry factor out of range
+        let input_f = json!({ "retry": { "factor": 11.0 } });
+        assert!(parse_strategy_override(Some(input_f)).is_err());
+    }
+
+    #[test]
+    fn test_parse_depth_filter_opts_integration() {
+        let depth = json!(5);
+        let filter = Some("blob:none".to_string());
+        let strategy = json!({ "retry": { "max": 3 } });
+
+        let opts = parse_depth_filter_opts(Some(depth), filter, Some(strategy)).unwrap();
+        assert_eq!(opts.depth, Some(5));
+        assert_eq!(opts.filter, Some(PartialFilter::BlobNone));
+        assert_eq!(opts.strategy_override.unwrap().retry.unwrap().max, Some(3));
+    }
+
+    #[test]
+    fn test_parse_depth_validation() {
+        // Not a number
+        assert!(parse_depth_filter_opts(Some(json!("five")), None, None).is_err());
+        // Negative
+        assert!(parse_depth_filter_opts(Some(json!(-1)), None, None).is_err());
+        // Too large
+        assert!(parse_depth_filter_opts(Some(json!(1000000000000i64)), None, None).is_err());
+    }
+}
