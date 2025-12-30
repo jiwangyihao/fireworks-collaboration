@@ -278,7 +278,10 @@ mod tests {
         }
 
         // Direct URL (anonymous)
-        let res = resolve_remote_to_use(&repo, "https://github.com/foo", &cfg);
+        // Note: github.com is whitelisted for fake SNI rewrite. Disable it for stable assertion.
+        let mut cfg_no_rewrite = AppConfig::default();
+        cfg_no_rewrite.http.fake_sni_enabled = false;
+        let res = resolve_remote_to_use(&repo, "https://github.com/foo", &cfg_no_rewrite);
         if let Ok(rem) = res {
             assert_eq!(rem.url().unwrap(), "https://github.com/foo");
         } else {
