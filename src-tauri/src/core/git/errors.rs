@@ -28,4 +28,10 @@ impl GitError {
             message: message.into(),
         }
     }
+
+    pub fn category(&self) -> ErrorCategory {
+        match self {
+            GitError::Categorized { category, .. } => *category,
+        }
+    }
 }

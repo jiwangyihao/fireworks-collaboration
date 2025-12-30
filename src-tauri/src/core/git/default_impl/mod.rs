@@ -55,21 +55,19 @@ impl GitService for DefaultGitService {
         // 若 repo 看起来是本地路径，则进行快速存在性校验，避免阻塞在底层 clone 过程
         // 判定规则：绝对路径，或以 ./ ../ 开头，或包含反斜杠（Windows 常见），统一按路径处理
         let repo_trim = repo.trim();
-        let looks_like_path = helpers::is_local_path_candidate(repo_trim);
-        if looks_like_path {
-            let p = std::path::Path::new(repo_trim);
-            if !p.exists() {
-                return Err(GitError::new(
-                    ErrorCategory::Internal,
-                    format!("source path does not exist: {repo_trim}"),
-                ));
+        // 判定规则：本地路径、HTTP(S)、或 SCP-like 语法
+        let source_type = identify_repo_source(repo_trim);
+        match source_type {
+            RepoSourceType::LocalPath => {
+                let p = std::path::Path::new(repo_trim);
+                if !p.exists() {
+                    return Err(GitError::new(
+                        ErrorCategory::Internal,
+                        format!("source path does not exist: {repo_trim}"),
+                    ));
+                }
             }
-        }
-        // 基础 URL 形态快速校验：允许 http/https 以及常见的 scp-like 语法（user@host:path），否则直接判定为无效输入
-        if !looks_like_path {
-            let looks_like_http = repo_trim.contains("://");
-            let looks_like_scp = repo_trim.contains('@') && repo_trim.contains(':');
-            if looks_like_http {
+            RepoSourceType::Http => {
                 if let Ok(parsed) = url::Url::parse(repo_trim) {
                     let scheme_ok = matches!(parsed.scheme(), "http" | "https");
                     if !scheme_ok {
@@ -84,14 +82,16 @@ impl GitService for DefaultGitService {
                         "invalid repository url format",
                     ));
                 }
-            } else if !looks_like_scp {
-                // 既不像本地路径，也不像 http(s) 或 scp-like，视为明显无效，快速失败
+            }
+            RepoSourceType::ScpLike => {} // accepted
+            RepoSourceType::Invalid => {
                 return Err(GitError::new(
                     ErrorCategory::Internal,
                     "invalid repository path or url",
                 ));
             }
         }
+        let looks_like_path = matches!(source_type, RepoSourceType::LocalPath);
         // SNI 状态
         helpers::emit_sni_status("GitClone", Some(repo), &mut on_progress);
         // 注册与改写
@@ -221,5 +221,53 @@ impl GitService for DefaultGitService {
             should_interrupt,
             &mut on_progress,
         )
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RepoSourceType {
+    LocalPath,
+    Http,
+    ScpLike,
+    Invalid,
+}
+
+pub fn identify_repo_source(s: &str) -> RepoSourceType {
+    let t = s.trim();
+    if helpers::is_local_path_candidate(t) {
+        RepoSourceType::LocalPath
+    } else if t.contains("://") {
+        RepoSourceType::Http
+    } else if t.contains('@') && t.contains(':') {
+        RepoSourceType::ScpLike
+    } else {
+        RepoSourceType::Invalid
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_identify_repo_source() {
+        assert_eq!(identify_repo_source("C:\\path"), RepoSourceType::LocalPath);
+        assert_eq!(identify_repo_source("./local"), RepoSourceType::LocalPath);
+        assert_eq!(
+            identify_repo_source("https://github.com/foo"),
+            RepoSourceType::Http
+        );
+        assert_eq!(
+            identify_repo_source("git@github.com:foo/bar"),
+            RepoSourceType::ScpLike
+        );
+        assert_eq!(
+            identify_repo_source("just-a-string"),
+            RepoSourceType::Invalid
+        );
+        assert_eq!(
+            identify_repo_source("  https://github.com/foo  "),
+            RepoSourceType::Http
+        );
     }
 }

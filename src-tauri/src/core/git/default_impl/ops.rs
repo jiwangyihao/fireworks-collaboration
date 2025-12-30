@@ -154,83 +154,7 @@ pub fn do_fetch<F: FnMut(ProgressPayload)>(
     fo.download_tags(git2::AutotagOption::Unspecified);
     fo.update_fetchhead(true);
 
-    let repo_url_trimmed = repo_url.trim();
-    let mut remote = if repo_url_trimmed.is_empty() {
-        let named = match repo.find_remote("origin") {
-            Ok(r) => Some(r),
-            Err(_) => match repo.remotes() {
-                Ok(names) => {
-                    if let Some(name) = names.iter().flatten().next() {
-                        repo.find_remote(name).ok()
-                    } else {
-                        None
-                    }
-                }
-                Err(_) => None,
-            },
-        };
-        if let Some(r) = named {
-            let url_opt = r.url().map(|s| s.to_string());
-            if let Some(u) = url_opt {
-                if let Some(new_url) = maybe_rewrite_https_to_custom(cfg, u.as_str()) {
-                    match repo.remote_anonymous(&new_url) {
-                        Ok(r2) => r2,
-                        Err(e) => {
-                            return Err(GitError::new(
-                                helpers::map_git2_error(&e),
-                                format!("remote anonymous with rewritten url: {e}"),
-                            ))
-                        }
-                    }
-                } else {
-                    r
-                }
-            } else {
-                r
-            }
-        } else {
-            return Err(GitError::new(
-                ErrorCategory::Internal,
-                "no remote configured",
-            ));
-        }
-    } else {
-        match repo.find_remote(repo_url_trimmed) {
-            Ok(r) => {
-                let url_opt = r.url().map(|s| s.to_string());
-                if let Some(u) = url_opt {
-                    if let Some(new_url) = maybe_rewrite_https_to_custom(cfg, u.as_str()) {
-                        match repo.remote_anonymous(&new_url) {
-                            Ok(r2) => r2,
-                            Err(e) => {
-                                return Err(GitError::new(
-                                    helpers::map_git2_error(&e),
-                                    format!("remote anonymous with rewritten url: {e}"),
-                                ))
-                            }
-                        }
-                    } else {
-                        r
-                    }
-                } else {
-                    r
-                }
-            }
-            Err(_) => {
-                let final_url = maybe_rewrite_https_to_custom(cfg, repo_url_trimmed)
-                    .unwrap_or_else(|| repo_url_trimmed.to_string());
-                match repo.remote_anonymous(&final_url) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        return Err(GitError::new(
-                            helpers::map_git2_error(&e),
-                            format!("remote lookup: {e}"),
-                        ))
-                    }
-                }
-            }
-        }
-    };
+    let mut remote = resolve_remote_to_use(&repo, repo_url, cfg)?;
 
     match remote.fetch(&[] as &[&str], Some(&mut fo), None) {
         Ok(_) => {
@@ -250,6 +174,110 @@ pub fn do_fetch<F: FnMut(ProgressPayload)>(
         Err(e) => {
             let cat = helpers::map_git2_error(&e);
             Err(GitError::new(cat, e.message().to_string()))
+        }
+    }
+}
+
+/// Resolves which remote to use for a fetch operation.
+/// If `url` is empty, tries to find "origin" or any existing remote.
+/// Rewrites HTTPS URLs to custom transport if configured.
+pub fn resolve_remote_to_use<'a>(
+    repo: &'a git2::Repository,
+    url: &str,
+    cfg: &crate::core::config::model::AppConfig,
+) -> Result<git2::Remote<'a>, GitError> {
+    let url_trimmed = url.trim();
+    if url_trimmed.is_empty() {
+        let named = match repo.find_remote("origin") {
+            Ok(r) => Some(r),
+            Err(_) => match repo.remotes() {
+                Ok(names) => {
+                    if let Some(name) = names.iter().flatten().next() {
+                        repo.find_remote(name).ok()
+                    } else {
+                        None
+                    }
+                }
+                Err(_) => None,
+            },
+        };
+        if let Some(r) = named {
+            let url_opt = r.url().map(|s| s.to_string());
+            if let Some(u) = url_opt {
+                if let Some(new_url) = maybe_rewrite_https_to_custom(cfg, u.as_str()) {
+                    repo.remote_anonymous(&new_url).map_err(|e| {
+                        GitError::new(
+                            helpers::map_git2_error(&e),
+                            format!("remote anonymous with rewritten url: {e}"),
+                        )
+                    })
+                } else {
+                    Ok(r)
+                }
+            } else {
+                Ok(r)
+            }
+        } else {
+            Err(GitError::new(
+                ErrorCategory::Internal,
+                "no remote configured",
+            ))
+        }
+    } else {
+        match repo.find_remote(url_trimmed) {
+            Ok(r) => {
+                let url_opt = r.url().map(|s| s.to_string());
+                if let Some(u) = url_opt {
+                    if let Some(new_url) = maybe_rewrite_https_to_custom(cfg, u.as_str()) {
+                        repo.remote_anonymous(&new_url).map_err(|e| {
+                            GitError::new(
+                                helpers::map_git2_error(&e),
+                                format!("remote anonymous with rewritten url: {e}"),
+                            )
+                        })
+                    } else {
+                        Ok(r)
+                    }
+                } else {
+                    Ok(r)
+                }
+            }
+            Err(_) => {
+                let final_url = maybe_rewrite_https_to_custom(cfg, url_trimmed)
+                    .unwrap_or_else(|| url_trimmed.to_string());
+                repo.remote_anonymous(&final_url).map_err(|e| {
+                    GitError::new(helpers::map_git2_error(&e), format!("remote lookup: {e}"))
+                })
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::config::model::AppConfig;
+
+    #[test]
+    fn test_resolve_remote_to_use_invalid_repo() {
+        let temp = tempfile::tempdir().unwrap();
+        // Repository::init(...) is needed to get a real repo for find_remote to run
+        let repo = git2::Repository::init(temp.path()).unwrap();
+        let cfg = AppConfig::default();
+
+        // No remotes yet
+        let res = resolve_remote_to_use(&repo, "", &cfg);
+        match res {
+            Err(e) => assert_eq!(e.category(), ErrorCategory::Internal),
+            Ok(_) => panic!("should fail"),
+        }
+
+        // Direct URL (anonymous)
+        let res = resolve_remote_to_use(&repo, "https://github.com/foo", &cfg);
+        if let Ok(rem) = res {
+            assert_eq!(rem.url().unwrap(), "https://github.com/foo");
+        } else {
+            panic!("should succeed");
         }
     }
 }

@@ -185,3 +185,54 @@ pub fn git_commit<F: FnMut(ProgressPayload)>(
     tracing::debug!(target = "git", "commit created: {}", commit_id);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn test_author_validation() {
+        let temp = tempfile::tempdir().unwrap();
+        let _repo = git2::Repository::init(temp.path()).unwrap();
+        let interrupt = AtomicBool::new(false);
+        let mut progress = |_| {};
+
+        // Empty message
+        let res = git_commit(temp.path(), "  ", None, true, &interrupt, &mut progress);
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err().category(), ErrorCategory::Protocol);
+
+        // Missing name in author
+        let author = Author {
+            name: Some(""),
+            email: Some("test@example.com"),
+        };
+        let res = git_commit(
+            temp.path(),
+            "msg",
+            Some(author),
+            true,
+            &interrupt,
+            &mut progress,
+        );
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err().category(), ErrorCategory::Protocol);
+
+        // Missing email in author
+        let author = Author {
+            name: Some("User"),
+            email: None,
+        };
+        let res = git_commit(
+            temp.path(),
+            "msg",
+            Some(author),
+            true,
+            &interrupt,
+            &mut progress,
+        );
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err().category(), ErrorCategory::Protocol);
+    }
+}
