@@ -32,15 +32,7 @@ pub fn git_checkout<F: FnMut(ProgressPayload)>(
         ));
     }
     let name = reference.trim();
-    if name.is_empty() {
-        return Err(GitError::new(ErrorCategory::Protocol, "reference is empty"));
-    }
-    if name.contains(' ') {
-        return Err(GitError::new(
-            ErrorCategory::Protocol,
-            "reference contains space",
-        ));
-    }
+    super::refname::validate_branch_name(name)?;
     let repo = git2::Repository::open(dest).map_err(|e| {
         GitError::new(
             ErrorCategory::Internal,

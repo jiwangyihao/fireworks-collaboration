@@ -204,3 +204,32 @@ pub fn git_remote_remove<F: FnMut(ProgressPayload)>(
     });
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_remote_url() {
+        assert!(validate_remote_url("https://github.com/foo.git").is_ok());
+        assert!(validate_remote_url("http://gitlab.com/bar").is_ok());
+        assert!(validate_remote_url("git@github.com:user/repo.git").is_ok());
+        assert!(validate_remote_url("/local/path/repo").is_ok());
+        assert!(validate_remote_url("C:\\local\\path").is_ok());
+
+        // Reject whitespace
+        assert!(validate_remote_url("https://github.com/foo.git ").is_err());
+        assert!(validate_remote_url("https://github.com/foo.git\n").is_err());
+        assert!(validate_remote_url(" ").is_err());
+
+        // Reject unsupported schemes
+        assert!(validate_remote_url("ftp://server/file").is_err());
+        assert!(validate_remote_url("ssh://git@github.com/foo").is_err()); // we prefer scp-like or http
+
+        // Reject invalid URL
+        assert!(validate_remote_url("https://[invalid]").is_err());
+
+        // Path with space (fallback path)
+        assert!(validate_remote_url("folder name").is_err());
+    }
+}

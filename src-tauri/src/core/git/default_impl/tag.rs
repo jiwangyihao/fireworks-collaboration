@@ -96,16 +96,7 @@ pub fn git_tag<F: FnMut(ProgressPayload)>(
             )
         })?;
         // CRLF 归一化：统一将 \r\n -> \n，遗留的单独 \r 也替换为 \n，保持 git 常见风格
-        let raw = msg_trimmed.unwrap();
-        let mut msg = raw.replace("\r\n", "\n");
-        if msg.contains('\r') {
-            msg = msg.replace('\r', "\n");
-        }
-        // 统一尾部空行：裁剪末尾空白后，若原本非空且不以换行结尾，补一个换行；若已多余换行，压缩为恰好一个结尾换行
-        let trimmed_end = msg.trim_end();
-        if !trimmed_end.is_empty() {
-            msg = format!("{trimmed_end}\n");
-        }
+        let msg = normalize_tag_message(&msg_trimmed.unwrap());
         // 若是 force 且已有引用，尝试复用：比较现有 tag 对象内容（目标 commit、消息、tagger）一致则不创建新对象
         let mut reused = false;
         if force {
@@ -189,4 +180,36 @@ pub fn git_tag<F: FnMut(ProgressPayload)>(
         });
     }
     Ok(())
+}
+
+/// Normalize tag message: CRLF -> LF, and ensure exactly one trailing LF if non-empty.
+pub fn normalize_tag_message(raw: &str) -> String {
+    let mut msg = raw.replace("\r\n", "\n");
+    if msg.contains('\r') {
+        msg = msg.replace('\r', "\n");
+    }
+    let trimmed_end = msg.trim_end();
+    if trimmed_end.is_empty() {
+        String::new()
+    } else {
+        format!("{trimmed_end}\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_tag_message() {
+        assert_eq!(normalize_tag_message("hello\r\nworld"), "hello\nworld\n");
+        assert_eq!(normalize_tag_message("hello\rworld"), "hello\nworld\n");
+        assert_eq!(
+            normalize_tag_message("already\nnormalized\n"),
+            "already\nnormalized\n"
+        );
+        assert_eq!(normalize_tag_message("trailing   "), "trailing\n");
+        assert_eq!(normalize_tag_message("   "), "");
+        assert_eq!(normalize_tag_message("multiple\n\n\n"), "multiple\n");
+    }
 }
