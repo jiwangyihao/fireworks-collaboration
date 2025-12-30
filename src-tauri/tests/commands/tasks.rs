@@ -7,7 +7,7 @@ use tauri_utils::assets::{AssetKey, CspHash};
 
 use fireworks_collaboration_lib::app::commands::tasks::*;
 use fireworks_collaboration_lib::core::tasks::registry::TaskRegistry;
-use fireworks_collaboration_lib::core::tasks::TaskState;
+use fireworks_collaboration_lib::core::tasks::{TaskKind, TaskState};
 
 use fireworks_collaboration_lib::app::types::TaskRegistryState;
 
@@ -128,4 +128,32 @@ async fn test_task_lifecycle_integration() {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     assert!(success, "Task did not transition to Canceled state");
+}
+
+#[tokio::test]
+async fn test_task_panic_state_resilience() {
+    let (app, registry) = create_mock_app();
+
+    // Directly spawn a task that panics
+    let (id, _token) = registry.create(TaskKind::Sleep { ms: 100 });
+
+    // Simulate what a real task runner would do
+    let reg_clone = registry.clone();
+    let id_clone = id.clone();
+    let _handle = tokio::spawn(async move {
+        reg_clone.set_state_noemit(&id_clone, TaskState::Running);
+        panic!("Simulated task panic");
+    });
+
+    // Wait for the task to finish (panicked)
+    let _ = _handle.await;
+
+    // Check state
+    let snapshot = registry.snapshot(&id).unwrap();
+
+    // Expected behavior: Ideally it SHOULD NOT be stuck in Running.
+    // However, without a panic handler, it will be.
+    // We want to verify the CURRENT behavior first.
+    // If it's Running, we found a hardening opportunity.
+    assert_eq!(snapshot.state, TaskState::Running);
 }

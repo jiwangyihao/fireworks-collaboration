@@ -19,9 +19,12 @@ pub fn redact_auth_in_headers(
         return headers;
     }
 
-    // Case-insensitive matching for Authorization header
+    // Case-insensitive matching for sensitive headers
     for (k, _v) in headers.clone().iter() {
-        if k.eq_ignore_ascii_case("authorization") {
+        if k.eq_ignore_ascii_case("authorization")
+            || k.eq_ignore_ascii_case("cookie")
+            || k.eq_ignore_ascii_case("proxy-authorization")
+        {
             headers.insert(k.clone(), "REDACTED".into());
         }
     }

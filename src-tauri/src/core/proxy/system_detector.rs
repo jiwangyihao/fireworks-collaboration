@@ -192,14 +192,17 @@ impl SystemProxyDetector {
             ProxyMode::Socks5
         } else if url.starts_with("http://") || url.starts_with("https://") {
             ProxyMode::Http
-        } else {
+        } else if !url.contains("://") {
             // If no scheme, assume HTTP and add it
             return Self::parse_proxy_url(&format!("http://{url}"));
+        } else {
+            tracing::warn!("Unsupported proxy scheme: {}", url);
+            return None;
         };
 
         // Basic validation: ensure there's a host part after the scheme
         if let Some(host_part) = url.split("://").nth(1) {
-            if host_part.is_empty() {
+            if host_part.is_empty() || host_part.starts_with(':') {
                 tracing::warn!("Invalid proxy URL (empty host): {}", url);
                 return None;
             }

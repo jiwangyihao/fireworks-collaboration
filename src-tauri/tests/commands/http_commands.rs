@@ -29,6 +29,23 @@ fn test_redact_auth_in_headers_masks_authorization() {
 }
 
 #[test]
+fn test_redact_auth_in_headers_masks_cookie_and_proxy_auth() {
+    let mut headers = HashMap::new();
+    headers.insert("Cookie".to_string(), "session=abc".to_string());
+    headers.insert(
+        "Proxy-Authorization".to_string(),
+        "Basic static".to_string(),
+    );
+    headers.insert("User-Agent".to_string(), "Mozilla/5.0".to_string());
+
+    let result = redact_auth_in_headers(headers, true);
+
+    assert_eq!(result.get("Cookie").unwrap(), "REDACTED");
+    assert_eq!(result.get("Proxy-Authorization").unwrap(), "REDACTED");
+    assert_eq!(result.get("User-Agent").unwrap(), "Mozilla/5.0");
+}
+
+#[test]
 fn test_redact_auth_in_headers_case_insensitive() {
     let mut headers = HashMap::new();
     headers.insert("authorization".to_string(), "Bearer token".to_string());

@@ -43,7 +43,6 @@ pub enum ProbeMethod {
 
 const IP_CONFIG_FILE_NAME: &str = "ip-config.json";
 
-
 /// 运行期控制项，来自主配置文件（config.json）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

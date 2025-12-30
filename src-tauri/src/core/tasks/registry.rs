@@ -163,7 +163,7 @@ impl TaskRegistry {
         }
     }
 
-    pub(in crate::core::tasks) fn set_state_noemit(&self, id: &Uuid, state: TaskState) {
+    pub fn set_state_noemit(&self, id: &Uuid, state: TaskState) {
         let _ = self.with_meta(id, |m| m.state = state);
     }
 
@@ -294,12 +294,7 @@ impl TaskRegistry {
         }
     }
 
-    pub(in crate::core::tasks) fn mark_running(
-        &self,
-        app: &Option<AppHandle>,
-        id: &Uuid,
-        kind: &str,
-    ) {
+    pub fn mark_running(&self, app: &Option<AppHandle>, id: &Uuid, kind: &str) {
         match app {
             Some(app_ref) => self.set_state_emit(app_ref, id, TaskState::Running),
             None => self.set_state_noemit(id, TaskState::Running),
@@ -307,7 +302,7 @@ impl TaskRegistry {
         self.publish_lifecycle_started(id, kind);
     }
 
-    pub(in crate::core::tasks) fn mark_completed(&self, app: &Option<AppHandle>, id: &Uuid) {
+    pub fn mark_completed(&self, app: &Option<AppHandle>, id: &Uuid) {
         match app {
             Some(app_ref) => self.set_state_emit(app_ref, id, TaskState::Completed),
             None => self.set_state_noemit(id, TaskState::Completed),
@@ -315,7 +310,7 @@ impl TaskRegistry {
         self.publish_lifecycle_completed(id);
     }
 
-    pub(in crate::core::tasks) fn mark_canceled(&self, app: &Option<AppHandle>, id: &Uuid) {
+    pub fn mark_canceled(&self, app: &Option<AppHandle>, id: &Uuid) {
         match app {
             Some(app_ref) => self.set_state_emit(app_ref, id, TaskState::Canceled),
             None => self.set_state_noemit(id, TaskState::Canceled),
@@ -323,12 +318,7 @@ impl TaskRegistry {
         self.publish_lifecycle_canceled(id);
     }
 
-    pub(in crate::core::tasks) fn mark_failed(
-        &self,
-        app: &Option<AppHandle>,
-        id: &Uuid,
-        fallback_message: &str,
-    ) {
+    pub fn mark_failed(&self, app: &Option<AppHandle>, id: &Uuid, fallback_message: &str) {
         match app {
             Some(app_ref) => self.set_state_emit(app_ref, id, TaskState::Failed),
             None => {

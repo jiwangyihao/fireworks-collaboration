@@ -81,6 +81,39 @@ async fn test_detect_system_proxy_env_override() {
 }
 
 #[tokio::test]
+async fn test_detect_system_proxy_invalid_urls() {
+    use fireworks_collaboration_lib::core::proxy::SystemProxyDetector;
+
+    // Test with various invalid proxy URLs
+    let invalid_urls = [
+        "http://",        // Empty host
+        "http:// ",       // Whitespace
+        "socks5://:8080", // No host
+        "invalid-scheme://localhost",
+    ];
+
+    for url in invalid_urls {
+        let res = SystemProxyDetector::parse_proxy_url(url);
+        assert!(res.is_none(), "URL '{}' should be invalid", url);
+    }
+}
+
+#[tokio::test]
+async fn test_detect_system_proxy_env_validation_errors() {
+    // Test that invalid Env vars return None gracefully
+    unsafe {
+        std::env::set_var("HTTP_PROXY", "  "); // Empty after trim
+    }
+    let res = detect_system_proxy().await;
+    unsafe {
+        std::env::remove_var("HTTP_PROXY");
+    }
+    // Result should be whatever the actual system has (or None if none),
+    // but definitely didn't crash on "  ".
+    assert!(res.is_ok());
+}
+
+#[tokio::test]
 async fn test_force_proxy_fallback() {
     let (app, config) = create_mock_app();
 
