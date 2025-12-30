@@ -164,3 +164,65 @@ pub fn is_local_path_candidate(s: &str) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::git::errors::ErrorCategory;
+
+    #[test]
+    fn test_map_git2_error_classification() {
+        // Network errors (English & Chinese)
+        let e1 = git2::Error::from_str("connection timed out");
+        assert_eq!(map_git2_error(&e1), ErrorCategory::Network);
+
+        let e1_zh = git2::Error::from_str("连接超时");
+        assert_eq!(map_git2_error(&e1_zh), ErrorCategory::Network);
+
+        let e1_fail = git2::Error::from_str("无法连接到服务器");
+        assert_eq!(map_git2_error(&e1_fail), ErrorCategory::Network);
+
+        // TLS errors
+        let e2 = git2::Error::from_str("SSL error occurred");
+        assert_eq!(map_git2_error(&e2), ErrorCategory::Tls);
+
+        // Auth errors
+        let e3 = git2::Error::from_str("The requested URL returned error: 401");
+        assert_eq!(map_git2_error(&e3), ErrorCategory::Auth);
+
+        let e4 = git2::Error::from_str("permission denied");
+        assert_eq!(map_git2_error(&e4), ErrorCategory::Auth);
+
+        // User cancel
+        let e5 = git2::Error::from_str("user canceled");
+        // We can't easily change the code() of a git2::Error from_str,
+        // but it doesn't match the Chinese keywords or other categories, so it falls through to Internal usually
+        // unless code() matches User.
+        let _ = e5;
+    }
+
+    #[test]
+    fn test_is_local_path_candidate() {
+        // Truthy cases
+        assert!(is_local_path_candidate("C:\\Users\\foo"));
+        assert!(is_local_path_candidate("./local"));
+        assert!(is_local_path_candidate("../parent"));
+        assert!(is_local_path_candidate("relative\\path")); // contains backslash
+
+        // Falsy cases
+        assert!(!is_local_path_candidate("https://github.com/foo.git"));
+        assert!(!is_local_path_candidate("git@github.com:foo/bar.git"));
+        assert!(!is_local_path_candidate("ftp://some-host/file"));
+    }
+
+    #[test]
+    fn test_percent_and_hint() {
+        assert_eq!(percent(50, 100), 50);
+        assert_eq!(percent(0, 100), 0);
+        assert_eq!(percent(100, 100), 100);
+        assert_eq!(percent(10, 0), 0); // division by zero safety
+
+        assert_eq!(total_hint(1024), Some(1024));
+        assert_eq!(total_hint(0), None);
+    }
+}
