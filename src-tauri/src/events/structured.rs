@@ -4,11 +4,20 @@ use std::any::Any;
 use std::sync::{Arc, Mutex, RwLock};
 
 /// 任务相关事件（示例：最小子集，后续可扩展）
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TaskEvent {
+    Created {
+        id: String,
+        kind: String,
+    },
     Started {
         id: String,
         kind: String,
+    },
+    Progress {
+        id: String,
+        message: String,
+        increment: f64,
     },
     Completed {
         id: String,

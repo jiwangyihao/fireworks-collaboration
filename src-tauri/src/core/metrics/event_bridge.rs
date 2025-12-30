@@ -99,6 +99,7 @@ impl EventMetricsBridge {
                     }
                 }
             }
+            TaskEvent::Created { .. } | TaskEvent::Progress { .. } => {}
         }
     }
 

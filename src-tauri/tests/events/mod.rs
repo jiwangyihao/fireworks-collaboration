@@ -6,3 +6,4 @@ pub(crate) mod common;
 mod events_backward_compat;
 mod events_structure_and_contract;
 mod events_task_lifecycle_git;
+mod events_task_lifecycle_structured;
