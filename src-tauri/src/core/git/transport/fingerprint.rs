@@ -164,3 +164,44 @@ pub fn record_certificate(
     }
     Some((changed, spki, cert))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fingerprint_recording_flow() {
+        test_reset_fp_state();
+
+        let host = "github.com";
+        let cert = Certificate(vec![0; 32]); // Dummy cert
+
+        // First record (New host)
+        let res1 = record_certificate(host, &[cert.clone()]).expect("None");
+        assert!(res1.0, "Expected changed=true on first record");
+
+        // Second record (Same cert, soon)
+        let res2 = record_certificate(host, &[cert.clone()]).expect("None");
+        assert!(!res2.0, "Expected changed=false for same cert");
+
+        // Third record (Different cert)
+        let cert2 = Certificate(vec![1; 32]);
+        let res3 = record_certificate(host, &[cert2.clone()]).expect("None");
+        assert!(res3.0, "Expected changed=true for different cert");
+    }
+
+    #[test]
+    fn test_fingerprint_lru_eviction() {
+        test_reset_fp_state();
+
+        // Push many hosts to trigger eviction (> 512)
+        for i in 0..600 {
+            let host = format!("host-{}.com", i);
+            record_certificate(&host, &[Certificate(vec![i as u8; 32])]);
+        }
+
+        let st = state().lock().unwrap();
+        assert_eq!(st.map.len(), 512, "Expected LRU to cap at 512");
+        assert_eq!(st.order.len(), 512);
+    }
+}

@@ -92,3 +92,103 @@ fn decide_https_to_custom_inner(
     decision.rewritten = Some(format!("https+custom://{authority}{path}{query}{fragment}"));
     decision
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::config::model::AppConfig;
+
+    #[test]
+    fn test_rewrite_basic_flow() {
+        let mut cfg = AppConfig::default();
+        cfg.http.fake_sni_enabled = true;
+        cfg.http.fake_sni_rollout_percent = 100;
+
+        // Whitelisted target (analytics.githubassets.com is usually in BUILTIN_IPS)
+        let url = "https://analytics.githubassets.com/foo";
+        let decision = decide_https_to_custom_inner(&cfg, url, false);
+
+        assert!(decision.eligible);
+        assert!(decision.sampled);
+        assert_eq!(
+            decision.rewritten,
+            Some("https+custom://analytics.githubassets.com/foo.git".to_string())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_disabled_by_config() {
+        let mut cfg = AppConfig::default();
+        cfg.http.fake_sni_enabled = false;
+
+        let url = "https://analytics.githubassets.com/foo";
+        let decision = decide_https_to_custom_inner(&cfg, url, false);
+
+        assert!(!decision.eligible);
+        assert!(decision.rewritten.is_none());
+    }
+
+    #[test]
+    fn test_rewrite_skipped_if_proxy_present() {
+        let mut cfg = AppConfig::default();
+        cfg.http.fake_sni_enabled = true;
+
+        let url = "https://analytics.githubassets.com/foo";
+        let decision = decide_https_to_custom_inner(&cfg, url, true);
+
+        assert!(!decision.eligible);
+        assert!(decision.rewritten.is_none());
+    }
+
+    #[test]
+    fn test_rewrite_skipped_if_not_whitelisted() {
+        let mut cfg = AppConfig::default();
+        cfg.http.fake_sni_enabled = true;
+
+        let url = "https://example.com/repo.git";
+        let decision = decide_https_to_custom_inner(&cfg, url, false);
+
+        assert!(!decision.eligible);
+        assert!(decision.rewritten.is_none());
+    }
+
+    #[test]
+    fn test_rewrite_rollout_sampling() {
+        let mut cfg = AppConfig::default();
+        cfg.http.fake_sni_enabled = true;
+
+        let url = "https://analytics.githubassets.com/foo";
+
+        // 0% rollout
+        cfg.http.fake_sni_rollout_percent = 0;
+        let d0 = decide_https_to_custom_inner(&cfg, url, false);
+        assert!(d0.eligible);
+        assert!(!d0.sampled);
+
+        // 100% rollout
+        cfg.http.fake_sni_rollout_percent = 100;
+        let d100 = decide_https_to_custom_inner(&cfg, url, false);
+        assert!(d100.sampled);
+    }
+
+    #[test]
+    fn test_rewrite_path_normalization() {
+        let mut cfg = AppConfig::default();
+        cfg.http.fake_sni_enabled = true;
+        cfg.http.fake_sni_rollout_percent = 100;
+
+        let url = "https://analytics.githubassets.com/repo.git";
+        let res = decide_https_to_custom_inner(&cfg, url, false);
+        assert_eq!(
+            res.rewritten,
+            Some("https+custom://analytics.githubassets.com/repo.git".to_string())
+        );
+
+        let url2 = "https://analytics.githubassets.com/repo";
+        let res2 = decide_https_to_custom_inner(&cfg, url2, false);
+        assert_eq!(
+            res2.rewritten,
+            Some("https+custom://analytics.githubassets.com/repo.git".to_string())
+        );
+    }
+}
