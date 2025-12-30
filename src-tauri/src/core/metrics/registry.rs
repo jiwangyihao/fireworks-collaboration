@@ -583,7 +583,7 @@ impl Hash for LabelKey {
 }
 
 impl LabelKey {
-    fn new(values: Vec<String>) -> Self {
+    pub(super) fn new(values: Vec<String>) -> Self {
         let mut hasher = DefaultHasher::new();
         values.hash(&mut hasher);
         let hash = hasher.finish();

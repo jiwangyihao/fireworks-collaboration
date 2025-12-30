@@ -875,3 +875,77 @@ impl HistogramSlot {
         self.hist.reset();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_window_aggregator_memory_estimation() {
+        let provider = Arc::new(ManualTimeProvider::new());
+        let agg = WindowAggregator::new(provider);
+        let desc = MetricDescriptor::histogram("test_hist", "test", &["l1"], &[0.1, 1.0]);
+        let labels = LabelKey::new(vec!["v1".into()]);
+
+        let config = HistogramWindowConfig::enable_raw_samples(Duration::from_secs(60), 10);
+        agg.enable_histogram_metric("test_hist", config);
+
+        // Record a few samples
+        for i in 0..5 {
+            agg.record_histogram(desc, labels.clone(), i as f64);
+        }
+
+        let mem = agg.estimate_memory_bytes();
+        // 5 samples * sizeof(RawSamplePoint)
+        assert_eq!(mem, 5 * mem::size_of::<RawSamplePoint>() as u64);
+
+        agg.disable_raw_samples();
+        assert_eq!(agg.estimate_memory_bytes(), 0);
+    }
+
+    #[test]
+    fn test_counter_entry_rollover() {
+        let desc = MetricDescriptor::counter("test_cnt", "test", &[]);
+        let mut entry = CounterEntry::new(desc, vec![]);
+
+        // Record at minute 0
+        entry.record(0, 10);
+        assert_eq!(entry.minutes[0].value, 10);
+        assert_eq!(entry.hours[0].value, 10);
+
+        // Record at minute 60 (same minute slot index 0, same hour slot index 1)
+        entry.record(60, 20);
+        assert_eq!(entry.minutes[0].value, 20); // Reset at minute 0 index
+        assert_eq!(entry.hours[1].value, 20);
+        assert_eq!(entry.hours[0].value, 10);
+
+        // Snapshot last minute
+        let snap = entry.snapshot(WindowRange::LastMinute, 60);
+        assert_eq!(snap.total, 20);
+
+        // Snapshot last 5 min (including minute 60)
+        let snap = entry.snapshot(WindowRange::LastFiveMinutes, 60);
+        assert_eq!(snap.total, 20); // Only minute 60 has value
+    }
+
+    #[test]
+    fn test_histogram_entry_buckets() {
+        let desc = MetricDescriptor::histogram("test_hist", "test", &[], &[10.0, 100.0]);
+        let mut entry = HistogramEntry::new(
+            desc,
+            &[10.0, 100.0],
+            vec![],
+            HistogramWindowOptions::from_config(HistogramWindowConfig::default()),
+        );
+
+        entry.record(0, 5.0); // Bucket 0
+        entry.record(0, 50.0); // Bucket 1
+        entry.record(0, 150.0); // Bucket 2
+
+        let snap = entry.snapshot(WindowRange::LastMinute, 0, &[0.5]);
+        assert_eq!(snap.count, 3);
+        assert_eq!(snap.buckets[0].1, 1); // <= 10
+        assert_eq!(snap.buckets[1].1, 1); // <= 100
+        assert_eq!(snap.buckets[2].1, 1); // > 100
+    }
+}
