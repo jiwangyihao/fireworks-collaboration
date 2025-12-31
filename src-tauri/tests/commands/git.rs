@@ -174,6 +174,10 @@ async fn test_git_add_command() {
                 completed = true;
                 break;
             }
+            if snapshot.state == TaskState::Failed {
+                let reason = registry.fail_reason(&uuid).unwrap_or_default();
+                panic!("Git add task failed: {}", reason);
+            }
         }
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
@@ -224,6 +228,10 @@ async fn test_git_commit_command() {
             if snapshot.state == TaskState::Completed {
                 completed = true;
                 break;
+            }
+            if snapshot.state == TaskState::Failed {
+                let reason = registry.fail_reason(&uuid).unwrap_or_default();
+                panic!("Git commit task failed: {}", reason);
             }
         }
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
