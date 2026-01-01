@@ -65,14 +65,14 @@ function handleBackdropClick() {
 
 <template>
   <dialog ref="dialogRef" class="modal" @close="handleCancel">
-    <div class="modal-box">
-      <h3 class="font-bold text-lg">{{ title }}</h3>
+    <div class="modal-box p-4">
+      <h3 class="font-bold text-lg mt-0 mb-0">{{ title }}</h3>
 
-      <div class="py-4">
+      <div class="text-base-content/80 text-sm">
         <slot></slot>
       </div>
 
-      <div class="modal-action">
+      <div class="modal-action mt-4">
         <button class="btn btn-ghost" @click="handleCancel">
           {{ cancelText }}
         </button>

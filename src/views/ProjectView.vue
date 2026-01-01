@@ -2,9 +2,11 @@
 <script setup lang="ts">
 import { onMounted, ref, computed, inject, Ref, watch, reactive } from "vue";
 import { storeToRefs } from "pinia";
+import { useRouter } from "vue-router";
 import { useProjectStore } from "../stores/project";
 import { useToastStore } from "../stores/toast";
 import { invoke } from "../api/tauri";
+import { detectVitePressProject } from "../api/vitepress";
 
 // 导入可复用组件
 import StatusCard from "../components/StatusCard.vue";
@@ -16,6 +18,7 @@ import AvatarGroup, { type AvatarItem } from "../components/AvatarGroup.vue";
 import BaseIcon from "../components/BaseIcon.vue";
 import { formatNumber, relativeTime } from "../utils/format";
 
+const router = useRouter();
 const projectStore = useProjectStore();
 const {
   upstreamRepo,
@@ -436,6 +439,22 @@ async function handlePushWorktree(wtPath: string) {
   } catch (error: any) {
     pushingWorktreePaths.delete(wtPath);
     toastStore.error(`启动推送失败: ${error.message}`);
+  }
+}
+
+/** 打开工作区 - 跳转到文档视图 */
+async function openWorktree(wtPath: string) {
+  // 检测是否为 VitePress 项目
+  try {
+    const detection = await detectVitePressProject(wtPath);
+    if (detection.isVitepress) {
+      // 跳转到 DocumentView
+      router.push(`/document/${encodeURIComponent(wtPath)}`);
+    } else {
+      toastStore.info("该工作区不是 VitePress 项目");
+    }
+  } catch (error) {
+    toastStore.error(`检测项目失败: ${error}`);
   }
 }
 
@@ -1106,7 +1125,8 @@ onMounted(async () => {
                 (w) => !w.isMainWorktree
               )"
               :key="wt.path"
-              class="group flex flex-col gap-1.5 px-3 py-2.5 rounded-xl border border-base-content/10 bg-base-200/30 hover:border-primary/50 transition-all"
+              class="group flex flex-col gap-1.5 px-3 py-2.5 rounded-xl border border-base-content/10 bg-base-200/30 hover:border-primary/50 transition-all cursor-pointer"
+              @click="openWorktree(wt.path)"
             >
               <!-- 第一行：分支 & PR & 操作 -->
               <div class="flex items-center justify-between w-full">
@@ -1153,7 +1173,7 @@ onMounted(async () => {
                     <button
                       class="btn btn-ghost btn-xs btn-square text-primary"
                       title="推送变更"
-                      @click="handlePushWorktree(wt.path)"
+                      @click.stop="handlePushWorktree(wt.path)"
                       :disabled="pushingWorktreePaths.has(wt.path)"
                     >
                       <span
@@ -1166,7 +1186,7 @@ onMounted(async () => {
                     <button
                       class="btn btn-ghost btn-xs btn-square text-error"
                       title="删除工作区"
-                      @click="showDeleteConfirm(wt.path)"
+                      @click.stop="showDeleteConfirm(wt.path)"
                     >
                       <BaseIcon icon="lucide--trash-2" size="sm" />
                     </button>
