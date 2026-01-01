@@ -547,18 +547,44 @@ onMounted(async () => {
             </div>
 
             <!-- 语言分布 -->
-            <LanguageBar :languages="languages" :show-legend="true" />
+            <template v-if="Object.keys(languages).length">
+              <LanguageBar :languages="languages" :show-legend="true" />
+            </template>
+            <template v-else>
+              <div class="space-y-1.5">
+                <div class="skeleton h-2 w-full rounded-full"></div>
+                <div class="flex gap-2">
+                  <div class="skeleton h-3 w-16"></div>
+                  <div class="skeleton h-3 w-12"></div>
+                  <div class="skeleton h-3 w-14"></div>
+                </div>
+              </div>
+            </template>
 
             <!-- 贡献者 + 时间 + 版本 同一行 -->
             <div class="flex items-center justify-between">
-              <div
-                v-if="contributorAvatars.length"
-                class="flex items-center gap-2"
-              >
-                <span class="text-xs text-base-content/50">贡献者</span>
-                <AvatarGroup :items="contributorAvatars" :max="5" size="sm" />
-              </div>
+              <!-- 贡献者区域 -->
+              <template v-if="contributorAvatars.length">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-base-content/50">贡献者</span>
+                  <AvatarGroup :items="contributorAvatars" :max="5" size="sm" />
+                </div>
+              </template>
+              <template v-else>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-base-content/50">贡献者</span>
+                  <div class="flex -space-x-2">
+                    <div class="skeleton w-6 h-6 rounded-full"></div>
+                    <div class="skeleton w-6 h-6 rounded-full"></div>
+                    <div class="skeleton w-6 h-6 rounded-full"></div>
+                    <div class="skeleton w-6 h-6 rounded-full"></div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- 版本和时间区域 -->
               <div class="flex items-center gap-2 text-xs">
+                <!-- 有 Release 时显示版本标签 -->
                 <a
                   v-if="latestRelease"
                   :href="latestRelease.html_url"
@@ -567,6 +593,12 @@ onMounted(async () => {
                   ><BaseIcon icon="lucide--tag" size="xs" />
                   {{ latestRelease.tag_name }}</a
                 >
+                <!-- 正在加载时（上游仓库未加载）显示 skeleton -->
+                <div
+                  v-else-if="!upstreamRepo"
+                  class="skeleton h-4 w-14 rounded"
+                ></div>
+                <!-- 加载完成但无 Release 时不显示任何内容 -->
                 <span class="text-base-content/50">{{
                   relativeTime(upstreamRepo.pushed_at)
                 }}</span>
@@ -697,57 +729,90 @@ onMounted(async () => {
             </div>
 
             <!-- 分支列表 -->
-            <div v-if="forkBranches.length">
+            <div>
               <div class="text-xs text-base-content/60 mb-1">
-                分支 ({{ forkBranches.length }})
+                <template v-if="forkBranches.length">
+                  分支 ({{ forkBranches.length }})
+                </template>
+                <template v-else> 分支 </template>
               </div>
-              <div class="flex flex-wrap gap-1">
-                <span
-                  v-for="branch in forkBranches.slice(0, 5)"
-                  :key="branch.name"
-                  class="badge badge-outline badge-xs"
-                  :class="{
-                    'badge-primary': branch.name === forkRepo.default_branch,
-                  }"
-                >
-                  <BaseIcon icon="lucide--git-branch" size="xs" />
-                  {{ branch.name }}
-                </span>
-                <span
-                  v-if="forkBranches.length > 5"
-                  class="badge badge-ghost badge-xs"
-                  >+{{ forkBranches.length - 5 }}</span
-                >
-              </div>
+              <template v-if="forkBranches.length">
+                <div class="flex flex-wrap gap-1">
+                  <span
+                    v-for="branch in forkBranches.slice(0, 5)"
+                    :key="branch.name"
+                    class="badge badge-outline badge-xs"
+                    :class="{
+                      'badge-primary': branch.name === forkRepo.default_branch,
+                    }"
+                  >
+                    <BaseIcon icon="lucide--git-branch" size="xs" />
+                    {{ branch.name }}
+                  </span>
+                  <span
+                    v-if="forkBranches.length > 5"
+                    class="badge badge-ghost badge-xs"
+                    >+{{ forkBranches.length - 5 }}</span
+                  >
+                </div>
+              </template>
+              <template v-else>
+                <div class="flex flex-wrap gap-1">
+                  <div class="skeleton h-4 w-16 rounded"></div>
+                  <div class="skeleton h-4 w-20 rounded"></div>
+                  <div class="skeleton h-4 w-14 rounded"></div>
+                </div>
+              </template>
             </div>
 
             <!-- 最近Commits -->
-            <div v-if="forkCommits.length">
+            <div>
               <div class="text-xs text-base-content/60 mb-1">最近提交</div>
-              <div class="space-y-1">
-                <a
-                  v-for="commit in forkCommits.slice(0, 3)"
-                  :key="commit.sha"
-                  :href="commit.html_url"
-                  target="_blank"
-                  class="flex items-center gap-2 text-xs hover:text-primary transition-colors"
-                >
-                  <div v-if="commit.author" class="avatar">
-                    <div class="w-4 rounded-full">
-                      <img
-                        :src="commit.author.avatar_url"
-                        :alt="commit.author.login"
-                      />
+              <template v-if="forkCommits.length">
+                <div class="space-y-1">
+                  <a
+                    v-for="commit in forkCommits.slice(0, 3)"
+                    :key="commit.sha"
+                    :href="commit.html_url"
+                    target="_blank"
+                    class="flex items-center gap-2 text-xs hover:text-primary transition-colors"
+                  >
+                    <div v-if="commit.author" class="avatar">
+                      <div class="w-4 rounded-full">
+                        <img
+                          :src="commit.author.avatar_url"
+                          :alt="commit.author.login"
+                        />
+                      </div>
                     </div>
+                    <span class="truncate flex-1">{{
+                      commit.commit.message.split("\n")[0]
+                    }}</span>
+                    <span class="text-[10px] text-base-content/40 shrink-0">{{
+                      commit.sha.slice(0, 7)
+                    }}</span>
+                  </a>
+                </div>
+              </template>
+              <template v-else>
+                <div class="space-y-1.5">
+                  <div class="flex items-center gap-2">
+                    <div class="skeleton w-4 h-4 rounded-full"></div>
+                    <div class="skeleton h-3 flex-1 rounded"></div>
+                    <div class="skeleton h-3 w-10 rounded"></div>
                   </div>
-                  <span class="truncate flex-1">{{
-                    commit.commit.message.split("\n")[0]
-                  }}</span>
-                  <span class="text-[10px] text-base-content/40 shrink-0">{{
-                    commit.sha.slice(0, 7)
-                  }}</span>
-                </a>
-              </div>
+                  <div class="flex items-center gap-2">
+                    <div class="skeleton w-4 h-4 rounded-full"></div>
+                    <div class="skeleton h-3 flex-1 rounded"></div>
+                    <div class="skeleton h-3 w-10 rounded"></div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <div class="skeleton w-4 h-4 rounded-full"></div>
+                    <div class="skeleton h-3 flex-1 rounded"></div>
+                    <div class="skeleton h-3 w-10 rounded"></div>
+                  </div>
+                </div>
+              </template>
             </div>
           </template>
           <template v-else-if="!hasFork">
