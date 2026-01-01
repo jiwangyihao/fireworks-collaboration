@@ -129,7 +129,7 @@ describe("TaskList (deprecated)", () => {
     it("has sleep duration input with default value", () => {
       const wrapper = mount(TaskList);
       const input = wrapper.find('input[type="number"]');
-      expect(input.element.value).toBe("3000");
+      expect((input.element as HTMLInputElement).value).toBe("3000");
     });
 
     it("has refresh button", () => {

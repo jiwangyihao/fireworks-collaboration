@@ -6,7 +6,7 @@ describe("TimeRangeSelector", () => {
   const mockOptions = [
     { label: "1h", value: "1h" as const },
     { label: "24h", value: "24h" as const },
-    { label: "7d", value: "7d" as const },
+    { label: "5m", value: "5m" as const },
   ];
 
   describe("rendering", () => {
@@ -25,7 +25,7 @@ describe("TimeRangeSelector", () => {
       expect(buttons.length).toBe(3);
       expect(buttons[0].text()).toBe("1h");
       expect(buttons[1].text()).toBe("24h");
-      expect(buttons[2].text()).toBe("7d");
+      expect(buttons[2].text()).toBe("5m");
     });
   });
 
@@ -55,7 +55,7 @@ describe("TimeRangeSelector", () => {
       await wrapper.findAll("button")[2].trigger("click");
 
       expect(wrapper.emitted("update:modelValue")).toHaveLength(1);
-      expect(wrapper.emitted("update:modelValue")![0]).toEqual(["7d"]);
+      expect(wrapper.emitted("update:modelValue")![0]).toEqual(["5m"]);
     });
 
     it("does not emit when same option clicked", async () => {
