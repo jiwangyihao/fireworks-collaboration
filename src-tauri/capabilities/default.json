@@ -2,9 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": [
-    "main"
-  ],
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "opener:default",
@@ -14,8 +12,22 @@
         {
           "name": "cmd",
           "cmd": "cmd",
-          "args": true,
-          "sidecar": false
+          "args": true
+        },
+        {
+          "name": "powershell",
+          "cmd": "powershell.exe",
+          "args": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "cmd",
+          "cmd": "cmd",
+          "args": true
         }
       ]
     },
@@ -47,7 +59,6 @@
         }
       ]
     },
-    "opener:default",
     "http:default",
     {
       "identifier": "http:allow-fetch",

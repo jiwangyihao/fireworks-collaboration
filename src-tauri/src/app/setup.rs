@@ -67,6 +67,7 @@ pub fn run() {
             crate::app::commands::config::set_config,
             crate::app::commands::config::export_team_config_template,
             crate::app::commands::config::import_team_config_template,
+            crate::app::commands::config::check_tool_version,
             crate::app::commands::ip_pool::ip_pool_get_snapshot,
             crate::app::commands::ip_pool::ip_pool_update_config,
             crate::app::commands::ip_pool::ip_pool_request_refresh,

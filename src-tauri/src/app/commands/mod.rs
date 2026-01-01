@@ -14,7 +14,8 @@ pub mod workspace;
 
 // Re-export all command functions
 pub use config::{
-    export_team_config_template, get_config, greet, import_team_config_template, set_config,
+    check_tool_version, export_team_config_template, get_config, greet,
+    import_team_config_template, set_config,
 };
 pub use credential::{
     add_credential, delete_credential, export_audit_log, get_credential, list_credentials,

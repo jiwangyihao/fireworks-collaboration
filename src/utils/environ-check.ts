@@ -8,7 +8,8 @@ export interface Status {
 
 export async function* checkGit(): AsyncGenerator<Partial<Status>> {
   try {
-    let result = await Command.create("cmd", ["/c", "git", "-v"]).execute();
+    // Git works fine with the shell plugin, no encoding issues
+    let result = await Command.create("cmd", ["/c", "git -v"]).execute();
     if (!/git version 2\.\d+/.test(result.stdout)) {
       throw "Git 版本过低，请安装 Git 2.x 及以上版本";
     }
@@ -88,13 +89,15 @@ export async function* checkGit(): AsyncGenerator<Partial<Status>> {
 
 export async function* checkNode(): AsyncGenerator<Partial<Status>> {
   try {
-    let result = await Command.create("cmd", ["/c", "node", "-v"]).execute();
-    if (parseInt(result.stdout.replace(/v/g, "").split(".")[0]) < 24) {
-      throw `Node 版本过低，需求版本 24.x 及以上，当前版本：${result.stdout}`;
+    // Use Rust backend to handle encoding issues
+    const { invoke } = await import("@tauri-apps/api/core");
+    const stdout = await invoke<string>("check_tool_version", { tool: "node" });
+    if (parseInt(stdout.replace(/v/g, "").split(".")[0]) < 24) {
+      throw `Node 版本过低，需求版本 24.x 及以上，当前版本：${stdout}`;
     }
     yield {
       type: "success",
-      message: `Node 通过，当前版本：${result.stdout.trim()}`,
+      message: `Node 通过，当前版本：${stdout}`,
     };
   } catch (error) {
     yield {
@@ -106,13 +109,15 @@ export async function* checkNode(): AsyncGenerator<Partial<Status>> {
 
 export async function* checkPnpm(): AsyncGenerator<Partial<Status>> {
   try {
-    let result = await Command.create("cmd", ["/c", "pnpm", "-v"]).execute();
-    if (parseInt(result.stdout.split(".")[0]) < 10) {
-      throw `pnpm 版本过低，需求版本 10.x 及以上，当前版本：v${result.stdout}`;
+    // Use Rust backend to handle encoding issues
+    const { invoke } = await import("@tauri-apps/api/core");
+    const stdout = await invoke<string>("check_tool_version", { tool: "pnpm" });
+    if (parseInt(stdout.split(".")[0]) < 10) {
+      throw `pnpm 版本过低，需求版本 10.x 及以上，当前版本：v${stdout}`;
     }
     yield {
       type: "success",
-      message: `pnpm 通过，当前版本：v${result.stdout.trim()}`,
+      message: `pnpm 通过，当前版本：v${stdout}`,
     };
   } catch (error) {
     yield {

@@ -176,3 +176,53 @@ pub async fn import_team_config_template(
 pub fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
+
+/// Check the version of an installed tool (node, pnpm, git, etc.)
+/// This uses lossy UTF-8 decoding to handle encoding issues on Windows.
+/// Tries to run the tool directly first (avoiding shell encoding issues),
+/// then falls back to cmd.exe if direct execution fails.
+#[tauri::command(rename_all = "camelCase")]
+pub fn check_tool_version(tool: &str) -> Result<String, String> {
+    use std::process::Command;
+
+    // Try running the tool directly first (works if it's in PATH as an .exe)
+    let direct_result = Command::new(tool).arg("-v").output();
+
+    let output = if let Ok(out) = direct_result {
+        if out.status.success() {
+            out
+        } else {
+            // Direct execution returned an error, try through cmd
+            Command::new("cmd.exe")
+                .args(["/c", &format!("{} -v", tool)])
+                .output()
+                .map_err(|e| format!("Failed to execute {}: {}", tool, e))?
+        }
+    } else {
+        // Direct execution failed (not in PATH or not an exe), try through cmd
+        Command::new("cmd.exe")
+            .args(["/c", &format!("{} -v", tool)])
+            .output()
+            .map_err(|e| format!("Failed to execute {}: {}", tool, e))?
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let error_msg: String = format!("{}{}", stderr.trim(), stdout.trim())
+            .chars()
+            .filter(|c| c.is_ascii_graphic() || c.is_ascii_whitespace())
+            .collect();
+        return Err(format!("Command failed: {}", error_msg));
+    }
+
+    // Use lossy conversion to handle non-UTF-8 bytes
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Filter to ASCII printable characters only
+    let version: String = stdout
+        .chars()
+        .filter(|c| c.is_ascii_graphic() || c.is_ascii_whitespace())
+        .collect();
+
+    Ok(version.trim().to_string())
+}
