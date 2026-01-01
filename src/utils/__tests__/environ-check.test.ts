@@ -1,13 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { execMock, createMock } = vi.hoisted(() => {
+const { execMock, createMock, invokeMock } = vi.hoisted(() => {
   const exec = vi.fn();
   const create = vi.fn(() => ({ execute: exec }));
-  return { execMock: exec, createMock: create };
+  const invoke = vi.fn();
+  return { execMock: exec, createMock: create, invokeMock: invoke };
 });
 
 vi.mock("@tauri-apps/plugin-shell", () => ({
   Command: { create: createMock },
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: invokeMock,
 }));
 
 import { checkGit, checkNode, checkPnpm } from "../environ-check";
@@ -28,6 +33,7 @@ describe("utils/environ-check", () => {
   beforeEach(() => {
     execMock.mockReset();
     createMock.mockClear();
+    invokeMock.mockReset();
   });
 
   it("checkGit: 版本符合 2.x 时成功", async () => {
@@ -53,21 +59,21 @@ describe("utils/environ-check", () => {
   });
 
   it("checkNode: 版本 >= v24 成功，低于报错", async () => {
-    execMock.mockResolvedValueOnce({ code: 0, stdout: "v24.1.0", stderr: "" });
+    invokeMock.mockResolvedValueOnce("v24.1.0");
     let res = await collect(checkNode());
     expect(res[0]).toMatchObject({ type: "success" });
 
-    execMock.mockResolvedValueOnce({ code: 0, stdout: "v18.19.0", stderr: "" });
+    invokeMock.mockResolvedValueOnce("v18.19.0");
     res = await collect(checkNode());
     expect(res[0]).toMatchObject({ type: "error" });
   });
 
   it("checkPnpm: 主版本 >= 10 成功，低于报错", async () => {
-    execMock.mockResolvedValueOnce({ code: 0, stdout: "10.15.0", stderr: "" });
+    invokeMock.mockResolvedValueOnce("10.15.0");
     let res = await collect(checkPnpm());
     expect(res[0]).toMatchObject({ type: "success" });
 
-    execMock.mockResolvedValueOnce({ code: 0, stdout: "7.28.0", stderr: "" });
+    invokeMock.mockResolvedValueOnce("7.28.0");
     res = await collect(checkPnpm());
     expect(res[0]).toMatchObject({ type: "error" });
   });
