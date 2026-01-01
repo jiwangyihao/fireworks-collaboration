@@ -146,7 +146,21 @@ pub fn run() {
             crate::app::commands::submodule::update_submodule,
             crate::app::commands::submodule::sync_all_submodules,
             crate::app::commands::submodule::sync_submodule,
-            crate::app::commands::submodule::get_submodule_config
+            crate::app::commands::submodule::get_submodule_config,
+            // VitePress 命令
+            crate::app::commands::vitepress::vitepress_detect_project,
+            crate::app::commands::vitepress::vitepress_check_dependencies,
+            crate::app::commands::vitepress::vitepress_get_doc_tree,
+            crate::app::commands::vitepress::vitepress_read_document,
+            crate::app::commands::vitepress::vitepress_save_document,
+            crate::app::commands::vitepress::vitepress_create_document,
+            crate::app::commands::vitepress::vitepress_create_folder,
+            crate::app::commands::vitepress::vitepress_rename,
+            crate::app::commands::vitepress::vitepress_delete,
+            crate::app::commands::vitepress::vitepress_install_dependencies,
+            crate::app::commands::vitepress::vitepress_start_dev_server,
+            crate::app::commands::vitepress::vitepress_stop_dev_server,
+            crate::app::commands::vitepress::vitepress_parse_config
         ]);
 
     // Setup application state and configuration
@@ -314,6 +328,10 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
         target = "submodule",
         "Submodule manager initialized with default config"
     );
+
+    // Initialize VitePress Dev Server State
+    app.manage(crate::app::commands::vitepress::DevServerState::default());
+    tracing::info!(target = "vitepress", "DevServerState initialized");
 
     Ok(())
 }

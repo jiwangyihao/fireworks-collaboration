@@ -5,7 +5,11 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-minimize",
     "opener:default",
+    "shell:allow-open",
     {
       "identifier": "shell:allow-execute",
       "allow": [
@@ -18,6 +22,18 @@
           "name": "powershell",
           "cmd": "powershell.exe",
           "args": true
+        },
+        {
+          "name": "pnpm",
+          "cmd": "pnpm",
+          "args": true,
+          "sidecar": false
+        },
+        {
+          "name": "node",
+          "cmd": "node",
+          "args": true,
+          "sidecar": false
         }
       ]
     },
@@ -28,6 +44,18 @@
           "name": "cmd",
           "cmd": "cmd",
           "args": true
+        },
+        {
+          "name": "pnpm",
+          "cmd": "pnpm",
+          "args": true,
+          "sidecar": false
+        },
+        {
+          "name": "node",
+          "cmd": "node",
+          "args": true,
+          "sidecar": false
         }
       ]
     },
