@@ -6,22 +6,13 @@ REM
 REM REMOVES from PATH: Git\usr\bin, Git\mingw64\bin (contain zlib1.dll, etc.)
 REM KEEPS: Everything else including Git\cmd, nodejs, etc.
 
-setlocal enabledelayedexpansion
+setlocal EnableDelayedExpansion
 
-REM Build new PATH excluding problematic Git paths
-set "NEWPATH="
-for %%p in ("%PATH:;=";"%") do (
-    set "ENTRY=%%~p"
-    REM Skip Git\usr\bin and Git\mingw64\bin
-    echo !ENTRY! | findstr /i "\\Git\\usr\\bin \\Git\\mingw64\\bin" >nul
-    if errorlevel 1 (
-        if defined NEWPATH (
-            set "NEWPATH=!NEWPATH!;!ENTRY!"
-        ) else (
-            set "NEWPATH=!ENTRY!"
-        )
-    )
-)
+REM Fast string replacement to disable problematic paths without looping (O(1))
+set "NEWPATH=%PATH%"
+set "NEWPATH=!NEWPATH:Git\usr\bin=Git\usr\bin_disabled!"
+set "NEWPATH=!NEWPATH:Git\mingw64\bin=Git\mingw64\bin_disabled!"
 
-endlocal & set "PATH=%NEWPATH%"
+REM Set the modified PATH
+set "PATH=!NEWPATH!"
 %*
