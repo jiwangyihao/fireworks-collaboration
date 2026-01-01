@@ -43,7 +43,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 # Tauri 核心依赖（禁用默认的 wry/webview2，由 feature flag 控制）
-tauri = { version = "2", default-features = false, optional = true }
+tauri = { version = "2", default-features = false, optional = true , features = [] }
 tauri-plugin-opener = { version = "2", optional = true }
 tauri-plugin-shell = { version = "2", optional = true }
 tauri-plugin-fs = { version = "2", optional = true }

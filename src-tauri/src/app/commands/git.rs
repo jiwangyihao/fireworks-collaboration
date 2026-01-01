@@ -873,6 +873,7 @@ pub async fn git_repo_status(dest: String) -> Result<RepoStatus, String> {
 /// - `dest`: Repository path
 /// - `name`: Branch name to delete
 /// - `force`: Whether to force delete (even if not merged)
+#[tauri::command(rename_all = "camelCase")]
 pub async fn git_delete_branch(
     dest: String,
     name: String,
@@ -1266,78 +1267,78 @@ pub async fn git_worktree_remove(
         return Err(format!("Worktree path does not exist: {}", path));
     }
 
-    let repo = git2::Repository::open(repo_path)
-        .map_err(|e| format!("Failed to open repository: {}", e))?;
+    // All git2 operations must complete in this sync block before any async calls
+    // because git2 types are not Send-safe
+    let branch_name: Option<String> = {
+        let repo = git2::Repository::open(repo_path)
+            .map_err(|e| format!("Failed to open repository: {}", e))?;
 
-    // 1. Find the worktree and branch name
-    // We need to iterate worktrees to find the one matching 'path' to get its name/branch
-    let mut wt_name: Option<String> = None;
-    let mut branch_name: Option<String> = None;
+        // 1. Find the worktree and branch name
+        let mut wt_name: Option<String> = None;
+        let mut found_branch: Option<String> = None;
 
-    if let Ok(wts) = repo.worktrees() {
-        for name in wts.iter() {
-            if let Some(name) = name {
-                if let Ok(wt) = repo.find_worktree(name) {
-                    // Check if paths match
-                    let current_wt_path = wt.path();
-                    // Normalize for comparison
-                    if current_wt_path.canonicalize().ok() == wt_path.canonicalize().ok()
-                        || current_wt_path == wt_path
-                    {
-                        wt_name = Some(name.to_string());
+        if let Ok(wts) = repo.worktrees() {
+            for name in wts.iter() {
+                if let Some(name) = name {
+                    if let Ok(wt) = repo.find_worktree(name) {
+                        let current_wt_path = wt.path();
+                        if current_wt_path.canonicalize().ok() == wt_path.canonicalize().ok()
+                            || current_wt_path == wt_path
+                        {
+                            wt_name = Some(name.to_string());
 
-                        // Get branch name
-                        if let Ok(wt_repo) = git2::Repository::open(current_wt_path) {
-                            if let Ok(head) = wt_repo.head() {
-                                if let Some(s) = head.shorthand() {
-                                    branch_name = Some(s.to_string());
+                            if let Ok(wt_repo) = git2::Repository::open(current_wt_path) {
+                                if let Ok(head) = wt_repo.head() {
+                                    if let Some(s) = head.shorthand() {
+                                        found_branch = Some(s.to_string());
+                                    }
                                 }
                             }
+                            break;
                         }
-                        break;
                     }
                 }
             }
         }
-    }
 
-    let name = wt_name.ok_or_else(|| "Could not find registered worktree for path".to_string())?;
+        let name =
+            wt_name.ok_or_else(|| "Could not find registered worktree for path".to_string())?;
 
-    // 2. Validate status and Remove Worktree
-    let worktree = repo
-        .find_worktree(&name)
-        .map_err(|e| format!("Failed to find worktree: {}", e))?;
+        // 2. Validate status and Remove Worktree
+        let worktree = repo
+            .find_worktree(&name)
+            .map_err(|e| format!("Failed to find worktree: {}", e))?;
 
-    // Check clean status if not forced
-    if !force.unwrap_or(false) {
-        if let Ok(wt_repo) = git2::Repository::open(wt_path) {
-            let statuses = wt_repo
-                .statuses(None)
-                .map_err(|e| format!("Failed to check status: {}", e))?;
-            if !statuses.is_empty() {
-                return Err("Worktree is dirty. Use force to remove it.".to_string());
+        // Check clean status if not forced
+        if !force.unwrap_or(false) {
+            if let Ok(wt_repo) = git2::Repository::open(wt_path) {
+                let statuses = wt_repo
+                    .statuses(None)
+                    .map_err(|e| format!("Failed to check status: {}", e))?;
+                if !statuses.is_empty() {
+                    return Err("Worktree is dirty. Use force to remove it.".to_string());
+                }
             }
         }
-    }
 
-    // Prune logic (remove from main repo)
-    // Note: libgit2 prune does NOT delete the directory usually, it just removes metadata.
-    // git worktree remove does both.
-    let mut opts = git2::WorktreePruneOptions::new();
-    opts.valid(true); // Don't prune if locked?
+        // Prune the worktree
+        let mut opts = git2::WorktreePruneOptions::new();
+        opts.valid(true);
 
-    worktree
-        .prune(Some(&mut opts))
-        .map_err(|e| format!("Failed to prune worktree: {}", e))?;
+        worktree
+            .prune(Some(&mut opts))
+            .map_err(|e| format!("Failed to prune worktree: {}", e))?;
 
-    // Delete directory
-    // We try to remove the directory. If it fails (e.g. file lock), we warn but don't fail the operation
-    // since the worktree is already pruned from git.
+        // Return the branch name for later use
+        found_branch
+    }; // All git2 types are dropped here
+
+    // Delete directory (safe, no git2 types involved)
     if let Err(e) = std::fs::remove_dir_all(wt_path) {
         tracing::warn!("Failed to remove worktree directory {}: {}", path, e);
     }
 
-    // 3. Delete Remote Branch
+    // 3. Delete Remote Branch (async section - no git2 types in scope)
     if delete_remote_branch.unwrap_or(false) {
         if let Some(branch) = branch_name {
             let remote_name = remote.as_deref().unwrap_or("origin");
@@ -1359,7 +1360,6 @@ pub async fn git_worktree_remove(
 
             let cred_refs = creds.as_ref().map(|(u, p)| (u.as_str(), p.as_str()));
 
-            // We need to implement GitRunner for Git2Runner, which we did.
             use crate::core::git::runner::GitRunner;
 
             let result = runner.push_repo(
@@ -1368,7 +1368,7 @@ pub async fn git_worktree_remove(
                 Some(&[&refspec]),
                 cred_refs,
                 &should_interrupt,
-                &mut |_| {}, // Ignore progress
+                &mut |_| {},
             );
 
             match result {
