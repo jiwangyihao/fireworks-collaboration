@@ -36,7 +36,7 @@
 
 /* Utilities migrated from App.vue */
 @utility page {
-  @apply w-full min-w-full h-full prose flex flex-col p-3;
+  @apply w-full min-w-full h-full prose flex flex-col p-4;
 }
 
 @utility vertical-lr {

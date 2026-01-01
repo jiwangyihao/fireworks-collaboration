@@ -72,6 +72,12 @@ const router = createRouter({
       name: "observability",
       component: () => import("../views/developer-tools/ObservabilityView.vue"),
     },
+    {
+      path: "/document/:worktreePath(.*)",
+      name: "document",
+      component: () => import("../views/DocumentView.vue"),
+      meta: { requiresProject: true },
+    },
   ],
 });
 
