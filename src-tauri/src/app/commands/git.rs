@@ -619,6 +619,41 @@ pub async fn git_remote_remove(
     Ok(id.to_string())
 }
 
+/// Reset current branch to a specific reference.
+/// This can be used for pull operations by resetting to the remote tracking branch.
+///
+/// # Parameters
+/// - `dest`: Repository path
+/// - `reference`: Target reference (e.g., "origin/main", "main", commit hash)
+/// - `hard`: If true, perform hard reset (update working tree as well)
+#[tauri::command(rename_all = "camelCase")]
+pub async fn git_reset(
+    dest: String,
+    reference: String,
+    hard: Option<bool>,
+    reg: State<'_, TaskRegistryState>,
+    app: tauri::AppHandle<TauriRuntime>,
+) -> Result<String, String> {
+    let hard_flag = hard.unwrap_or(true); // Default to hard reset for pull operations
+
+    let (id, token) = reg.create(TaskKind::GitReset {
+        dest: dest.clone(),
+        reference: reference.clone(),
+        hard: hard_flag,
+    });
+
+    reg.clone().spawn_git_reset_task(
+        Some(AppHandle::from_tauri(app.clone())),
+        id,
+        token,
+        dest,
+        reference,
+        hard_flag,
+    );
+
+    Ok(id.to_string())
+}
+
 // ============================================================================
 // Synchronous query commands (no task creation)
 // ============================================================================

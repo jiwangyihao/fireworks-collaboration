@@ -616,4 +616,70 @@ impl TaskRegistry {
             }
         })
     }
+
+    pub fn spawn_git_reset_task(
+        self: &Arc<Self>,
+        app: Option<AppHandle>,
+        id: Uuid,
+        token: CancellationToken,
+        dest: String,
+        reference: String,
+        hard: bool,
+    ) -> JoinHandle<()> {
+        let this = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            this.mark_running(&app, &id, "GitReset");
+            if token.is_cancelled() {
+                handle_cancel(&this, &app, &id, "GitReset");
+                return;
+            }
+            let interrupt_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let dest_path = std::path::PathBuf::from(dest.clone());
+            let res: Result<(), crate::core::git::errors::GitError> = {
+                let app_for_cb = app.clone();
+                let id_for_cb = id;
+                crate::core::git::default_impl::reset::git_reset(
+                    &dest_path,
+                    &reference,
+                    hard,
+                    &interrupt_flag,
+                    move |p| {
+                        if let Some(app_ref) = &app_for_cb {
+                            let prog = TaskProgressEvent {
+                                task_id: id_for_cb,
+                                kind: p.kind,
+                                phase: p.phase,
+                                percent: p.percent,
+                                objects: p.objects,
+                                bytes: p.bytes,
+                                total_hint: p.total_hint,
+                                retried_times: None,
+                            };
+                            emit_all(app_ref, EV_PROGRESS, &prog);
+                        }
+                    },
+                )
+            };
+            if token.is_cancelled() || interrupt_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                handle_cancel(&this, &app, &id, "GitReset");
+                return;
+            }
+            match res {
+                Ok(()) => {
+                    this.mark_completed(&app, &id);
+                }
+                Err(e) => {
+                    report_failure(
+                        &this,
+                        &app,
+                        &id,
+                        "GitReset",
+                        &e,
+                        None,
+                        "failed without error event",
+                    );
+                }
+            }
+        })
+    }
 }

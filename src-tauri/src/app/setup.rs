@@ -90,6 +90,7 @@ pub fn run() {
             crate::app::commands::git::git_remote_set,
             crate::app::commands::git::git_remote_add,
             crate::app::commands::git::git_remote_remove,
+            crate::app::commands::git::git_reset,
             crate::app::commands::git::git_list_branches,
             crate::app::commands::git::git_repo_status,
             crate::app::commands::git::git_delete_branch,

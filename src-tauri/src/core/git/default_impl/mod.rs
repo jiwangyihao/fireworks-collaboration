@@ -20,6 +20,7 @@ pub mod opts;
 pub mod push;
 pub mod refname;
 pub mod remote;
+pub mod reset; // Git reset (hard reset for pull operations)
 pub mod tag; // P2.2a: depth/filter/strategyOverride parsing placeholder
 
 use crate::core::git::runner::{Git2Runner, GitRunner};

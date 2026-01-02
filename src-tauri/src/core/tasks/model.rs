@@ -100,6 +100,11 @@ pub enum TaskKind {
         dest: String,
         name: String,
     },
+    GitReset {
+        dest: String,
+        reference: String,
+        hard: bool,
+    },
     HttpFake {
         url: String,
         method: String,
@@ -126,6 +131,7 @@ impl TaskKind {
             Self::GitRemoteSet { .. } => "GitRemoteSet",
             Self::GitRemoteAdd { .. } => "GitRemoteAdd",
             Self::GitRemoteRemove { .. } => "GitRemoteRemove",
+            Self::GitReset { .. } => "GitReset",
             Self::HttpFake { .. } => "HttpFake",
             Self::Sleep { .. } => "Sleep",
             Self::Unknown => "Unknown",
