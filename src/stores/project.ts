@@ -283,12 +283,33 @@ export const useProjectStore = defineStore("project", {
         if (this.forkRepo) {
           this.forkRepo.syncStatus = syncStatus as ForkSyncStatus;
         }
+
+        // Fork 同步成功后，自动 fetch 本地仓库以更新远程跟踪分支
+        if (this.localStatus?.exists && this.localStatus?.path) {
+          try {
+            await this.fetchLocalRepo();
+          } catch (e) {
+            console.warn("Fork 同步后本地 fetch 失败:", e);
+          }
+        }
       } catch (error: any) {
         this.lastError = `同步Fork失败: ${error.message || error}`;
         throw error;
       } finally {
         this.loadingState = "idle";
       }
+    },
+
+    // Fetch 本地仓库（更新远程跟踪分支）
+    async fetchLocalRepo(): Promise<string | null> {
+      if (!this.localStatus?.path || !this.forkRepo) {
+        return null;
+      }
+
+      const { startGitFetch } = await import("../api/tasks");
+      const cloneUrl =
+        this.forkRepo.clone_url || this.forkRepo.html_url + ".git";
+      return startGitFetch(cloneUrl, this.localStatus.path);
     },
 
     // 强制同步Fork仓库（丢弃所有本地变更）

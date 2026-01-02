@@ -391,11 +391,38 @@ async function handleClone() {
 }
 
 // 同步本地仓库（fetch）
+const fetchingTaskId = ref<string | null>(null);
+
+// 监听 fetch 任务状态
+watch(
+  () => {
+    if (!fetchingTaskId.value) return null;
+    const task = tasksStore.items.find((t) => t.id === fetchingTaskId.value);
+    return task?.state;
+  },
+  async (newState) => {
+    if (newState === "completed") {
+      await projectStore.checkLocalRepo();
+      toastStore.success("同步完成");
+      projectStore.loadingState = "idle";
+      fetchingTaskId.value = null;
+    } else if (newState === "failed") {
+      const err = tasksStore.lastErrorById[fetchingTaskId.value!];
+      toastStore.error(`同步失败: ${err?.message || "未知错误"}`);
+      projectStore.loadingState = "idle";
+      fetchingTaskId.value = null;
+    }
+  }
+);
+
 async function handleFetch() {
   if (!localStatus.value?.path || !projectStore.forkRepo) {
     toastStore.error("本地仓库不存在");
     return;
   }
+
+  // 防止重复点击
+  if (fetchingTaskId.value) return;
 
   try {
     projectStore.loadingState = "fetching" as any;
@@ -403,46 +430,112 @@ async function handleFetch() {
     const cloneUrl =
       projectStore.forkRepo.clone_url ||
       projectStore.forkRepo.html_url + ".git";
-    await startGitFetch(cloneUrl, localStatus.value.path);
+    const taskId = await startGitFetch(cloneUrl, localStatus.value.path);
+    fetchingTaskId.value = taskId;
     toastStore.success("同步任务已启动");
-
-    // 延迟刷新
-    setTimeout(async () => {
-      await projectStore.checkLocalRepo();
-    }, 2000);
+    // 不再这里手动idle，交由watch处理
   } catch (error: any) {
     console.error("同步失败:", error);
     toastStore.error(`同步失败: ${error.message || error}`);
-  } finally {
     projectStore.loadingState = "idle";
   }
 }
 
-// 推送本地仓库（push）
-async function handlePush() {
+// 拉取本地仓库（fetch + reset 到远程跟踪分支）
+const pullingTaskId = ref<string | null>(null);
+const pullingPhase = ref<"fetch" | "reset" | null>(null);
+
+// 监听 pull 任务状态
+watch(
+  () => {
+    if (!pullingTaskId.value) return null;
+    const task = tasksStore.items.find((t) => t.id === pullingTaskId.value);
+    return task?.state;
+  },
+  async (newState) => {
+    if (!pullingTaskId.value) return;
+
+    if (newState === "completed") {
+      if (pullingPhase.value === "fetch") {
+        // Fetch 完成，执行 reset 到远程跟踪分支
+        try {
+          const trackingBranch = localStatus.value?.trackingBranch;
+          if (!trackingBranch) {
+            toastStore.warning("无跟踪分支，仅同步远程状态");
+            await projectStore.checkLocalRepo();
+            projectStore.loadingState = "idle";
+            pullingTaskId.value = null;
+            pullingPhase.value = null;
+            return;
+          }
+
+          const { startGitReset } = await import("../api/tasks");
+          const resetTaskId = await startGitReset({
+            dest: localStatus.value!.path!,
+            reference: trackingBranch,
+            hard: true,
+          });
+          pullingTaskId.value = resetTaskId;
+          pullingPhase.value = "reset";
+        } catch (e: any) {
+          toastStore.error(`重置失败: ${e.message || e}`);
+          projectStore.loadingState = "idle";
+          pullingTaskId.value = null;
+          pullingPhase.value = null;
+        }
+      } else if (pullingPhase.value === "reset") {
+        // Reset 完成，刷新状态
+        await projectStore.checkLocalRepo();
+        toastStore.success("拉取完成");
+        projectStore.loadingState = "idle";
+        pullingTaskId.value = null;
+        pullingPhase.value = null;
+      }
+    } else if (newState === "failed") {
+      const err = tasksStore.lastErrorById[pullingTaskId.value!];
+      const phase = pullingPhase.value === "fetch" ? "同步" : "重置";
+      toastStore.error(`${phase}失败: ${err?.message || "未知错误"}`);
+      projectStore.loadingState = "idle";
+      pullingTaskId.value = null;
+      pullingPhase.value = null;
+    }
+  }
+);
+
+async function handlePull() {
   if (!localStatus.value?.path) {
     toastStore.error("本地仓库不存在");
     return;
   }
 
-  try {
-    projectStore.loadingState = "pushing" as any;
-    const { startGitPush } = await import("../api/tasks");
-    await startGitPush({
-      dest: localStatus.value.path,
-      useStoredCredential: true,
-    });
-    toastStore.success("推送任务已启动");
+  // 防止重复点击
+  if (pullingTaskId.value) return;
 
-    // 延迟刷新
-    setTimeout(async () => {
-      await projectStore.checkLocalRepo();
-    }, 2000);
+  try {
+    projectStore.loadingState = "fetching" as any;
+    pullingPhase.value = "fetch";
+
+    // 先 fetch
+    const { startGitFetch } = await import("../api/tasks");
+    const cloneUrl =
+      projectStore.forkRepo?.clone_url ||
+      projectStore.forkRepo?.html_url + ".git";
+
+    if (!cloneUrl) {
+      toastStore.error("无法获取远程仓库 URL");
+      projectStore.loadingState = "idle";
+      pullingPhase.value = null;
+      return;
+    }
+
+    const taskId = await startGitFetch(cloneUrl, localStatus.value.path);
+    pullingTaskId.value = taskId;
+    // 由 watch 处理后续的 reset 操作
   } catch (error: any) {
-    console.error("推送失败:", error);
-    toastStore.error(`推送失败: ${error.message || error}`);
-  } finally {
+    console.error("拉取失败:", error);
+    toastStore.error(`拉取失败: ${error.message || error}`);
     projectStore.loadingState = "idle";
+    pullingPhase.value = null;
   }
 }
 
@@ -533,6 +626,27 @@ async function refresh() {
 // 页面加载
 onMounted(async () => {
   await projectStore.loadAllData();
+
+  // 如果本地仓库存在，自动 fetch 以更新 ahead/behind 状态
+  if (
+    localStatus.value?.exists &&
+    localStatus.value?.path &&
+    projectStore.forkRepo
+  ) {
+    try {
+      projectStore.loadingState = "fetching" as any;
+      const { startGitFetch } = await import("../api/tasks");
+      const cloneUrl =
+        projectStore.forkRepo.clone_url ||
+        projectStore.forkRepo.html_url + ".git";
+      const taskId = await startGitFetch(cloneUrl, localStatus.value.path);
+      // 使用 fetchingTaskId 来触发现有的 watch 监听机制
+      fetchingTaskId.value = taskId;
+    } catch (e) {
+      console.warn("自动 fetch 失败:", e);
+      projectStore.loadingState = "idle";
+    }
+  }
 });
 </script>
 
@@ -996,15 +1110,15 @@ onMounted(async () => {
               </button>
               <button
                 class="btn btn-xs btn-primary"
-                :disabled="loadingState !== 'idle' || localStatus.ahead === 0"
-                @click="handlePush"
-                title="推送本地提交到远程"
+                :disabled="loadingState !== 'idle' || localStatus.behind === 0"
+                @click="handlePull"
+                title="从远程拉取更新到本地"
               >
                 <span
-                  v-if="loadingState === 'pushing'"
+                  v-if="loadingState === 'fetching'"
                   class="loading loading-spinner loading-xs"
                 ></span>
-                <span v-else>推送</span>
+                <span v-else>拉取</span>
               </button>
             </div>
           </template>

@@ -277,6 +277,18 @@ export async function startGitRemoteRemove(params: {
   return invoke<string>("git_remote_remove", { dest, name });
 }
 
+// Git Reset: 重置当前分支到指定引用（用于 pull 操作）
+export async function startGitReset(params: {
+  dest: string;
+  reference: string;
+  hard?: boolean;
+}) {
+  const { dest, reference, hard } = params;
+  const args: Record<string, unknown> = { dest, reference };
+  if (hard !== undefined) args.hard = hard;
+  return invoke<string>("git_reset", args);
+}
+
 // ============================================================================
 // Sync query APIs (no task creation)
 // ============================================================================
