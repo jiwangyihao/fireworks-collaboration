@@ -680,11 +680,11 @@ async function handleDeleteConfirm() {
     </div>
 
     <!-- Main Content Area (Card Layout) -->
-    <div class="flex flex-1 overflow-hidden gap-4 h-full">
+    <div class="flex flex-1 overflow-hidden h-full">
       <!-- Sidebar Card (StatusCard Emulation) - Wrapper for animation -->
       <div
         class="flex-shrink-0 transition-all duration-300 ease-in-out overflow-hidden"
-        :class="isSidebarOpen ? 'w-80 opacity-100' : 'w-0 opacity-0'"
+        :class="isSidebarOpen ? 'w-80 opacity-100 mr-4' : 'w-0 opacity-0 mr-0'"
       >
         <!-- Actual Content Card (Fixed Width to prevent internal reflow) -->
         <div
@@ -971,7 +971,9 @@ async function handleDeleteConfirm() {
       <!-- Right Preview Pane (Collapsible) -->
       <div
         class="flex-shrink-0 transition-all duration-300 ease-in-out overflow-hidden"
-        :class="isPreviewOpen ? 'w-[500px] opacity-100' : 'w-0 opacity-0'"
+        :class="
+          isPreviewOpen ? 'w-[500px] opacity-100 ml-4' : 'w-0 opacity-0 ml-0'
+        "
       >
         <div
           class="w-[500px] flex flex-col card border-2 border-base-content/15 bg-base-100 h-full"

@@ -440,3 +440,10 @@ M src/router/index.ts                           # 添加 /document 路由
 - **布局稳定性**：
   - 修复模态框打开时的页面抖动 (Layout Shift) 问题
   - 方案：`src/style.css` 中配置 `scrollbar-gutter: stable` (用户修正为 `auto`)，并配合 `overflow: hidden` 确保布局稳态
+
+### 9.4 视图过渡动画优化
+
+- **侧边栏/预览面板间距处理**：
+  - 问题：使用 flex 布局的 `gap` 属性会导致侧边栏/预览面板收起时，虽然宽度变为 0，但 gap 依然占据空间，导致视觉上留有空白。
+  - 修复：移除容器的 `gap-4`，改为在侧边栏和预览面板上动态应用 `margin` (`mr-4` / `ml-4`)。
+  - 效果：当面板展开时应用 margin，收起时 margin 移除，确保过渡动画平滑且无残留间距。
