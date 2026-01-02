@@ -433,3 +433,10 @@ M src/router/index.ts                           # 添加 /document 路由
   - 修复 Select 在 Loading 状态下的交互逻辑
 - **导航栏**：
   - DocumentView 返回按钮移除 `pl-0`，恢复标准按钮内边距和交互反馈
+- **对话框重构 (Refactor)**：
+  - 提取 `BaseModal` 组件，统一 `ConfirmModal` 和 `InputModal` 的交互与视觉样式
+  - 统一使用 `btn-sm` 小号按钮
+  - 规范化模态框内边距 (`p-4`)
+- **布局稳定性**：
+  - 修复模态框打开时的页面抖动 (Layout Shift) 问题
+  - 方案：`src/style.css` 中配置 `scrollbar-gutter: stable` (用户修正为 `auto`)，并配合 `overflow: hidden` 确保布局稳态

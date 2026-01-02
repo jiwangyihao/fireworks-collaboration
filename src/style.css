@@ -59,3 +59,14 @@
 .list-leave-active {
   position: absolute;
 }
+
+/* Enforce full-screen app layout, prevent body scrollbar to avoid layout shifts */
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 0 !important; /* Force remove scrollbar compensation padding */
+  scrollbar-gutter: auto;
+}
