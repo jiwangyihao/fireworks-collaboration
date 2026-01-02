@@ -14,6 +14,7 @@ mod git_credential_autofill;
 mod git_fetch_core_and_shallow;
 mod git_preconditions_and_cancel;
 mod git_push_and_retry;
+mod git_reset;
 mod git_strategy_and_override;
 mod git_tag_and_remote;
 mod opts;
