@@ -40,6 +40,59 @@ const loadingTree = computed(() => docStore.loadingTree);
 const error = computed(() => docStore.error);
 const selectedPath = computed(() => docStore.selectedPath);
 
+// Editor related mapping (E2)
+const currentBlocks = computed(() => docStore.currentBlocks);
+const isDirty = computed(() => docStore.isDirty);
+const isSaving = computed(() => docStore.isSaving);
+const loadingContent = computed(() => docStore.loadingContent);
+
+// Break the reactivity loop: Only update this when loading finishes
+const staticInitialBlocks = ref<any[]>([]);
+watch(loadingContent, (isLoading) => {
+  if (!isLoading && docStore.currentBlocks) {
+    // Determine if we should update static blocks.
+    // We only update if it's a fresh load (loading just finished).
+    // Using JSON parse/stringify to be safe.
+    staticInitialBlocks.value = JSON.parse(
+      JSON.stringify(docStore.currentBlocks)
+    );
+  }
+});
+
+import BlockEditor from "../components/editor/BlockEditor.vue";
+
+async function handleSaveDocument() {
+  try {
+    await docStore.saveDocumentContent();
+    toastStore.success("保存成功");
+  } catch (e) {
+    toastStore.error(`保存失败: ${e}`);
+  }
+}
+
+function handleEditorChange(blocks: any[]) {
+  docStore.updateEditorBlocks(blocks);
+}
+
+// Auto-save logic (E2.2)
+let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+watch(
+  () => docStore.isDirty,
+  (dirty) => {
+    if (dirty && !isSaving.value) {
+      if (autoSaveTimer) clearTimeout(autoSaveTimer);
+      autoSaveTimer = setTimeout(async () => {
+        try {
+          await docStore.saveDocumentContent();
+          console.log("Auto-save successful");
+        } catch (e) {
+          console.error("Auto-save failed:", e);
+        }
+      }, 2000); // 2 seconds debounce
+    }
+  }
+);
+
 // Filtering
 const showHiddenFiles = ref(false);
 const IGNORED_NAMES = [
@@ -429,6 +482,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   document.removeEventListener("click", closeContextMenu);
+  if (autoSaveTimer) clearTimeout(autoSaveTimer);
   docStore.resetState();
 });
 
@@ -888,6 +942,30 @@ async function handleDeleteConfirm() {
           </div>
 
           <div class="flex items-center gap-2 shrink-0">
+            <!-- Save Button -->
+            <button
+              v-if="selectedPath"
+              class="btn btn-xs gap-1.5"
+              :class="
+                isDirty ? 'btn-primary shadow-sm' : 'btn-ghost opacity-50'
+              "
+              @click="handleSaveDocument"
+              :disabled="!isDirty || isSaving"
+            >
+              <span
+                v-if="isSaving"
+                class="loading loading-spinner loading-xs"
+              ></span>
+              <BaseIcon
+                v-else
+                :icon="
+                  isDirty ? 'ph--floppy-disk-back-fill' : 'ph--floppy-disk'
+                "
+                size="sm"
+              />
+              {{ isSaving ? "保存中..." : isDirty ? "保存" : "已保存" }}
+            </button>
+
             <button
               v-if="isDevServerRunning && !isPreviewOpen"
               class="btn btn-sm btn-ghost btn-square"
@@ -904,10 +982,13 @@ async function handleDeleteConfirm() {
           </div>
         </div>
 
+        <!-- DEBUG INFO -->
+
         <!-- Main Content -->
         <div
-          class="flex-1 relative border-t-2 border-dashed border-base-200 bg-base-50/30 m-4 rounded-lg"
+          class="flex-1 relative border-t-2 border-dashed border-base-200 bg-base-50/10 m-4 rounded-lg overflow-hidden"
         >
+          <!-- Empty State -->
           <div
             v-if="!selectedPath"
             class="absolute inset-0 flex flex-col items-center justify-center text-base-content/30 gap-6"
@@ -927,43 +1008,27 @@ async function handleDeleteConfirm() {
             </div>
           </div>
 
+          <!-- Loading State -->
+          <div
+            v-else-if="loadingContent"
+            class="absolute inset-0 flex flex-col items-center justify-center text-base-content/30 gap-4"
+          >
+            <span
+              class="loading loading-spinner loading-lg text-primary/30"
+            ></span>
+            <p class="text-sm">正在加载文档内容...</p>
+          </div>
+
+          <!-- Block Editor -->
           <div
             v-else
-            class="absolute inset-0 flex items-center justify-center p-10"
+            class="absolute inset-0 flex flex-col p-4 overflow-hidden"
           >
-            <div class="text-center max-w-md w-full">
-              <div
-                class="w-20 h-20 bg-primary/5 rounded-2xl flex items-center justify-center mx-auto mb-6"
-              >
-                <BaseIcon
-                  icon="ph--code-block"
-                  size="2xl"
-                  class="text-primary"
-                />
-              </div>
-
-              <h3 class="text-xl font-bold text-base-content mb-2">
-                编辑器即将推出
-              </h3>
-              <p class="text-base-content/60 mb-8">
-                Markdown 编辑器正在紧锣密鼓地开发中 (E2阶段)
-              </p>
-
-              <div
-                class="stats shadow w-full border border-base-200 bg-base-100"
-              >
-                <div class="stat">
-                  <div class="stat-title">当前文件</div>
-                  <div
-                    class="stat-value text-sm truncate"
-                    :title="selectedPath"
-                  >
-                    {{ selectedPath.split("/").pop() }}
-                  </div>
-                  <div class="stat-desc truncate">{{ selectedPath }}</div>
-                </div>
-              </div>
-            </div>
+            <BlockEditor
+              :key="selectedPath || 'editor'"
+              :initial-content="staticInitialBlocks"
+              @change="handleEditorChange"
+            />
           </div>
         </div>
       </div>

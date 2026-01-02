@@ -409,6 +409,8 @@ vitepress_delete(path: String) -> bool
 
 ### E2：块编辑器（3 周）
 
+> 详细计划请参考 [E2 细化路线图与开发计划](file:///c:/Users/34404/Documents/GitHub/fireworks-collaboration/doc/TECH_DESIGN_E2_PLAN.md)
+
 **目标**：为非程序员用户提供所见即所得编辑体验
 
 > BlockNote 本身就是所见即所得编辑器，无需单独的预览栏。

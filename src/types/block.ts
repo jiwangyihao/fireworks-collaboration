@@ -38,6 +38,8 @@ export interface InlineContent {
   children?: InlineContent[];
   /** 行内数学公式（$...$） */
   formula?: string;
+  /** 是否为行内显示模式（$$...$$） */
+  displayMode?: boolean;
 }
 
 /**
@@ -87,6 +89,8 @@ export interface StrongContent extends InlineContent {
 export interface InlineMathContent extends InlineContent {
   type: "inlineMath";
   formula: string;
+  /** 是否为行内显示模式（$$...$$），默认为 false ($...$) */
+  displayMode?: boolean;
 }
 
 // ============================================================================

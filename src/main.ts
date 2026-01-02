@@ -5,6 +5,16 @@ import router from "./router";
 import { useConfigStore } from "./stores/config";
 import { initTaskEvents } from "./api/tasks";
 import "./style.css";
+
+// 配置 veaury 兼容 React 19 (E2.1)
+// react-dom 19 不再支持动态判断 render/createRoot，需要手动配置
+import { createRoot } from "react-dom/client";
+import { setVeauryOptions } from "veaury";
+setVeauryOptions({
+  react: {
+    createRoot,
+  },
+});
 // + dev 调试句柄（方案 B）
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";

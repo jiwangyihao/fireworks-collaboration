@@ -35,6 +35,12 @@ export const useDocumentStore = defineStore("document", () => {
   const docTree = ref<DocTreeNode | null>(null);
   const loadingTree = ref(false);
 
+  // Document Content (E2)
+  const currentBlocks = ref<any[]>([]);
+  const currentFrontmatter = ref<Record<string, any>>({});
+  const isDirty = ref(false);
+  const isSaving = ref(false);
+
   // Selection
   const selectedPath = ref<string | null>(null);
   // Placeholder for E2: content of current document
@@ -43,6 +49,7 @@ export const useDocumentStore = defineStore("document", () => {
   // Generic Loading/Error
   const loadingDetection = ref(false);
   const loadingDependencies = ref(false);
+  const loadingContent = ref(false);
   const error = ref<string | null>(null);
 
   // ==========================================================================
@@ -85,6 +92,11 @@ export const useDocumentStore = defineStore("document", () => {
     dependencyStatus.value = null;
     docTree.value = null;
     selectedPath.value = null;
+    currentBlocks.value = [];
+    currentFrontmatter.value = {};
+    isDirty.value = false;
+    isSaving.value = false;
+    loadingContent.value = false;
     error.value = null;
     installLogs.value = [];
   }
@@ -199,8 +211,61 @@ export const useDocumentStore = defineStore("document", () => {
     }
   }
 
-  function selectDocument(path: string) {
+  async function selectDocument(path: string) {
+    if (selectedPath.value === path) return;
     selectedPath.value = path;
+    await loadDocumentContent(path);
+  }
+
+  /** Load document content and convert to blocks (E2) */
+  async function loadDocumentContent(path: string) {
+    loadingContent.value = true;
+    try {
+      const { readDocument } = await import("../api/vitepress");
+      const { loadMarkdownToEditor } = await import(
+        "../utils/blocknote-adapter"
+      );
+
+      const doc = await readDocument(path);
+      currentFrontmatter.value = doc.frontmatter || {};
+      currentBlocks.value = await loadMarkdownToEditor(doc.content);
+      isDirty.value = false;
+    } catch (e) {
+      error.value = `加载文档失败: ${e}`;
+    } finally {
+      loadingContent.value = false;
+    }
+  }
+
+  /** Save current blocks back to markdown file (E2) */
+  async function saveDocumentContent() {
+    if (!selectedPath.value || isSaving.value) return;
+
+    isSaving.value = true;
+    try {
+      const { saveDocument } = await import("../api/vitepress");
+      const { saveEditorToMarkdown } = await import(
+        "../utils/blocknote-adapter"
+      );
+
+      const markdown = await saveEditorToMarkdown(
+        currentBlocks.value,
+        currentFrontmatter.value
+      );
+
+      await saveDocument(selectedPath.value, markdown);
+      isDirty.value = false;
+    } catch (e) {
+      error.value = `保存文档失败: ${e}`;
+      throw e;
+    } finally {
+      isSaving.value = false;
+    }
+  }
+
+  function updateEditorBlocks(blocks: any[]) {
+    currentBlocks.value = blocks;
+    isDirty.value = true;
   }
 
   return {
@@ -214,8 +279,13 @@ export const useDocumentStore = defineStore("document", () => {
     docTree,
     loadingTree,
     selectedPath,
+    currentBlocks,
+    currentFrontmatter,
+    isDirty,
+    isSaving,
     loadingDetection,
     loadingDependencies,
+    loadingContent,
     error,
 
     // Getters
@@ -235,6 +305,9 @@ export const useDocumentStore = defineStore("document", () => {
     renameItem,
     deleteItem,
     selectDocument,
+    loadDocumentContent,
+    saveDocumentContent,
+    updateEditorBlocks,
     resetState,
   };
 });

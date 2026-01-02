@@ -56,6 +56,9 @@ function inlineContentToMarkdown(content: InlineContent): string {
       return `[${linkText}](${content.href || ""})`;
 
     case "inlineMath":
+      if (content.displayMode) {
+        return `$$${content.formula || ""}$$`;
+      }
       return `$${content.formula || ""}$`;
 
     default:

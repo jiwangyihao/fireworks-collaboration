@@ -52,7 +52,38 @@ function createProcessor() {
     .use(remarkGfm) // 支持 GFM：表格、复选框、删除线等
     .use(remarkFrontmatter, ["yaml"])
     .use(remarkDirective)
-    .use(remarkMath);
+    .use(remarkMath)
+    .use(remarkEnrichMath);
+}
+
+/**
+ * Custom plugin to enrich math nodes with source information.
+ * Specifically checks if inlineMath nodes are wrapped in $$ (double dollars) in the source.
+ */
+function remarkEnrichMath() {
+  return (tree: any, file: any) => {
+    const visit = (node: any) => {
+      if (node.type === "inlineMath") {
+        const start = node.position?.start?.offset;
+        const end = node.position?.end?.offset;
+        if (
+          typeof start === "number" &&
+          typeof end === "number" &&
+          file.value
+        ) {
+          const raw = file.value.slice(start, end);
+          if (raw.startsWith("$$")) {
+            node.data = node.data || {};
+            node.data.displayMode = true;
+          }
+        }
+      }
+      if (node.children) {
+        node.children.forEach(visit);
+      }
+    };
+    visit(tree);
+  };
 }
 
 // ============================================================================
@@ -114,6 +145,7 @@ function convertPhrasingContent(node: PhrasingContent): InlineContent {
       return {
         type: "inlineMath",
         formula: node.value,
+        displayMode: (node.data as any)?.displayMode || false,
       };
 
     default:
@@ -577,8 +609,14 @@ function convertNodes(nodes: RootContent[]): Block[] {
  */
 export function markdownToBlocks(markdown: string): Block[] {
   const processor = createProcessor();
-  const tree = processor.parse(markdown) as Root;
-  return convertNodes(tree.children);
+  const parsedTree = processor.parse(markdown);
+  const tree = processor.runSync(parsedTree, markdown) as Root;
+  const blocks = convertNodes(tree.children);
+  console.log(
+    "[Parser] Parsed blocks from markdown:",
+    JSON.stringify(blocks, null, 2)
+  );
+  return blocks;
 }
 
 /**
@@ -589,7 +627,8 @@ export function parseMarkdownDocument(
   path: string = ""
 ): Document {
   const processor = createProcessor();
-  const tree = processor.parse(markdown) as Root;
+  const parsedTree = processor.parse(markdown);
+  const tree = processor.runSync(parsedTree, markdown) as Root;
 
   const frontmatter = extractFrontmatter(tree);
   const blocks = convertNodes(tree.children);
