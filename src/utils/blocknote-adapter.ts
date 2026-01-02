@@ -11,7 +11,7 @@ interface BlockNoteBlock {
   id?: string;
   type: string;
   props: Record<string, unknown>;
-  content: unknown[];
+  content: unknown; // 可能是 InlineContent[] 或 TableContent 对象
   children?: BlockNoteBlock[];
 }
 
@@ -201,6 +201,50 @@ export function internalToBlockNote(blocks: InternalBlock[]): BlockNoteBlock[] {
           children: undefined,
         };
 
+      case "table": {
+        // 将 Internal TableBlock 转换为 BlockNote table 格式
+        const tableBlock = block as any;
+        const { headerRow, rows } = tableBlock.props || {};
+
+        // BlockNote table 格式: content.rows[].cells 是 InlineContent[][] (二维数组)
+        const tableRows: any[] = [];
+
+        // 添加表头行
+        if (headerRow && headerRow.cells) {
+          tableRows.push({
+            cells: headerRow.cells.map((cell: any) => ({
+              type: "tableCell",
+              content: internalInlineToBlockNote(cell.content || []),
+              props: {},
+            })),
+          });
+        }
+
+        // 添加数据行
+        if (rows && Array.isArray(rows)) {
+          for (const row of rows) {
+            tableRows.push({
+              cells: row.cells.map((cell: any) => ({
+                type: "tableCell",
+                content: internalInlineToBlockNote(cell.content || []),
+                props: {},
+              })),
+            });
+          }
+        }
+
+        return {
+          ...common,
+          type: "table",
+          props: {},
+          content: {
+            type: "tableContent",
+            rows: tableRows,
+          },
+          children: undefined,
+        };
+      }
+
       case "quote":
         // Fallback: Map quote to a paragraph with "> " prefix
         // Since we don't have a native blockquote block active in schema yet
@@ -278,7 +322,7 @@ export function blockNoteToInternal(blocks: BlockNoteBlock[]): InternalBlock[] {
         return {
           ...common,
           type: "paragraph" as const,
-          content: blockNoteInlineToInternal(block.content),
+          content: blockNoteInlineToInternal(block.content as unknown[]),
         };
 
       case "heading":
@@ -286,14 +330,14 @@ export function blockNoteToInternal(blocks: BlockNoteBlock[]): InternalBlock[] {
           ...common,
           type: "heading" as const,
           props: { level: (block.props.level as 1 | 2 | 3 | 4 | 5 | 6) || 1 },
-          content: blockNoteInlineToInternal(block.content),
+          content: blockNoteInlineToInternal(block.content as unknown[]),
         };
 
       case "bulletListItem":
         return {
           ...common,
           type: "bulletListItem" as const,
-          content: blockNoteInlineToInternal(block.content),
+          content: blockNoteInlineToInternal(block.content as unknown[]),
           children:
             block.children && block.children.length > 0
               ? blockNoteToInternal(block.children)
@@ -305,7 +349,7 @@ export function blockNoteToInternal(blocks: BlockNoteBlock[]): InternalBlock[] {
           ...common,
           type: "numberedListItem" as const,
           props: { start: (block.props.start as number) || 1 },
-          content: blockNoteInlineToInternal(block.content),
+          content: blockNoteInlineToInternal(block.content as unknown[]),
           children:
             block.children && block.children.length > 0
               ? blockNoteToInternal(block.children)
@@ -317,7 +361,7 @@ export function blockNoteToInternal(blocks: BlockNoteBlock[]): InternalBlock[] {
           ...common,
           type: "checkListItem" as const,
           props: { checked: (block.props.checked as boolean) || false },
-          content: blockNoteInlineToInternal(block.content),
+          content: blockNoteInlineToInternal(block.content as unknown[]),
           children:
             block.children && block.children.length > 0
               ? blockNoteToInternal(block.children)
@@ -326,7 +370,7 @@ export function blockNoteToInternal(blocks: BlockNoteBlock[]): InternalBlock[] {
 
       case "codeBlock": {
         const language = (block.props.language as string) || "text";
-        const code = (block.content[0] as any)?.text || "";
+        const code = ((block.content as any[])?.[0] as any)?.text || "";
 
         // E2.2: 尝试恢复自定义块（反序列化 JSON）
         if (language === "json") {
@@ -361,6 +405,52 @@ export function blockNoteToInternal(blocks: BlockNoteBlock[]): InternalBlock[] {
           props: {
             language,
             code,
+          },
+        };
+      }
+
+      case "table": {
+        // BlockNote table 格式转换为 Internal TableBlock
+        const tableContent = block.content as any;
+        const bnRows = tableContent?.rows || [];
+
+        // 辅助函数：安全地转换 cell 内容
+        const convertCell = (cell: any) => {
+          // BlockNote cell 是对象: { type: "tableCell", content: InlineContent[], props: {...} }
+          if (
+            cell &&
+            cell.type === "tableCell" &&
+            Array.isArray(cell.content)
+          ) {
+            return { content: blockNoteInlineToInternal(cell.content) };
+          }
+          // 如果是直接的数组（兼容旧格式）
+          if (Array.isArray(cell)) {
+            return { content: blockNoteInlineToInternal(cell) };
+          }
+          // 如果不是预期格式，返回空内容
+          return { content: [] };
+        };
+
+        // 第一行作为表头
+        const headerRow =
+          bnRows.length > 0
+            ? {
+                cells: bnRows[0].cells.map(convertCell),
+              }
+            : { cells: [] };
+
+        // 剩余行作为数据行
+        const dataRows = bnRows.slice(1).map((row: any) => ({
+          cells: row.cells.map(convertCell),
+        }));
+
+        return {
+          ...common,
+          type: "table" as const,
+          props: {
+            headerRow,
+            rows: dataRows,
           },
         };
       }
