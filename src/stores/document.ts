@@ -160,10 +160,9 @@ export const useDocumentStore = defineStore("document", () => {
     isInstalling.value = true;
     try {
       await apiInstallDependencies(worktreePath.value);
-      // Note: isInstalling is reset by the event listener in DocumentView.vue
-      // when "vitepress://install-finish" is received
+      isInstalling.value = false;
     } catch (e) {
-      isInstalling.value = false; // Only reset on error
+      isInstalling.value = false; // Reset on error
       throw e; // Let View handle error display or toast
     }
   }

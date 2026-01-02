@@ -81,6 +81,9 @@ importers:
         specifier: ^2.8.2
         version: 2.8.2
     devDependencies:
+      '@pinia/testing':
+        specifier: ^1.0.3
+        version: 1.0.3(pinia@2.3.1(typescript@5.6.3)(vue@3.5.20(typescript@5.6.3)))
       '@tailwindcss/typography':
         specifier: ^0.5.16
         version: 0.5.16(tailwindcss@4.1.12)
@@ -583,6 +586,11 @@ packages:
 
   '@one-ini/wasm@0.1.1':
     resolution: {integrity: sha512-XuySG1E38YScSJoMlqovLru4KTUNSjgVTIjyh7qMX6aNN5HY5Ct5LhRJdxO79JtTzKfzV/bnWpz+zquYrISsvw==}
+
+  '@pinia/testing@1.0.3':
+    resolution: {integrity: sha512-g+qR49GNdI1Z8rZxKrQC3GN+LfnGTNf5Kk8Nz5Cz6mIGva5WRS+ffPXQfzhA0nu6TveWzPNYTjGl4nJqd3Cu9Q==}
+    peerDependencies:
+      pinia: '>=3.0.4'
 
   '@pkgjs/parseargs@0.11.0':
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
@@ -2334,6 +2342,10 @@ snapshots:
       '@octokit/webhooks-methods': 6.0.0
 
   '@one-ini/wasm@0.1.1': {}
+
+  '@pinia/testing@1.0.3(pinia@2.3.1(typescript@5.6.3)(vue@3.5.20(typescript@5.6.3)))':
+    dependencies:
+      pinia: 2.3.1(typescript@5.6.3)(vue@3.5.20(typescript@5.6.3))
 
   '@pkgjs/parseargs@0.11.0':
     optional: true
