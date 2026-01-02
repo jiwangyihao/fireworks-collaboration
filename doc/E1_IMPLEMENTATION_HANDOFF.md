@@ -52,12 +52,12 @@
 
 ### 3.1 项目检测与配置
 
-| 命令                             | 说明                                         |
-| -------------------------------- | -------------------------------------------- |
-| `vitepress_detect_project`       | 检测指定路径是否为 VitePress 项目            |
-| `vitepress_parse_config`         | 解析 VitePress 配置（通过 Node.js 脚本执行） |
-| `vitepress_check_dependencies`   | 检查 pnpm 依赖安装状态                       |
-| `vitepress_install_dependencies` | 执行 `pnpm install` 并流式输出进度           |
+| 命令                             | 说明                                                  |
+| -------------------------------- | ----------------------------------------------------- |
+| `vitepress_detect_project`       | 检测指定路径是否为 VitePress 项目                     |
+| `vitepress_parse_config`         | 解析 VitePress 配置（通过 Node.js 脚本执行）          |
+| `vitepress_check_dependencies`   | 检查 pnpm 依赖安装状态                                |
+| `vitepress_install_dependencies` | 删除 node_modules 后执行 `pnpm install`（带进度事件） |
 
 ### 3.2 文档树管理
 
@@ -154,8 +154,9 @@ stopDevServer(processId: number): Promise<void>
 - **文档树展示**：递归展示 VitePress 项目的 Markdown 文件结构
 - **Git 状态标记**：显示文件的 modified/staged/untracked/conflict 状态
 - **标题提取**：从 Frontmatter 或 `# ` 标题自动提取显示名称
-- **文件过滤**：默认隐藏系统文件夹（public、scripts、assets 等）和 README.md
-- **过滤开关**：眼睛图标切换显示/隐藏过滤文件
+- **文件过滤**：默认隐藏系统文件夹（public、scripts、assets、README.md、CONTRIBUTING.md 等）
+- **工具栏按钮**：显示/隐藏文件、新建文档、新建文件夹、重新安装依赖
+- **DaisyUI Tooltip**：所有工具栏按钮使用 `tooltip tooltip-left` 显示提示
 
 ### 5.2 上下文菜单
 
@@ -182,6 +183,14 @@ stopDevServer(processId: number): Promise<void>
 - **文档同步**：在文档树中选择文件时，预览面板自动导航到对应页面
 - **重启保持**：重启预览时保持当前 iframe 页面，完成后自动刷新
 - **自动重启**：文件创建/删除/重命名时自动重启预览（适配 VitePress 自动 sidebar 插件）
+
+### 5.5 依赖安装增强
+
+- **真实进度条**：解析 pnpm 的 `Progress: resolved X, reused Y, downloaded Z, added N` 输出
+- **彩色终端输出**：ANSI 转义码转 HTML，支持 16 色显示
+- **自动滚动**：终端输出自动滚动到底部
+- **干净重装**：重新安装依赖时先删除 `node_modules` 目录
+- **FORCE_COLOR**：设置环境变量强制 pnpm 输出颜色
 
 ---
 
@@ -258,12 +267,34 @@ cmd.exe (PID: xxx)
 }
 ```
 
-### 8.2 ANSI 转义码清理
+### 8.2 ANSI 转义码处理
 
-VitePress Dev Server 输出包含颜色转义码，需在显示前清理：
+VitePress Dev Server 和 pnpm 输出包含颜色转义码：
 
 ```typescript
+// 清理 ANSI 码（用于 URL 提取）
 const cleanUrl = info.url.replace(/(?:\x1b\[|\x9b\[|\[)[\d;]*m/g, "");
+
+// ANSI 转 HTML（用于彩色终端显示）
+function ansiToHtml(text: string): string {
+  const ansiColors: Record<string, string> = {
+    "31": "color:#e74c3c",
+    "32": "color:#2ecc71",
+    "33": "color:#f1c40f",
+    "34": "color:#3498db",
+    "35": "color:#9b59b6",
+    "36": "color:#1abc9c",
+    "1": "font-weight:bold",
+  };
+  return text.replace(/\x1b\[([0-9;]+)m/g, (_, codes) => {
+    const styles = codes
+      .split(";")
+      .map((c) => ansiColors[c])
+      .filter(Boolean)
+      .join(";");
+    return styles ? `<span style="${styles}">` : "</span>";
+  });
+}
 ```
 
 ### 8.3 文档路径到 URL 转换
@@ -363,3 +394,42 @@ M src/router/index.ts                           # 添加 /document 路由
   ]
 }
 ```
+
+---
+
+## 9. 最终 UX 优化 (E1.9)
+
+### 9.1 依赖安装体验
+
+- **实时日志流**：
+  - 前端监听 `vitepress://install-progress` 事件
+  - 使用 `ansi-to-html` 解析 ANSI 颜色码，还原真实终端体验
+  - 实现 `scrollLogsToBottom` 自动跟随输出
+- **进度解析**：
+  - 正则解析 pnpm 输出 `Progress: resolved (\d+), reused (\d+), downloaded (\d+), added (\d+)`
+  - 动态计算并展示进度条 (progress-primary)
+- **重新安装**：
+  - 侧边栏新增 "重新安装依赖" 功能
+  - 实现前端 Loading 状态与按钮禁用逻辑
+
+### 9.2 工作区删除安全机制
+
+- **脏状态检测优化**：
+  - 后端 `git_status` 排除 `node_modules` 等非跟踪文件
+  - 精确识别 Uncommitted Changes
+- **强制删除保护**：
+  - 检测到脏状态时弹出确认模态框 (`ConfirmModal`)
+  - 修复了模态框关闭时过早重置删除状态导致的 Loading 动画丢失问题
+  - 维持 `deletingWorktreePath` 状态直到删除操作完全结束
+- **状态重置修复**：
+  - 修复：删除工作区后重建同名工作区，DocumentView 显示旧状态
+  - 方案：`docStore.resetState()` 现在会清除 `worktreePath`，强制 `bindProject` 触发重新初始化
+
+### 9.3 UI 细节打磨
+
+- **表单布局**：
+  - ProjectView 新建分支表单统一使用 `flex-row items-center gap-3`
+  - 修复 Label 与 Input 间距丢失问题
+  - 修复 Select 在 Loading 状态下的交互逻辑
+- **导航栏**：
+  - DocumentView 返回按钮移除 `pl-0`，恢复标准按钮内边距和交互反馈

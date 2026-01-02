@@ -72,12 +72,14 @@ export const useDocumentStore = defineStore("document", () => {
   /** Initialize/Switch Project */
   async function bindProject(path: string) {
     if (worktreePath.value === path) return;
-    worktreePath.value = path;
+
     resetState();
+    worktreePath.value = path;
     await detectProject();
   }
 
   function resetState() {
+    worktreePath.value = null;
     detection.value = null;
     config.value = null;
     dependencyStatus.value = null;
@@ -158,12 +160,11 @@ export const useDocumentStore = defineStore("document", () => {
     isInstalling.value = true;
     try {
       await apiInstallDependencies(worktreePath.value);
-      // Success handling is done via event listener usually
-      // checkProjectDependencies() will be called after success
+      // Note: isInstalling is reset by the event listener in DocumentView.vue
+      // when "vitepress://install-finish" is received
     } catch (e) {
+      isInstalling.value = false; // Only reset on error
       throw e; // Let View handle error display or toast
-    } finally {
-      isInstalling.value = false;
     }
   }
 
@@ -235,5 +236,6 @@ export const useDocumentStore = defineStore("document", () => {
     renameItem,
     deleteItem,
     selectDocument,
+    resetState,
   };
 });

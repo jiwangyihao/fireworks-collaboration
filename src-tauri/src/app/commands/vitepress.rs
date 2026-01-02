@@ -812,26 +812,44 @@ pub async fn vitepress_delete(path: String) -> Result<bool, String> {
     Ok(true)
 }
 
-/// 安装依赖（运行 pnpm install）
+/// 安装依赖（删除 node_modules 后运行 pnpm install）
 #[tauri::command(rename_all = "camelCase")]
 pub async fn vitepress_install_dependencies<R: Runtime>(
     project_path: String,
     window: Window<R>,
 ) -> Result<(), String> {
+    // 先删除 node_modules 目录
+    let node_modules_path = Path::new(&project_path).join("node_modules");
+    if node_modules_path.exists() {
+        window
+            .emit("vitepress://install-progress", "正在删除 node_modules...")
+            .ok();
+        fs::remove_dir_all(&node_modules_path)
+            .await
+            .map_err(|e| format!("Failed to remove node_modules: {}", e))?;
+        window
+            .emit("vitepress://install-progress", "node_modules 已删除")
+            .ok();
+    }
+
+    // Windows: 使用 cmd /C 执行 pnpm install
     #[cfg(target_os = "windows")]
     let (mut rx, _child) = window
         .shell()
         .command("cmd")
         .args(["/C", "pnpm install"])
+        .env("FORCE_COLOR", "1") // 强制彩色输出
         .current_dir(Path::new(&project_path))
         .spawn()
         .map_err(|e| format!("Failed to spawn pnpm install: {}", e))?;
 
+    // 非 Windows: 直接调用 pnpm
     #[cfg(not(target_os = "windows"))]
     let (mut rx, _child) = window
         .shell()
         .command("pnpm")
         .args(["install"])
+        .env("FORCE_COLOR", "1") // 强制彩色输出
         .current_dir(Path::new(&project_path))
         .spawn()
         .map_err(|e| format!("Failed to spawn pnpm install: {}", e))?;

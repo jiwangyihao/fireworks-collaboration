@@ -1,6 +1,15 @@
 ```vue
 <script setup lang="ts">
-import { onMounted, ref, computed, inject, Ref, watch, reactive } from "vue";
+import {
+  onMounted,
+  ref,
+  computed,
+  inject,
+  Ref,
+  watch,
+  reactive,
+  nextTick,
+} from "vue";
 import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import { useProjectStore } from "../stores/project";
@@ -169,29 +178,47 @@ function showDeleteConfirm(worktreePath: string) {
 
 // 删除远端分支选项
 const deleteRemoteBranch = ref(false);
+// 正在删除的工作区路径（用于显示 loading 和禁用操作）
+const deletingWorktreePath = ref("");
+// 是否显示强制删除确认对话框
+const showForceDeleteModal = ref(false);
+// 强制删除时保存的路径（避免在关闭第一个对话框时被重置）
+const forceDeletePath = ref("");
+// 强制删除时保存的删除远端分支选项
+const forceDeleteRemoteBranch = ref(false);
 
-// 确认删除工作区
-async function confirmDeleteWorktree() {
-  if (!localStatus.value?.path || !pendingDeletePath.value) {
+// 确认删除工作区（支持 force 参数）
+async function confirmDeleteWorktree(force = false) {
+  // 使用适当的路径来源
+  const pathToDelete = force ? forceDeletePath.value : pendingDeletePath.value;
+  const shouldDeleteRemote = force
+    ? forceDeleteRemoteBranch.value
+    : deleteRemoteBranch.value;
+
+  if (!localStatus.value?.path || !pathToDelete) {
     toastStore.error("参数错误");
     return;
   }
 
   // 从worktrees列表中获取要删除的分支名
   const worktreeToDelete = localStatus.value.worktrees?.find(
-    (wt) => wt.path === pendingDeletePath.value
+    (wt) => wt.path === pathToDelete
   );
   const branchToDelete = worktreeToDelete?.branch;
+
+  // 设置删除中状态
+  deletingWorktreePath.value = pathToDelete;
 
   try {
     const { removeWorktree, deleteGitBranch } = await import("../api/tasks");
 
+    console.time("removeWorktree");
     // 删除 worktree（如果需要删除远端分支，也在这里处理）
     await removeWorktree(
       localStatus.value.path,
-      pendingDeletePath.value,
-      false, // force
-      deleteRemoteBranch.value, // delete_remote_branch
+      pathToDelete,
+      force, // 是否强制删除
+      shouldDeleteRemote, // delete_remote_branch
       "origin", // remote
       true // use_stored_credential
     );
@@ -206,19 +233,59 @@ async function confirmDeleteWorktree() {
     }
 
     toastStore.success(
-      deleteRemoteBranch.value
-        ? "工作区已删除，远端分支也已删除"
-        : "工作区已删除"
+      shouldDeleteRemote ? "工作区已删除，远端分支也已删除" : "工作区已删除"
     );
     await projectStore.checkLocalRepo();
+    resetDeleteState();
   } catch (error: any) {
+    const errorMsg = error.message || String(error);
+
+    // 如果是 dirty 错误且不是强制删除，显示二次确认
+    if (errorMsg.includes("dirty") && !force) {
+      // 保存路径和选项供强制删除使用
+      forceDeletePath.value = pathToDelete;
+      forceDeleteRemoteBranch.value = shouldDeleteRemote;
+      deletingWorktreePath.value = "";
+      showDeleteModal.value = false;
+      showForceDeleteModal.value = true;
+      return;
+    }
+
     console.error("删除工作区失败:", error);
-    toastStore.error(`删除工作区失败: ${error.message || error}`);
-  } finally {
-    pendingDeletePath.value = "";
-    deleteRemoteBranch.value = false;
-    showDeleteModal.value = false;
+    toastStore.error(`删除工作区失败: ${errorMsg}`);
+    resetDeleteState();
   }
+}
+
+// 确认强制删除
+async function confirmForceDelete() {
+  // 先设置 loading 状态，再关闭模态框
+  deletingWorktreePath.value = forceDeletePath.value;
+  showForceDeleteModal.value = false;
+
+  // 等待 Vue 渲染 loading 状态
+  await nextTick();
+
+  await confirmDeleteWorktree(true);
+}
+
+// 取消强制删除
+function cancelForceDelete() {
+  // 如果已经在删除过程中（由 confirmForceDelete 触发了关闭），则忽略取消事件
+  if (deletingWorktreePath.value) return;
+
+  showForceDeleteModal.value = false;
+  resetDeleteState();
+}
+
+// 重置删除状态
+function resetDeleteState() {
+  pendingDeletePath.value = "";
+  deleteRemoteBranch.value = false;
+  deletingWorktreePath.value = "";
+  forceDeletePath.value = "";
+  forceDeleteRemoteBranch.value = false;
+  showDeleteModal.value = false;
 }
 
 // Fork仓库
@@ -1046,35 +1113,45 @@ onMounted(async () => {
             </div>
 
             <!-- 新建模式：输入分支名 -->
-            <div v-if="worktreeCreateMode === 'new'" class="form-control">
-              <label class="label py-1">
-                <span class="label-text text-xs font-medium">分支名称</span>
+            <div
+              v-if="worktreeCreateMode === 'new'"
+              class="form-control flex flex-row items-center gap-3"
+            >
+              <label class="label py-1 p-0!">
+                <span class="label-text text-sm font-medium whitespace-nowrap"
+                  >分支名称</span
+                >
               </label>
               <input
                 v-model="worktreeForm.branch"
                 type="text"
-                class="input input-bordered input-sm"
+                class="input input-bordered input-sm flex-1"
                 placeholder="feature/my-feature"
               />
             </div>
 
             <!-- 远端模式：选择远端分支 -->
-            <div v-else class="form-control">
-              <label class="label py-1">
-                <span class="label-text text-xs font-medium">选择远端分支</span>
-              </label>
-              <div
-                v-if="loadingRemoteBranches"
-                class="flex items-center gap-2 text-sm text-base-content/60"
-              >
-                <span class="loading loading-spinner loading-xs"></span>
-                正在加载远端分支...
+            <div v-else class="form-control flex flex-col gap-1">
+              <div class="flex items-center justify-between">
+                <label class="label py-1 p-0!">
+                  <span class="label-text text-sm font-medium"
+                    >选择远端分支</span
+                  >
+                </label>
+                <div
+                  v-if="loadingRemoteBranches"
+                  class="flex items-center gap-2 text-xs text-base-content/60"
+                >
+                  <span class="loading loading-spinner loading-xs"></span>
+                  加载中...
+                </div>
               </div>
               <select
-                v-else
                 v-model="worktreeForm.selectedRemoteBranch"
-                class="select select-bordered select-sm"
+                class="select select-bordered select-sm w-full"
+                :disabled="loadingRemoteBranches"
               >
+                >
                 <option value="" disabled>请选择远端分支</option>
                 <option
                   v-for="branch in remoteBranches.filter(
@@ -1125,9 +1202,37 @@ onMounted(async () => {
                 (w) => !w.isMainWorktree
               )"
               :key="wt.path"
-              class="group flex flex-col gap-1.5 px-3 py-2.5 rounded-xl border border-base-content/10 bg-base-200/30 hover:border-primary/50 transition-all cursor-pointer"
-              @click="openWorktree(wt.path)"
+              class="group relative flex flex-col gap-1.5 px-3 py-2.5 rounded-xl border border-base-content/10 bg-base-200/30 hover:border-primary/50 transition-all"
+              :class="{
+                'cursor-pointer': deletingWorktreePath !== wt.path,
+                'opacity-60 pointer-events-none':
+                  deletingWorktreePath === wt.path,
+              }"
+              @click="deletingWorktreePath !== wt.path && openWorktree(wt.path)"
             >
+              <!-- Debug: 比较路径 -->
+              {{
+                console.log(
+                  "wt.path:",
+                  wt.path,
+                  "deletingWorktreePath:",
+                  deletingWorktreePath,
+                  "match:",
+                  deletingWorktreePath === wt.path
+                )
+              }}
+              <!-- 删除中遮罩 -->
+              <div
+                v-if="deletingWorktreePath === wt.path"
+                class="absolute inset-0 flex items-center justify-center bg-base-100/50 rounded-xl z-10"
+              >
+                <span
+                  class="loading loading-spinner loading-md text-error"
+                ></span>
+                <span class="ml-2 text-sm text-error font-medium"
+                  >正在删除...</span
+                >
+              </div>
               <!-- 第一行：分支 & PR & 操作 -->
               <div class="flex items-center justify-between w-full">
                 <div class="flex items-center gap-2 min-w-0">
@@ -1270,6 +1375,29 @@ onMounted(async () => {
     </div>
 
     <p class="text-warning text-sm">此操作不可撤销！</p>
+  </ConfirmModal>
+
+  <!-- 强制删除确认对话框（工作区有未提交变更时） -->
+  <ConfirmModal
+    v-model="showForceDeleteModal"
+    title="工作区包含未提交变更"
+    confirm-text="强制删除"
+    confirm-variant="error"
+    @confirm="confirmForceDelete"
+    @cancel="cancelForceDelete"
+  >
+    <div class="py-2">
+      <div class="alert alert-warning mb-4">
+        <BaseIcon icon="ph--warning" size="md" />
+        <span>该工作区包含未提交的更改，强制删除将丢失这些更改！</span>
+      </div>
+      <code class="text-sm text-error break-all block mb-2">{{
+        forceDeletePath
+      }}</code>
+      <p class="text-sm text-base-content/70">
+        建议先提交或暂存您的更改，或确认这些更改不再需要。
+      </p>
+    </div>
   </ConfirmModal>
 </template>
 

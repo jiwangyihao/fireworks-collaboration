@@ -3,7 +3,7 @@
  * DocumentView - VitePress 项目文档视图
  * Redesigned with Card UI to match ProjectView
  */
-import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { listen } from "@tauri-apps/api/event";
 import { useToastStore } from "../stores/toast";
@@ -123,6 +123,84 @@ function toggleSidebar() {
 const showConfirmModal = ref(false);
 const deleteTargetName = ref("");
 
+// Install Progress Enhancement
+const installLogRef = ref<HTMLDivElement | null>(null);
+const installProgress = ref({
+  resolved: 0,
+  reused: 0,
+  downloaded: 0,
+  added: 0,
+  done: false,
+});
+
+// ANSI 转 HTML（支持常见颜色）
+function ansiToHtml(text: string): string {
+  const ansiColors: Record<string, string> = {
+    "30": "color:#000",
+    "31": "color:#e74c3c",
+    "32": "color:#2ecc71",
+    "33": "color:#f1c40f",
+    "34": "color:#3498db",
+    "35": "color:#9b59b6",
+    "36": "color:#1abc9c",
+    "37": "color:#ecf0f1",
+    "90": "color:#7f8c8d",
+    "91": "color:#e74c3c",
+    "92": "color:#2ecc71",
+    "93": "color:#f1c40f",
+    "94": "color:#3498db",
+    "95": "color:#9b59b6",
+    "96": "color:#1abc9c",
+    "97": "color:#fff",
+    "1": "font-weight:bold",
+  };
+
+  return text
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\x1b\[([0-9;]+)m/g, (_, codes: string) => {
+      const parts = codes.split(";");
+      const styles = parts
+        .map((c) => ansiColors[c])
+        .filter(Boolean)
+        .join(";");
+      if (styles) return `<span style="${styles}">`;
+      if (codes === "0" || codes === "") return "</span>";
+      return "";
+    })
+    .replace(/\x1b\[0m/g, "</span>");
+}
+
+// 解析 pnpm 进度输出
+function parsePnpmProgress(line: string) {
+  // pnpm 进度格式可能包含 ANSI 码，先清理
+  const cleanLine = line.replace(/\x1b\[[0-9;]*m/g, "");
+
+  // 匹配格式如: Progress: resolved 150, reused 148, downloaded 2, added 150
+  // 或: Progress: resolved 150, reused 148, downloaded 2, added 150, done
+  const match = cleanLine.match(
+    /Progress:\s*resolved\s+(\d+).*?reused\s+(\d+).*?downloaded\s+(\d+).*?added\s+(\d+)/i
+  );
+  if (match) {
+    installProgress.value = {
+      resolved: parseInt(match[1]) || 0,
+      reused: parseInt(match[2]) || 0,
+      downloaded: parseInt(match[3]) || 0,
+      added: parseInt(match[4]) || 0,
+      done: cleanLine.toLowerCase().includes("done"),
+    };
+  }
+}
+
+// 自动滚动到底部
+function scrollLogsToBottom() {
+  nextTick(() => {
+    if (installLogRef.value) {
+      installLogRef.value.scrollTop = installLogRef.value.scrollHeight;
+    }
+  });
+}
+
 // ============================================================================
 // Actions
 // ============================================================================
@@ -130,16 +208,31 @@ const deleteTargetName = ref("");
 async function handleInstallDependencies() {
   if (isInstalling.value) return;
 
+  // 重置进度状态
+  installProgress.value = {
+    resolved: 0,
+    reused: 0,
+    downloaded: 0,
+    added: 0,
+    done: false,
+  };
+
   const unlistenProgress = await listen<string>(
     "vitepress://install-progress",
     (e) => {
       docStore.installLogs.push(e.payload);
+      parsePnpmProgress(e.payload);
+      scrollLogsToBottom();
     }
   );
 
   const unlistenFinish = await listen<boolean>(
     "vitepress://install-finish",
     (e) => {
+      // 重置安装状态
+      docStore.isInstalling = false;
+      installProgress.value.done = true;
+
       if (e.payload) {
         toastStore.success("依赖安装成功");
         docStore.checkProjectDependencies();
@@ -328,12 +421,15 @@ onMounted(async () => {
     : route.params.worktreePath || "";
 
   if (path) {
+    // 每次进入都重置状态，确保数据是最新的
+    docStore.resetState();
     docStore.bindProject(path);
   }
 });
 
 onUnmounted(() => {
   document.removeEventListener("click", closeContextMenu);
+  docStore.resetState();
 });
 
 watch(
@@ -487,7 +583,7 @@ async function handleDeleteConfirm() {
     >
       <div class="flex items-center gap-3">
         <button
-          class="btn btn-sm btn-ghost btn-square mr-1"
+          class="btn btn-sm btn-ghost btn-square"
           @click="toggleSidebar"
           :title="isSidebarOpen ? '收起侧边栏' : '展开侧边栏'"
         >
@@ -499,7 +595,7 @@ async function handleDeleteConfirm() {
           />
         </button>
         <button
-          class="btn btn-sm btn-ghost gap-1 font-normal pl-0 hover:bg-transparent"
+          class="btn btn-sm btn-ghost gap-1 font-normal"
           @click="router.push('/project')"
         >
           <BaseIcon icon="ph--arrow-left" size="sm" />
@@ -609,32 +705,52 @@ async function handleDeleteConfirm() {
               文档目录
             </h3>
             <div class="flex gap-0.5" v-if="!needsInstall">
-              <button
-                class="btn btn-xs btn-ghost btn-square"
-                :class="{ 'text-primary bg-primary/10': showHiddenFiles }"
-                :title="showHiddenFiles ? '隐藏系统文件' : '显示所有文件'"
-                @click="showHiddenFiles = !showHiddenFiles"
+              <div
+                class="tooltip tooltip-left"
+                :data-tip="showHiddenFiles ? '隐藏系统文件' : '显示所有文件'"
               >
-                <BaseIcon
-                  :icon="showHiddenFiles ? 'ph--eye' : 'ph--eye-slash'"
-                  size="sm"
-                />
-              </button>
+                <button
+                  class="btn btn-xs btn-ghost btn-square"
+                  :class="{ 'text-primary bg-primary/10': showHiddenFiles }"
+                  @click="showHiddenFiles = !showHiddenFiles"
+                >
+                  <BaseIcon
+                    :icon="showHiddenFiles ? 'ph--eye' : 'ph--eye-slash'"
+                    size="sm"
+                  />
+                </button>
+              </div>
               <div class="w-px h-4 bg-base-content/10 mx-1 self-center"></div>
-              <button
-                class="btn btn-xs btn-ghost btn-square"
-                title="新建文档"
-                @click="handleToolbarAction('new-file')"
-              >
-                <BaseIcon icon="ph--file-plus" size="sm" />
-              </button>
-              <button
-                class="btn btn-xs btn-ghost btn-square"
-                title="新建文件夹"
-                @click="handleToolbarAction('new-folder')"
-              >
-                <BaseIcon icon="ph--folder-plus" size="sm" />
-              </button>
+              <div class="tooltip tooltip-left" data-tip="新建文档">
+                <button
+                  class="btn btn-xs btn-ghost btn-square"
+                  @click="handleToolbarAction('new-file')"
+                >
+                  <BaseIcon icon="ph--file-plus" size="sm" />
+                </button>
+              </div>
+              <div class="tooltip tooltip-left" data-tip="新建文件夹">
+                <button
+                  class="btn btn-xs btn-ghost btn-square"
+                  @click="handleToolbarAction('new-folder')"
+                >
+                  <BaseIcon icon="ph--folder-plus" size="sm" />
+                </button>
+              </div>
+              <div class="w-px h-4 bg-base-content/10 mx-1 self-center"></div>
+              <div class="tooltip tooltip-left" data-tip="重新安装依赖">
+                <button
+                  class="btn btn-xs btn-ghost btn-square"
+                  @click="handleInstallDependencies"
+                  :disabled="isInstalling"
+                >
+                  <span
+                    v-if="isInstalling"
+                    class="loading loading-spinner loading-xs"
+                  ></span>
+                  <BaseIcon v-else icon="ph--package" size="sm" />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -661,23 +777,50 @@ async function handleDeleteConfirm() {
               <p class="text-xs">{{ error }}</p>
             </div>
 
-            <!-- Install Needed -->
+            <!-- Install Needed or Installing -->
             <div
-              v-else-if="needsInstall"
+              v-else-if="needsInstall || isInstalling"
               class="h-full flex flex-col items-center justify-center gap-4 text-center p-4"
             >
               <div
                 v-if="isInstalling"
-                class="flex flex-col items-center gap-2 w-full"
+                class="flex flex-col items-center gap-3 w-full"
               >
-                <span
-                  class="loading loading-spinner loading-lg text-primary"
-                ></span>
-                <p class="text-sm">正在安装依赖...</p>
+                <!-- 进度条 -->
+                <div class="w-full" v-if="installProgress.resolved > 0">
+                  <div
+                    class="flex justify-between text-xs text-base-content/60 mb-1"
+                  >
+                    <span>已解析: {{ installProgress.resolved }}</span>
+                    <span>已下载: {{ installProgress.downloaded }}</span>
+                  </div>
+                  <progress
+                    class="progress progress-primary w-full"
+                    :value="installProgress.added"
+                    :max="installProgress.resolved || 100"
+                  ></progress>
+                  <div class="text-xs text-base-content/50 mt-1 text-center">
+                    复用: {{ installProgress.reused }} | 新增:
+                    {{ installProgress.added }}
+                  </div>
+                </div>
+                <div v-else class="flex items-center gap-2">
+                  <span
+                    class="loading loading-spinner loading-md text-primary"
+                  ></span>
+                  <p class="text-sm">正在安装依赖...</p>
+                </div>
+
+                <!-- 终端输出（带颜色和自动滚动） -->
                 <div
-                  class="text-xs text-base-content/50 font-mono h-24 overflow-y-auto w-full bg-base-200 p-2 rounded text-left"
+                  ref="installLogRef"
+                  class="text-xs font-mono h-32 overflow-y-auto w-full bg-base-300 p-2 rounded text-left scrollbar-thin"
                 >
-                  <div v-for="(log, i) in installLogs" :key="i">{{ log }}</div>
+                  <div
+                    v-for="(log, i) in installLogs"
+                    :key="i"
+                    v-html="ansiToHtml(log)"
+                  ></div>
                 </div>
               </div>
               <template v-else>

@@ -1312,9 +1312,17 @@ pub async fn git_worktree_remove(
         // Check clean status if not forced
         if !force.unwrap_or(false) {
             if let Ok(wt_repo) = git2::Repository::open(wt_path) {
+                let mut status_opts = git2::StatusOptions::new();
+                // 包含未跟踪文件（检测新增文件），但排除被 gitignore 忽略的文件
+                status_opts
+                    .include_untracked(true)
+                    .include_ignored(false)
+                    .exclude_submodules(true);
+
                 let statuses = wt_repo
-                    .statuses(None)
+                    .statuses(Some(&mut status_opts))
                     .map_err(|e| format!("Failed to check status: {}", e))?;
+
                 if !statuses.is_empty() {
                     return Err("Worktree is dirty. Use force to remove it.".to_string());
                 }
