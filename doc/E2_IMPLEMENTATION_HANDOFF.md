@@ -101,11 +101,50 @@ if (item.displayMode) {
 
 ---
 
-## 4. 后续阶段衔接 (E2.3 & E2.4)
+## 4. 表格块双向转换 (Table Block Conversion)
+
+**问题**：Markdown 表格解析为 Internal `TableBlock` 后，无法正确映射到 BlockNote 的表格格式；同时 BlockNote 表格保存时单元格内容丢失。
+
+**根因分析**：
+
+1.  **Internal -> BlockNote**：初始实现将单元格内容直接转换为 `InlineContent[]`，但 BlockNote 表格要求每个单元格是 `{ type: "tableCell", content: [...], props: {...} }` 对象。
+2.  **BlockNote -> Internal**：BlockNote 返回的 `cell` 是 `TableCell` 对象，需要从 `cell.content` 提取内容，而非直接使用 `cell`。
+
+**解决方案**：
+
+```typescript
+// blocknote-adapter.ts - Internal -> BlockNote
+cells: row.cells.map((cell: any) => ({
+  type: "tableCell",
+  content: internalInlineToBlockNote(cell.content || []),
+  props: {},
+}));
+
+// blocknote-adapter.ts - BlockNote -> Internal
+const convertCell = (cell: any) => {
+  if (cell?.type === "tableCell" && Array.isArray(cell.content)) {
+    return { content: blockNoteInlineToInternal(cell.content) };
+  }
+  return { content: [] };
+};
+```
+
+---
+
+## 5. Quote 块降级处理 (Quote Block Fallback)
+
+**问题**：Markdown 中的 `> [!NOTE]` 等引用块解析为 `quote` 类型，但 BlockNote 默认 Schema 中未启用 `blockquote`，导致显示为 `[未支持的块类型: quote]`。
+
+**临时方案**：将 `quote` 块映射为带 `> ` 前缀的普通段落，保留可读性，待 E2.3 实现专门的 Quote Block UI。
+
+---
+
+## 6. 后续阶段衔接 (E2.3 & E2.4)
 
 当前编辑器已具备稳健的数据层，接下来的工作将聚焦于 UI 层的丰富：
 
 1.  **MathBlock 实现**：移除文本形式的 `$$`，使用 `KaTeX` 实现真·所见即所得公式编辑。
 2.  **MermaidBlock 实现**：实现 Mermaid 图表的实时预览与代码编辑双模式。
 3.  **ContainerBlock 实现**：支持 VitePress 提示块的可视化编辑。
-4.  **VitePress 特性支持**：为 `VueComponent` 和 `@include` 提供专门的属性编辑表单，而非 JSON 代码块。
+4.  **QuoteBlock 实现**：启用原生引用块，支持 GitHub Alerts 语法。
+5.  **VitePress 特性支持**：为 `VueComponent` 和 `@include` 提供专门的属性编辑表单，而非 JSON 代码块。
