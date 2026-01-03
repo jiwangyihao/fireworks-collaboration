@@ -166,17 +166,16 @@ export const useDocumentStore = defineStore("document", () => {
     }
   }
 
-  /** Install Dependencies (Wrapper needed for event listening in View) */
+  /** Install Dependencies (Wrapper needed for event listening in View)
+   *  注意：这里只负责启动安装任务，isInstalling 的重置由 View 层的
+   *  vitepress://install-finish 事件监听器负责，以保持安装动画直到真正完成
+   */
   async function installProjectDependencies() {
     if (!worktreePath.value) return;
     isInstalling.value = true;
-    try {
-      await apiInstallDependencies(worktreePath.value);
-      isInstalling.value = false;
-    } catch (e) {
-      isInstalling.value = false; // Reset on error
-      throw e; // Let View handle error display or toast
-    }
+    // 只启动安装，不在这里重置 isInstalling
+    // 完成状态由事件 vitepress://install-finish 在 View 层处理
+    await apiInstallDependencies(worktreePath.value);
   }
 
   // CRUD Actions

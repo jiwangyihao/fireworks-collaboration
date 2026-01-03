@@ -134,10 +134,12 @@ describe("Document Store", () => {
     expect(store.isInstalling).toBe(true);
     expect(api.installDependencies).toHaveBeenCalledWith("/project/root");
 
-    // Complete installation
+    // Complete installation (API returns)
     resolveInstall!(undefined);
     await actionPromise;
 
-    expect(store.isInstalling).toBe(false);
+    // 注意：isInstalling 不会在这里重置，它由 View 层的 vitepress://install-finish 事件监听器负责
+    // Store 只负责启动安装任务，保持 isInstalling=true 直到 View 层收到完成事件
+    expect(store.isInstalling).toBe(true);
   });
 });
