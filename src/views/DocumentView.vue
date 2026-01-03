@@ -328,10 +328,49 @@ async function handleStartDevServer() {
     devServerPid.value = info.processId;
     isPreviewOpen.value = true; // 自动展开预览栏
 
+    // 如果有选中的文档，计算对应的预览 URL
+    if (selectedPath.value) {
+      const targetUrl = getPreviewUrlForDocument(selectedPath.value, cleanUrl);
+      if (targetUrl) {
+        devServerUrl.value = targetUrl;
+      }
+    }
+
     toastStore.success(`服务已启动: ${cleanUrl}`);
   } catch (e) {
     toastStore.error(`启动失败: ${e}`);
     isDevServerRunning.value = false;
+  }
+}
+
+/** 计算文档对应的预览 URL */
+function getPreviewUrlForDocument(
+  docPath: string,
+  baseUrl: string
+): string | null {
+  try {
+    const basePath = worktreePath.value || "";
+    let relativePath = docPath.replace(/\\/g, "/"); // 统一为正斜杠
+    const baseNormalized = basePath.replace(/\\/g, "/");
+
+    if (relativePath.startsWith(baseNormalized)) {
+      relativePath = relativePath.slice(baseNormalized.length);
+    }
+
+    // 去掉开头的斜杠和 .md 后缀
+    relativePath = relativePath.replace(/^\/+/, "").replace(/\.md$/i, "");
+
+    // 如果是 index，VitePress 通常可以直接访问目录
+    if (relativePath.endsWith("/index")) {
+      relativePath = relativePath.slice(0, -6) + "/";
+    }
+
+    // 构建完整 URL
+    const cleanBaseUrl = baseUrl.replace(/\/$/, "");
+    return `${cleanBaseUrl}/${relativePath}`;
+  } catch (e) {
+    console.warn("Failed to calculate preview URL:", e);
+    return null;
   }
 }
 
@@ -421,32 +460,12 @@ function handleSelectDocument(node: DocTreeNode) {
 
     // 同步预览 iframe 到对应页面
     if (isPreviewOpen.value && devServerUrl.value && previewIframeRef.value) {
-      try {
-        // 计算相对路径：文件路径相对于 worktreePath
-        const basePath = worktreePath.value || "";
-        let relativePath = node.path.replace(/\\/g, "/"); // 统一为正斜杠
-        const baseNormalized = basePath.replace(/\\/g, "/");
-
-        if (relativePath.startsWith(baseNormalized)) {
-          relativePath = relativePath.slice(baseNormalized.length);
-        }
-
-        // 去掉开头的斜杠和 .md 后缀
-        relativePath = relativePath.replace(/^\/+/, "").replace(/\.md$/i, "");
-
-        // 如果是 index，VitePress 通常可以直接访问目录
-        if (relativePath.endsWith("/index")) {
-          relativePath = relativePath.slice(0, -6) + "/";
-        }
-
-        // 构建完整 URL
-        const baseUrl = devServerUrl.value.replace(/\/$/, "");
-        const targetUrl = `${baseUrl}/${relativePath}`;
-
-        // 导航 iframe
+      // 需要从当前 URL 中提取 base URL（去掉路径部分）
+      const urlObj = new URL(devServerUrl.value);
+      const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
+      const targetUrl = getPreviewUrlForDocument(node.path, baseUrl);
+      if (targetUrl) {
         previewIframeRef.value.src = targetUrl;
-      } catch (e) {
-        console.warn("Failed to sync preview:", e);
       }
     }
   }
