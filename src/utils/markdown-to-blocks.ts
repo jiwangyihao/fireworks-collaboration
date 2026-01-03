@@ -39,6 +39,15 @@ import {
 } from "../types/block";
 import type { Frontmatter, Document } from "../types/document";
 
+// 容器类型默认标题（与 VitePress 官方一致）
+const containerDefaultTitles: Record<ContainerType, string> = {
+  tip: "提示",
+  info: "信息",
+  warning: "警告",
+  danger: "危险",
+  details: "详情",
+};
+
 // ============================================================================
 // 解析器配置
 // ============================================================================
@@ -53,7 +62,8 @@ function createProcessor() {
     .use(remarkFrontmatter, ["yaml"])
     .use(remarkDirective)
     .use(remarkMath)
-    .use(remarkEnrichMath);
+    .use(remarkEnrichMath)
+    .use(remarkVitePressContainers); // 处理 VitePress ::: container 语法
 }
 
 /**
@@ -83,6 +93,111 @@ function remarkEnrichMath() {
       }
     };
     visit(tree);
+  };
+}
+
+/**
+ * 自定义插件：处理 VitePress 容器语法 (::: info, ::: tip 等)
+ * 将 `::: type` 格式转换为 containerDirective 节点
+ */
+function remarkVitePressContainers() {
+  return (tree: any) => {
+    const visit = (node: any, index: number, parent: any) => {
+      // 查找包含 `::: type` 格式的段落
+      if (node.type === "paragraph" && node.children?.[0]?.type === "text") {
+        const text = node.children[0].value as string;
+
+        // 模式1: 单段落完整包含容器 (START ... END)
+        // 匹配：::: type [title]\n content \n:::
+        const singleBlockMatch = text.match(
+          /^:::\s*(info|tip|warning|danger|details|note)(?:[ \t]+(.*?))?\n([\s\S]*?)\n:::\s*$/i
+        );
+
+        if (singleBlockMatch) {
+          const containerType = singleBlockMatch[1].toLowerCase();
+          const title = singleBlockMatch[2]?.trim() || "";
+          const contentText = singleBlockMatch[3];
+
+          // 解析内部 Markdown 内容
+          // 使用与 createProcessor 相同的插件配置（除了本插件自身，防止递归死循环其实也不太可能）
+          // 这里为了简单，创建一个新的 processor
+          // 注意：需要确保 remarkMath 等插件被包含，否则内部公式无法解析
+          const innerProcessor = unified()
+            .use(remarkParse)
+            .use(remarkGfm)
+            .use(remarkDirective)
+            .use(remarkMath)
+            .use(remarkEnrichMath); // 复用文件内的 helper
+
+          const innerRoot = innerProcessor.parse(contentText);
+          const containerChildren = innerRoot.children;
+
+          const containerNode = {
+            type: "containerDirective",
+            name: containerType,
+            attributes: { title },
+            children: containerChildren,
+          };
+
+          parent.children.splice(index, 1, containerNode);
+          return index; // 继续
+        }
+
+        // 模式2: 多段落容器 (START ... 寻找 sibling END)
+        const containerStartMatch = text.match(
+          /^:::\s*(info|tip|warning|danger|details|note)(?:\s+(.*))?$/im
+        );
+
+        if (containerStartMatch) {
+          const containerType = containerStartMatch[1].toLowerCase();
+          const title = containerStartMatch[2]?.trim() || "";
+
+          // 找到对应的结束标记 `:::`
+          const siblings = parent?.children || [];
+          let endIndex = -1;
+          const containerChildren: any[] = [];
+
+          for (let i = index + 1; i < siblings.length; i++) {
+            const sibling = siblings[i];
+            if (
+              sibling.type === "paragraph" &&
+              sibling.children?.[0]?.type === "text" &&
+              sibling.children[0].value.trim() === ":::"
+            ) {
+              endIndex = i;
+              break;
+            }
+            containerChildren.push(sibling);
+          }
+
+          if (endIndex > index) {
+            // 创建 containerDirective 节点
+            const containerNode = {
+              type: "containerDirective",
+              name: containerType,
+              attributes: { title },
+              children: containerChildren,
+            };
+
+            // 替换原节点和内容
+            siblings.splice(index, endIndex - index + 1, containerNode);
+            return index; // 返回当前索引继续处理
+          }
+        }
+      }
+
+      // 递归处理子节点
+      if (node.children) {
+        for (let i = 0; i < node.children.length; i++) {
+          const result = visit(node.children[i], i, node);
+          if (typeof result === "number") {
+            i = result; // 如果节点被替换，调整索引
+          }
+        }
+      }
+    };
+
+    visit(tree, 0, null);
   };
 }
 
@@ -308,6 +423,28 @@ function convertNode(node: RootContent): Block | Block[] | null {
         } as ImageBlock;
       }
 
+      // 检测单 displayMode 公式段落：如果段落只包含一个 inlineMath 且 displayMode=true，转为 MathBlock
+      if (
+        node.children.length === 1 &&
+        node.children[0].type === "inlineMath"
+      ) {
+        const mathNode = node.children[0] as any;
+        // displayMode 可能在 data.displayMode 或 data.hChildren.displayMode
+        const isDisplayMode =
+          mathNode.data?.displayMode === true ||
+          (mathNode.data?.hChildren &&
+            mathNode.data.hChildren.some((c: any) => c.displayMode === true));
+        if (isDisplayMode) {
+          return {
+            id: generateBlockId(),
+            type: "math",
+            props: {
+              formula: mathNode.value || "",
+            },
+          } as MathBlock;
+        }
+      }
+
       return {
         id: generateBlockId(),
         type: "paragraph",
@@ -315,12 +452,150 @@ function convertNode(node: RootContent): Block | Block[] | null {
       } as ParagraphBlock;
     }
 
-    case "blockquote":
+    case "blockquote": {
+      // 检测 GitHub 风格的 callout: > [!NOTE], > [!TIP], > [!WARNING] 等
+      const firstChild = node.children[0];
+      if (
+        firstChild?.type === "paragraph" &&
+        firstChild.children[0]?.type === "text"
+      ) {
+        const text = (firstChild.children[0] as any).value as string;
+        // 只匹配 [!TYPE] 及其后面同一行的可选标题（不包含换行后的内容）
+        const calloutMatch = text.match(
+          /^\[!(NOTE|TIP|WARNING|CAUTION|IMPORTANT)\](?:[ \t]+([^\n]*))?/i
+        );
+        if (calloutMatch) {
+          const typeMap: Record<string, ContainerType> = {
+            NOTE: "info",
+            TIP: "tip",
+            WARNING: "warning",
+            CAUTION: "danger",
+            IMPORTANT: "details",
+          };
+          const containerType =
+            typeMap[calloutMatch[1].toUpperCase()] || "info";
+          // 标题只取 [!TYPE] 同一行的内容（如果有）
+          const title = calloutMatch[2]?.trim() || "";
+
+          // 处理剩余内容：移除 callout 标记，保留换行后的内容
+          const afterCallout = text.substring(calloutMatch[0].length);
+          const remainingText = afterCallout.replace(/^\n/, ""); // 移除开头换行
+
+          // 构建新的 children
+          const newChildren: RootContent[] = [];
+
+          if (remainingText) {
+            // 如果有剩余文本，创建一个新段落
+            newChildren.push({
+              type: "paragraph",
+              children: [{ type: "text", value: remainingText }],
+            } as any);
+          }
+
+          // 添加原 blockquote 的其他子节点
+          for (let i = 1; i < node.children.length; i++) {
+            newChildren.push(node.children[i]);
+          }
+
+          // 构建 content：标题（自定义或默认）+ 内容
+          const contentItems: InlineContent[] = [];
+          // 总是添加标题（自定义或默认）
+          const titleText =
+            title || containerDefaultTitles[containerType] || "提示";
+          contentItems.push({ type: "text", text: titleText } as InlineContent);
+          // 添加换行符，确保在编辑器中标题与内容分行
+          contentItems.push({ type: "text", text: "\n" } as InlineContent);
+
+          // 转换剩余内容（多个段落用单换行分隔）
+          newChildren.forEach((child: RootContent, index: number) => {
+            if (child.type === "paragraph" && "children" in child) {
+              // 添加段落间的换行（第一个段落前不加）
+              if (index > 0) {
+                contentItems.push({
+                  type: "text",
+                  text: "\n",
+                } as InlineContent);
+              }
+              const paragraphContent = convertInlineContent(
+                child.children as PhrasingContent[]
+              );
+              contentItems.push(...paragraphContent);
+            }
+          });
+
+          return {
+            id: generateBlockId(),
+            type: "container",
+            props: {
+              containerType,
+            },
+            content: contentItems,
+          } as ContainerBlock;
+        }
+      }
+
       return {
         id: generateBlockId(),
         type: "quote",
         children: convertNodes(node.children),
       } as QuoteBlock;
+    }
+
+    // VitePress 容器指令: ::: info, ::: tip, ::: warning, ::: danger, ::: details
+    case "containerDirective": {
+      const directiveName = (node as any).name as string;
+      const typeMap: Record<string, ContainerType> = {
+        info: "info",
+        tip: "tip",
+        warning: "warning",
+        danger: "danger",
+        details: "details",
+      };
+      const containerType = typeMap[directiveName.toLowerCase()] || "info";
+
+      // 提取标题（指令属性或第一行文本）
+      let title = "";
+      const attrs = (node as any).attributes || {};
+      if (attrs.title) {
+        title = attrs.title;
+      } else if ((node as any).children?.[0]?.type === "paragraph") {
+        // 移除：不要从内容中猜测标题，这会导致内容重复
+        // 如果没有 title 属性，就使用默认标题
+      }
+
+      // 构建 content：标题（自定义或默认）+ 内容
+      const contentItems: InlineContent[] = [];
+      // 总是添加标题（自定义或默认）
+      const titleText =
+        title || containerDefaultTitles[containerType] || "提示";
+      contentItems.push({ type: "text", text: titleText } as InlineContent);
+      // 添加换行符
+      contentItems.push({ type: "text", text: "\n" } as InlineContent);
+
+      // 转换子节点内容（多个段落用单换行分隔，对应编辑器中的 \n）
+      const children = (node as any).children || [];
+      children.forEach((child: any, index: number) => {
+        if (child.type === "paragraph" && "children" in child) {
+          // 添加段落间的换行（第一个段落前不加）
+          if (index > 0) {
+            contentItems.push({ type: "text", text: "\n" } as InlineContent);
+          }
+          const paragraphContent = convertInlineContent(
+            child.children as PhrasingContent[]
+          );
+          contentItems.push(...paragraphContent);
+        }
+      });
+
+      return {
+        id: generateBlockId(),
+        type: "container",
+        props: {
+          containerType,
+        },
+        content: contentItems,
+      } as ContainerBlock;
+    }
 
     case "list": {
       // 将列表转换为多个列表项 Block
@@ -415,6 +690,17 @@ function convertNode(node: RootContent): Block | Block[] | null {
       } as CodeBlockBlock;
     }
 
+    // 块级数学公式 ($$...$$)
+    case "math": {
+      return {
+        id: generateBlockId(),
+        type: "math",
+        props: {
+          formula: (node as any).value || "",
+        },
+      } as MathBlock;
+    }
+
     case "table": {
       const rows = node.children;
       if (rows.length === 0) return null;
@@ -467,16 +753,6 @@ function convertNode(node: RootContent): Block | Block[] | null {
         type: "thematicBreak",
       } as ThematicBreakBlock;
 
-    case "math":
-      return {
-        id: generateBlockId(),
-        type: "math",
-        props: {
-          formula: node.value,
-          display: "block",
-        },
-      } as MathBlock;
-
     case "html": {
       const html = node.value;
 
@@ -514,61 +790,6 @@ function convertNode(node: RootContent): Block | Block[] | null {
         type: "paragraph",
         content: [{ type: "text", text: html }],
       } as ParagraphBlock;
-    }
-
-    // 处理 remark-directive 的容器指令（:::tip 等）
-    case "containerDirective": {
-      const directiveNode = node as unknown as {
-        name: string;
-        children: RootContent[];
-        attributes?: Record<string, string>;
-      };
-
-      const containerType = directiveNode.name as ContainerType;
-      const validContainerTypes: ContainerType[] = [
-        "tip",
-        "warning",
-        "danger",
-        "details",
-        "info",
-        "note",
-      ];
-
-      if (validContainerTypes.includes(containerType)) {
-        // 提取自定义标题（如果有）
-        let title: string | undefined;
-        const childBlocks: Block[] = [];
-
-        for (const child of directiveNode.children) {
-          const converted = convertNode(child as RootContent);
-          if (converted) {
-            if (Array.isArray(converted)) {
-              childBlocks.push(...converted);
-            } else {
-              childBlocks.push(converted);
-            }
-          }
-        }
-
-        // 尝试从属性中获取标题
-        if (directiveNode.attributes?.title) {
-          title = directiveNode.attributes.title;
-        }
-
-        return {
-          id: generateBlockId(),
-          type: "container",
-          props: { containerType, title },
-          children: childBlocks,
-        } as ContainerBlock;
-      }
-
-      // 未知的容器类型，作为引用块处理
-      return {
-        id: generateBlockId(),
-        type: "quote",
-        children: convertNodes(directiveNode.children as RootContent[]),
-      } as QuoteBlock;
     }
 
     case "yaml":
@@ -611,6 +832,10 @@ export function markdownToBlocks(markdown: string): Block[] {
   const processor = createProcessor();
   const parsedTree = processor.parse(markdown);
   const tree = processor.runSync(parsedTree, markdown) as Root;
+
+  // 调试：输出完整 MDAST 树
+  console.log("[Parser] Full MDAST tree:", JSON.stringify(tree, null, 2));
+
   const blocks = convertNodes(tree.children);
   console.log(
     "[Parser] Parsed blocks from markdown:",

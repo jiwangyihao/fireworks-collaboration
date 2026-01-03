@@ -7,12 +7,22 @@
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 
-import { useCreateBlockNote } from "@blocknote/react";
+import {
+  useCreateBlockNote,
+  SideMenu,
+  SideMenuController,
+  DragHandleButton,
+  AddBlockButton,
+  SuggestionMenuController,
+} from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import { customSchema } from "./schema";
 import zh from "./locale-zh";
 import type { Block } from "@blocknote/core";
 import { useEffect } from "react";
+import { CustomDragHandleMenu } from "./CustomSideMenu";
+import { BlockInputRules } from "./extensions/InputRules";
+import { getCustomSlashMenuItems } from "./SlashMenuItems";
 
 interface BlockNoteEditorProps {
   initialContent?: Block<typeof customSchema.blockSchema, any, any>[];
@@ -34,6 +44,10 @@ export function BlockNoteEditor({
     schema: customSchema,
     dictionary: zh,
     initialContent: initialContent as any,
+    // 注入自定义 Input Rules (Tiptap Extension)
+    _tiptapOptions: {
+      extensions: [BlockInputRules],
+    },
   });
 
   // 通知父组件编辑器已就绪（仅在挂载时调用一次）
@@ -64,7 +78,33 @@ export function BlockNoteEditor({
         }
       }}
       theme="light"
-    />
+      sideMenu={false}
+      slashMenu={false}
+    >
+      {/* 自定义侧边菜单，包含容器类型切换 */}
+      <SideMenuController
+        sideMenu={(props) => (
+          <SideMenu
+            {...props}
+            dragHandleMenu={() => <CustomDragHandleMenu />}
+          />
+        )}
+      />
+
+      {/* 自定义 Slash Menu */}
+      <SuggestionMenuController
+        triggerCharacter={"/"}
+        getItems={async (query) =>
+          getCustomSlashMenuItems(editor).filter(
+            (item) =>
+              item.title.toLowerCase().includes(query.toLowerCase()) ||
+              item.aliases?.some((alias) =>
+                alias.toLowerCase().includes(query.toLowerCase())
+              )
+          )
+        }
+      />
+    </BlockNoteView>
   );
 }
 

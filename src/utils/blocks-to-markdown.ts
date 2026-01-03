@@ -8,6 +8,7 @@
 import {
   type Block,
   type InlineContent,
+  type TextContent,
   type HeadingBlock,
   type ParagraphBlock,
   type BulletListItemBlock,
@@ -32,9 +33,14 @@ import yaml from "yaml";
 // ============================================================================
 
 /**
- * 将 InlineContent 转换为 Markdown 文本
+ * 将 InlineContent 或 InlineContent[] 转换为 Markdown 文本
  */
-function inlineContentToMarkdown(content: InlineContent): string {
+function inlineContentToMarkdown(
+  content: InlineContent | InlineContent[]
+): string {
+  if (Array.isArray(content)) {
+    return content.map((c) => inlineContentToMarkdown(c)).join("");
+  }
   switch (content.type) {
     case "text":
       return content.text || "";
@@ -71,6 +77,73 @@ function inlineContentToMarkdown(content: InlineContent): string {
  */
 function inlineContentsToMarkdown(contents: InlineContent[]): string {
   return contents.map(inlineContentToMarkdown).join("");
+}
+
+/**
+ * 预处理容器内容：将带有样式的换行符拆分出来。
+ * 例如：**text\ntext** -> **text**\n**text**
+ * 这可以防止序列化后的 **\n\n** 破坏 Markdown 结构。
+ */
+function preprocessContainerContent(
+  contents: InlineContent[]
+): InlineContent[] {
+  const splitContent = (content: InlineContent): InlineContent[] => {
+    // 文本节点：如果有换行符，直接拆分
+    if (content.type === "text") {
+      if (content.text && content.text.includes("\n")) {
+        return content.text
+          .split(/(\n)/)
+          .filter((t) => t !== "")
+          .map((t) => ({ type: "text", text: t }) as TextContent);
+      }
+      return [content];
+    }
+
+    // 容器节点 (strong, emphasis)：递归检查 children
+    if ("children" in content && Array.isArray(content.children)) {
+      // 链接不拆分
+      if (content.type === "link") return [content];
+
+      const newChildren = content.children.flatMap(splitContent);
+
+      // 检查 children 是否有换行符
+      const hasNewline = newChildren.some(
+        (c) => c.type === "text" && (c as TextContent).text.includes("\n")
+      );
+
+      if (!hasNewline) {
+        return [{ ...content, children: newChildren }];
+      }
+
+      // 如果有换行符，拆分当前节点
+      const result: InlineContent[] = [];
+      let currentChunk: InlineContent[] = [];
+
+      for (const child of newChildren) {
+        // 只要包含换行符就被视为分割点？
+        // splitContent 应该已经把纯文本的 \n 拆出来了
+        // 但如果 splitContent 没有正确拆分...
+
+        if (child.type === "text" && child.text === "\n") {
+          if (currentChunk.length > 0) {
+            result.push({ ...content, children: currentChunk });
+            currentChunk = [];
+          }
+          result.push(child); // 换行符提升到外层
+        } else {
+          currentChunk.push(child);
+        }
+      }
+      if (currentChunk.length > 0) {
+        result.push({ ...content, children: currentChunk });
+      }
+      return result;
+    }
+
+    return [content];
+  };
+
+  return contents.flatMap(splitContent);
 }
 
 // ============================================================================
@@ -200,14 +273,95 @@ function blockToMarkdown(block: Block, indent: string = ""): string {
 
     case "container": {
       const container = block as ContainerBlock;
-      const { containerType, title } = container.props;
+      const { containerType } = container.props;
+
+      // 智能提取标题：寻找第一个换行符
+      const content = container.content || [];
+      let title = "";
+      let bodyContent: InlineContent[] = content;
+
+      if (content.length > 0) {
+        let fullText = "";
+        let splitIndex = -1;
+        let splitOffset = -1;
+
+        // 寻找第一个换行符
+        for (let i = 0; i < content.length; i++) {
+          const item = content[i];
+          if (item.type === "text") {
+            const textItem = item as TextContent;
+            const textIdx = textItem.text.indexOf("\n");
+            if (textIdx !== -1) {
+              splitIndex = i;
+              splitOffset = textIdx;
+              fullText += textItem.text.substring(0, textIdx);
+              break;
+            }
+            fullText += textItem.text;
+          }
+        }
+
+        if (splitIndex === -1) {
+          // 没有换行符，全部作为标题
+          title = content
+            .map((c) => (c.type === "text" ? c.text : ""))
+            .join("")
+            .trim();
+          bodyContent = [];
+        } else {
+          // 提取标题
+          title = fullText.trim();
+
+          // 提取 Body
+          bodyContent = [];
+          const splitNode = content[splitIndex];
+          if (splitNode.type === "text") {
+            const splitTextNode = splitNode as TextContent;
+            // 移除标题部分和换行符，保留后续内容
+            let afterText = splitTextNode.text.substring(splitOffset);
+            afterText = afterText.replace(/^\n+/, "");
+
+            if (afterText) {
+              bodyContent.push({ ...splitNode, text: afterText });
+            }
+          }
+          // 添加后续节点
+          for (let i = splitIndex + 1; i < content.length; i++) {
+            bodyContent.push(content[i]);
+          }
+        }
+
+        // 默认标题列表
+        const defaultTitles = [
+          "提示",
+          "警告",
+          "危险",
+          "详情",
+          "信息",
+          "注意",
+          "TIP",
+          "WARNING",
+          "DANGER",
+          "DETAILS",
+          "INFO",
+          "NOTE",
+        ];
+
+        // 如果是默认标题，title 置空
+        if (defaultTitles.includes(title)) {
+          title = "";
+        }
+      }
+
       const titlePart = title ? ` ${title}` : "";
-      const content = container.children
-        ? container.children
-            .map((child) => blockToMarkdown(child, ""))
-            .join("\n\n")
-        : "";
-      return `:::${containerType}${titlePart}\n${content}\n:::`;
+
+      // 预处理内容，确保样式不跨越换行符
+      const processedBodyContent = preprocessContainerContent(bodyContent);
+
+      let bodyMarkdown = inlineContentToMarkdown(processedBodyContent);
+      // 容器内容中的单换行在保存时转为双换行（VitePress 格式）
+      bodyMarkdown = bodyMarkdown.replace(/\n/g, "\n\n");
+      return `:::${containerType}${titlePart}\n${bodyMarkdown}\n:::`;
     }
 
     case "math": {

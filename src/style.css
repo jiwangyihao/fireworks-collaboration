@@ -70,3 +70,149 @@ body {
   padding: 0 !important; /* Force remove scrollbar compensation padding */
   scrollbar-gutter: auto;
 }
+
+/* Container block title styling - first line is the title */
+.container-content::first-line {
+  font-weight: 700;
+}
+
+/* Add spacing after title (the first br separates title from content) */
+.container-content br:first-of-type {
+  display: block;
+  content: url("data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7");
+  margin-bottom: 0.5em;
+}
+
+/* =====================================================
+   VitePress-style Container Block Colors
+   Based on VitePress default theme custom-block styles
+   ===================================================== */
+
+:root {
+  /* VitePress base colors - Light mode */
+  --vp-c-text-1: #3c3c43;
+  --vp-c-text-2: #67676c;
+
+  /* Gray palette */
+  --vp-c-gray-soft: rgba(142, 150, 170, 0.14);
+
+  /* Indigo palette (brand/tip) */
+  --vp-c-indigo-soft: rgba(100, 108, 255, 0.14);
+
+  /* Purple palette (important) */
+  --vp-c-purple-soft: rgba(159, 122, 234, 0.14);
+
+  /* Green palette (success) */
+  --vp-c-green-soft: rgba(16, 185, 129, 0.14);
+
+  /* Yellow palette (warning) */
+  --vp-c-yellow-soft: rgba(234, 179, 8, 0.14);
+
+  /* Red palette (danger/caution) */
+  --vp-c-red-soft: rgba(244, 63, 94, 0.14);
+
+  /* Container block variables - following VitePress exactly */
+  /* 使用 CSS 相对颜色语法从 soft 背景色派生出 100% 不透明的强调色边框，并降低 20% 亮度 */
+  --vp-custom-block-info-border: hsl(
+    from var(--vp-custom-block-info-bg) h s calc(l * 0.5) / 1
+  );
+  --vp-custom-block-info-text: var(--vp-c-text-1);
+  --vp-custom-block-info-bg: var(--vp-c-gray-soft);
+
+  --vp-custom-block-tip-border: hsl(
+    from var(--vp-custom-block-tip-bg) h s calc(l * 0.5) / 1
+  );
+  --vp-custom-block-tip-text: var(--vp-c-text-1);
+  --vp-custom-block-tip-bg: var(--vp-c-indigo-soft);
+
+  --vp-custom-block-warning-border: hsl(
+    from var(--vp-custom-block-warning-bg) h s calc(l * 0.5) / 1
+  );
+  --vp-custom-block-warning-text: var(--vp-c-text-1);
+  --vp-custom-block-warning-bg: var(--vp-c-yellow-soft);
+
+  --vp-custom-block-danger-border: hsl(
+    from var(--vp-custom-block-danger-bg) h s calc(l * 0.5) / 1
+  );
+  --vp-custom-block-danger-text: var(--vp-c-text-1);
+  --vp-custom-block-danger-bg: var(--vp-c-red-soft);
+
+  --vp-custom-block-details-border: hsl(
+    from var(--vp-custom-block-details-bg) h s calc(l * 0.5) / 1
+  );
+  --vp-custom-block-details-text: var(--vp-c-text-1);
+  --vp-custom-block-details-bg: var(--vp-c-gray-soft);
+}
+
+/* Dark mode overrides */
+[data-theme="dark"],
+[data-theme="synthwave"],
+[data-theme="halloween"],
+[data-theme="forest"],
+[data-theme="black"],
+[data-theme="luxury"],
+[data-theme="dracula"],
+[data-theme="business"],
+[data-theme="night"],
+[data-theme="coffee"],
+[data-theme="dim"],
+[data-theme="sunset"],
+[data-theme="abyss"] {
+  --vp-c-text-1: rgba(255, 255, 245, 0.86);
+  --vp-c-text-2: rgba(235, 235, 245, 0.6);
+}
+
+/* Container block type-specific styles */
+.container-block-tip {
+  border-color: var(--vp-custom-block-tip-border);
+  background-color: var(--vp-custom-block-tip-bg);
+  color: var(--vp-custom-block-tip-text);
+}
+
+.container-block-info {
+  border-color: var(--vp-custom-block-info-border);
+  background-color: var(--vp-custom-block-info-bg);
+  color: var(--vp-custom-block-info-text);
+}
+
+.container-block-warning {
+  border-color: var(--vp-custom-block-warning-border);
+  background-color: var(--vp-custom-block-warning-bg);
+  color: var(--vp-custom-block-warning-text);
+}
+
+.container-block-danger {
+  border-color: var(--vp-custom-block-danger-border);
+  background-color: var(--vp-custom-block-danger-bg);
+  color: var(--vp-custom-block-danger-text);
+}
+
+.container-block-details {
+  border-color: var(--vp-custom-block-details-border);
+  background-color: var(--vp-custom-block-details-bg);
+  color: var(--vp-custom-block-details-text);
+}
+
+/* =====================================================
+   MathLive Customization
+   ===================================================== */
+math-field {
+  font-size: 1.1em;
+  /* 确保 MathField 本身没有边框和背景，由 focus-within 控制 */
+  background: transparent;
+  border: none;
+}
+
+/* 仅在编辑时显示工具栏按钮 (键盘开关和菜单) */
+math-field:not(:focus-within)::part(virtual-keyboard-toggle),
+math-field:not(:focus-within)::part(menu-toggle) {
+  display: none;
+}
+
+/* 聚焦时的样式：增加轻微的高亮 */
+math-field:focus-within {
+  outline: none;
+  background-color: var(--vp-c-gray-soft); /* 使用淡灰色背景指示编辑状态 */
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px var(--color-primary, #646cff);
+}

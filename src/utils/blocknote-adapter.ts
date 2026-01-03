@@ -51,20 +51,14 @@ function internalInlineToBlockNote(inlineContent: InlineContent[]): unknown[] {
             styles: {},
           })),
         };
-      case "inlineMath":
-        const formula = "formula" in item ? item.formula : "";
-        if (item.displayMode) {
-          return {
-            type: "text",
-            text: `$$${formula}$$`,
-            styles: {},
-          };
-        }
+      case "inlineMath": {
+        const formula = "formula" in item ? (item.formula as string) : "";
+        // 使用 BlockNote 自定义内联内容类型
         return {
-          type: "text",
-          text: `$${formula}$`,
-          styles: {},
+          type: "inlineMath",
+          props: { formula },
         };
+      }
       default:
         return { type: "text", text: "", styles: {} };
     }
@@ -103,6 +97,13 @@ function blockNoteInlineToInternal(content: unknown[]): InlineContent[] {
           type: "text" as const,
           text: c.text,
         })),
+      };
+    }
+    // E2.3: 自定义内联内容 - inlineMath
+    if (item.type === "inlineMath") {
+      return {
+        type: "inlineMath" as const,
+        formula: (item.props?.formula as string) || "",
       };
     }
     return { type: "text" as const, text: "" };
@@ -265,10 +266,50 @@ export function internalToBlockNote(blocks: InternalBlock[]): BlockNoteBlock[] {
           children: undefined,
         };
 
+      // E2.3: ContainerBlock - VitePress 容器块
+      case "container": {
+        const containerBlock = block as any;
+        return {
+          ...common,
+          type: "container",
+          props: {
+            containerType: containerBlock.props?.containerType || "tip",
+          },
+          // 内容直接使用 content，第一行可能是标题
+          content: internalInlineToBlockNote(containerBlock.content || []),
+          children: undefined,
+        };
+      }
+
+      // E2.3: MathBlock - LaTeX 公式块
+      case "math": {
+        const mathBlock = block as any;
+        return {
+          ...common,
+          type: "math",
+          props: {
+            formula: mathBlock.props?.formula || "",
+          },
+          content: undefined,
+          children: undefined,
+        };
+      }
+
+      // E2.3: MermaidBlock - Mermaid 图表块
+      case "mermaid": {
+        const mermaidBlock = block as any;
+        return {
+          ...common,
+          type: "mermaid",
+          props: {
+            code: mermaidBlock.props?.code || "",
+          },
+          content: undefined,
+          children: undefined,
+        };
+      }
+
       // VitePress 扩展块 - 暂时转为代码块显示
-      case "container":
-      case "math":
-      case "mermaid":
       case "vueComponent":
       case "include":
         return {
@@ -451,6 +492,41 @@ export function blockNoteToInternal(blocks: BlockNoteBlock[]): InternalBlock[] {
           props: {
             headerRow,
             rows: dataRows,
+          },
+        };
+      }
+
+      // E2.3: ContainerBlock 反向转换
+      case "container": {
+        return {
+          ...common,
+          type: "container" as const,
+          props: {
+            containerType: (block.props.containerType as string) || "tip",
+          },
+          // 直接使用 content，第一行可能是标题
+          content: blockNoteInlineToInternal(block.content as unknown[]),
+        };
+      }
+
+      // E2.3: MathBlock 反向转换
+      case "math": {
+        return {
+          ...common,
+          type: "math" as const,
+          props: {
+            formula: (block.props.formula as string) || "",
+          },
+        };
+      }
+
+      // E2.3: MermaidBlock 反向转换
+      case "mermaid": {
+        return {
+          ...common,
+          type: "mermaid" as const,
+          props: {
+            code: (block.props.code as string) || "",
           },
         };
       }

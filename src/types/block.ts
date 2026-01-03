@@ -288,28 +288,22 @@ export interface ThematicBreakBlock extends BaseBlock {
 // ============================================================================
 
 /**
- * VitePress 容器类型
+ * VitePress 容器类型（与 VitePress 官方一致）
  */
-export type ContainerType =
-  | "tip"
-  | "warning"
-  | "danger"
-  | "details"
-  | "info"
-  | "note";
+export type ContainerType = "tip" | "info" | "warning" | "danger" | "details";
 
 /**
  * 容器块（VitePress :::tip 等）
+ * 内容的第一行可作为标题，如果是默认标题则保存时不写入 Markdown
  */
 export interface ContainerBlock extends BaseBlock {
   type: "container";
   props: {
     /** 容器类型 */
     containerType: ContainerType;
-    /** 自定义标题（可选） */
-    title?: string;
   };
-  children: Block[];
+  /** 内容（第一行可作为标题） */
+  content: InlineContent[];
 }
 
 /**
@@ -524,14 +518,13 @@ export function createCodeBlock(
  */
 export function createContainerBlock(
   containerType: ContainerType,
-  children: Block[],
-  title?: string
+  content: InlineContent[] = []
 ): ContainerBlock {
   return {
     id: generateBlockId(),
     type: "container",
-    props: { containerType, title },
-    children,
+    props: { containerType },
+    content,
   };
 }
 
