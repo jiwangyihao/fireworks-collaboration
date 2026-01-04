@@ -161,7 +161,11 @@ pub fn run() {
             crate::app::commands::vitepress::vitepress_install_dependencies,
             crate::app::commands::vitepress::vitepress_start_dev_server,
             crate::app::commands::vitepress::vitepress_stop_dev_server,
-            crate::app::commands::vitepress::vitepress_parse_config
+            crate::app::commands::vitepress::vitepress_parse_config,
+            crate::app::commands::vitepress::vitepress_create_preview,
+            crate::app::commands::vitepress::vitepress_delete_preview,
+            crate::app::commands::vitepress::vitepress_cleanup_previews,
+            crate::app::commands::vitepress::vitepress_get_components
         ]);
 
     // Setup application state and configuration

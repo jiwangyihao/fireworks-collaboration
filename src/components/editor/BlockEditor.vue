@@ -20,6 +20,14 @@ interface Props {
   initialContent?: Block[];
   /** 是否可编辑 */
   editable?: boolean;
+  /** 当前文件路径 */
+  filePath?: string;
+  /** 项目根目录 */
+  projectRoot?: string;
+  /** Dev Server 端口 */
+  devServerPort?: number;
+  /** Dev Server URL */
+  devServerUrl?: string;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -77,6 +85,10 @@ defineExpose({
     <BlockNoteEditorVue
       :initialContent="rawInitialContent"
       :editable="editable"
+      :filePath="filePath"
+      :projectRoot="projectRoot"
+      :devServerPort="devServerPort"
+      :devServerUrl="devServerUrl"
       :onReady="handleReady"
       :onChange="handleChange"
     />

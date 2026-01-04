@@ -216,3 +216,32 @@ math-field:focus-within {
   border-radius: 4px;
   box-shadow: 0 0 0 2px var(--color-primary, #646cff);
 }
+
+/* =====================================================
+   Quote Block Styling
+   BlockNote renders children in .bn-block-group sibling,
+   so we extend the parent quote's border via CSS.
+   ===================================================== */
+
+/* Quote block 基础样式 - 直接应用到 .node-quote */
+.node-quote {
+  border-left: 4px solid rgb(156 163 175); /* gray-400 */
+  padding-left: 1rem;
+  background-color: rgba(243, 244, 246, 0.5); /* gray-100/50 */
+}
+
+/* 当 quote block 有嵌套子块时，为其 bn-block-group 添加左边框延续 */
+.bn-block:has(.node-quote) > .bn-block-group {
+  border-left: 4px solid rgb(156 163 175); /* gray-400 */
+  margin-left: 0;
+  padding-left: 1rem;
+  background-color: rgba(243, 244, 246, 0.5); /* gray-100/50 */
+}
+
+.bn-block-outer {
+  margin: calc(2 * var(--spacing)) 0;
+}
+
+.bn-block-outer:has(.quote-block-sibling) {
+  margin-top: calc(-2 * var(--spacing));
+}

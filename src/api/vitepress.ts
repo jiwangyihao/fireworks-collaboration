@@ -210,8 +210,11 @@ export async function startDevServer(
 /**
  * 停止 Dev Server
  */
-export async function stopDevServer(processId: number): Promise<void> {
-  return invoke<void>("vitepress_stop_dev_server", { processId });
+export async function stopDevServer(
+  processId: number,
+  projectRoot?: string
+): Promise<void> {
+  return invoke<void>("vitepress_stop_dev_server", { processId, projectRoot });
 }
 
 /**

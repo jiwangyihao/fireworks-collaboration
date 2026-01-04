@@ -47,7 +47,9 @@ async fn test_vitepress_crud() {
     assert!(fs::exists(&doc_path).unwrap());
 
     // 2. Read Document
-    let content = vitepress_read_document(doc_path.clone()).await.unwrap();
+    let content = vitepress_read_document(doc_path.clone(), None, None)
+        .await
+        .unwrap();
     assert!(content.content.contains("# test-doc"));
 
     // 3. Rename
@@ -125,7 +127,7 @@ async fn test_vitepress_save_document() {
 
     assert!(save_result.success);
 
-    let read_result = vitepress_read_document(doc_path).await.unwrap();
+    let read_result = vitepress_read_document(doc_path, None, None).await.unwrap();
     assert_eq!(read_result.content, new_content);
 }
 
@@ -144,7 +146,7 @@ draft: true
     let doc_path = dir.path().join("frontmatter-test.md");
     fs::write(&doc_path, content).unwrap();
 
-    let result = vitepress_read_document(doc_path.to_string_lossy().to_string())
+    let result = vitepress_read_document(doc_path.to_string_lossy().to_string(), None, None)
         .await
         .unwrap();
 
@@ -229,7 +231,7 @@ async fn test_vitepress_check_dependencies() {
 #[tokio::test]
 async fn test_vitepress_error_handling() {
     // Test 1: read non-existent file
-    let result = vitepress_read_document("/non/existent/path.md".to_string()).await;
+    let result = vitepress_read_document("/non/existent/path.md".to_string(), None, None).await;
     assert!(result.is_err());
 
     // Test 2: rename non-existent file

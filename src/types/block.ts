@@ -139,7 +139,8 @@ export type CustomBlockType =
   | "math"
   | "mermaid"
   | "vueComponent"
-  | "include";
+  | "include"
+  | "shikiCode";
 
 /**
  * 所有 Block 类型的联合
@@ -273,6 +274,9 @@ export interface ImageBlock extends BaseBlock {
  */
 export interface QuoteBlock extends BaseBlock {
   type: "quote";
+  props?: {
+    groupId?: string;
+  };
   children: Block[];
 }
 
@@ -365,6 +369,31 @@ export interface IncludeBlock extends BaseBlock {
   };
 }
 
+/**
+ * Shiki 代码块（VitePress 高级语法支持）
+ */
+export interface ShikiCodeBlock extends BaseBlock {
+  type: "shikiCode";
+  props: {
+    /** 代码内容 */
+    code: string;
+    /** 语言 */
+    language: string;
+    /** 文件名 [foo.ts] */
+    filename?: string;
+    /** 高亮行 {1,3-5} */
+    highlightLines?: string;
+    /** 是否显示行号 :line-numbers */
+    showLineNumbers?: boolean;
+    /** 起始行号 :line-numbers=2 */
+    startLineNumber?: number;
+    /** 代码组 Tabs (JSON string) */
+    tabs?: string;
+    /** 当前激活 Tab 索引 */
+    activeTabIndex?: number;
+  };
+}
+
 // ============================================================================
 // Block 联合类型
 // ============================================================================
@@ -392,7 +421,8 @@ export type CustomBlock =
   | MathBlock
   | MermaidBlock
   | VueComponentBlock
-  | IncludeBlock;
+  | IncludeBlock
+  | ShikiCodeBlock;
 
 /**
  * 所有 Block 类型的联合
@@ -550,5 +580,24 @@ export function createMermaidBlock(code: string): MermaidBlock {
     id: generateBlockId(),
     type: "mermaid",
     props: { code },
+  };
+}
+
+/**
+ * 创建 Shiki 代码块
+ */
+export function createShikiCodeBlock(
+  code: string,
+  language: string = "text",
+  options: Partial<ShikiCodeBlock["props"]> = {}
+): ShikiCodeBlock {
+  return {
+    id: generateBlockId(),
+    type: "shikiCode",
+    props: {
+      code,
+      language,
+      ...options,
+    },
   };
 }

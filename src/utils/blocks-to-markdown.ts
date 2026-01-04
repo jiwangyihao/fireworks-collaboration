@@ -23,6 +23,7 @@ import {
   type MermaidBlock,
   type VueComponentBlock,
   type IncludeBlock,
+  type ShikiCodeBlock,
 } from "../types/block";
 import type { Document, Frontmatter } from "../types/document";
 
@@ -215,6 +216,77 @@ function blockToMarkdown(block: Block, indent: string = ""): string {
       const fence = "```";
       const header = meta ? `${lang} ${meta}` : lang;
       return `${fence}${header}\n${codeBlock.props.code}\n${fence}`;
+    }
+
+    case "shikiCode": {
+      const shikiBlock = block as ShikiCodeBlock;
+      let tabs: any[] = [];
+      try {
+        const rawTabs = shikiBlock.props.tabs;
+        if (rawTabs) {
+          tabs = typeof rawTabs === "string" ? JSON.parse(rawTabs) : rawTabs;
+        }
+      } catch (e) {
+        console.warn("Failed to parse tabs:", e);
+      }
+
+      // 辅助：序列化单个 Tab/Block
+      const serializeOne = (
+        code: string,
+        lang: string,
+        filename?: string,
+        highlight?: string,
+        showLines?: boolean,
+        startLine?: number
+      ) => {
+        let infoString = lang || "text";
+        if (filename) infoString += ` [${filename}]`;
+        if (highlight) infoString += ` ${highlight}`;
+        if (showLines) {
+          if (startLine && startLine !== 1) {
+            infoString += ` :line-numbers=${startLine}`;
+          } else {
+            infoString += " :line-numbers";
+          }
+        }
+        const fence = "```";
+        return `${fence}${infoString}\n${code}\n${fence}`;
+      };
+
+      // 如果有多个 Tab，序列化为 code-group
+      if (tabs && tabs.length > 1) {
+        const blocks = tabs
+          .map((tab) =>
+            serializeOne(
+              tab.code,
+              tab.language,
+              tab.filename,
+              tab.highlightLines,
+              tab.showLineNumbers,
+              tab.startLineNumber
+            )
+          )
+          .join("\n");
+        return `::: code-group\n${blocks}\n:::`;
+      }
+
+      // 否则序列化为普通代码块（使用顶层 Props）
+      const {
+        language,
+        filename,
+        highlightLines,
+        showLineNumbers,
+        startLineNumber,
+        code,
+      } = shikiBlock.props;
+      return serializeOne(
+        code,
+        language,
+        filename,
+        highlightLines,
+        showLineNumbers,
+        startLineNumber
+      );
     }
 
     case "table": {
@@ -462,18 +534,38 @@ function frontmatterToMarkdown(frontmatter: Frontmatter): string {
  * 将 Block 数组转换为 Markdown 文本
  */
 export function blocksToMarkdown(blocks: Block[]): string {
-  const parts: string[] = [];
+  let result = "";
+  let prevBlock: Block | null = null;
 
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i];
     const md = blockToMarkdown(block, "");
 
-    if (md) {
-      parts.push(md);
+    if (!md) continue;
+
+    if (result.length > 0) {
+      let separator = "\n\n"; // 默认块间距
+
+      // 智能处理引用块分组：同 groupId 的引用块紧凑连接
+      if (
+        prevBlock &&
+        prevBlock.type === "quote" &&
+        block.type === "quote" &&
+        (prevBlock as QuoteBlock).props?.groupId &&
+        (prevBlock as QuoteBlock).props?.groupId ===
+          (block as QuoteBlock).props?.groupId
+      ) {
+        separator = "\n";
+      }
+
+      result += separator;
     }
+
+    result += md;
+    prevBlock = block;
   }
 
-  return parts.join("\n\n");
+  return result;
 }
 
 /**

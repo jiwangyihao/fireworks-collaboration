@@ -43,6 +43,26 @@ export const getCustomSlashMenuItems = (editor: any) => {
       icon: <Icon icon="lucide:network" />,
       subtext: "插入 Mermaid 图表",
     },
+    // E2.5: Shiki Code Block
+    {
+      title: "代码块 (Pro)",
+      onItemClick: () => {
+        editor.insertBlocks(
+          [
+            {
+              type: "shikiCode",
+              props: { code: "", language: "text" },
+            },
+          ],
+          editor.getTextCursorPosition().block,
+          "after"
+        );
+      },
+      aliases: ["code", "pre", "shiki", "daima"],
+      group: "Advanced",
+      icon: <Icon icon="lucide:code-2" />,
+      subtext: "插入支持高亮和行号的代码块",
+    },
     // Container: Tip
     {
       title: "提示",
@@ -117,6 +137,65 @@ export const getCustomSlashMenuItems = (editor: any) => {
       group: "Containers",
       icon: <Icon icon="lucide:list-collapse" />,
       subtext: "插入详情折叠块",
+    },
+    // E2.4: Quote Block
+    {
+      title: "引用",
+      onItemClick: () => {
+        editor.insertBlocks(
+          [{ type: "quote", props: {} }],
+          editor.getTextCursorPosition().block,
+          "after"
+        );
+      },
+      aliases: ["quote", "blockquote", "yy", "yinyong"],
+      group: "Basic blocks",
+      icon: <Icon icon="lucide:quote" />,
+      subtext: "插入引用块",
+    },
+    // E2.4: Vue Component Block
+    {
+      title: "Vue 组件",
+      onItemClick: () => {
+        editor.insertBlocks(
+          [
+            {
+              type: "vueComponent",
+              props: {
+                componentName: "",
+                attributesJson: "{}",
+                selfClosing: true,
+              },
+            },
+          ],
+          editor.getTextCursorPosition().block,
+          "after"
+        );
+      },
+      aliases: ["vue", "component", "zj", "zujian"],
+      group: "VitePress",
+      icon: <Icon icon="mdi:vuejs" />,
+      subtext: "插入 Vue 组件标签",
+    },
+    // E2.4: Include Block
+    {
+      title: "文件包含",
+      onItemClick: () => {
+        editor.insertBlocks(
+          [
+            {
+              type: "include",
+              props: { path: "", lineRange: "", region: "" },
+            },
+          ],
+          editor.getTextCursorPosition().block,
+          "after"
+        );
+      },
+      aliases: ["include", "import", "bh", "baohan", "yinyong"],
+      group: "VitePress",
+      icon: <Icon icon="mdi:file-import" />,
+      subtext: "插入文件包含指令",
     },
   ];
 

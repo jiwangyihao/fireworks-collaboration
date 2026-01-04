@@ -9,6 +9,7 @@
 //! - 文档 CRUD
 
 use git2;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -17,6 +18,7 @@ use tauri::{Emitter, Runtime, State, Window};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use tokio::fs;
+use tokio::sync::Mutex as AsyncMutex;
 
 // ============================================================================
 // 状态管理
@@ -189,6 +191,29 @@ pub struct SaveResult {
     pub success: bool,
     pub path: String,
     pub message: Option<String>,
+}
+
+// ============================================================================
+// 组件解析相关
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentProp {
+    pub name: String,
+    pub type_name: String,
+    pub description: Option<String>,
+    pub default: Option<String>,
+    pub optional: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VueComponent {
+    pub name: String,
+    pub path: String,
+    pub description: Option<String>,
+    pub props: Vec<ComponentProp>,
 }
 
 // ============================================================================
@@ -595,14 +620,37 @@ async fn extract_title(file_path: &Path) -> Option<String> {
 
 /// 读取文档内容
 #[tauri::command(rename_all = "camelCase")]
-pub async fn vitepress_read_document(path: String) -> Result<DocumentContent, String> {
-    let file_path = Path::new(&path);
+pub async fn vitepress_read_document(
+    path: String,
+    base_path: Option<String>,
+    root_path: Option<String>,
+) -> Result<DocumentContent, String> {
+    let mut target_path = PathBuf::from(&path);
 
-    if !file_path.exists() {
-        return Err(format!("File not found: {}", path));
+    // 路径解析逻辑
+    if path.starts_with("@/") {
+        // 处理别名 (相对于项目根)
+        if let Some(root) = root_path {
+            target_path = Path::new(&root).join(&path[2..]);
+        }
+    } else if path.starts_with(".") {
+        // 处理相对路径 (相对于当前文件)
+        if let Some(base) = base_path {
+            let base_dir = Path::new(&base)
+                .parent()
+                .ok_or_else(|| "Invalid base path".to_string())?;
+            target_path = base_dir.join(&path);
+        }
     }
 
-    let content = fs::read_to_string(file_path)
+    // 规范化路径 (处理 .. 等) - 简单处理，实际需要 canonicalize 但要小心文件不存在的情况
+    // 这里我们先尝试直接读取，如果不存在再报错
+
+    if !target_path.exists() {
+        return Err(format!("File not found: {}", target_path.display()));
+    }
+
+    let content = fs::read_to_string(&target_path)
         .await
         .map_err(|e| format!("Failed to read file: {}", e))?;
 
@@ -610,7 +658,7 @@ pub async fn vitepress_read_document(path: String) -> Result<DocumentContent, St
     let frontmatter = parse_frontmatter(&content);
 
     Ok(DocumentContent {
-        path,
+        path: target_path.to_string_lossy().to_string(),
         content,
         frontmatter,
     })
@@ -1001,6 +1049,7 @@ pub async fn vitepress_start_dev_server<R: Runtime>(
 #[tauri::command(rename_all = "camelCase")]
 pub async fn vitepress_stop_dev_server(
     process_id: u32,
+    project_root: Option<String>,
     state: State<'_, DevServerState>,
 ) -> Result<(), String> {
     // On Windows, run taskkill FIRST to ensure we catch the process tree before the parent dies
@@ -1021,11 +1070,475 @@ pub async fn vitepress_stop_dev_server(
         }
     }
 
-    let mut servers = state.servers.lock().unwrap();
-    if let Some(child) = servers.remove(&process_id) {
-        // Still try to call kill on the wrapper for cleanup
-        let _ = child.kill();
+    // 先处理 state，在 await 之前释放 MutexGuard
+    {
+        let mut servers = state.servers.lock().unwrap();
+        if let Some(child) = servers.remove(&process_id) {
+            // Still try to call kill on the wrapper for cleanup
+            let _ = child.kill();
+        }
+    } // MutexGuard 在这里被释放
+
+    // 清理预览目录（现在可以安全地 await）
+    if let Some(root) = project_root {
+        let preview_dir = Path::new(&root).join(PREVIEW_DIR_NAME);
+        if preview_dir.exists() {
+            if let Err(e) = fs::remove_dir_all(&preview_dir).await {
+                println!("Failed to clean preview directory: {}", e);
+            } else {
+                println!("Cleaned preview directory: {:?}", preview_dir);
+            }
+        }
     }
 
     Ok(())
+}
+
+// ============================================================================
+// 预览文件管理
+// ============================================================================
+
+/// 预览目录名称
+const PREVIEW_DIR_NAME: &str = "_fireworks_preview";
+
+/// 使用静态锁防止并发修改 .git/info/exclude
+static EXCLUDE_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
+
+/// 确保 Git 忽略预览目录（使用 .git/info/exclude，不修改 .gitignore）
+async fn ensure_git_exclude(project_root: &Path) -> Result<(), String> {
+    // 获取全局锁，确保同一时间只有一个任务在修改 exclude 文件
+    let _guard = EXCLUDE_LOCK.lock().await;
+
+    let exclude_path = project_root.join(".git/info/exclude");
+
+    if !exclude_path.exists() {
+        // .git/info 目录可能不存在
+        if let Some(parent) = exclude_path.parent() {
+            match fs::create_dir_all(parent).await {
+                Ok(_) => (),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (), // 忽略已存在错误
+                Err(e) => return Err(format!("Failed to create .git/info: {}", e)),
+            }
+        }
+        fs::write(&exclude_path, format!("{}/\n", PREVIEW_DIR_NAME))
+            .await
+            .map_err(|e| format!("Failed to create exclude file: {}", e))?;
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(&exclude_path)
+        .await
+        .map_err(|e| format!("Failed to read exclude file: {}", e))?;
+
+    let pattern = format!("{}/", PREVIEW_DIR_NAME);
+    if !content.contains(&pattern) {
+        let new_content = if content.ends_with('\n') {
+            format!("{}{}\n", content, pattern)
+        } else {
+            format!("{}\n{}\n", content, pattern)
+        };
+        fs::write(&exclude_path, new_content)
+            .await
+            .map_err(|e| format!("Failed to update exclude file: {}", e))?;
+    }
+
+    Ok(())
+}
+
+/// 创建或更新预览文件
+#[tauri::command(rename_all = "camelCase")]
+pub async fn vitepress_create_preview(
+    project_root: String,
+    preview_id: String,
+    content: String,
+    content_type: String, // "markdown" | "vue"
+) -> Result<String, String> {
+    let root = Path::new(&project_root);
+    let preview_dir = root.join(PREVIEW_DIR_NAME);
+
+    // 确保预览目录存在
+    if !preview_dir.exists() {
+        fs::create_dir_all(&preview_dir)
+            .await
+            .map_err(|e| format!("Failed to create preview dir: {}", e))?;
+
+        // 确保 Git 忽略
+        ensure_git_exclude(root).await?;
+    }
+
+    // 生成预览文件
+    let file_name = format!("{}.md", preview_id);
+    let file_path = preview_dir.join(&file_name);
+
+    // 构建预览 Markdown 内容
+    // 使用 layout: false 避免导航栏
+    // 使用 vp-doc 类保留 VitePress 文档样式
+    let preview_content = match content_type.as_str() {
+        "vue" => format!(
+            r#"---
+layout: false
+title: Preview
+---
+
+<div class="vp-doc preview-root" style="padding: 16px;">
+
+{}
+
+</div>
+
+<script setup>
+import {{ onMounted }} from 'vue'
+onMounted(() => {{
+  const previewId = '{}'
+  const root = document.querySelector('.preview-root')
+  const sendHeight = () => {{
+    if (!root) return
+    const height = root.scrollHeight
+    window.parent.postMessage({{ type: 'resize', previewId, height }}, '*')
+  }}
+  // 初始发送
+  sendHeight()
+  // 持续监听高度变化（动态内容）
+  const observer = new ResizeObserver(sendHeight)
+  if (root) observer.observe(root)
+}})
+</script>
+
+<style>
+@import 'vitepress/dist/client/theme-default/styles/vars.css';
+@import 'vitepress/dist/client/theme-default/styles/base.css';
+@import 'vitepress/dist/client/theme-default/styles/utils.css';
+@import 'vitepress/dist/client/theme-default/styles/components/vp-doc.css';
+
+html, body {{
+  height: auto !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}}
+
+/* 禁用第一个子元素的上外边距 */
+.preview-root > :first-child {{ margin-top: 0; }}
+</style>
+"#,
+            content, preview_id
+        ),
+        _ => format!(
+            r#"---
+layout: false
+title: Preview
+---
+
+<div class="vp-doc preview-root" style="padding: 16px;">
+
+{}
+
+</div>
+
+<script setup>
+import {{ onMounted }} from 'vue'
+onMounted(() => {{
+  const previewId = '{}'
+  const root = document.querySelector('.preview-root')
+  const sendHeight = () => {{
+    if (!root) return
+    const height = root.scrollHeight
+    window.parent.postMessage({{ type: 'resize', previewId, height }}, '*')
+  }}
+  // 初始发送
+  sendHeight()
+  // 持续监听高度变化（动态内容）
+  const observer = new ResizeObserver(sendHeight)
+  if (root) observer.observe(root)
+}})
+</script>
+
+<style>
+@import 'vitepress/dist/client/theme-default/styles/vars.css';
+@import 'vitepress/dist/client/theme-default/styles/base.css';
+@import 'vitepress/dist/client/theme-default/styles/utils.css';
+@import 'vitepress/dist/client/theme-default/styles/components/vp-doc.css';
+
+html, body {{
+  height: auto !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}}
+
+/* 禁用第一个子元素的上外边距 */
+.preview-root > :first-child {{ margin-top: 0; }}
+</style>
+"#,
+            content, preview_id
+        ),
+    };
+
+    fs::write(&file_path, preview_content)
+        .await
+        .map_err(|e| format!("Failed to write preview file: {}", e))?;
+
+    // 返回预览 URL 路径（相对于 VitePress root）
+    Ok(format!("/{}/{}.html", PREVIEW_DIR_NAME, preview_id))
+}
+
+/// 删除单个预览文件
+#[tauri::command(rename_all = "camelCase")]
+pub async fn vitepress_delete_preview(
+    project_root: String,
+    preview_id: String,
+) -> Result<(), String> {
+    let root = Path::new(&project_root);
+    let file_path = root
+        .join(PREVIEW_DIR_NAME)
+        .join(format!("{}.md", preview_id));
+
+    if file_path.exists() {
+        fs::remove_file(&file_path)
+            .await
+            .map_err(|e| format!("Failed to delete preview file: {}", e))?;
+    }
+
+    Ok(())
+}
+
+/// 清理所有预览文件（编辑器关闭时调用）
+#[tauri::command(rename_all = "camelCase")]
+pub async fn vitepress_cleanup_previews(project_root: String) -> Result<(), String> {
+    let preview_dir = Path::new(&project_root).join(PREVIEW_DIR_NAME);
+
+    if preview_dir.exists() {
+        fs::remove_dir_all(&preview_dir)
+            .await
+            .map_err(|e| format!("Failed to cleanup preview dir: {}", e))?;
+    }
+
+    Ok(())
+}
+
+/// 获取项目的所有 Vue 组件信息（解析 props 和 metadata）
+#[tauri::command(rename_all = "camelCase")]
+pub async fn vitepress_get_components(project_root: String) -> Result<Vec<VueComponent>, String> {
+    let components_dir = Path::new(&project_root).join(".vitepress/theme/components");
+    if !components_dir.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut components = Vec::new();
+    // 使用栈进行迭代式递归扫描
+    let mut stack = vec![components_dir.clone()];
+
+    while let Some(current_dir) = stack.pop() {
+        if let Ok(mut entries) = fs::read_dir(&current_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().and_then(|s| s.to_str()) == Some("vue") {
+                    if let Ok(content) = fs::read_to_string(&path).await {
+                        if let Some(mut comp) = parse_vue_component(&path, &content) {
+                            // 计算相对路径
+                            if let Ok(rel) = path.strip_prefix(&components_dir) {
+                                comp.path = rel.to_string_lossy().replace("\\", "/");
+                            }
+                            components.push(comp);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 按名称排序
+    components.sort_by(|a, b| a.name.cmp(&b.name));
+
+    Ok(components)
+}
+
+/// 解析 Vue 组件内容
+fn parse_vue_component(path: &Path, content: &str) -> Option<VueComponent> {
+    // 检查是否忽略
+    if content.contains("@editor-ignore") {
+        return None;
+    }
+
+    let name = path.file_stem()?.to_str()?.to_string();
+    let mut description = None;
+    let mut props = Vec::new();
+
+    // 1. 尝试解析 <editor> XML 块 (主要约定)
+    let editor_regex = Regex::new(r"(?s)<editor>\s*(\{.*?\})\s*</editor>").unwrap();
+    if let Some(caps) = editor_regex.captures(content) {
+        if let Some(json_str) = caps.get(1) {
+            if let Ok(meta) = serde_json::from_str::<serde_json::Value>(json_str.as_str()) {
+                // 如果标记为 hidden，则跳过
+                if meta
+                    .get("hidden")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    return None;
+                }
+
+                if let Some(desc) = meta.get("description").and_then(|v| v.as_str()) {
+                    description = Some(desc.to_string());
+                }
+
+                if let Some(props_meta) = meta.get("props").and_then(|v| v.as_array()) {
+                    for p in props_meta {
+                        props.push(ComponentProp {
+                            name: p
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
+                                .to_string(),
+                            type_name: p
+                                .get("type")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("string")
+                                .to_string(),
+                            description: p
+                                .get("description")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            default: p.get("default").map(|v| v.to_string()),
+                            optional: p.get("optional").and_then(|v| v.as_bool()).unwrap_or(true), // 默认为可选
+                        });
+                    }
+                    // 如果有 <editor> props 定义，直接返回，不再尝试正则解析 props
+                    return Some(VueComponent {
+                        name,
+                        path: path.file_name()?.to_str()?.to_string(),
+                        description,
+                        props,
+                    });
+                }
+            }
+        }
+    }
+
+    // 如果 <editor> 中没有提供 description，尝试从组件注释解析
+    if description.is_none() {
+        // 查找顶层 JSDoc: /** ... */ (简单匹配第一个)
+        let doc_regex = Regex::new(r"(?s)/\*\*\s*(.*?)\s*\*/").unwrap();
+        if let Some(caps) = doc_regex.captures(content) {
+            if let Some(doc_content) = caps.get(1) {
+                let lines: Vec<&str> = doc_content
+                    .as_str()
+                    .lines()
+                    .map(|l| l.trim().trim_start_matches('*').trim())
+                    .filter(|l| !l.starts_with('@')) // 排除 @xxx 标签，但保留空行
+                    .collect();
+
+                // 合并连续空行为单个空行，并去除首尾空行
+                let mut result = Vec::new();
+                let mut prev_empty = true; // 跳过开头空行
+                for line in lines {
+                    if line.is_empty() {
+                        if !prev_empty {
+                            result.push(""); // 保留段落分隔
+                            prev_empty = true;
+                        }
+                    } else {
+                        result.push(line);
+                        prev_empty = false;
+                    }
+                }
+                // 去除末尾空行
+                while result.last() == Some(&"") {
+                    result.pop();
+                }
+
+                let desc_clean = result.join("\n");
+                if !desc_clean.is_empty() {
+                    description = Some(desc_clean);
+                }
+            }
+        }
+    }
+
+    // 如果 <editor> 没有提供 props，尝试从 defineProps 解析
+    if props.is_empty() {
+        // 匹配 defineProps<{ ... }>()
+        let props_block_regex =
+            Regex::new(r"(?s)defineProps\s*[<|(]\s*[\{](.*?)[\}]\s*[>|)]").unwrap();
+        if let Some(caps) = props_block_regex.captures(content) {
+            if let Some(inner) = caps.get(1) {
+                let inner_text = inner.as_str();
+
+                // 匹配 JSDoc + 属性定义
+                // 模式: (/** doc */)? name?: type
+                let prop_item_regex = Regex::new(r"(?m)(?:/\*\*\s*(?P<doc>[\s\S]*?)\s*\*/\s*)?^\s*(?P<name>[a-zA-Z0-9_$]+)(?P<optional>\?)?\s*:\s*(?P<type>[^,;\n]+)").unwrap();
+
+                for cap in prop_item_regex.captures_iter(inner_text) {
+                    let name = cap
+                        .name("name")
+                        .map(|m| m.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let type_str = cap
+                        .name("type")
+                        .map(|m| m.as_str().trim())
+                        .unwrap_or("string")
+                        .to_string();
+
+                    // 移除可能的逗号或分号
+                    let type_clean = type_str
+                        .trim_end_matches(|c| c == ',' || c == ';')
+                        .to_string();
+
+                    let mut prop_desc = None;
+                    let mut prop_default = None;
+
+                    if let Some(doc_match) = cap.name("doc") {
+                        let doc_lines: Vec<&str> = doc_match
+                            .as_str()
+                            .lines()
+                            .map(|l| l.trim().trim_start_matches('*').trim())
+                            .filter(|l| !l.is_empty())
+                            .collect();
+
+                        // 提取 @default 值
+                        for line in &doc_lines {
+                            if line.starts_with("@default") {
+                                let default_val =
+                                    line.trim_start_matches("@default").trim().to_string();
+                                if !default_val.is_empty() {
+                                    prop_default = Some(default_val);
+                                }
+                            }
+                        }
+
+                        // 过滤掉 @xxx 标签，保留纯描述
+                        let clean_doc = doc_lines
+                            .iter()
+                            .filter(|l| !l.starts_with('@'))
+                            .copied()
+                            .collect::<Vec<_>>()
+                            .join("\n"); // 保留换行
+
+                        if !clean_doc.is_empty() {
+                            prop_desc = Some(clean_doc);
+                        }
+                    }
+
+                    // 检查是否可选 (通过 ? 标记)
+                    let is_optional = cap.name("optional").is_some();
+
+                    props.push(ComponentProp {
+                        name,
+                        type_name: type_clean,
+                        description: prop_desc,
+                        default: prop_default,
+                        optional: is_optional,
+                    });
+                }
+            }
+        }
+    }
+
+    Some(VueComponent {
+        name,
+        path: path.file_name()?.to_str()?.to_string(), // 这里先保持 filename，外部会更新为 relative path
+        description,
+        props,
+    })
 }

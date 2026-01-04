@@ -89,6 +89,33 @@ export const BlockInputRules = Extension.create({
           }
         },
       }),
+
+      // Quote Block Input Rule: > at line start -> Quote Block
+      new InputRule({
+        find: /^> $/,
+        handler: ({ state, range }) => {
+          const { tr } = state;
+          const { from } = range;
+          const $from = state.doc.resolve(from);
+
+          const start = $from.before();
+          const end = $from.after();
+
+          if (!$from.parent.isTextblock) return;
+
+          const quoteNode = this.editor.schema.nodes.quote?.create();
+
+          if (quoteNode) {
+            tr.replaceWith(start, end, quoteNode);
+            // 将光标定位到新创建的 quote 块内部
+            // 使用 TextSelection.near 通过类型断言
+            const TextSelection = state.selection.constructor as any;
+            if (TextSelection.near) {
+              tr.setSelection(TextSelection.near(tr.doc.resolve(start + 1)));
+            }
+          }
+        },
+      }),
     ];
   },
 });

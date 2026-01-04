@@ -36,6 +36,7 @@ import {
   type VueComponentBlock,
   type IncludeBlock,
   generateBlockId,
+  createShikiCodeBlock,
 } from "../types/block";
 import type { Frontmatter, Document } from "../types/document";
 
@@ -110,7 +111,7 @@ function remarkVitePressContainers() {
         // 模式1: 单段落完整包含容器 (START ... END)
         // 匹配：::: type [title]\n content \n:::
         const singleBlockMatch = text.match(
-          /^:::\s*(info|tip|warning|danger|details|note)(?:[ \t]+(.*?))?\n([\s\S]*?)\n:::\s*$/i
+          /^:::\s*(info|tip|warning|danger|details|note|code-group)(?:[ \t]+(.*?))?\n([\s\S]*?)\n:::\s*$/i
         );
 
         if (singleBlockMatch) {
@@ -145,7 +146,7 @@ function remarkVitePressContainers() {
 
         // 模式2: 多段落容器 (START ... 寻找 sibling END)
         const containerStartMatch = text.match(
-          /^:::\s*(info|tip|warning|danger|details|note)(?:\s+(.*))?$/im
+          /^:::\s*(info|tip|warning|danger|details|note|code-group)(?:\s+(.*))?$/im
         );
 
         if (containerStartMatch) {
@@ -541,9 +542,59 @@ function convertNode(node: RootContent): Block | Block[] | null {
       } as QuoteBlock;
     }
 
-    // VitePress 容器指令: ::: info, ::: tip, ::: warning, ::: danger, ::: details
+    // VitePress 容器指令: ::: info, ::: tip, ::: warning, ::: danger, ::: details, ::: code-group
     case "containerDirective": {
       const directiveName = (node as any).name as string;
+      const lowerName = directiveName.toLowerCase();
+
+      // 特殊处理: ::: code-group
+      if (lowerName === "code-group") {
+        const children = (node as any).children || [];
+        const tabs: any[] = [];
+
+        for (const child of children) {
+          if (child.type === "code") {
+            const meta = child.meta || "";
+            const filenameMatch = meta.match(/\[(.*?)\]/);
+            const filename = filenameMatch ? filenameMatch[1] : "";
+
+            const highlightMatch = meta.match(/\{(.*?)\}/);
+            const highlightLines = highlightMatch
+              ? `{${highlightMatch[1]}}`
+              : "";
+
+            const lineNumbersMatch = meta.match(/:line-numbers(?:=(\d+))?/);
+            const showLineNumbers = !!lineNumbersMatch;
+            const startLineNumber =
+              lineNumbersMatch && lineNumbersMatch[1]
+                ? parseInt(lineNumbersMatch[1], 10)
+                : 1;
+
+            tabs.push({
+              code: child.value || "",
+              language: child.lang || "text",
+              filename,
+              highlightLines,
+              showLineNumbers,
+              startLineNumber,
+            });
+          }
+        }
+
+        if (tabs.length > 0) {
+          const activeTab = tabs[0];
+          return createShikiCodeBlock(activeTab.code, activeTab.language, {
+            filename: activeTab.filename,
+            highlightLines: activeTab.highlightLines,
+            showLineNumbers: activeTab.showLineNumbers,
+            startLineNumber: activeTab.startLineNumber,
+            tabs: JSON.stringify(tabs),
+            activeTabIndex: 0,
+          });
+        }
+      }
+
+      // 普通容器: info, tip, warning, danger, details
       const typeMap: Record<string, ContainerType> = {
         info: "info",
         tip: "tip",
@@ -551,16 +602,14 @@ function convertNode(node: RootContent): Block | Block[] | null {
         danger: "danger",
         details: "details",
       };
-      const containerType = typeMap[directiveName.toLowerCase()] || "info";
+      // 默认为 info，code-group 已经处理过，这里不用担心覆盖
+      const containerType = typeMap[lowerName] || "info";
 
       // 提取标题（指令属性或第一行文本）
       let title = "";
       const attrs = (node as any).attributes || {};
       if (attrs.title) {
         title = attrs.title;
-      } else if ((node as any).children?.[0]?.type === "paragraph") {
-        // 移除：不要从内容中猜测标题，这会导致内容重复
-        // 如果没有 title 属性，就使用默认标题
       }
 
       // 构建 content：标题（自定义或默认）+ 内容
@@ -678,16 +727,33 @@ function convertNode(node: RootContent): Block | Block[] | null {
         } as MermaidBlock;
       }
 
-      // 普通代码块
-      return {
-        id: generateBlockId(),
-        type: "codeBlock",
-        props: {
-          language,
-          code: node.value,
-          filename: node.meta || undefined,
-        },
-      } as CodeBlockBlock;
+      // VitePress Shiki 代码块解析
+      const meta = node.meta || "";
+      const filenameMatch = meta.match(/\[(.*?)\]/);
+      const filename = filenameMatch ? filenameMatch[1] : undefined;
+
+      const highlightMatch = meta.match(/\{(.*?)\}/);
+      const highlightLines = highlightMatch
+        ? `{${highlightMatch[1]}}`
+        : undefined;
+
+      const lineNumbersMatch = meta.match(/:line-numbers(?:=(\d+))?/);
+      let showLineNumbers = false;
+      let startLineNumber = 1;
+
+      if (lineNumbersMatch) {
+        showLineNumbers = true;
+        if (lineNumbersMatch[1]) {
+          startLineNumber = parseInt(lineNumbersMatch[1], 10);
+        }
+      }
+
+      return createShikiCodeBlock(node.value, language, {
+        filename,
+        highlightLines,
+        showLineNumbers,
+        startLineNumber,
+      });
     }
 
     // 块级数学公式 ($$...$$)

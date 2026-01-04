@@ -49,7 +49,7 @@ async function handleStop() {
 
   isLoading.value = true;
   try {
-    await stopDevServer(processId.value);
+    await stopDevServer(processId.value, props.projectPath);
     status.value = "stopped";
     url.value = null;
     processId.value = null;
@@ -92,7 +92,7 @@ onUnmounted(() => {
   // So for now, maybe we should stop it or just warn.
   // Let's stop it to be safe for E1.
   if (processId.value) {
-    stopDevServer(processId.value);
+    stopDevServer(processId.value, props.projectPath);
   }
 });
 </script>

@@ -1460,6 +1460,7 @@ dependencies = [
  "proptest",
  "rand 0.8.5",
  "rcgen",
+ "regex",
  "ring",
  "rustls 0.21.12",
  "secret-service",

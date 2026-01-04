@@ -9,7 +9,16 @@ import {
   defaultBlockSpecs,
   defaultInlineContentSpecs,
 } from "@blocknote/core";
-import { ContainerBlock, MathBlock, MermaidBlock, InlineMath } from "./blocks";
+import {
+  ContainerBlock,
+  MathBlock,
+  MermaidBlock,
+  InlineMath,
+  VueComponentBlock,
+  IncludeBlock,
+  ShikiCodeBlock,
+  QuoteBlock,
+} from "./blocks";
 
 // 创建自定义 Schema
 export const customSchema = BlockNoteSchema.create({
@@ -29,9 +38,11 @@ export const customSchema = BlockNoteSchema.create({
     math: MathBlock(),
     mermaid: MermaidBlock(),
 
-    // TODO E2.4：VitePress 特色语法块
-    // vueComponent: VueComponentBlock,
-    // include: IncludeBlock,
+    // E2.4：VitePress 特色语法块 (createReactBlockSpec 返回工厂函数，需调用)
+    vueComponent: VueComponentBlock(),
+    include: IncludeBlock(),
+    shikiCode: ShikiCodeBlock(),
+    quote: QuoteBlock(),
   },
   inlineContentSpecs: {
     // 保留默认内联内容

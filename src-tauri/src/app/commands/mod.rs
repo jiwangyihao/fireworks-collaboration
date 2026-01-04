@@ -46,8 +46,9 @@ pub use submodule::{
 };
 pub use tasks::{task_cancel, task_list, task_snapshot, task_start_sleep};
 pub use vitepress::{
-    vitepress_check_dependencies, vitepress_create_document, vitepress_create_folder,
-    vitepress_delete, vitepress_detect_project, vitepress_get_doc_tree,
+    vitepress_check_dependencies, vitepress_cleanup_previews, vitepress_create_document,
+    vitepress_create_folder, vitepress_create_preview, vitepress_delete, vitepress_delete_preview,
+    vitepress_detect_project, vitepress_get_components, vitepress_get_doc_tree,
     vitepress_install_dependencies, vitepress_parse_config, vitepress_read_document,
     vitepress_rename, vitepress_save_document, vitepress_start_dev_server,
     vitepress_stop_dev_server,

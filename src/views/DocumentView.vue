@@ -109,13 +109,22 @@ const IGNORED_NAMES = [
 
 const filteredDocTree = computed(() => {
   if (!docTree.value) return null;
-  if (showHiddenFiles.value) return docTree.value;
 
   const node = { ...docTree.value }; // Shallow copy
+
   if (node.children) {
-    node.children = node.children.filter(
-      (child) => !IGNORED_NAMES.includes(child.name)
+    // 1. 始终过滤掉预览目录
+    let children = node.children.filter(
+      (child) => child.name !== "_fireworks_preview"
     );
+
+    // 2. 如果未开启显示隐藏文件，过滤掉忽略列表中的文件
+    if (!showHiddenFiles.value) {
+      children = children.filter(
+        (child) => !IGNORED_NAMES.includes(child.name)
+      );
+    }
+    node.children = children;
   }
   return node;
 });
@@ -308,7 +317,8 @@ async function handleInstallDependencies() {
 }
 
 const isDevServerRunning = ref(false);
-const devServerUrl = ref("");
+const devServerUrl = ref(""); // 完整的当前文档预览 URL
+const devServerBaseUrl = ref(""); // 基础 URL（用于 Block 组件预览）
 const devServerPid = ref<number | null>(null);
 const isPreviewOpen = ref(false);
 const previewIframeRef = ref<HTMLIFrameElement | null>(null);
@@ -324,6 +334,7 @@ async function handleStartDevServer() {
     const cleanUrl = info.url.replace(/(?:\x1b\[|\x9b\[|\[)[\d;]*m/g, "");
 
     isDevServerRunning.value = true;
+    devServerBaseUrl.value = cleanUrl; // 基础 URL 用于 Block 组件
     devServerUrl.value = cleanUrl;
     devServerPid.value = info.processId;
     isPreviewOpen.value = true; // 自动展开预览栏
@@ -377,9 +388,10 @@ function getPreviewUrlForDocument(
 async function handleStopDevServer() {
   if (!devServerPid.value) return;
   try {
-    await stopDevServer(devServerPid.value);
+    await stopDevServer(devServerPid.value, worktreePath.value || undefined);
     isDevServerRunning.value = false;
     devServerUrl.value = "";
+    devServerBaseUrl.value = "";
     devServerPid.value = null;
     isPreviewOpen.value = false;
     toastStore.info("预览服务已停止");
@@ -396,7 +408,7 @@ async function handleRestartDevServer() {
   // 先停止
   if (devServerPid.value) {
     try {
-      await stopDevServer(devServerPid.value);
+      await stopDevServer(devServerPid.value, worktreePath.value || undefined);
     } catch (e) {
       console.warn("Stop failed during restart:", e);
     }
@@ -412,6 +424,7 @@ async function handleRestartDevServer() {
     const cleanUrl = info.url.replace(/(?:\x1b\[|\x9b\[|\[)[\d;]*m/g, "");
 
     isDevServerRunning.value = true;
+    devServerBaseUrl.value = cleanUrl;
     devServerUrl.value = cleanUrl;
     devServerPid.value = info.processId;
 
@@ -432,6 +445,7 @@ async function handleRestartDevServer() {
     toastStore.error(`重启失败: ${e}`);
     isDevServerRunning.value = false;
     devServerUrl.value = "";
+    devServerBaseUrl.value = "";
   }
 }
 
@@ -1046,6 +1060,9 @@ async function handleDeleteConfirm() {
             <BlockEditor
               :key="selectedPath || 'editor'"
               :initial-content="staticInitialBlocks"
+              :file-path="selectedPath || undefined"
+              :project-root="worktreePath || undefined"
+              :dev-server-url="devServerBaseUrl || undefined"
               @change="handleEditorChange"
             />
           </div>
