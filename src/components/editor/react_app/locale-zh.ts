@@ -7,6 +7,7 @@
 import { zh } from "@blocknote/core/locales";
 
 // 如果需要自定义某些翻译，可以在这里扩展
+// 如果需要自定义某些翻译，可以在这里扩展
 const customZh = {
   ...zh,
   // 示例：覆盖占位符

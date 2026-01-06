@@ -2,7 +2,17 @@ import { getDefaultReactSlashMenuItems } from "@blocknote/react";
 import { Icon } from "@iconify/react";
 
 export const getCustomSlashMenuItems = (editor: any) => {
-  const defaultItems = getDefaultReactSlashMenuItems(editor);
+  // 1. Filter default items
+  const defaultItems = getDefaultReactSlashMenuItems(editor).filter(
+    (item) =>
+      item.title !== "Code Block" &&
+      item.title !== "代码块" &&
+      !item.title.startsWith("Heading") &&
+      !item.title.startsWith("标题") &&
+      !item.title.includes("可折叠") && // Added filter for Chinese "Collapsible"
+      item.title !== "Quote" &&
+      item.title !== "引用"
+  );
 
   const customItems = [
     // Math Block
@@ -20,7 +30,7 @@ export const getCustomSlashMenuItems = (editor: any) => {
         );
       },
       aliases: ["math", "formula", "latex", "gs", "gongshi", "shuxue"],
-      group: "Advanced",
+      group: "高级功能",
       icon: <Icon icon="lucide:sigma" />,
       subtext: "插入数学公式块",
     },
@@ -39,13 +49,13 @@ export const getCustomSlashMenuItems = (editor: any) => {
         );
       },
       aliases: ["mermaid", "flowchart", "diagram", "mm", "tubiao", "liucheng"],
-      group: "Advanced",
+      group: "高级功能",
       icon: <Icon icon="lucide:network" />,
       subtext: "插入 Mermaid 图表",
     },
     // E2.5: Shiki Code Block
     {
-      title: "代码块 (Pro)",
+      title: "代码块",
       onItemClick: () => {
         editor.insertBlocks(
           [
@@ -59,9 +69,24 @@ export const getCustomSlashMenuItems = (editor: any) => {
         );
       },
       aliases: ["code", "pre", "shiki", "daima"],
-      group: "Advanced",
+      group: "基础",
       icon: <Icon icon="lucide:code-2" />,
-      subtext: "插入支持高亮和行号的代码块",
+      subtext: "插入代码块",
+    },
+    // E2.4: Quote Block
+    {
+      title: "引用",
+      onItemClick: () => {
+        editor.insertBlocks(
+          [{ type: "quote", props: {} }],
+          editor.getTextCursorPosition().block,
+          "after"
+        );
+      },
+      aliases: ["quote", "blockquote", "yy", "yinyong"],
+      group: "基础",
+      icon: <Icon icon="lucide:quote" />,
+      subtext: "插入引用块",
     },
     // Container: Tip
     {
@@ -74,7 +99,7 @@ export const getCustomSlashMenuItems = (editor: any) => {
         );
       },
       aliases: ["tip", "ts", "hint", "tishi"],
-      group: "Containers",
+      group: "容器",
       icon: <Icon icon="lucide:lightbulb" />,
       subtext: "插入提示容器",
     },
@@ -89,7 +114,7 @@ export const getCustomSlashMenuItems = (editor: any) => {
         );
       },
       aliases: ["info", "xx", "xinxi"],
-      group: "Containers",
+      group: "容器",
       icon: <Icon icon="lucide:info" />,
       subtext: "插入信息容器",
     },
@@ -104,7 +129,7 @@ export const getCustomSlashMenuItems = (editor: any) => {
         );
       },
       aliases: ["warning", "jg", "jinggao"],
-      group: "Containers",
+      group: "容器",
       icon: <Icon icon="lucide:triangle-alert" />,
       subtext: "插入警告容器",
     },
@@ -119,7 +144,7 @@ export const getCustomSlashMenuItems = (editor: any) => {
         );
       },
       aliases: ["danger", "wx", "weixian"],
-      group: "Containers",
+      group: "容器",
       icon: <Icon icon="lucide:flame" />,
       subtext: "插入危险容器",
     },
@@ -134,24 +159,9 @@ export const getCustomSlashMenuItems = (editor: any) => {
         );
       },
       aliases: ["details", "xq", "collapse", "xiangqing", "zhedie"],
-      group: "Containers",
+      group: "容器",
       icon: <Icon icon="lucide:list-collapse" />,
       subtext: "插入详情折叠块",
-    },
-    // E2.4: Quote Block
-    {
-      title: "引用",
-      onItemClick: () => {
-        editor.insertBlocks(
-          [{ type: "quote", props: {} }],
-          editor.getTextCursorPosition().block,
-          "after"
-        );
-      },
-      aliases: ["quote", "blockquote", "yy", "yinyong"],
-      group: "Basic blocks",
-      icon: <Icon icon="lucide:quote" />,
-      subtext: "插入引用块",
     },
     // E2.4: Vue Component Block
     {
@@ -199,5 +209,37 @@ export const getCustomSlashMenuItems = (editor: any) => {
     },
   ];
 
-  return [...defaultItems, ...customItems];
+  const finalItems = [...defaultItems, ...customItems];
+
+  // Define group order (using Chinese keys)
+  const groupOrder = [
+    "标题",
+    "基础",
+    "媒体",
+    "容器",
+    "高级功能",
+    "VitePress",
+    "其他",
+  ];
+
+  // Sort items
+  return finalItems.sort((a, b) => {
+    const groupA = a.group || "其他";
+    const groupB = b.group || "其他";
+
+    const indexA = groupOrder.indexOf(groupA);
+    const indexB = groupOrder.indexOf(groupB);
+
+    // If both groups are in our order list, compare indices
+    if (indexA !== -1 && indexB !== -1) {
+      return indexA - indexB;
+    }
+
+    // If one is in the list, it comes first
+    if (indexA !== -1) return -1;
+    if (indexB !== -1) return 1;
+
+    // Fallback: sort alphabetically for unknown groups
+    return groupA.localeCompare(groupB);
+  });
 };

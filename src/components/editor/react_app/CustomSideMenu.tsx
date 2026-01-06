@@ -117,7 +117,6 @@ export function CustomDragHandleMenu() {
   return (
     <DragHandleMenu>
       <RemoveBlockItem>删除</RemoveBlockItem>
-      <BlockColorsItem>颜色</BlockColorsItem>
       <ContainerDivider />
       {Object.entries(containerTypes).map(([key, config]) => (
         <ContainerTypeItem key={key} containerType={key as ContainerTypeKey}>

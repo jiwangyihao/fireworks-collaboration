@@ -10,6 +10,9 @@ import { useState, useEffect, useRef, useId, useCallback } from "react";
 import mermaid from "mermaid";
 import CodeMirror from "@uiw/react-codemirror";
 import { mermaid as mermaidLang } from "codemirror-lang-mermaid";
+import { blockRegistry } from "../BlockCapabilities";
+import { Icon } from "@iconify/react";
+import React from "react";
 
 // 初始化 Mermaid
 mermaid.initialize({
@@ -44,6 +47,14 @@ export const MermaidBlock = createReactBlockSpec(
       const uniqueId = useId().replace(/:/g, "_");
       const containerRef = useRef<HTMLDivElement>(null);
       // Removed textareaRef
+
+      // 注册编辑执行器
+      useEffect(() => {
+        blockRegistry.registerExecutor(props.block.id, "edit", {
+          execute: () => setIsEditing(true),
+          isActive: () => isEditing,
+        });
+      }, [props.block.id, isEditing]);
 
       // 同步外部 code 变化
       useEffect(() => {
@@ -96,7 +107,7 @@ export const MermaidBlock = createReactBlockSpec(
       // 编辑模式
       if (isEditing) {
         return (
-          <div className="w-full border border-base-300 rounded-lg overflow-hidden my-2 bg-base-100">
+          <div className="w-full border border-base-300 rounded-lg overflow-hidden bg-base-100">
             {/* 图表预览区 */}
             <div className="w-full min-h-32 flex items-center justify-center p-4 bg-base-100/50">
               {error ? (
@@ -129,6 +140,9 @@ export const MermaidBlock = createReactBlockSpec(
 
               <div
                 className="w-full text-base"
+                onFocus={() => {
+                  blockRegistry.focusBlock(props.editor, props.block.id);
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Escape") {
                     handleCancel();
@@ -199,3 +213,13 @@ export const MermaidBlock = createReactBlockSpec(
     },
   }
 );
+
+blockRegistry.register("mermaid", {
+  icon: React.createElement(Icon, {
+    icon: "lucide:network",
+    className: "w-4 h-4",
+  }),
+  label: "Mermaid 图表",
+  supportedStyles: [],
+  actions: [],
+});

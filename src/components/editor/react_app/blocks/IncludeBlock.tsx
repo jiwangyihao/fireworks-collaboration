@@ -6,10 +6,11 @@
  */
 
 import { createReactBlockSpec } from "@blocknote/react";
-import { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Icon } from "@iconify/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorContext, useGlobalEditorContext } from "../EditorContext";
+import { blockRegistry } from "../BlockCapabilities";
 
 // 递归文件树节点组件
 const IGNORED_NAMES = [
@@ -299,6 +300,33 @@ export const IncludeBlock = createReactBlockSpec(
 
       const [isEditing, setIsEditing] = useState(!path);
       const [localPath, setLocalPath] = useState(path);
+
+      // 同步外部属性变化
+      useEffect(() => {
+        setLocalPath(path);
+      }, [path]);
+
+      // 注册执行器
+      useEffect(() => {
+        const blockId = props.block.id;
+        // 路径输入
+        blockRegistry.registerExecutor(blockId, "path", {
+          execute: (val) => {
+            props.editor.updateBlock(props.block, {
+              props: { path: val },
+            });
+            setLocalPath(val);
+          },
+          getValue: () => path,
+          isActive: () => false,
+        });
+
+        // 编辑按钮
+        blockRegistry.registerExecutor(blockId, "edit", {
+          execute: () => setIsEditing(true),
+          isActive: () => isEditing,
+        });
+      }, [props.block.id, props.editor, props.block, path, isEditing]);
       const [localLineStart, setLocalLineStart] = useState<string>(
         lineStart?.toString() || ""
       );
@@ -499,6 +527,9 @@ export const IncludeBlock = createReactBlockSpec(
           <div
             className="w-full rounded-lg border border-blue-500/30 bg-blue-500/10 p-4"
             contentEditable={false}
+            onFocus={() => {
+              blockRegistry.focusBlock(props.editor, props.block.id);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
                 setIsEditing(false);
@@ -682,3 +713,13 @@ export const IncludeBlock = createReactBlockSpec(
     },
   }
 );
+
+blockRegistry.register("include", {
+  icon: React.createElement(Icon, {
+    icon: "lucide:file-input",
+    className: "w-4 h-4",
+  }),
+  label: "包含文件",
+  supportedStyles: [],
+  actions: [],
+});

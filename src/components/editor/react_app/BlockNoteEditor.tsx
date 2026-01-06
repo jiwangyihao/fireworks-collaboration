@@ -11,9 +11,9 @@ import {
   useCreateBlockNote,
   SideMenu,
   SideMenuController,
-  DragHandleButton,
-  AddBlockButton,
   SuggestionMenuController,
+  FormattingToolbar,
+  FormattingToolbarController,
 } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import { customSchema } from "./schema";
@@ -25,6 +25,9 @@ import { BlockInputRules } from "./extensions/InputRules";
 import { QuoteKeyboardShortcuts } from "./extensions/KeyboardShortcuts";
 import { getCustomSlashMenuItems } from "./SlashMenuItems";
 import { EditorContext, updateGlobalContext } from "./EditorContext";
+import { StaticToolbar } from "./StaticToolbar";
+import { getRegisteredBlockTypes } from "./BlockCapabilities";
+import { CustomFormattingToolbar } from "./CustomFormattingToolbar";
 
 interface BlockNoteEditorProps {
   initialContent?: Block<typeof customSchema.blockSchema, any, any>[];
@@ -96,43 +99,57 @@ export function BlockNoteEditor({
     <EditorContext.Provider
       value={{ filePath, projectRoot, devServerPort, devServerUrl }}
     >
-      <BlockNoteView
-        editor={editor}
-        editable={editable}
-        onChange={() => {
-          if (onChange) {
-            onChange(editor.document);
-          }
-        }}
-        theme="light"
-        // 自定义 Side Menu
-        sideMenu={false}
-        slashMenu={false}
-      >
-        {/* 自定义侧边菜单，包含容器类型切换 */}
-        <SideMenuController
-          sideMenu={(props) => (
-            <SideMenu
-              {...props}
-              dragHandleMenu={(props) => <CustomDragHandleMenu {...props} />}
-            />
-          )}
-        />
+      <div className="blocknote-container">
+        {/* E2.5: 静态工具栏 - 渲染在 BlockNoteView 外部作为兄弟元素 */}
+        <StaticToolbar editor={editor} />
 
-        {/* 自定义 Slash Menu */}
-        <SuggestionMenuController
-          triggerCharacter={"/"}
-          getItems={async (query) =>
-            getCustomSlashMenuItems(editor).filter(
-              (item) =>
-                item.title.toLowerCase().includes(query.toLowerCase()) ||
-                item.aliases?.some((alias) =>
-                  alias.toLowerCase().includes(query.toLowerCase())
-                )
-            )
-          }
-        />
-      </BlockNoteView>
+        <BlockNoteView
+          editor={editor}
+          editable={editable}
+          onChange={() => {
+            if (onChange) {
+              onChange(editor.document);
+            }
+          }}
+          theme="light"
+          // 自定义 Side Menu
+          sideMenu={false}
+          slashMenu={false}
+          // E2.5: 禁用默认浮动工具栏，使用自定义 Controller 替代以移除对齐按钮
+          formattingToolbar={false}
+        >
+          {/* 自定义侧边菜单，包含容器类型切换 */}
+          <SideMenuController
+            sideMenu={(props) => (
+              <SideMenu
+                {...props}
+                dragHandleMenu={(props) => <CustomDragHandleMenu {...props} />}
+              />
+            )}
+          />
+
+          {/* 自定义浮动工具栏 (移除对齐按钮，统一图标) */}
+          <FormattingToolbarController
+            formattingToolbar={() => (
+              <CustomFormattingToolbar editor={editor} />
+            )}
+          />
+
+          {/* 自定义 Slash Menu */}
+          <SuggestionMenuController
+            triggerCharacter={"/"}
+            getItems={async (query) =>
+              getCustomSlashMenuItems(editor).filter(
+                (item) =>
+                  item.title.toLowerCase().includes(query.toLowerCase()) ||
+                  item.aliases?.some((alias) =>
+                    alias.toLowerCase().includes(query.toLowerCase())
+                  )
+              )
+            }
+          />
+        </BlockNoteView>
+      </div>
     </EditorContext.Provider>
   );
 }

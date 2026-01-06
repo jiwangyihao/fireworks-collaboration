@@ -20,6 +20,8 @@ import BaseIcon from "../components/BaseIcon.vue";
 import DocumentTree from "../components/document/DocumentTree.vue";
 import InputModal from "../components/InputModal.vue";
 import ConfirmModal from "../components/ConfirmModal.vue";
+import FrontmatterPanel from "../components/editor/FrontmatterPanel.vue";
+import EditorToolbar from "../components/editor/EditorToolbar.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -181,6 +183,10 @@ const isSidebarOpen = ref(true);
 function toggleSidebar() {
   isSidebarOpen.value = !isSidebarOpen.value;
 }
+
+// E2.5: Frontmatter panel state and editor ref
+const isFrontmatterOpen = ref(false);
+const blockEditorRef = ref<InstanceType<typeof BlockEditor> | null>(null);
 
 const showConfirmModal = ref(false);
 const deleteTargetName = ref("");
@@ -773,176 +779,183 @@ async function handleDeleteConfirm() {
         class="flex-shrink-0 transition-all duration-300 ease-in-out overflow-hidden"
         :class="isSidebarOpen ? 'w-80 opacity-100 mr-4' : 'w-0 opacity-0 mr-0'"
       >
-        <!-- Actual Content Card (Fixed Width to prevent internal reflow) -->
+        <!-- Sidebar Content Container (scrollable, supports multiple cards) -->
         <div
-          class="w-80 flex flex-col card border-2 border-base-content/15 bg-base-100 h-full"
+          class="w-80 h-full flex flex-col gap-4 overflow-y-auto scrollbar-thin"
         >
-          <!-- Card Header (Clean, no bg/border) -->
+          <!-- Document Tree Card -->
           <div
-            class="h-14 flex items-center justify-between px-4 flex-shrink-0"
+            class="flex flex-col card border-2 border-base-content/15 bg-base-100 flex-1 min-h-0"
           >
-            <h3
-              class="font-bold text-base flex items-center gap-2 text-base-content m-0!"
+            <!-- Card Header (Clean, no bg/border) -->
+            <div
+              class="h-14 flex items-center justify-between px-4 flex-shrink-0"
             >
-              <BaseIcon
-                icon="ph--tree-structure"
-                size="md"
-                class="text-primary"
-              />
-              文档目录
-            </h3>
-            <div class="flex gap-0.5" v-if="!needsInstall">
-              <div
-                class="tooltip tooltip-left"
-                :data-tip="showHiddenFiles ? '隐藏系统文件' : '显示所有文件'"
+              <h3
+                class="font-bold text-base flex items-center gap-2 text-base-content m-0!"
               >
-                <button
-                  class="btn btn-xs btn-ghost btn-square"
-                  :class="{ 'text-primary bg-primary/10': showHiddenFiles }"
-                  @click="showHiddenFiles = !showHiddenFiles"
-                >
-                  <BaseIcon
-                    :icon="showHiddenFiles ? 'ph--eye' : 'ph--eye-slash'"
-                    size="sm"
-                  />
-                </button>
-              </div>
-              <div class="w-px h-4 bg-base-content/10 mx-1 self-center"></div>
-              <div class="tooltip tooltip-left" data-tip="新建文档">
-                <button
-                  class="btn btn-xs btn-ghost btn-square"
-                  @click="handleToolbarAction('new-file')"
-                >
-                  <BaseIcon icon="ph--file-plus" size="sm" />
-                </button>
-              </div>
-              <div class="tooltip tooltip-left" data-tip="新建文件夹">
-                <button
-                  class="btn btn-xs btn-ghost btn-square"
-                  @click="handleToolbarAction('new-folder')"
-                >
-                  <BaseIcon icon="ph--folder-plus" size="sm" />
-                </button>
-              </div>
-              <div class="w-px h-4 bg-base-content/10 mx-1 self-center"></div>
-              <div class="tooltip tooltip-left" data-tip="重新安装依赖">
-                <button
-                  class="btn btn-xs btn-ghost btn-square"
-                  @click="handleInstallDependencies"
-                  :disabled="isInstalling"
-                >
-                  <span
-                    v-if="isInstalling"
-                    class="loading loading-spinner loading-xs"
-                  ></span>
-                  <BaseIcon v-else icon="ph--package" size="sm" />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Scrollable Content -->
-          <div
-            class="flex-1 overflow-y-auto !overflow-x-hidden scrollbar-thin px-4 pb-4"
-          >
-            <!-- Loading -->
-            <div
-              v-if="loadingTree"
-              class="h-full flex items-center justify-center"
-            >
-              <span
-                class="loading loading-spinner loading-md text-primary/50"
-              ></span>
-            </div>
-
-            <!-- Error -->
-            <div
-              v-else-if="error"
-              class="h-full flex flex-col items-center justify-center text-error p-4 text-center"
-            >
-              <BaseIcon icon="ph--warning-circle" size="lg" class="mb-2" />
-              <p class="text-xs">{{ error }}</p>
-            </div>
-
-            <!-- Install Needed or Installing -->
-            <div
-              v-else-if="needsInstall || isInstalling"
-              class="h-full flex flex-col items-center justify-center gap-4 text-center p-4"
-            >
-              <div
-                v-if="isInstalling"
-                class="flex flex-col items-center gap-3 w-full"
-              >
-                <!-- 进度条 -->
-                <div class="w-full" v-if="installProgress.resolved > 0">
-                  <div
-                    class="flex justify-between text-xs text-base-content/60 mb-1"
-                  >
-                    <span>已解析: {{ installProgress.resolved }}</span>
-                    <span>已下载: {{ installProgress.downloaded }}</span>
-                  </div>
-                  <progress
-                    class="progress progress-primary w-full"
-                    :value="installProgress.added"
-                    :max="installProgress.resolved || 100"
-                  ></progress>
-                  <div class="text-xs text-base-content/50 mt-1 text-center">
-                    复用: {{ installProgress.reused }} | 新增:
-                    {{ installProgress.added }}
-                  </div>
-                </div>
-                <div v-else class="flex items-center gap-2">
-                  <span
-                    class="loading loading-spinner loading-md text-primary"
-                  ></span>
-                  <p class="text-sm">正在安装依赖...</p>
-                </div>
-
-                <!-- 终端输出（带颜色和自动滚动） -->
-                <div
-                  ref="installLogRef"
-                  class="text-xs font-mono h-32 overflow-y-auto w-full bg-base-300 p-2 rounded text-left scrollbar-thin"
-                >
-                  <div
-                    v-for="(log, i) in installLogs"
-                    :key="i"
-                    v-html="ansiToHtml(log)"
-                  ></div>
-                </div>
-              </div>
-              <template v-else>
                 <BaseIcon
-                  icon="ph--package"
-                  size="xl"
-                  class="text-warning opacity-80"
+                  icon="ph--tree-structure"
+                  size="md"
+                  class="text-primary"
                 />
-                <p class="text-xs text-base-content/70">需要安装依赖才能继续</p>
-                <button
-                  class="btn btn-sm btn-primary w-full shadow-sm"
-                  @click="handleInstallDependencies"
+                文档目录
+              </h3>
+              <div class="flex gap-0.5" v-if="!needsInstall">
+                <div
+                  class="tooltip tooltip-left"
+                  :data-tip="showHiddenFiles ? '隐藏系统文件' : '显示所有文件'"
                 >
-                  安装依赖
-                </button>
-              </template>
+                  <button
+                    class="btn btn-xs btn-ghost btn-square"
+                    :class="{ 'text-primary bg-primary/10': showHiddenFiles }"
+                    @click="showHiddenFiles = !showHiddenFiles"
+                  >
+                    <BaseIcon
+                      :icon="showHiddenFiles ? 'ph--eye' : 'ph--eye-slash'"
+                      size="sm"
+                    />
+                  </button>
+                </div>
+                <div class="w-px h-4 bg-base-content/10 mx-1 self-center"></div>
+                <div class="tooltip tooltip-left" data-tip="新建文档">
+                  <button
+                    class="btn btn-xs btn-ghost btn-square"
+                    @click="handleToolbarAction('new-file')"
+                  >
+                    <BaseIcon icon="ph--file-plus" size="sm" />
+                  </button>
+                </div>
+                <div class="tooltip tooltip-left" data-tip="新建文件夹">
+                  <button
+                    class="btn btn-xs btn-ghost btn-square"
+                    @click="handleToolbarAction('new-folder')"
+                  >
+                    <BaseIcon icon="ph--folder-plus" size="sm" />
+                  </button>
+                </div>
+                <div class="w-px h-4 bg-base-content/10 mx-1 self-center"></div>
+                <div class="tooltip tooltip-left" data-tip="重新安装依赖">
+                  <button
+                    class="btn btn-xs btn-ghost btn-square"
+                    @click="handleInstallDependencies"
+                    :disabled="isInstalling"
+                  >
+                    <span
+                      v-if="isInstalling"
+                      class="loading loading-spinner loading-xs"
+                    ></span>
+                    <BaseIcon v-else icon="ph--package" size="sm" />
+                  </button>
+                </div>
+              </div>
             </div>
 
-            <!-- Doc Tree -->
-            <DocumentTree
-              v-else-if="filteredDocTree"
-              :tree="filteredDocTree"
-              :loading="loadingTree"
-              :selected-path="selectedPath"
-              @select="handleSelectDocument"
-              @contextmenu="handleContextMenu"
-            />
-
-            <!-- Empty -->
+            <!-- Scrollable Content -->
             <div
-              v-else
-              class="h-full flex flex-col items-center justify-center text-base-content/40"
+              class="flex-1 overflow-y-auto !overflow-x-hidden scrollbar-thin px-4 pb-4"
             >
-              <BaseIcon icon="ph--folder-dashed" size="xl" class="mb-2" />
-              <p class="text-xs">暂无文档 (请右键新建)</p>
+              <!-- Loading -->
+              <div
+                v-if="loadingTree"
+                class="h-full flex items-center justify-center"
+              >
+                <span
+                  class="loading loading-spinner loading-md text-primary/50"
+                ></span>
+              </div>
+
+              <!-- Error -->
+              <div
+                v-else-if="error"
+                class="h-full flex flex-col items-center justify-center text-error p-4 text-center"
+              >
+                <BaseIcon icon="ph--warning-circle" size="lg" class="mb-2" />
+                <p class="text-xs">{{ error }}</p>
+              </div>
+
+              <!-- Install Needed or Installing -->
+              <div
+                v-else-if="needsInstall || isInstalling"
+                class="h-full flex flex-col items-center justify-center gap-4 text-center p-4"
+              >
+                <div
+                  v-if="isInstalling"
+                  class="flex flex-col items-center gap-3 w-full"
+                >
+                  <!-- 进度条 -->
+                  <div class="w-full" v-if="installProgress.resolved > 0">
+                    <div
+                      class="flex justify-between text-xs text-base-content/60 mb-1"
+                    >
+                      <span>已解析: {{ installProgress.resolved }}</span>
+                      <span>已下载: {{ installProgress.downloaded }}</span>
+                    </div>
+                    <progress
+                      class="progress progress-primary w-full"
+                      :value="installProgress.added"
+                      :max="installProgress.resolved || 100"
+                    ></progress>
+                    <div class="text-xs text-base-content/50 mt-1 text-center">
+                      复用: {{ installProgress.reused }} | 新增:
+                      {{ installProgress.added }}
+                    </div>
+                  </div>
+                  <div v-else class="flex items-center gap-2">
+                    <span
+                      class="loading loading-spinner loading-md text-primary"
+                    ></span>
+                    <p class="text-sm">正在安装依赖...</p>
+                  </div>
+
+                  <!-- 终端输出（带颜色和自动滚动） -->
+                  <div
+                    ref="installLogRef"
+                    class="text-xs font-mono h-32 overflow-y-auto w-full bg-base-300 p-2 rounded text-left scrollbar-thin"
+                  >
+                    <div
+                      v-for="(log, i) in installLogs"
+                      :key="i"
+                      v-html="ansiToHtml(log)"
+                    ></div>
+                  </div>
+                </div>
+                <template v-else>
+                  <BaseIcon
+                    icon="ph--package"
+                    size="xl"
+                    class="text-warning opacity-80"
+                  />
+                  <p class="text-xs text-base-content/70">
+                    需要安装依赖才能继续
+                  </p>
+                  <button
+                    class="btn btn-sm btn-primary w-full shadow-sm"
+                    @click="handleInstallDependencies"
+                  >
+                    安装依赖
+                  </button>
+                </template>
+              </div>
+
+              <!-- Doc Tree -->
+              <DocumentTree
+                v-else-if="filteredDocTree"
+                :tree="filteredDocTree"
+                :loading="loadingTree"
+                :selected-path="selectedPath"
+                @select="handleSelectDocument"
+                @contextmenu="handleContextMenu"
+              />
+
+              <!-- Empty -->
+              <div
+                v-else
+                class="h-full flex flex-col items-center justify-center text-base-content/40"
+              >
+                <BaseIcon icon="ph--folder-dashed" size="xl" class="mb-2" />
+                <p class="text-xs">暂无文档 (请右键新建)</p>
+              </div>
             </div>
           </div>
         </div>
@@ -999,6 +1012,18 @@ async function handleDeleteConfirm() {
               {{ isSaving ? "保存中..." : isDirty ? "保存" : "已保存" }}
             </button>
 
+            <!-- Frontmatter Panel Toggle (E2.5) -->
+            <button
+              v-if="selectedPath"
+              class="btn btn-sm btn-ghost btn-square"
+              :class="{ 'btn-active bg-primary/10': isFrontmatterOpen }"
+              title="文档元数据配置"
+              @click="isFrontmatterOpen = !isFrontmatterOpen"
+            >
+              <BaseIcon icon="ph--gear-six" size="md" />
+            </button>
+
+            <!-- Preview Panel Toggle -->
             <button
               v-if="isDevServerRunning && !isPreviewOpen"
               class="btn btn-sm btn-ghost btn-square"
@@ -1019,7 +1044,7 @@ async function handleDeleteConfirm() {
 
         <!-- Main Content -->
         <div
-          class="flex-1 relative border-t-2 border-dashed border-base-200 bg-base-50/10 m-4 rounded-lg overflow-hidden"
+          class="flex-1 relative border-t-2 border-dashed border-base-200 bg-base-50/10 rounded-lg overflow-hidden"
         >
           <!-- Empty State -->
           <div
@@ -1052,19 +1077,27 @@ async function handleDeleteConfirm() {
             <p class="text-sm">正在加载文档内容...</p>
           </div>
 
-          <!-- Block Editor -->
-          <div
-            v-else
-            class="absolute inset-0 flex flex-col p-4 overflow-hidden"
-          >
-            <BlockEditor
-              :key="selectedPath || 'editor'"
-              :initial-content="staticInitialBlocks"
-              :file-path="selectedPath || undefined"
-              :project-root="worktreePath || undefined"
-              :dev-server-url="devServerBaseUrl || undefined"
-              @change="handleEditorChange"
+          <!-- Block Editor Area -->
+          <div v-else class="absolute inset-0 flex flex-col overflow-hidden">
+            <!-- Frontmatter Panel (E2.5) - Above Editor -->
+            <FrontmatterPanel
+              v-if="selectedPath"
+              :is-open="isFrontmatterOpen"
+              @toggle="isFrontmatterOpen = !isFrontmatterOpen"
             />
+
+            <!-- Block Editor -->
+            <div class="flex-1 overflow-hidden">
+              <BlockEditor
+                ref="blockEditorRef"
+                :key="selectedPath || 'editor'"
+                :initial-content="staticInitialBlocks"
+                :file-path="selectedPath || undefined"
+                :project-root="worktreePath || undefined"
+                :dev-server-url="devServerBaseUrl || undefined"
+                @change="handleEditorChange"
+              />
+            </div>
           </div>
         </div>
       </div>

@@ -1178,6 +1178,7 @@ pub async fn vitepress_create_preview(
             r#"---
 layout: false
 title: Preview
+exclude: true
 ---
 
 <div class="vp-doc preview-root" style="padding: 16px;">
@@ -1226,6 +1227,7 @@ html, body {{
             r#"---
 layout: false
 title: Preview
+exclude: true
 ---
 
 <div class="vp-doc preview-root" style="padding: 16px;">

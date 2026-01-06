@@ -2,8 +2,8 @@
 
 > **文档密级**：内部技术资料
 > **适用对象**：前端开发组、架构师
-> **最后更新**：2026-01-05
-> **版本**：v2.5 (E2.4 完整实现: VueComponent/Include/ShikiCodeBlock/QuoteBlock)
+> **最后更新**：2026-01-07
+> **版本**：v2.5 (E2.5 UI/UX 深度定制: Toolbar/SlashMenu/Icons)
 
 ---
 
@@ -18,8 +18,9 @@
 - **架构突破**：成功实现了基于 React (编辑器) + Vue (宿主) 的混合架构，解决了跨框架状态同步导致的死循环问题。
 - **深度适配**：开发了专用的 AST 转换中间件，实现了 BlockNote 缺失的 Markdown 特性（行内块级公式、自定义容器、Mermaid 图表），且做到了 100% 数据回写保真。
 - **交互体验**：引入了 MathLive 和 CodeMirror 等重型组件，将专业领域的编辑体验带入通用文本编辑器中。
+- **UI/UX 重构 (E2.5)**：全面接管 BlockNote 默认 UI，实现了基于 Iconify 的统一图标系统、高度定制的 Slash Menu (中文优化) 以及可扩展的 Toolbar Action 注册机制。
 
-**完成状态**：✅ E2.1/E2.2/E2.3/E2.4 全阶段交付闭环
+**完成状态**：✅ E2.1-E2.5 全阶段交付闭环
 
 ---
 
@@ -39,16 +40,13 @@
 
 构建在 `@blocknote/react` 之上的定制化 UI 系统。
 
-| 文件路径                                                       | 关键组件/配置             | 职责描述                                                                                                                                                      |
-| :------------------------------------------------------------- | :------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/components/editor/react_app/BlockNoteEditor.tsx`          | `<BlockNoteView />`       | **编辑器入口**<br>配置 Editor 实例，挂载 Schema，初始化 `SlashMenuItems` 和 `SideMenu`。                                                                      |
-| `src/components/editor/react_app/SlashMenuItems.tsx`           | `getCustomSlashMenuItems` | **指令集配置中心**<br>定义 `/` 菜单的各项指令。实现了基于**拼音别名**的混合搜索算法（如 `/gs` -> 公式），极大提升了中文输入体验。                             |
-| `src/components/editor/react_app/blocks/InlineMath.tsx`        | `<InlineMath />`          | **行内公式组件**<br>封装 `math-field` Web Component。**关键贡献**：实现了捕获阶段的键盘事件拦截，解决了 ProseMirror 光标无法进入 Shadow DOM 的难题。          |
-| `src/components/editor/react_app/blocks/MermaidBlock.tsx`      | `<MermaidBlock />`        | **图表组件**<br>集成 `CodeMirror` 提供专业的代码编辑体验，并配合 `Start/Finish` 状态机管理实时预览。                                                          |
-| `src/components/editor/react_app/blocks/ContainerBlock.tsx`    | `<ContainerBlock />`      | **容器组件**<br>利用 CSS 变量 (`hsl from`) 实现与 VitePress 主题色的自动同步。管理标题的即时编辑。                                                            |
-| `src/components/editor/react_app/blocks/IncludeBlock.tsx`      | `<IncludeBlock />`        | **引用组件**<br>支持 `@include` 语法。集成文件树选择器，实现了**递归过滤**（自动隐藏循环引用文件和空目录）及行号范围选择。                                    |
-| `src/components/editor/react_app/blocks/VueComponentBlock.tsx` | `<VueComponentBlock />`   | **组件调试器**<br>自动扫描 `.vitepress/theme/components`。支持 Prop 表单自动生成、JSDoc 解析，并集成 Iframe 实时预览。                                        |
-| `src/components/editor/react_app/blocks/ShikiCodeBlock.tsx`    | `<ShikiCodeBlock />`      | **高级代码块** (E2.5)<br>集成 CodeMirror。支持 VitePress 高级元数据：语言选择、文件名标题 `[foo.ts]`、行高亮 `{1-3}`、行号显示 `:line-numbers` 及 Diff 模式。 |
+| 文件路径                                                | 关键组件/配置             | 职责描述                                                                                                                                             |
+| :------------------------------------------------------ | :------------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/components/editor/react_app/BlockNoteEditor.tsx`   | `<BlockNoteView />`       | **编辑器入口**<br>配置 Editor 实例，挂载 Schema，初始化 `SlashMenuItems` 和 `SideMenu`。                                                             |
+| `src/components/editor/react_app/SlashMenuItems.tsx`    | `getCustomSlashMenuItems` | **指令集配置中心**<br>定义 `/` 菜单的各项指令。实现了基于**拼音别名**的混合搜索算法（如 `/gs` -> 公式），极大提升了中文输入体验。                    |
+| `src/components/editor/react_app/StaticToolbar.tsx`     | `<StaticToolbar />`       | **自定义工具栏** (E2.5)<br>完全重写默认 Toolbar，移除冗余样式按钮，集成 `BlockCapabilities` 动态动作系统，统一使用 Iconify 图标。                    |
+| `src/components/editor/react_app/blocks/InlineMath.tsx` | `<InlineMath />`          | **行内公式组件**<br>封装 `math-field` Web Component。**关键贡献**：实现了捕获阶段的键盘事件拦截，解决了 ProseMirror 光标无法进入 Shadow DOM 的难题。 |
+| `src/components/editor/react_app/BlockCapabilities.ts`  | `blockRegistry`           | **能力注册表** (E2.5)<br>集中管理所有 Block 的元数据（图标、Label）及上下文 Toolbar Actions（如公式的“键盘/菜单”切换按钮）。                         |
 
 ### 2.3 宿主集成层 (Host Integration Layer)
 
@@ -156,13 +154,13 @@ watch(loadingContent, (isLoading) => {
 
 4.  **Serialization Phase (Stringifier)**:
     `blocks-to-markdown.ts` 在输出时进行精确还原。
-    ``typescript
-if (node.props.displayMode) {
-    return `$$${node.props.latex}$$`; // 还原双美元
-} else {
-    return `$${node.props.latex}$`;   // 还原单美元
-}
-``
+    ```typescript
+    if (node.props.displayMode) {
+      return `$$${node.props.latex}$$`; // 还原双美元
+    } else {
+      return `$${node.props.latex}$`; // 还原单美元
+    }
+    ```
     这一改动确保了用户无论是输入行内公式还是块级公式，在 "保存 -> 刷新" 闭环后，不仅内容一致，连**排版格式**都完全一致。
 
 ### 3.3 自定义块数据转换架构 (Custom Block Data Transformation Architecture)
@@ -185,16 +183,16 @@ if (node.props.displayMode) {
     }
     ```
   - **BlockNote Block (Flattened in Editor)**:
-    `javascript
-{
-  "type": "container",
-  "props": { "containerType": "tip", "title": "提示" },
-  "content": [ // 直接作为 content 数组，而非 children 属性
-     { "type": "paragraph", "content": [...] },
-     { "type": "bulletListItem", "content": [...] }
-  ]
-}
-`
+    ```javascript
+    {
+      "type": "container",
+      "props": { "containerType": "tip", "title": "提示" },
+      "content": [ // 直接作为 content 数组，而非 children 属性
+         { "type": "paragraph", "content": [...] },
+         { "type": "bulletListItem", "content": [...] }
+      ]
+    }
+    ```
     这种**扁平化映射**极大地简化了编辑器内部的各种操作（如拖拽、全选），因为 BlockNote 核心对深层嵌套的 `children` 属性支持并不完美，而 `content` 数组是其原生的一级公民。
 
 - **样式同步机制 (Style Synchronization)**:
@@ -340,14 +338,12 @@ E2.4 阶段引入了 `ShikiCodeBlock` 组件，替换默认的 CodeBlock 以支�
 ```ts [config.ts]
 export default {};
 ```
-````
 
 ```js [config.js]
 module.exports = {};
 ```
 
 :::
-
 ````
 
 **解析 (markdown-to-blocks.ts)**：
@@ -361,12 +357,27 @@ module.exports = {};
 > **症状**：`::: code-group` 被识别为两个独立的代码块，而非多标签聚合。
 >
 > **根因**：`remarkVitePressContainers` 插件的正则表达式中，**遗漏了 `code-group`**。
+>
 > ```diff
 > - /^:::\s*(info|tip|warning|danger|details|note)(?:[ \t]+(.*?))?\n([\s\S]*?)\n:::\s*$/i
 > + /^:::\s*(info|tip|warning|danger|details|note|code-group)(?:[ \t]+(.*?))?\n([\s\S]*?)\n:::\s*$/i
 > ```
 >
 > **修复**：在 `markdown-to-blocks.ts` 的两处正则中添加 `code-group` (Line 114, 148)。
+
+> [!NOTE]
+> **代码块自动聚焦问题**
+>
+> **症状**：输入代码时输入法会被打断，或者光标位置异常。
+>
+> **修复**：将 `CodeMirror` 组件的 `basicSetup` 配置从 Props 移出至组件外部常量，防止 React 每次渲染时重新创建 Extension 实例导致 Editor View 重建。
+
+> [!NOTE]
+> **Shiki 高亮闪烁**
+>
+> **症状**：快速输入时高亮样式会有短暂延迟或闪烁。
+>
+> **优化**：实施了 `useShikiHighlighter` hook 的单例模式缓存，复用 Highlighter 实例。
 
 > [!NOTE]
 > **下拉菜单裁剪问题**
@@ -414,10 +425,12 @@ E2.4 阶段完成了 QuoteBlock 的原生化改造，实现了 Markdown 标准�
 
 ```markdown
 <!-- 同一引用块的多行 -->
+
 > line 1
 > line 2
 
 <!-- 两个独立引用块 -->
+
 > quote A
 
 > quote B
@@ -425,10 +438,10 @@ E2.4 阶段完成了 QuoteBlock 的原生化改造，实现了 Markdown 标准�
 
 **解决方案**：
 
-| 阶段 | 文件 | 实现逻辑 |
-|:--|:--|:--|
-| **解析** | `blocknote-adapter.ts` | `internalToBlockNote`: 同一内部 QuoteBlock 的所有段落分配相同 `groupId` |
-| **编辑** | `KeyboardShortcuts.ts` | Enter 分割块时，通过 `setNodeMarkup` 复制原块的 `groupId` 到新块 |
+| 阶段       | 文件                   | 实现逻辑                                                                                          |
+| :--------- | :--------------------- | :------------------------------------------------------------------------------------------------ |
+| **解析**   | `blocknote-adapter.ts` | `internalToBlockNote`: 同一内部 QuoteBlock 的所有段落分配相同 `groupId`                           |
+| **编辑**   | `KeyboardShortcuts.ts` | Enter 分割块时，通过 `setNodeMarkup` 复制原块的 `groupId` 到新块                                  |
 | **序列化** | `blocknote-adapter.ts` | `blockNoteToInternal`: 预处理阶段合并相邻同 `groupId` 块，使用 `_mergedSequence` 保持嵌套引用顺序 |
 
 ### 6.3 键盘快捷键扩展
@@ -444,7 +457,7 @@ export const QuoteKeyboardShortcuts = Extension.create({
         // 有内容：splitBlock + 复制 groupId
       },
       "Shift-Enter": ({ editor }) => {
-        return editor.commands.setHardBreak();  // 软换行
+        return editor.commands.setHardBreak(); // 软换行
       },
     };
   },
@@ -467,7 +480,7 @@ export const QuoteKeyboardShortcuts = Extension.create({
 }
 
 .bn-block-outer:has(.quote-block-sibling) {
-  margin-top: calc(-2 * var(--spacing));  /* 精确抵消间距 */
+  margin-top: calc(-2 * var(--spacing)); /* 精确抵消间距 */
 }
 ```
 
@@ -481,9 +494,9 @@ export const QuoteKeyboardShortcuts = Extension.create({
 _mergedSequence: [
   { type: "content", content: ["line 1"] },
   { type: "content", content: ["line 2"] },
-  { type: "child", child: nestedQuoteBlock },  // 保持位置
+  { type: "child", child: nestedQuoteBlock }, // 保持位置
   { type: "content", content: ["line 3"] },
-]
+];
 ```
 
 ### 6.6 关键修复历史
@@ -506,6 +519,8 @@ _mergedSequence: [
 >
 > **修复**：改用 `_mergedSequence` 单一数组，按顺序存储 content 和 child 项。
 
+---
+
 ## 7. 全链路验证与测试矩阵 (Full-Link Verification Matrix)
 
 为了确保 E2.3 交付的质量，我们执行了覆盖以下维度的测试验证：
@@ -518,4 +533,147 @@ _mergedSequence: [
 | **Inline Math**     | 光标逃逸     | 在公式末尾按 `→`            | 光标应立即跳出 Shadow DOM，出现在公式后的文本节点中       | ✅ 成功逃逸           | Pass |
 | **Mermaid**         | 语法错误处理 | 输入错误的 Mermaid 代码     | 预览区域应显示错误提示，而不是导致编辑器崩溃              | ✅ 显示红色错误日志   | Pass |
 | **Persistence**     | 双向一致性   | 输入公式 -> 保存 -> 刷新    | 重新加载后的公式内容应与保存前完全一致（包括 LaTeX 格式） | ✅ 字节级一致         | Pass |
-````
+
+---
+
+## 8. E2.5 UI/UX 深度定制与工程化重构 (E2.5 UI/UX & Refactor)
+
+E2.5 阶段聚焦于打磨编辑器 "最后一公里" 的用户体验，移除了所有 BlockNote 的原生 React UI 依赖，构建了一套完全自主可控的 Toolbar 和 Menu 系统。
+
+### 8.1 统一图标与视觉系统 (Unified Icon System)
+
+**背景**：BlockNote 内部依赖 `react-icons` (Phosphor Set)，风格与我们项目的 Lucide Icons 不符且不支持 Tree Shaking。
+
+**重构行动**：
+
+- **全面替换**：从底层 `BlockCapabilities.ts` 到 UI 组件 `StaticToolbar.tsx`，将所有图标替换为 `@iconify/react` (`lucide:` 集合)。
+- **收益**：包体积减少，视觉风格完全统一。
+
+### 8.2 静态/浮动工具栏重写 (Toolbar Override)
+
+**痛点**：默认的 Formatting Toolbar 包含大量我们不需要的按钮（如颜色、对齐），且无法扩展自定义 Block 的操作（如切换公式键盘）。
+
+**架构方案**：
+
+1.  **屏蔽原生 UI**：`<BlockNoteView formattingToolbar={false} />`
+2.  **构建自定义 Toolbar (`StaticToolbar.tsx`)**：
+    - 集成 `BlockRegistry` 获取上下文操作。
+    - **UI 基础设施 (`ToolbarControls.tsx`)**：
+      - `ToolbarDropdown`：使用 React Portal 将菜单渲染到 Body 层级，彻底解决了在 overflow:hidden 容器（如表格或布局容器）中下拉菜单被裁剪的问题。
+      - `ToolbarInput`：内置防抖 (Debounce) 的输入组件，用于属性编辑。
+
+```typescript
+// src/components/editor/react_app/BlockCapabilities.ts
+blockRegistry.register("math", {
+  actions: [
+    { type: "button", id: "toggleKeyboard", icon: ... },
+    { type: "button", id: "toggleMenu", icon: ... }
+  ]
+});
+```
+
+### 8.3 斜杠菜单深度定制 (Slash Menu Customization)
+
+**文件**：`src/components/editor/react_app/SlashMenuItems.tsx`
+
+**核心增强**：
+
+1.  **干扰项过滤**：移除了 Default 的 Quote、Heading、CodeBlock，只保留我们深度适配的自定义版本。
+2.  **中文适配**：
+    - **拼音混合搜索**：键入 `/gs` 可匹配 "公式" (Gong Si)。
+    - **中文分组**：将菜单项按 "标题", "基础", "媒体", "容器", "高级功能" 重组。
+3.  **排序策略**：通过自定义 `groupOrder` 数组，强制将 "标题" 组置顶，提升高频操作效率。
+
+```typescript
+const groupOrder = [
+  "标题",
+  "基础",
+  "媒体",
+  "容器",
+  "高级功能",
+  "VitePress",
+  "其他",
+];
+finalItems.sort(
+  (a, b) => groupOrder.indexOf(a.group) - groupOrder.indexOf(b.group)
+);
+```
+
+### 8.4 预览同步架构 (Preview Synchronization)
+
+**组件**：`src/composables/usePreviewSync.ts` (Vue Realm)
+
+为了打通 "Editor (React)" 与 "Preview (VitePress/Vue)" 之间的隔阂，我们设计了状态同步 Hook：
+
+1.  **自动刷新机制**：
+    监听 `docStore.isSaving` 状态。当保存完成（File System update）后，自动触发 debounced refresh，等待 VitePress HMR 热更新完成。
+
+2.  **滚动同步 (预留)**：
+    `syncScrollToBlock` 函数实现了基于 Block ID 的双向定位能力，为未来的 "Scroll Sync" 功能打下了基础。
+
+3.  **Frontmatter 同步**：
+    `docStore` 新增 `updateFrontmatter` Action，确保元数据变更（如 Title, Description）能即时写入文件头，并在预览中生效。
+
+### 8.5 工程化细节
+
+- **类型补全**：添加 `src/types/mathlive.d.ts` 解决 JSX Intrinsic Elements 报错。
+- **副作用隔离**：`ContainerBlock`, `MermaidBlock` 等组件内移除了遗留的 `actions` 数组，操作统一收敛至 Toolbar 注册表。
+- **Z-Index 管理**：修正 `StaticToolbar` z-index 为 40，解决了遮挡侧边栏菜单的问题。
+
+---
+
+## 9. E2.5 FrontmatterPanel 动态配置重构 (Dynamic Frontmatter Panel)
+
+E2.5 阶段对文档元数据配置面板进行了彻底重构，从静态表单转变为动态、可扩展的配置系统。
+
+### 9.1 架构设计
+
+- **动态字段注册表 (`FIELD_REGISTRY`)**：
+  集中管理所有支持的 Frontmatter 字段定义（Label, Type, Group, Description）。支持 `text`, `textarea`, `select`, `toggle` 等多种输入类型。
+- **动态状态管理**：
+  面板不再显示所有可能的字段，而是仅显示文档中**已配置**的字段。用户通过 "添加配置项" 菜单按需添加。
+
+### 9.2 关键特性
+
+1.  **分组管理**：
+    将字段划分为 `Basic` (基础), `Layout` (布局与显示), `Sidebar` (侧边栏配置), `Advanced` (高级) 四大组。
+    - **Sidebar 分组**：专门集成了 `vitepress-sidebar` 插件所需的 `order`, `date`, `exclude` 字段。
+2.  **UI/UX 优化**：
+    - **自定义 Select 下拉菜单**：使用 `Teleport` 实现的自定义下拉菜单，替代原生 `<select>`，提供一致的视觉体验（Neutral Hover, Active Border）。
+    - **智能添加菜单**：基于 `getBoundingClientRect` 的动态定位菜单，解决了 Hover 间隙导致的菜单关闭问题。
+    - **字段描述**：在每个字段 Label 下方提供详细的 Description，辅助用户理解配置项用途（如 SEO 影响、布局行为）。
+3.  **数据清洗**：
+    - 在编辑编辑过程中**保留空字符串**，防止用户清空输入框时字段立即跳动消失。
+    - 仅在最终保存（Persistence Layer）时清理 Empty Values。
+
+### 9.3 核心代码
+
+```typescript
+// Field Registry Example
+const FIELD_REGISTRY: FieldConfig[] = [
+  {
+    key: "layout",
+    label: "布局",
+    type: "select",
+    group: "layout",
+    options: [
+      { value: "doc", label: "文档" },
+      { value: "home", label: "首页" },
+    ],
+  },
+  {
+    key: "order",
+    label: "排序优先级",
+    group: "sidebar", // New Group
+    description: "侧边栏菜单的排序优先级...",
+  },
+];
+```
+
+### 9.4 后端预览优化 (Backend Preview Optimization)
+
+- **文件：** `src-tauri/src/app/commands/vitepress.rs`
+- **变更：** `vitepress_create_preview` 函数
+- **逻辑：**
+  生成的预览 Markdown 文件现自动注入 `exclude: true` Frontmatter。
+  这确保了 `vitepress-sidebar` 等自动侧边栏插件会忽略产生的临时预览文件，避免其污染侧边栏目录导航。

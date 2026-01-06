@@ -267,6 +267,12 @@ export const useDocumentStore = defineStore("document", () => {
     isDirty.value = true;
   }
 
+  /** Update frontmatter and mark document as dirty (E2.5) */
+  function updateFrontmatter(frontmatter: Record<string, any>) {
+    currentFrontmatter.value = { ...frontmatter };
+    isDirty.value = true;
+  }
+
   return {
     // State
     worktreePath,
@@ -307,6 +313,7 @@ export const useDocumentStore = defineStore("document", () => {
     loadDocumentContent,
     saveDocumentContent,
     updateEditorBlocks,
+    updateFrontmatter,
     resetState,
   };
 });

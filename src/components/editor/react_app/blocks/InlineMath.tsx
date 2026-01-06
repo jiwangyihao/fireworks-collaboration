@@ -7,16 +7,14 @@
 
 import { createReactInlineContentSpec } from "@blocknote/react";
 import { useLayoutEffect, useRef, useEffect, useState } from "react";
-import "mathlive";
+import { initMathLive } from "./MathLiveUtils";
 import { MathfieldElement } from "mathlive";
+import { Icon } from "@iconify/react"; // Use Iconify
+import { NodeSelection } from "prosemirror-state";
+import { blockRegistry } from "../BlockCapabilities";
 
-// 设置全局字体路径和语言环境 (在组件渲染前执行)
-try {
-  MathfieldElement.fontsDirectory = "/fonts";
-  MathfieldElement.locale = "zh-cn";
-} catch (e) {
-  console.warn("Failed to set MathLive fonts directory or locale", e);
-}
+// 初始化 MathLive
+initMathLive();
 
 // 为 React 声明自定义元素类型
 declare global {
@@ -228,27 +226,140 @@ export const InlineMath = createReactInlineContentSpec(
         }
       };
 
+      // 注册块能力
+
+      // 焦点管理 & Registry Reporting
+      const wasActiveRef = useRef(false);
+
       useEffect(() => {
-        // locale and fontsDirectory are handled globally
-      }, []);
+        if (!view || !spanRef.current) return;
+
+        const checkActive = () => {
+          const dom = spanRef.current;
+          if (!dom) return;
+
+          // Check if selection is on this node
+          const pos = view.posAtDOM(dom, 0);
+          if (pos === null) return;
+
+          const { from, to } = view.state.selection;
+          const node = view.state.doc.nodeAt(pos);
+
+          // Relaxed check:
+          // 1. Precise PM NodeSelection
+          // 关键：只用 isFocused 判断是否激活
+          // isNodeSelection 可能在 blur 时仍为 true（PM selection 还没更新）
+
+          // Debug: Check active element
+          // console.log("InlineMath checkActive", document.activeElement);
+
+          const isFocused =
+            document.activeElement === mathfieldRef.current ||
+            // Allow focus to be on body temporarily (during clicks)??
+            // Or better: rely on the fact that if we preventDefault on toolbar, activeElement won't change.
+            // But if user clicks OUTSIDE editor, we want to blur.
+
+            // Check if active element is within the toolbar?
+            document.activeElement?.closest(".editor-toolbar");
+
+          const isMathFieldFocused =
+            document.activeElement === mathfieldRef.current;
+
+          if (isFocused) {
+            // 只设置类型，不需要执行器（没有输入框了）
+            blockRegistry.setActiveInline("inlineMath", {
+              toggleKeyboard: {
+                execute: () => {
+                  mathfieldRef.current?.executeCommand("toggleVirtualKeyboard");
+                },
+                isActive: () => false,
+              },
+              toggleMenu: {
+                execute: (e: any) => {
+                  if (mathfieldRef.current && e?.currentTarget) {
+                    const button = e.currentTarget as HTMLElement;
+                    const rect = button.getBoundingClientRect();
+                    mathfieldRef.current.showMenu({
+                      location: {
+                        x: rect.left,
+                        y: rect.bottom + 5,
+                      },
+                      modifiers: {
+                        alt: false,
+                        control: false,
+                        shift: false,
+                        meta: false,
+                      },
+                    });
+                  } else {
+                    mathfieldRef.current?.executeCommand("toggleContextMenu");
+                  }
+                },
+                isActive: () => false,
+              },
+            });
+            wasActiveRef.current = true;
+          } else if (wasActiveRef.current) {
+            // 只有当这个实例之前是激活的，才清除
+
+            blockRegistry.setActiveInline(null);
+            wasActiveRef.current = false;
+          }
+        };
+
+        const unsubscribe = editor.onSelectionChange(checkActive);
+
+        // 也监听 math-field 的 focus/blur 事件
+        const mf = mathfieldRef.current;
+        if (mf) {
+          mf.addEventListener("focus", checkActive);
+          mf.addEventListener("blur", checkActive);
+        }
+
+        return () => {
+          unsubscribe();
+          if (mf) {
+            mf.removeEventListener("focus", checkActive);
+            mf.removeEventListener("blur", checkActive);
+          }
+          // 组件卸载时，如果还是激活状态，清除
+          if (wasActiveRef.current) {
+            blockRegistry.setActiveInline(null);
+          }
+        };
+      }, [view, editor]);
+
+      // Override Focus to sync selection
+      const handleFocus = () => {
+        if (!view || !spanRef.current) return;
+        const pos = view.posAtDOM(spanRef.current, 0);
+        if (pos !== null) {
+          // Force NodeSelection
+          const tr = view.state.tr.setSelection(
+            NodeSelection.create(view.state.doc, pos)
+          );
+          view.dispatch(tr);
+        }
+      };
 
       return (
         <span
           ref={spanRef}
-          className="inline-block align-middle"
-          // Prosemirror ignore mutation inside?
-          // Inline content with content="none" is usually treated as atom.
-          // PM usually ignores DOM changes inside atom unless we tell it not to.
-          // But here we capture events.
+          className="inline-math-node inline-block mx-1 align-middle"
+          data-inline-math
         >
           <math-field
             ref={mathfieldRef}
-            class="shadow-none border-none bg-transparent outline-none p-0 mx-1"
+            class="px-1 bg-gray-100 rounded cursor-pointer min-w-[20px] inline-block text-center"
+            style={{
+              display: "inline-block",
+              minWidth: "20px",
+            }}
             onInput={handleInput}
-            // 阻止常见的 ProseMirror 事件冒泡，防止干扰编辑
+            // Sync Focus to PM Selection
+            onFocus={handleFocus}
             onMouseDown={(e: MouseEvent) => e.stopPropagation()}
             onClick={(e: MouseEvent) => e.stopPropagation()}
-            // Key events? handled by mathfield usually.
           >
             {latex}
           </math-field>
@@ -257,3 +368,24 @@ export const InlineMath = createReactInlineContentSpec(
     },
   }
 );
+
+// Register capabilities globally for InlineMath
+blockRegistry.register("inlineMath", {
+  label: "行内公式",
+  icon: <Icon icon="lucide:function-square" />,
+  supportedStyles: ["inlineMath"],
+  actions: [
+    {
+      type: "button",
+      id: "toggleKeyboard",
+      label: "键盘",
+      icon: <Icon icon="lucide:keyboard" />,
+    },
+    {
+      type: "button",
+      id: "toggleMenu",
+      label: "菜单",
+      icon: <Icon icon="lucide:menu" />,
+    },
+  ],
+});

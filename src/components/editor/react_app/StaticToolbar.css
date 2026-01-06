@@ -1,0 +1,161 @@
+/**
+ * StaticToolbar.css - 静态工具栏样式
+ */
+
+.static-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  background: oklch(from var(--color-base-200) l c h / 0.95);
+  border-bottom: 1px solid oklch(from var(--color-base-content) l c h / 0.1);
+  flex-shrink: 0;
+  backdrop-filter: blur(8px);
+  overflow: visible; /* 允许下拉菜单显示在外部 */
+}
+
+.static-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.75rem;
+  height: 1.75rem;
+  padding: 0 0.375rem;
+  border: none;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: oklch(from var(--color-base-content) l c h / 0.6);
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.static-toolbar-btn:hover:not(:disabled) {
+  background: oklch(from var(--color-base-content) l c h / 0.08);
+  color: var(--color-base-content);
+}
+
+.static-toolbar-btn.active {
+  background: oklch(from var(--color-primary) l c h / 0.15);
+  color: var(--color-primary);
+}
+
+.static-toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.static-toolbar-btn code {
+  font-family: monospace;
+  font-size: 0.75rem;
+}
+
+.static-toolbar-divider {
+  width: 1px;
+  height: 1.25rem;
+  background: oklch(from var(--color-base-content) l c h / 0.15);
+  margin: 0 0.375rem;
+}
+
+.static-toolbar-select {
+  height: 1.75rem;
+  padding: 0 0.5rem;
+  border: 1px solid oklch(from var(--color-base-content) l c h / 0.15);
+  border-radius: 0.375rem;
+  background: var(--color-base-100);
+  color: oklch(from var(--color-base-content) l c h / 0.8);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.static-toolbar-select:hover {
+  border-color: oklch(from var(--color-base-content) l c h / 0.25);
+}
+
+.static-toolbar-select:focus {
+  outline: none;
+  border-color: oklch(from var(--color-primary) l c h / 0.5);
+}
+
+/* Link Button Wrapper */
+.link-button-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Link Popover */
+.link-popover {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background: var(--color-base-100);
+  border: 1px solid oklch(from var(--color-base-content) l c h / 0.15);
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 12px oklch(from var(--color-base-content) l c h / 0.1);
+  z-index: 1000;
+  white-space: nowrap;
+}
+
+.link-popover-form {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.link-popover-input {
+  width: 14rem;
+  height: 1.75rem;
+  padding: 0 0.5rem;
+  border: 1px solid oklch(from var(--color-base-content) l c h / 0.2);
+  border-radius: 0.375rem;
+  background: var(--color-base-200);
+  color: var(--color-base-content);
+  font-size: 0.75rem;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.link-popover-input:focus {
+  border-color: var(--color-primary);
+}
+
+.link-popover-input::placeholder {
+  color: oklch(from var(--color-base-content) l c h / 0.4);
+}
+
+.link-popover-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: none;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: oklch(from var(--color-base-content) l c h / 0.6);
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.link-popover-btn:hover {
+  background: oklch(from var(--color-base-content) l c h / 0.1);
+  color: var(--color-base-content);
+}
+
+.link-popover-btn.confirm:hover {
+  background: oklch(from var(--color-success) l c h / 0.15);
+  color: var(--color-success);
+}
+
+.link-popover-btn.remove:hover {
+  background: oklch(from var(--color-error) l c h / 0.15);
+  color: var(--color-error);
+}

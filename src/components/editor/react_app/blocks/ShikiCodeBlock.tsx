@@ -32,6 +32,7 @@ import {
   ViewUpdate,
 } from "@codemirror/view";
 import { RangeSetBuilder, EditorState, Extension } from "@codemirror/state";
+import { blockRegistry } from "../BlockCapabilities";
 
 // 常用语言列表
 const LANGUAGES = [
@@ -205,6 +206,119 @@ interface ShikiTab {
   startLineNumber: number;
 }
 
+import React from "react";
+
+// 模块加载时注册 shikiCode 块的能力配置
+blockRegistry.register("shikiCode", {
+  icon: React.createElement(Icon, {
+    icon: "lucide:code-2",
+    className: "w-4 h-4",
+  }),
+  label: "代码块",
+  supportedStyles: [],
+  actions: [
+    // 语言选择下拉菜单
+    {
+      type: "dropdown",
+      id: "language",
+      label: "语言",
+      icon: React.createElement(Icon, {
+        icon: "lucide:code",
+        className: "w-4 h-4",
+      }),
+    },
+    // 文件/Tab 选择下拉菜单
+    {
+      type: "dropdown",
+      id: "fileTab",
+      label: "文件",
+      icon: React.createElement(Icon, {
+        icon: "lucide:files",
+        className: "w-4 h-4",
+      }),
+      iconOnly: true, // 只显示图标，避免与文件名输入框重复
+    },
+    // 文件名输入框
+    {
+      type: "input",
+      id: "filename",
+      label: "文件名",
+      icon: React.createElement(Icon, {
+        icon: "lucide:file",
+        className: "w-4 h-4",
+      }),
+      placeholder: "filename.ext",
+      width: "12rem",
+      hideIcon: true,
+    },
+    // 行号开关
+    {
+      type: "toggle",
+      id: "lineNumbers",
+      label: "行号",
+      icon: React.createElement(Icon, {
+        icon: "ph:list-numbers",
+        className: "w-4 h-4",
+      }),
+    },
+    // 标注按钮
+    {
+      type: "button",
+      id: "highlight",
+      label: "高亮",
+      icon: React.createElement(Icon, {
+        icon: "lucide:highlighter",
+        className: "w-4 h-4",
+      }),
+    },
+    {
+      type: "button",
+      id: "focus",
+      label: "聚焦",
+      icon: React.createElement(Icon, {
+        icon: "lucide:scan-eye",
+        className: "w-4 h-4",
+      }),
+    },
+    {
+      type: "button",
+      id: "++",
+      label: "添加 (Diff+)",
+      icon: React.createElement(Icon, {
+        icon: "lucide:plus",
+        className: "w-4 h-4",
+      }),
+    },
+    {
+      type: "button",
+      id: "--",
+      label: "删除 (Diff-)",
+      icon: React.createElement(Icon, {
+        icon: "lucide:minus",
+        className: "w-4 h-4",
+      }),
+    },
+    {
+      type: "button",
+      id: "error",
+      label: "错误",
+      icon: React.createElement(Icon, {
+        icon: "lucide:x-circle",
+        className: "w-4 h-4",
+      }),
+    },
+    {
+      type: "button",
+      id: "warning",
+      label: "警告",
+      icon: React.createElement(Icon, {
+        icon: "lucide:alert-triangle",
+        className: "w-4 h-4",
+      }),
+    },
+  ],
+});
+
 export const ShikiCodeBlock = createReactBlockSpec(
   {
     type: "shikiCode",
@@ -277,6 +391,79 @@ export const ShikiCodeBlock = createReactBlockSpec(
         ]);
       }, [tabs]);
 
+      // 注册执行器到 Registry (用于 StaticToolbar 调用)
+      useEffect(() => {
+        const blockId = props.block.id;
+
+        // 语言选择执行器
+        blockRegistry.registerExecutor(blockId, "language", {
+          execute: (lang) => {
+            setLocalLang(lang);
+            updateBlockRef.current?.({ language: lang });
+          },
+          isActive: () => false,
+          getValue: () => localLangRef.current,
+          getOptions: () =>
+            LANGUAGES.map((l) => ({ value: l.value, label: l.label })),
+        });
+
+        // 文件/Tab 选择执行器
+        blockRegistry.registerExecutor(blockId, "fileTab", {
+          execute: (tabIndex) => {
+            handleTabSwitchRef.current?.(parseInt(tabIndex));
+          },
+          isActive: () => false,
+          getValue: () => String(activeTabIndexRef.current),
+          getOptions: () =>
+            localTabsRef.current.map((tab, i) => ({
+              value: String(i),
+              label: tab.filename || `File ${i + 1}`,
+            })),
+        });
+
+        // 文件名输入执行器
+        blockRegistry.registerExecutor(blockId, "filename", {
+          execute: (name) => {
+            setLocalFilename(name);
+            updateBlockRef.current?.({ filename: name });
+          },
+          isActive: () => false,
+          getValue: () => localFilenameRef.current,
+        });
+
+        // 行号开关执行器
+        blockRegistry.registerExecutor(blockId, "lineNumbers", {
+          execute: (val) => {
+            const newVal =
+              typeof val === "boolean" ? val : !localShowLineNumbersRef.current;
+            setLocalShowLineNumbers(newVal);
+            updateBlockRef.current?.({ showLineNumbers: newVal });
+          },
+          isActive: () => localShowLineNumbersRef.current,
+          getValue: () => localShowLineNumbersRef.current,
+        });
+
+        // 注册标注按钮的执行器
+        const annotationActions = [
+          "highlight",
+          "focus",
+          "++",
+          "--",
+          "error",
+          "warning",
+        ] as const;
+        annotationActions.forEach((actionId) => {
+          blockRegistry.registerExecutor(blockId, actionId, {
+            execute: () => toggleAnnotationRef.current?.(actionId),
+            isActive: () => activeAnnotationRef.current === actionId,
+          });
+        });
+
+        return () => {
+          blockRegistry.unregisterExecutors(blockId);
+        };
+      }, [props.block.id]);
+
       // 内部 UI 状态 (用于编辑器绑定和快速反馈)
       const [localCode, setLocalCode] = useState(code);
       const [localLang, setLocalLang] = useState(language);
@@ -289,6 +476,22 @@ export const ShikiCodeBlock = createReactBlockSpec(
       const [activeAnnotation, setActiveAnnotation] = useState<string | null>(
         null
       );
+
+      // Refs for registry callbacks (avoid stale closure)
+      const activeAnnotationRef = useRef(activeAnnotation);
+      activeAnnotationRef.current = activeAnnotation;
+
+      const localLangRef = useRef(localLang);
+      localLangRef.current = localLang;
+
+      const localFilenameRef = useRef(localFilename);
+      localFilenameRef.current = localFilename;
+
+      const localShowLineNumbersRef = useRef(localShowLineNumbers);
+      localShowLineNumbersRef.current = localShowLineNumbers;
+
+      const activeTabIndexRef = useRef(activeTabIndex);
+      activeTabIndexRef.current = activeTabIndex;
 
       // UI State: File Switcher Menu
       const [showFileMenu, setShowFileMenu] = useState(false);
@@ -334,6 +537,10 @@ export const ShikiCodeBlock = createReactBlockSpec(
         [props.editor, props.block, activeTabIndex]
       );
 
+      // Ref for updateBlock (used by executors)
+      const updateBlockRef = useRef(updateBlock);
+      updateBlockRef.current = updateBlock;
+
       // Tab 操作处理器
       const handleTabSwitch = (index: number) => {
         if (index < 0 || index >= localTabs.length) return;
@@ -345,7 +552,17 @@ export const ShikiCodeBlock = createReactBlockSpec(
             ...target, // 将目标 Tab 的属性提升到 Block Props，实现“切换视图”
           },
         });
+
+        // 通知工具栏重新渲染（更新文件下拉菜单选中项）
+        blockRegistry.notify();
       };
+
+      // Refs for handleTabSwitch and localTabs (used by executors)
+      const handleTabSwitchRef = useRef(handleTabSwitch);
+      handleTabSwitchRef.current = handleTabSwitch;
+
+      const localTabsRef = useRef(localTabs);
+      localTabsRef.current = localTabs;
 
       const handleAddTab = () => {
         const newTab: ShikiTab = {
@@ -480,20 +697,26 @@ export const ShikiCodeBlock = createReactBlockSpec(
             // 检测注释类型
             // 匹配任何形式的 [!code type]
             const match = text.match(/\[\!code\s+(.*?)\]/);
+            let newAnnotation: string | null = null;
+
             if (match) {
-              setActiveAnnotation(match[1].trim());
+              newAnnotation = match[1].trim();
             } else {
-              // 检测 Prop Highlgiht
+              // 检测 Prop Highlight
               const set = parseHighlightLines(localHighlight);
               if (set.has(lineNo)) {
-                setActiveAnnotation("highlight");
-              } else {
-                setActiveAnnotation(null);
+                newAnnotation = "highlight";
               }
             }
+
+            // 更新状态并通知 registry（触发 StaticToolbar 重渲染）
+            // 注意：先同步更新 ref，再通知（因为 React state 是异步的）
+            activeAnnotationRef.current = newAnnotation;
+            setActiveAnnotation(newAnnotation);
+            blockRegistry.notify();
           }
         });
-      }, [localHighlight]); // 当 localHighlight 变化时，也需要重新评估当前状态 (实际上 updateListener 会在视图更新时触发吗？highlight prop change triggers re-render, creating new listener? efficient enough.)
+      }, [localHighlight]); // 当 localHighlight 变化时，也需要重新评估当前状态
 
       // 语言扩展加载
       const extensions = useMemo(() => {
@@ -660,14 +883,25 @@ export const ShikiCodeBlock = createReactBlockSpec(
         }
 
         if (shouldDispatch) {
+          // 计算光标在行内的相对偏移，以便在文本变化后保持合理位置
+          const cursorOffsetInLine = Math.min(
+            state.selection.main.from - line.from,
+            newText.length
+          );
+          const newAnchor = line.from + cursorOffsetInLine;
+
           dispatch({
             changes: { from: line.from, to: line.to, insert: newText },
-            selection: { anchor: state.selection.main.from },
+            selection: { anchor: newAnchor },
           });
           // 强制同步
           setLocalCode(view.state.doc.toString());
         }
       };
+
+      // Ref for toggleAnnotation (used by registry executors)
+      const toggleAnnotationRef = useRef(toggleAnnotation);
+      toggleAnnotationRef.current = toggleAnnotation;
 
       // 辅助函数：判断按钮是否激活
       const isActive = (type: string) => activeAnnotation === type;
@@ -902,6 +1136,10 @@ export const ShikiCodeBlock = createReactBlockSpec(
               theme={githubLight}
               extensions={extensions}
               onChange={(val) => setLocalCode(val)}
+              onFocus={() => {
+                // 使用 blockRegistry 辅助方法同步选区
+                blockRegistry.focusBlock(props.editor, props.block.id, "start");
+              }}
               basicSetup={{
                 lineNumbers: localShowLineNumbers,
                 foldGutter: true,

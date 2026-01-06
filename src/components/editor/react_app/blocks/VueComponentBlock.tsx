@@ -6,11 +6,12 @@
  */
 
 import { createReactBlockSpec } from "@blocknote/react";
-import { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Icon } from "@iconify/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorContext, useGlobalEditorContext } from "../EditorContext";
 import Markdown from "react-markdown";
+import { blockRegistry } from "../BlockCapabilities";
 
 // 组件信息类型
 interface ComponentProp {
@@ -72,6 +73,34 @@ export const VueComponentBlock = createReactBlockSpec(
 
       const [isEditing, setIsEditing] = useState(!componentName);
       const [localName, setLocalName] = useState(componentName);
+
+      // 同步外部属性变化
+      useEffect(() => {
+        setLocalName(componentName);
+      }, [componentName]);
+
+      // 注册执行器
+      useEffect(() => {
+        const blockId = props.block.id;
+        // 组件名输入
+        blockRegistry.registerExecutor(blockId, "componentName", {
+          execute: (name) => {
+            // 更新 Block 属性
+            props.editor.updateBlock(props.block, {
+              props: { componentName: name },
+            });
+            setLocalName(name); // 同时更新本地状态
+          },
+          getValue: () => componentName,
+          isActive: () => false,
+        });
+
+        // 编辑按钮
+        blockRegistry.registerExecutor(blockId, "edit", {
+          execute: () => setIsEditing(true),
+          isActive: () => isEditing,
+        });
+      }, [props.block.id, props.editor, props.block, componentName, isEditing]);
       const [localAttrs, setLocalAttrs] =
         useState<Record<string, string>>(attributes);
       const [newAttrKey, setNewAttrKey] = useState("");
@@ -355,6 +384,9 @@ export const VueComponentBlock = createReactBlockSpec(
           <div
             className="rounded-lg border border-base-300 bg-base-200/50 p-4 w-full max-w-none"
             contentEditable={false}
+            onFocus={() => {
+              blockRegistry.focusBlock(props.editor, props.block.id);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
                 setIsEditing(false);
@@ -658,3 +690,13 @@ export const VueComponentBlock = createReactBlockSpec(
     },
   }
 );
+
+blockRegistry.register("vueComponent", {
+  icon: React.createElement(Icon, {
+    icon: "mdi:vuejs",
+    className: "w-4 h-4",
+  }),
+  label: "Vue 组件",
+  supportedStyles: [],
+  actions: [],
+});
