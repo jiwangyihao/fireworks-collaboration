@@ -8,7 +8,7 @@
 
 import React, { useState, useRef, useEffect, memo } from "react";
 import { RiArrowDownSLine } from "react-icons/ri";
-import type { DropdownOption } from "./BlockCapabilities";
+import type { DropdownOption } from "./ContentRegistry";
 import { DropdownMenu, MenuItem } from "./menu";
 
 // --- Toolbar Dropdown ---

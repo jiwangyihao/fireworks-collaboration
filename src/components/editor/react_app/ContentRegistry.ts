@@ -1,17 +1,21 @@
 /**
- * BlockCapabilities.ts - 块能力注册与管理中心
+ * ContentRegistry.ts - 统一内容注册中心
  *
- * 提供去中心化的块能力注册机制：
- * 1. 每个块自行注册其 capabilities
- * 2. 自定义 actions 由块内部实现，toolbar 仅负责触发
- * 3. 支持多种 action 类型：button, dropdown, input, toggle
+ * 提供去中心化的内容类型注册机制，覆盖：
+ * 1. Toolbar 能力配置 (supportedStyles, actions)
+ * 2. SlashMenu 项注册 (一个类型可对应多个菜单项)
+ * 3. SideMenu 操作注册
+ *
+ * 每个块组件自行注册其配置，实现组件自治。
  */
 import { Block, BlockNoteEditor } from "@blocknote/core";
 import { ReactNode } from "react";
 import React from "react";
 import { Icon } from "@iconify/react";
 
-// --- Action 类型定义 ---
+// ============================================================================
+// Toolbar Action 类型定义
+// ============================================================================
 
 export type BlockActionType = "button" | "dropdown" | "input" | "toggle";
 
@@ -27,14 +31,14 @@ export interface ButtonActionDefinition extends BaseActionDefinition {
 
 export interface DropdownActionDefinition extends BaseActionDefinition {
   type: "dropdown";
-  iconOnly?: boolean; // 只显示图标，不显示当前选中值
+  iconOnly?: boolean;
 }
 
 export interface InputActionDefinition extends BaseActionDefinition {
   type: "input";
   placeholder?: string;
-  width?: string; // e.g., "8rem"
-  hideIcon?: boolean; // 隐藏图标
+  width?: string;
+  hideIcon?: boolean;
 }
 
 export interface ToggleActionDefinition extends BaseActionDefinition {
@@ -47,7 +51,9 @@ export type BlockActionDefinition =
   | InputActionDefinition
   | ToggleActionDefinition;
 
-// --- Executor 接口 ---
+// ============================================================================
+// Executor 接口
+// ============================================================================
 
 export interface DropdownOption {
   value: string;
@@ -56,32 +62,97 @@ export interface DropdownOption {
 }
 
 export interface BlockActionExecutor {
-  execute: (value?: any) => void; // value: 新选中项/输入值/toggle状态
-  isActive: () => boolean; // 用于 button 高亮
-  getValue?: () => any; // 当前值 (input/toggle/dropdown)
-  getOptions?: () => DropdownOption[]; // dropdown 选项列表
+  execute: (value?: any) => void;
+  isActive: () => boolean;
+  getValue?: () => any;
+  getOptions?: () => DropdownOption[];
 }
 
-// --- 块能力接口 ---
+// ============================================================================
+// SlashMenu 项定义
+// ============================================================================
 
-export interface BlockCapabilities {
-  // supportedStyles: 支持的样式列表，如果为 true 则支持所有默认样式，如果为 false 或空数组则不支持任何样式
+export interface SlashMenuItemDefinition {
+  /** 唯一标识符 */
+  id: string;
+  /** 显示标题 */
+  title: string;
+  /** 副标题/描述 */
+  subtext?: string;
+  /** 图标 */
+  icon: ReactNode;
+  /** 分组 */
+  group: string;
+  /** 搜索别名 */
+  aliases: string[];
+  /** 对应的块类型 */
+  blockType: string;
+  /** 插入时的默认 props */
+  props?: Record<string, any>;
+  /** 插入后是否移动光标到新块 */
+  moveCursor?: boolean;
+}
+
+// ============================================================================
+// SideMenu Action 定义
+// ============================================================================
+
+export interface SideMenuActionDefinition {
+  /** 唯一标识符 */
+  id: string;
+  /** 显示标签 */
+  label: string;
+  /** Iconify 图标名 */
+  icon: string;
+  /** 当前是否激活（可选） */
+  isActive?: (block: Block<any, any, any>) => boolean;
+  /** 执行操作 */
+  execute: (block: Block<any, any, any>, editor: any) => void;
+}
+
+// ============================================================================
+// 内容类型接口 (原 BlockCapabilities)
+// ============================================================================
+
+export interface ContentType {
+  // --- Toolbar 能力 ---
+  /** 支持的样式列表，true 表示支持所有默认样式 */
   supportedStyles: string[] | boolean;
   hasAlignment: boolean;
   hasIndent: boolean;
   hasTextColor: boolean;
   hasBackgroundColor: boolean;
+  /** Toolbar 操作 */
   actions: BlockActionDefinition[];
+  /** 图标 */
   icon: ReactNode;
+  /** 显示名称 */
   label: string;
+
+  // --- SlashMenu 配置 ---
+  /** SlashMenu 项（一个类型可注册多个项） */
+  slashMenuItems?: SlashMenuItemDefinition[];
+
+  // --- SideMenu 配置 ---
+  /** SideMenu 操作 */
+  sideMenuActions?: SideMenuActionDefinition[];
 }
 
-// --- 图标助手 ---
-const iconify = (icon: string) =>
+// 兼容别名
+export type BlockCapabilities = ContentType;
+
+// ============================================================================
+// 图标助手
+// ============================================================================
+
+export const iconify = (icon: string) =>
   React.createElement(Icon, { icon, className: "w-4 h-4" });
 
-// 默认能力
-const DEFAULT_CAPABILITIES: BlockCapabilities = {
+// ============================================================================
+// 默认配置
+// ============================================================================
+
+const DEFAULT_CONTENT_TYPE: ContentType = {
   supportedStyles: ["bold", "italic", "underline", "strike", "code", "link"],
   hasAlignment: true,
   hasIndent: true,
@@ -90,17 +161,22 @@ const DEFAULT_CAPABILITIES: BlockCapabilities = {
   actions: [],
   icon: iconify("lucide:help-circle"),
   label: "Unknown Block",
+  slashMenuItems: [],
+  sideMenuActions: [],
 };
 
-// --- 注册表类 ---
+// ============================================================================
+// 注册表类
+// ============================================================================
 
-class BlockCapabilityRegistry {
+class ContentRegistry {
   // 块类型 -> 能力配置
-  private capabilities: Map<string, Partial<BlockCapabilities>> = new Map();
+  private types: Map<string, Partial<ContentType>> = new Map();
 
   // 块实例 ID -> 操作执行器映射 (blockId -> actionId -> executor)
   private executors: Map<string, Map<string, BlockActionExecutor>> = new Map();
-  // 当前激活的 Inline 内容 (用于 InlineMath 等独立输入组件)
+
+  // 当前激活的 Inline 内容
   private activeInline: {
     type: string;
     executor: Record<string, BlockActionExecutor>;
@@ -119,10 +195,13 @@ class BlockCapabilityRegistry {
   private initDefaults() {
     if (this.initialized) return;
 
+    // 段落
     this.register("paragraph", {
       icon: iconify("lucide:pilcrow"),
       label: "段落",
     });
+
+    // 标题
     this.register("heading", {
       icon: iconify("lucide:heading-1"),
       label: "标题",
@@ -139,6 +218,8 @@ class BlockCapabilityRegistry {
       icon: iconify("lucide:heading-3"),
       label: "标题 3",
     });
+
+    // 列表
     this.register("bulletListItem", {
       icon: iconify("lucide:list"),
       label: "无序列表",
@@ -151,6 +232,8 @@ class BlockCapabilityRegistry {
       icon: iconify("lucide:check-square"),
       label: "任务列表",
     });
+
+    // 其他内置块
     this.register("quote", { icon: iconify("lucide:quote"), label: "引用" });
     this.register("image", {
       icon: iconify("lucide:image"),
@@ -162,43 +245,77 @@ class BlockCapabilityRegistry {
     this.initialized = true;
   }
 
+  // =========================================================================
+  // 注册 API
+  // =========================================================================
+
   /**
-   * 注册或更新块类型能力（由块组件调用）
+   * 注册或更新内容类型（由块组件调用）
    */
-  register(type: string, caps: Partial<BlockCapabilities>) {
-    const existing = this.capabilities.get(type) || {};
-    this.capabilities.set(type, { ...existing, ...caps });
+  register(type: string, config: Partial<ContentType>) {
+    const existing = this.types.get(type) || {};
+    this.types.set(type, { ...existing, ...config });
     this.notify();
   }
 
   /**
-   * 获取块能力
+   * 获取内容类型配置
    */
-  get(type: string): BlockCapabilities {
-    const specific = this.capabilities.get(type);
+  get(type: string): ContentType {
+    const specific = this.types.get(type);
 
     if (!specific) {
       if (type.startsWith("heading-")) {
-        const baseHeading = this.capabilities.get("heading");
+        const baseHeading = this.types.get("heading");
         if (baseHeading) {
           return {
-            ...DEFAULT_CAPABILITIES,
+            ...DEFAULT_CONTENT_TYPE,
             ...baseHeading,
             label: `标题 ${type.split("-")[1]}`,
           };
         }
       }
-      return { ...DEFAULT_CAPABILITIES, label: type };
+      return { ...DEFAULT_CONTENT_TYPE, label: type };
     }
 
-    return { ...DEFAULT_CAPABILITIES, ...specific };
+    return { ...DEFAULT_CONTENT_TYPE, ...specific };
   }
 
-  // --- 实例级操作执行器管理 ---
+  // =========================================================================
+  // SlashMenu API
+  // =========================================================================
 
   /**
-   * 注册块实例的操作执行器（由块组件 mount 时调用）
+   * 获取所有已注册的 SlashMenu 项
    */
+  getSlashMenuItems(): SlashMenuItemDefinition[] {
+    const items: SlashMenuItemDefinition[] = [];
+
+    for (const [blockType, config] of this.types.entries()) {
+      if (config.slashMenuItems && config.slashMenuItems.length > 0) {
+        items.push(...config.slashMenuItems);
+      }
+    }
+
+    return items;
+  }
+
+  // =========================================================================
+  // SideMenu API
+  // =========================================================================
+
+  /**
+   * 获取指定块类型的 SideMenu Actions
+   */
+  getSideMenuActions(type: string): SideMenuActionDefinition[] {
+    const config = this.types.get(type);
+    return config?.sideMenuActions || [];
+  }
+
+  // =========================================================================
+  // 实例级操作执行器管理 (保持与原 BlockCapabilities 兼容)
+  // =========================================================================
+
   registerExecutor(
     blockId: string,
     actionId: string,
@@ -210,23 +327,14 @@ class BlockCapabilityRegistry {
     this.executors.get(blockId)!.set(actionId, executor);
   }
 
-  /**
-   * 注销块实例的所有执行器（由块组件 unmount 时调用）
-   */
   unregisterExecutors(blockId: string) {
     this.executors.delete(blockId);
   }
 
-  /**
-   * 注销块实例的单个执行器
-   */
   unregisterExecutor(blockId: string, actionId: string) {
     this.executors.get(blockId)?.delete(actionId);
   }
 
-  /**
-   * 获取指定块实例的操作执行器
-   */
   getExecutor(
     blockId: string,
     actionId: string
@@ -237,9 +345,6 @@ class BlockCapabilityRegistry {
     return this.executors.get(blockId)?.get(actionId);
   }
 
-  /**
-   * 执行指定块的操作
-   */
   executeAction(blockId: string, actionId: string, value?: any) {
     const executor = this.getExecutor(blockId, actionId);
     if (executor) {
@@ -247,40 +352,29 @@ class BlockCapabilityRegistry {
     }
   }
 
-  /**
-   * 检查指定块的操作是否激活
-   */
   isActionActive(blockId: string, actionId: string): boolean {
     const executor = this.getExecutor(blockId, actionId);
     return executor?.isActive() ?? false;
   }
 
-  /**
-   * 获取 action 当前值 (用于 dropdown/input/toggle)
-   */
   getActionValue(blockId: string, actionId: string): any {
     const executor = this.getExecutor(blockId, actionId);
     return executor?.getValue?.();
   }
 
-  /**
-   * 获取 dropdown 选项
-   */
   getActionOptions(blockId: string, actionId: string): DropdownOption[] {
     const executor = this.getExecutor(blockId, actionId);
     return executor?.getOptions?.() ?? [];
   }
 
-  // --- Inline 内容激活管理 ---
+  // =========================================================================
+  // Inline 内容激活管理
+  // =========================================================================
 
-  /**
-   * 设置当前激活的 Inline 内容及其实例执行器
-   */
   setActiveInline(
     type: string | null,
     executors: Record<string, BlockActionExecutor> = {}
   ) {
-    // Guard: 如果没有变化，不触发 notify 避免无限循环
     if (type === null && this.activeInline === null) {
       return;
     }
@@ -296,61 +390,47 @@ class BlockCapabilityRegistry {
     return this.activeInline;
   }
 
-  /**
-   * 执行 Active Inline 的操作
-   */
   executeInlineAction(actionId: string, value?: any) {
     if (this.activeInline && this.activeInline.executor[actionId]) {
       this.activeInline.executor[actionId].execute(value);
     }
   }
 
-  // --- 块焦点辅助 ---
+  // =========================================================================
+  // 块焦点辅助
+  // =========================================================================
 
-  /**
-   * 将 BlockNote 的选区设置到指定块
-   *
-   * 用于自定义块（如 MathBlock）在其内部元素获焦时，
-   * 同步更新 BlockNote 的选区，使 StaticToolbar 能正确检测当前块类型。
-   *
-   * @param editor BlockNote 编辑器实例
-   * @param blockId 块 ID
-   * @param position 光标位置，默认 "end"
-   */
   focusBlock(editor: any, blockId: string, position: "start" | "end" = "end") {
     try {
       editor.setTextCursorPosition(blockId, position);
     } catch (e) {
-      // 某些块可能不支持 setTextCursorPosition，静默忽略
-      console.warn("[BlockRegistry] focusBlock failed:", e);
+      console.warn("[ContentRegistry] focusBlock failed:", e);
     }
   }
 
-  // --- 订阅系统 ---
+  // =========================================================================
+  // 订阅系统
+  // =========================================================================
 
   subscribe(listener: () => void) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  /**
-   * 触发所有订阅者更新（块内部状态变化时调用）
-   */
   notify() {
     this.listeners.forEach((cb) => cb());
   }
 }
 
-// 导出单例
-export const blockRegistry = new BlockCapabilityRegistry();
+// ============================================================================
+// 导出
+// ============================================================================
 
-// 兼容旧 API
-export function getBlockCapabilities(blockType: string): BlockCapabilities {
-  return blockRegistry.get(blockType);
-}
+// 新导出名
+export const contentRegistry = new ContentRegistry();
 
 /**
- * 获取所有注册块类型的列表选项
+ * 获取所有注册块类型的列表选项（用于块类型下拉）
  */
 export function getRegisteredBlockTypes(
   editor: BlockNoteEditor<any, any, any>
@@ -385,14 +465,14 @@ export function getRegisteredBlockTypes(
   const processedTypes = new Set<string>();
 
   const addItem = (type: string, props?: any) => {
-    const caps = blockRegistry.get(type);
+    const caps = contentRegistry.get(type);
     let icon = caps.icon;
     let label = caps.label;
     let value = type;
 
     if (type === "heading" && props?.level) {
       value = `heading-${props.level}`;
-      const levelCaps = blockRegistry.get(value);
+      const levelCaps = contentRegistry.get(value);
       if (levelCaps.label !== "Unknown Block") {
         label = levelCaps.label;
         icon = levelCaps.icon;

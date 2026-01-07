@@ -7,7 +7,7 @@
 
 import { createReactBlockSpec } from "@blocknote/react";
 import React, { useState, useEffect, useRef } from "react";
-import { blockRegistry } from "../BlockCapabilities";
+import { contentRegistry, iconify } from "../ContentRegistry";
 import { Icon } from "@iconify/react";
 
 // 容器类型定义（与 VitePress 官方一致）
@@ -16,26 +16,31 @@ export const containerTypes = {
     label: "提示",
     icon: "lucide:lightbulb",
     className: "container-block-tip",
+    aliases: ["tip", "ts", "hint", "tishi"],
   },
   info: {
     label: "信息",
     icon: "lucide:info",
     className: "container-block-info",
+    aliases: ["info", "xx", "xinxi"],
   },
   warning: {
     label: "警告",
     icon: "lucide:triangle-alert",
     className: "container-block-warning",
+    aliases: ["warning", "jg", "jinggao"],
   },
   danger: {
     label: "危险",
     icon: "lucide:flame",
     className: "container-block-danger",
+    aliases: ["danger", "wx", "weixian"],
   },
   details: {
     label: "详情",
     icon: "lucide:list-collapse",
     className: "container-block-details",
+    aliases: ["details", "xq", "collapse", "xiangqing", "zhedie"],
   },
 } as const;
 
@@ -64,7 +69,7 @@ export const ContainerBlock = createReactBlockSpec(
       }, [containerType]);
 
       useEffect(() => {
-        blockRegistry.registerExecutor(props.block.id, "containerType", {
+        contentRegistry.registerExecutor(props.block.id, "containerType", {
           getValue: () => containerTypeRef.current || "tip",
           execute: (val: any) => {
             const block = props.editor.getBlock(props.block.id);
@@ -113,7 +118,7 @@ export const ContainerBlock = createReactBlockSpec(
             // 延时聚焦以确保 DOM 更新完成
             setTimeout(() => {
               props.editor.focus();
-              blockRegistry.focusBlock(props.editor, props.block.id, "end");
+              contentRegistry.focusBlock(props.editor, props.block.id, "end");
             }, 10);
           },
           getOptions: () =>
@@ -159,23 +164,74 @@ export const ContainerBlock = createReactBlockSpec(
   }
 );
 
-// 注册容器块能力
-blockRegistry.register("container", {
-  icon: React.createElement(Icon, {
-    icon: "lucide:box-select",
-    className: "w-4 h-4",
-  }),
+// 注册容器块：Toolbar + SlashMenu + SideMenu
+contentRegistry.register("container", {
+  icon: iconify("lucide:box-select"),
   label: "容器",
   supportedStyles: true,
+
+  // Toolbar Actions
   actions: [
     {
       type: "dropdown",
       id: "containerType",
       label: "类型",
-      icon: React.createElement(Icon, {
-        icon: "lucide:palette",
-        className: "w-4 h-4",
-      }),
+      icon: iconify("lucide:palette"),
     },
   ],
+
+  // SlashMenu Items (一个类型对应多个菜单项)
+  slashMenuItems: Object.entries(containerTypes).map(([key, config]) => ({
+    id: `container-${key}`,
+    title: config.label,
+    subtext: `插入${config.label}容器`,
+    icon: iconify(config.icon),
+    group: "容器",
+    aliases: [...config.aliases],
+    blockType: "container",
+    props: { containerType: key },
+  })),
+
+  // SideMenu Actions
+  sideMenuActions: Object.entries(containerTypes).map(([key, config]) => ({
+    id: `container-type-${key}`,
+    label: config.label,
+    icon: config.icon,
+    isActive: (block) => (block.props as any).containerType === key,
+    execute: (block, editor) => {
+      const currentType = (block.props as any)
+        .containerType as ContainerTypeKey;
+      const currentContent = (block.content || []) as any[];
+      const currentConfig = containerTypes[currentType];
+
+      // 检查是否使用默认标题
+      let updateContent = undefined;
+
+      if (currentContent && currentContent.length > 0) {
+        const firstNode = currentContent[0];
+        if (firstNode.type === "text") {
+          const currentText = firstNode.text;
+          const label = currentConfig.label;
+
+          if (currentText && currentText.startsWith(label)) {
+            const remainder = currentText.slice(label.length);
+            if (remainder.length === 0 || /^\s/.test(remainder)) {
+              const newLabel = containerTypes[key as ContainerTypeKey].label;
+              const newText = newLabel + remainder;
+
+              updateContent = [
+                { ...firstNode, text: newText },
+                ...currentContent.slice(1),
+              ];
+            }
+          }
+        }
+      }
+
+      editor.updateBlock(block, {
+        props: { containerType: key },
+        ...(updateContent ? { content: updateContent as any } : {}),
+      });
+    },
+  })),
 });

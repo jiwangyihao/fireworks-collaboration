@@ -11,7 +11,7 @@ import { Icon } from "@iconify/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorContext, useGlobalEditorContext } from "../EditorContext";
 import Markdown from "react-markdown";
-import { blockRegistry } from "../BlockCapabilities";
+import { contentRegistry, iconify } from "../ContentRegistry";
 
 // 组件信息类型
 interface ComponentProp {
@@ -83,7 +83,7 @@ export const VueComponentBlock = createReactBlockSpec(
       useEffect(() => {
         const blockId = props.block.id;
         // 组件名输入
-        blockRegistry.registerExecutor(blockId, "componentName", {
+        contentRegistry.registerExecutor(blockId, "componentName", {
           execute: (name) => {
             // 更新 Block 属性
             props.editor.updateBlock(props.block, {
@@ -96,7 +96,7 @@ export const VueComponentBlock = createReactBlockSpec(
         });
 
         // 编辑按钮
-        blockRegistry.registerExecutor(blockId, "edit", {
+        contentRegistry.registerExecutor(blockId, "edit", {
           execute: () => setIsEditing(true),
           isActive: () => isEditing,
         });
@@ -385,7 +385,7 @@ export const VueComponentBlock = createReactBlockSpec(
             className="rounded-lg border border-base-300 bg-base-200/50 p-4 w-full max-w-none"
             contentEditable={false}
             onFocus={() => {
-              blockRegistry.focusBlock(props.editor, props.block.id);
+              contentRegistry.focusBlock(props.editor, props.block.id);
             }}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
@@ -691,12 +691,21 @@ export const VueComponentBlock = createReactBlockSpec(
   }
 );
 
-blockRegistry.register("vueComponent", {
-  icon: React.createElement(Icon, {
-    icon: "mdi:vuejs",
-    className: "w-4 h-4",
-  }),
+contentRegistry.register("vueComponent", {
+  icon: iconify("mdi:vuejs"),
   label: "Vue 组件",
   supportedStyles: [],
   actions: [],
+  slashMenuItems: [
+    {
+      id: "vueComponent",
+      title: "Vue 组件",
+      subtext: "插入 Vue 组件标签",
+      icon: iconify("mdi:vuejs"),
+      group: "VitePress",
+      aliases: ["vue", "component", "zj", "zujian"],
+      blockType: "vueComponent",
+      props: { componentName: "", attributesJson: "{}", selfClosing: true },
+    },
+  ],
 });

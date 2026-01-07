@@ -962,3 +962,53 @@ const createBlockInserter = (
 ```
 
 **效果**：减少约 100 行重复代码。
+
+### 10.8 Unified Content Registry
+
+BlockNote 编辑器已完成向统一 `ContentRegistry` 系统的迁移，实现"高内聚、低耦合"的架构。
+
+**1. 核心架构变更**
+
+- **唯一事实来源**：`src/components/editor/react_app/ContentRegistry.ts` 取代了原有的 `BlockCapabilities` 和 `BlockRegistry`，成为管理块能力（Toolbar, Slash Menu, Side Menu）的唯一中心。
+- **去中心化注册**：每个 Block 组件现在负责定义和注册自己的所有行为，而不是分散在多个配置文件中。
+- **动态能力发现**：Toolbar、Slash Menu 和 Side Menu 组件不再包含硬编码逻辑，而是通过 Registry 动态查询当前可用能力。
+
+**2. 已迁移组件列表**
+
+| 组件文件                | 注册内容                        | 说明                                                |
+| :---------------------- | :------------------------------ | :-------------------------------------------------- |
+| `MathBlock.tsx`         | slashMenuItems                  | 注册了"数学公式"块，支持别名 (math, formula, latex) |
+| `MermaidBlock.tsx`      | slashMenuItems                  | 注册了"Mermaid 图表"块，支持别名 (mermaid, graph)   |
+| `ShikiCodeBlock.tsx`    | slashMenuItems                  | 注册了"代码块"，支持别名 (code, shiki)              |
+| `IncludeBlock.tsx`      | slashMenuItems                  | 注册了"文件包含"块，支持别名 (include, file)        |
+| `VueComponentBlock.tsx` | slashMenuItems                  | 注册了"Vue 组件"块，支持别名 (vue, component)       |
+| `QuoteBlock.tsx`        | slashMenuItems                  | 注册了"引用"块，支持快捷键                          |
+| `ContainerBlock.tsx`    | slashMenuItems, sideMenuActions | 注册了多种容器类型及其 Side Menu 转换操作           |
+| `InlineMath.tsx`        | supportedStyles, actions        | 注册了行内公式的样式和 Toolbar 交互能力             |
+
+**3. API 变更摘要**
+
+- **移除**：`BlockCapabilities.ts` 已被删除。
+- **移除**：`import { blockRegistry }` 已被移除。所有代码应使用 `import { contentRegistry }`。
+- **新增**：`contentRegistry.register(type, config)` - 用于注册块能力。
+- **新增**：`contentRegistry.getSlashMenuItems()` - 获取所有斜杠菜单项。
+- **新增**：`contentRegistry.getSideMenuActions(type)` - 获取特定块的侧边菜单操作。
+
+**4. 典型代码模式**
+
+```tsx
+// 1. 在 Block 组件中注册
+contentRegistry.register("myBlock", {
+  label: "My Block",
+  slashMenuItems: [{ ... }],
+  sideMenuActions: [{ ... }]
+});
+
+// 2. 在组件挂载时注册执行器
+useEffect(() => {
+  contentRegistry.registerExecutor(block.id, "myAction", {
+    execute: () => { ... }
+  });
+  return () => contentRegistry.unregisterExecutors(block.id);
+}, []);
+```

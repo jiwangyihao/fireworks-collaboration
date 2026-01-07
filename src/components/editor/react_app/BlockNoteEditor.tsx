@@ -26,7 +26,7 @@ import { QuoteKeyboardShortcuts } from "./extensions/KeyboardShortcuts";
 import { getCustomSlashMenuItems } from "./SlashMenuItems";
 import { EditorContext, updateGlobalContext } from "./EditorContext";
 import { StaticToolbar } from "./StaticToolbar";
-import { getRegisteredBlockTypes } from "./BlockCapabilities";
+import { getRegisteredBlockTypes, contentRegistry } from "./ContentRegistry";
 import { CustomFormattingToolbar } from "./CustomFormattingToolbar";
 
 interface BlockNoteEditorProps {
@@ -145,8 +145,10 @@ export function BlockNoteEditor({
                   item.aliases?.some((alias) =>
                     alias.toLowerCase().includes(query.toLowerCase())
                   )
-              )
+              ) as any
             }
+            onItemClick={(item: any) => item.onItemClick()}
+            suggestionMenuComponent={undefined as any}
           />
         </BlockNoteView>
       </div>

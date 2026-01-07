@@ -11,7 +11,7 @@ import { initMathLive } from "./MathLiveUtils";
 import { MathfieldElement } from "mathlive";
 import { Icon } from "@iconify/react"; // Use Iconify
 import { NodeSelection } from "prosemirror-state";
-import { blockRegistry } from "../BlockCapabilities";
+import { contentRegistry } from "../ContentRegistry";
 
 // 初始化 MathLive
 initMathLive();
@@ -267,7 +267,7 @@ export const InlineMath = createReactInlineContentSpec(
 
           if (isFocused) {
             // 只设置类型，不需要执行器（没有输入框了）
-            blockRegistry.setActiveInline("inlineMath", {
+            contentRegistry.setActiveInline("inlineMath", {
               toggleKeyboard: {
                 execute: () => {
                   mathfieldRef.current?.executeCommand("toggleVirtualKeyboard");
@@ -302,7 +302,7 @@ export const InlineMath = createReactInlineContentSpec(
           } else if (wasActiveRef.current) {
             // 只有当这个实例之前是激活的，才清除
 
-            blockRegistry.setActiveInline(null);
+            contentRegistry.setActiveInline(null);
             wasActiveRef.current = false;
           }
         };
@@ -324,7 +324,7 @@ export const InlineMath = createReactInlineContentSpec(
           }
           // 组件卸载时，如果还是激活状态，清除
           if (wasActiveRef.current) {
-            blockRegistry.setActiveInline(null);
+            contentRegistry.setActiveInline(null);
           }
         };
       }, [view, editor]);
@@ -370,7 +370,7 @@ export const InlineMath = createReactInlineContentSpec(
 );
 
 // Register capabilities globally for InlineMath
-blockRegistry.register("inlineMath", {
+contentRegistry.register("inlineMath", {
   label: "行内公式",
   icon: <Icon icon="lucide:function-square" />,
   supportedStyles: ["inlineMath"],

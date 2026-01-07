@@ -2,7 +2,7 @@ import { createReactBlockSpec } from "@blocknote/react";
 import { useRef, useEffect } from "react";
 import { initMathLive } from "./MathLiveUtils";
 import { MathfieldElement } from "mathlive";
-import { blockRegistry } from "../BlockCapabilities";
+import { contentRegistry, iconify } from "../ContentRegistry";
 import { Icon } from "@iconify/react";
 import React from "react";
 
@@ -44,7 +44,7 @@ export const MathBlock = createReactBlockSpec(
       useEffect(() => {
         const blockId = props.block.id;
 
-        blockRegistry.registerExecutor(blockId, "formula", {
+        contentRegistry.registerExecutor(blockId, "formula", {
           execute: (val: string) => {
             if (ref.current) {
               ref.current.value = val;
@@ -58,14 +58,14 @@ export const MathBlock = createReactBlockSpec(
         });
 
         // 注册 MathLive 专属动作
-        blockRegistry.registerExecutor(blockId, "toggleKeyboard", {
+        contentRegistry.registerExecutor(blockId, "toggleKeyboard", {
           execute: () => {
             ref.current?.executeCommand("toggleVirtualKeyboard");
           },
           isActive: () => false,
         });
 
-        blockRegistry.registerExecutor(blockId, "toggleMenu", {
+        contentRegistry.registerExecutor(blockId, "toggleMenu", {
           execute: (e: React.MouseEvent) => {
             // e is the click event from the toolbar button
             if (ref.current && e && e.currentTarget) {
@@ -93,16 +93,16 @@ export const MathBlock = createReactBlockSpec(
         });
 
         return () => {
-          blockRegistry.unregisterExecutor(blockId, "formula");
-          blockRegistry.unregisterExecutor(blockId, "toggleKeyboard");
-          blockRegistry.unregisterExecutor(blockId, "toggleMenu");
+          contentRegistry.unregisterExecutor(blockId, "formula");
+          contentRegistry.unregisterExecutor(blockId, "toggleKeyboard");
+          contentRegistry.unregisterExecutor(blockId, "toggleMenu");
         };
       }, [props.block.id]);
 
       // 处理 math-field 获焦时，更新 BlockNote 的 selection 到此块
       const handleFocus = () => {
         // 使用 blockRegistry 辅助方法同步选区
-        blockRegistry.focusBlock(props.editor, props.block.id);
+        contentRegistry.focusBlock(props.editor, props.block.id);
       };
 
       return (
@@ -131,11 +131,8 @@ export const MathBlock = createReactBlockSpec(
   }
 );
 
-blockRegistry.register("math", {
-  icon: React.createElement(Icon, {
-    icon: "lucide:sigma",
-    className: "w-4 h-4",
-  }),
+contentRegistry.register("math", {
+  icon: iconify("lucide:sigma"),
   label: "公式块",
   supportedStyles: [],
   actions: [
@@ -150,6 +147,19 @@ blockRegistry.register("math", {
       id: "toggleMenu",
       label: "菜单",
       icon: <Icon icon="lucide:menu" />,
+    },
+  ],
+  slashMenuItems: [
+    {
+      id: "math",
+      title: "数学公式",
+      subtext: "插入数学公式块",
+      icon: iconify("lucide:sigma"),
+      group: "高级功能",
+      aliases: ["math", "formula", "latex", "gs", "gongshi", "shuxue"],
+      blockType: "math",
+      props: { formula: "" },
+      moveCursor: true,
     },
   ],
 });

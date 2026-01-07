@@ -33,7 +33,7 @@ import {
   ViewUpdate,
 } from "@codemirror/view";
 import { RangeSetBuilder, EditorState, Extension } from "@codemirror/state";
-import { blockRegistry } from "../BlockCapabilities";
+import { contentRegistry, iconify } from "../ContentRegistry";
 
 // 常用语言列表
 const LANGUAGES = [
@@ -210,11 +210,8 @@ interface ShikiTab {
 import React from "react";
 
 // 模块加载时注册 shikiCode 块的能力配置
-blockRegistry.register("shikiCode", {
-  icon: React.createElement(Icon, {
-    icon: "lucide:code-2",
-    className: "w-4 h-4",
-  }),
+contentRegistry.register("shikiCode", {
+  icon: iconify("lucide:code-2"),
   label: "代码块",
   supportedStyles: [],
   actions: [
@@ -223,99 +220,81 @@ blockRegistry.register("shikiCode", {
       type: "dropdown",
       id: "language",
       label: "语言",
-      icon: React.createElement(Icon, {
-        icon: "lucide:code",
-        className: "w-4 h-4",
-      }),
+      icon: iconify("lucide:code"),
     },
     // 文件/Tab 选择下拉菜单
     {
       type: "dropdown",
-      id: "fileTab",
+      id: "activeTab",
       label: "文件",
-      icon: React.createElement(Icon, {
-        icon: "lucide:files",
-        className: "w-4 h-4",
-      }),
-      iconOnly: true, // 只显示图标，避免与文件名输入框重复
+      icon: iconify("lucide:file-code"),
+      iconOnly: true,
     },
-    // 文件名输入框
+    // 文件名输入
     {
       type: "input",
       id: "filename",
       label: "文件名",
-      icon: React.createElement(Icon, {
-        icon: "lucide:file",
-        className: "w-4 h-4",
-      }),
-      placeholder: "filename.ext",
-      width: "12rem",
+      icon: iconify("lucide:file"),
+      placeholder: "filename",
+      width: "6rem",
       hideIcon: true,
     },
-    // 行号开关
+    // 行号显示切换
     {
       type: "toggle",
-      id: "lineNumbers",
+      id: "showLineNumbers",
       label: "行号",
-      icon: React.createElement(Icon, {
-        icon: "ph:list-numbers",
-        className: "w-4 h-4",
-      }),
+      icon: iconify("lucide:list-ordered"),
     },
-    // 标注按钮
+    // 高亮按钮
     {
       type: "button",
       id: "highlight",
       label: "高亮",
-      icon: React.createElement(Icon, {
-        icon: "lucide:highlighter",
-        className: "w-4 h-4",
-      }),
+      icon: iconify("lucide:highlighter"),
     },
     {
       type: "button",
       id: "focus",
       label: "聚焦",
-      icon: React.createElement(Icon, {
-        icon: "lucide:scan-eye",
-        className: "w-4 h-4",
-      }),
+      icon: iconify("lucide:scan-eye"),
     },
     {
       type: "button",
       id: "++",
-      label: "添加 (Diff+)",
-      icon: React.createElement(Icon, {
-        icon: "lucide:plus",
-        className: "w-4 h-4",
-      }),
+      label: "新增行",
+      icon: iconify("lucide:plus"),
     },
     {
       type: "button",
       id: "--",
-      label: "删除 (Diff-)",
-      icon: React.createElement(Icon, {
-        icon: "lucide:minus",
-        className: "w-4 h-4",
-      }),
+      label: "删除行",
+      icon: iconify("lucide:minus"),
     },
     {
       type: "button",
       id: "error",
       label: "错误",
-      icon: React.createElement(Icon, {
-        icon: "lucide:x-circle",
-        className: "w-4 h-4",
-      }),
+      icon: iconify("lucide:x-circle"),
     },
     {
       type: "button",
       id: "warning",
       label: "警告",
-      icon: React.createElement(Icon, {
-        icon: "lucide:alert-triangle",
-        className: "w-4 h-4",
-      }),
+      icon: iconify("lucide:alert-triangle"),
+    },
+  ],
+  slashMenuItems: [
+    {
+      id: "shikiCode",
+      title: "代码块",
+      subtext: "插入代码块",
+      icon: iconify("lucide:code-2"),
+      group: "基础",
+      aliases: ["code", "pre", "shiki", "daima"],
+      blockType: "shikiCode",
+      props: { code: "", language: "text" },
     },
   ],
 });
@@ -397,7 +376,7 @@ export const ShikiCodeBlock = createReactBlockSpec(
         const blockId = props.block.id;
 
         // 语言选择执行器
-        blockRegistry.registerExecutor(blockId, "language", {
+        contentRegistry.registerExecutor(blockId, "language", {
           execute: (lang) => {
             setLocalLang(lang);
             updateBlockRef.current?.({ language: lang });
@@ -409,7 +388,7 @@ export const ShikiCodeBlock = createReactBlockSpec(
         });
 
         // 文件/Tab 选择执行器
-        blockRegistry.registerExecutor(blockId, "fileTab", {
+        contentRegistry.registerExecutor(blockId, "fileTab", {
           execute: (tabIndex) => {
             handleTabSwitchRef.current?.(parseInt(tabIndex));
           },
@@ -423,7 +402,7 @@ export const ShikiCodeBlock = createReactBlockSpec(
         });
 
         // 文件名输入执行器
-        blockRegistry.registerExecutor(blockId, "filename", {
+        contentRegistry.registerExecutor(blockId, "filename", {
           execute: (name) => {
             setLocalFilename(name);
             updateBlockRef.current?.({ filename: name });
@@ -433,7 +412,7 @@ export const ShikiCodeBlock = createReactBlockSpec(
         });
 
         // 行号开关执行器
-        blockRegistry.registerExecutor(blockId, "lineNumbers", {
+        contentRegistry.registerExecutor(blockId, "lineNumbers", {
           execute: (val) => {
             const newVal =
               typeof val === "boolean" ? val : !localShowLineNumbersRef.current;
@@ -454,14 +433,14 @@ export const ShikiCodeBlock = createReactBlockSpec(
           "warning",
         ] as const;
         annotationActions.forEach((actionId) => {
-          blockRegistry.registerExecutor(blockId, actionId, {
+          contentRegistry.registerExecutor(blockId, actionId, {
             execute: () => toggleAnnotationRef.current?.(actionId),
             isActive: () => activeAnnotationRef.current === actionId,
           });
         });
 
         return () => {
-          blockRegistry.unregisterExecutors(blockId);
+          contentRegistry.unregisterExecutors(blockId);
         };
       }, [props.block.id]);
 
@@ -557,7 +536,7 @@ export const ShikiCodeBlock = createReactBlockSpec(
         });
 
         // 通知工具栏重新渲染（更新文件下拉菜单选中项）
-        blockRegistry.notify();
+        contentRegistry.notify();
       };
 
       // Refs for handleTabSwitch and localTabs (used by executors)
@@ -716,7 +695,7 @@ export const ShikiCodeBlock = createReactBlockSpec(
             // 注意：先同步更新 ref，再通知（因为 React state 是异步的）
             activeAnnotationRef.current = newAnnotation;
             setActiveAnnotation(newAnnotation);
-            blockRegistry.notify();
+            contentRegistry.notify();
           }
         });
       }, [localHighlight]); // 当 localHighlight 变化时，也需要重新评估当前状态
@@ -910,7 +889,7 @@ export const ShikiCodeBlock = createReactBlockSpec(
       const isActive = (type: string) => activeAnnotation === type;
 
       return (
-        <div className="w-full my-4 rounded-lg border border-base-200 bg-white shadow-sm group">
+        <div className="w-full rounded-lg border border-base-200 bg-white shadow-sm group">
           {/* Header / Toolbar */}
           <div className="flex flex-wrap items-center gap-1 p-1.5 bg-gray-50/50 border-b border-gray-100 text-xs rounded-t-lg">
             {/* Language Selector */}
@@ -1116,7 +1095,11 @@ export const ShikiCodeBlock = createReactBlockSpec(
               onChange={(val) => setLocalCode(val)}
               onFocus={() => {
                 // 使用 blockRegistry 辅助方法同步选区
-                blockRegistry.focusBlock(props.editor, props.block.id, "start");
+                contentRegistry.focusBlock(
+                  props.editor,
+                  props.block.id,
+                  "start"
+                );
               }}
               basicSetup={{
                 lineNumbers: localShowLineNumbers,

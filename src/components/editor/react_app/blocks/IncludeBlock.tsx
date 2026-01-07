@@ -10,7 +10,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Icon } from "@iconify/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorContext, useGlobalEditorContext } from "../EditorContext";
-import { blockRegistry } from "../BlockCapabilities";
+import { contentRegistry, iconify } from "../ContentRegistry";
 import { BasePopover, BaseMenu } from "../menu";
 
 // 递归文件树节点组件
@@ -334,7 +334,7 @@ export const IncludeBlock = createReactBlockSpec(
       useEffect(() => {
         const blockId = props.block.id;
         // 路径输入
-        blockRegistry.registerExecutor(blockId, "path", {
+        contentRegistry.registerExecutor(blockId, "path", {
           execute: (val) => {
             props.editor.updateBlock(props.block, {
               props: { path: val },
@@ -346,7 +346,7 @@ export const IncludeBlock = createReactBlockSpec(
         });
 
         // 编辑按钮
-        blockRegistry.registerExecutor(blockId, "edit", {
+        contentRegistry.registerExecutor(blockId, "edit", {
           execute: () => setIsEditing(true),
           isActive: () => isEditing,
         });
@@ -552,7 +552,7 @@ export const IncludeBlock = createReactBlockSpec(
             className="w-full rounded-lg border border-blue-500/30 bg-blue-500/10 p-4"
             contentEditable={false}
             onFocus={() => {
-              blockRegistry.focusBlock(props.editor, props.block.id);
+              contentRegistry.focusBlock(props.editor, props.block.id);
             }}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
@@ -738,12 +738,21 @@ export const IncludeBlock = createReactBlockSpec(
   }
 );
 
-blockRegistry.register("include", {
-  icon: React.createElement(Icon, {
-    icon: "lucide:file-input",
-    className: "w-4 h-4",
-  }),
+contentRegistry.register("include", {
+  icon: iconify("mdi:file-import"),
   label: "包含文件",
   supportedStyles: [],
   actions: [],
+  slashMenuItems: [
+    {
+      id: "include",
+      title: "文件包含",
+      subtext: "插入文件包含指令",
+      icon: iconify("mdi:file-import"),
+      group: "VitePress",
+      aliases: ["include", "import", "bh", "baohan", "yinyong"],
+      blockType: "include",
+      props: { path: "", lineRange: "", region: "" },
+    },
+  ],
 });

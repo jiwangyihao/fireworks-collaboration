@@ -6,7 +6,7 @@
  */
 
 import { createReactBlockSpec } from "@blocknote/react";
-import { blockRegistry } from "../BlockCapabilities";
+import { contentRegistry, iconify } from "../ContentRegistry";
 import { Icon } from "@iconify/react";
 import React from "react";
 
@@ -41,12 +41,21 @@ export const QuoteBlock = createReactBlockSpec(
   }
 );
 
-blockRegistry.register("quote", {
-  icon: React.createElement(Icon, {
-    icon: "lucide:quote",
-    className: "w-4 h-4",
-  }),
+contentRegistry.register("quote", {
+  icon: iconify("lucide:quote"),
   label: "引用",
   supportedStyles: true,
   actions: [],
+  slashMenuItems: [
+    {
+      id: "quote",
+      title: "引用",
+      subtext: "插入引用块",
+      icon: iconify("lucide:quote"),
+      group: "基础",
+      aliases: ["quote", "blockquote", "yy", "yinyong"],
+      blockType: "quote",
+      props: {},
+    },
+  ],
 });

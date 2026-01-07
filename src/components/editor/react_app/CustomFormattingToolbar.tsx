@@ -12,7 +12,7 @@ import {
   LinkPopover,
   MemoizedCustomActions,
 } from "./StaticToolbar";
-import { getRegisteredBlockTypes, blockRegistry } from "./BlockCapabilities";
+import { getRegisteredBlockTypes, contentRegistry } from "./ContentRegistry";
 import { useFormattingActions } from "./hooks";
 
 interface CustomFormattingToolbarProps {
@@ -67,7 +67,7 @@ export function CustomFormattingToolbar({
 
     const unsubscribeSelection = editor.onSelectionChange(update);
     const unsubscribeChange = editor.onChange(update);
-    const unsubscribeRegistry = blockRegistry.subscribe(update);
+    const unsubscribeRegistry = contentRegistry.subscribe(update);
 
     update();
     return () => {
@@ -78,7 +78,7 @@ export function CustomFormattingToolbar({
   }, [editor]);
 
   // Capabilities
-  const capabilities = blockRegistry.get(currentBlockType);
+  const capabilities = contentRegistry.get(currentBlockType);
 
   // Actions (from hook)
   const {
@@ -249,7 +249,7 @@ export function CustomFormattingToolbar({
           <ToolbarButton
             onClick={insertMath}
             title="行内公式"
-            isActive={blockRegistry.getActiveInline()?.type === "inlineMath"}
+            isActive={contentRegistry.getActiveInline()?.type === "inlineMath"}
           >
             <Icon icon="lucide:sigma" />
           </ToolbarButton>

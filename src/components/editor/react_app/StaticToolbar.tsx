@@ -20,11 +20,10 @@ import { createPortal } from "react-dom";
 import { Icon } from "@iconify/react";
 import { BlockTypeDropdown } from "./BlockTypeDropdown";
 import {
-  getBlockCapabilities,
+  contentRegistry,
   getRegisteredBlockTypes,
-  blockRegistry,
   type BlockActionDefinition,
-} from "./BlockCapabilities";
+} from "./ContentRegistry";
 import {
   ToolbarDropdown,
   ToolbarInput,
@@ -226,14 +225,14 @@ export const MemoizedCustomActions = memo(function CustomActions({
                 icon={action.icon}
                 label={action.label}
                 value={
-                  blockRegistry.getActionValue(targetBlockId, action.id) || ""
+                  contentRegistry.getActionValue(targetBlockId, action.id) || ""
                 }
-                options={blockRegistry.getActionOptions(
+                options={contentRegistry.getActionOptions(
                   targetBlockId,
                   action.id
                 )}
                 onChange={(val) =>
-                  blockRegistry.executeAction(targetBlockId, action.id, val)
+                  contentRegistry.executeAction(targetBlockId, action.id, val)
                 }
                 iconOnly={action.iconOnly}
               />
@@ -246,12 +245,12 @@ export const MemoizedCustomActions = memo(function CustomActions({
                 icon={action.icon}
                 label={action.label}
                 value={
-                  blockRegistry.getActionValue(targetBlockId, action.id) || ""
+                  contentRegistry.getActionValue(targetBlockId, action.id) || ""
                 }
                 placeholder={action.placeholder}
                 width={action.width}
                 onChange={(val) =>
-                  blockRegistry.executeAction(targetBlockId, action.id, val)
+                  contentRegistry.executeAction(targetBlockId, action.id, val)
                 }
                 hideIcon={action.hideIcon}
               />
@@ -263,12 +262,12 @@ export const MemoizedCustomActions = memo(function CustomActions({
                 key={action.id}
                 icon={action.icon}
                 label={action.label}
-                isActive={blockRegistry.isActionActive(
+                isActive={contentRegistry.isActionActive(
                   targetBlockId,
                   action.id
                 )}
                 onChange={(val) =>
-                  blockRegistry.executeAction(targetBlockId, action.id, val)
+                  contentRegistry.executeAction(targetBlockId, action.id, val)
                 }
               />
             );
@@ -279,10 +278,10 @@ export const MemoizedCustomActions = memo(function CustomActions({
               <ToolbarButton
                 key={action.id}
                 onClick={(e) =>
-                  blockRegistry.executeAction(targetBlockId, action.id, e)
+                  contentRegistry.executeAction(targetBlockId, action.id, e)
                 }
                 onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
-                isActive={blockRegistry.isActionActive(
+                isActive={contentRegistry.isActionActive(
                   targetBlockId,
                   action.id
                 )}
@@ -306,7 +305,7 @@ export function StaticToolbar({ editor }: StaticToolbarProps) {
   const [currentLinkUrl, setCurrentLinkUrl] = useState("");
 
   // 2. Active Inline Check (Top Priority)
-  const activeInline = blockRegistry.getActiveInline();
+  const activeInline = contentRegistry.getActiveInline();
 
   // 3. Editor Selection Block (Derived)
   let editorSelectionBlock;
@@ -343,7 +342,7 @@ export function StaticToolbar({ editor }: StaticToolbarProps) {
 
   // 5. Capabilities & BlockTypes
   // If activeInline, get capabilities for that type directly
-  const capabilities = blockRegistry.get(currentBlockType || "paragraph");
+  const capabilities = contentRegistry.get(currentBlockType || "paragraph");
   const blockTypes = useMemo(() => getRegisteredBlockTypes(editor), [editor]);
 
   // 监听编辑器变化
@@ -366,7 +365,7 @@ export function StaticToolbar({ editor }: StaticToolbarProps) {
 
     const unsubscribeSelection = editor.onSelectionChange(update);
     const unsubscribeChange = editor.onChange(update);
-    const unsubscribeRegistry = blockRegistry.subscribe(update);
+    const unsubscribeRegistry = contentRegistry.subscribe(update);
 
     // Initial check
     update();
@@ -563,7 +562,7 @@ export function StaticToolbar({ editor }: StaticToolbarProps) {
           <ToolbarButton
             onClick={insertMath}
             title="行内公式"
-            isActive={blockRegistry.getActiveInline()?.type === "inlineMath"}
+            isActive={contentRegistry.getActiveInline()?.type === "inlineMath"}
           >
             <Icon icon="lucide:sigma" />
           </ToolbarButton>

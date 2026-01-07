@@ -10,7 +10,7 @@ import { useState, useEffect, useRef, useId, useCallback } from "react";
 import mermaid from "mermaid";
 import CodeMirror from "@uiw/react-codemirror";
 import { mermaid as mermaidLang } from "codemirror-lang-mermaid";
-import { blockRegistry } from "../BlockCapabilities";
+import { contentRegistry, iconify } from "../ContentRegistry";
 import { Icon } from "@iconify/react";
 import React from "react";
 
@@ -50,7 +50,7 @@ export const MermaidBlock = createReactBlockSpec(
 
       // 注册编辑执行器
       useEffect(() => {
-        blockRegistry.registerExecutor(props.block.id, "edit", {
+        contentRegistry.registerExecutor(props.block.id, "edit", {
           execute: () => setIsEditing(true),
           isActive: () => isEditing,
         });
@@ -141,7 +141,7 @@ export const MermaidBlock = createReactBlockSpec(
               <div
                 className="w-full text-base"
                 onFocus={() => {
-                  blockRegistry.focusBlock(props.editor, props.block.id);
+                  contentRegistry.focusBlock(props.editor, props.block.id);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Escape") {
@@ -214,12 +214,22 @@ export const MermaidBlock = createReactBlockSpec(
   }
 );
 
-blockRegistry.register("mermaid", {
-  icon: React.createElement(Icon, {
-    icon: "lucide:network",
-    className: "w-4 h-4",
-  }),
+contentRegistry.register("mermaid", {
+  icon: iconify("lucide:network"),
   label: "Mermaid 图表",
   supportedStyles: [],
   actions: [],
+  slashMenuItems: [
+    {
+      id: "mermaid",
+      title: "Mermaid 图表",
+      subtext: "插入 Mermaid 图表",
+      icon: iconify("lucide:network"),
+      group: "高级功能",
+      aliases: ["mermaid", "flowchart", "diagram", "mm", "tubiao", "liucheng"],
+      blockType: "mermaid",
+      props: { code: "" },
+      moveCursor: true,
+    },
+  ],
 });
