@@ -855,3 +855,110 @@ if (align === "center") {
 3. **可维护性**：新增菜单功能只需组合现有组件，无需了解底层 Teleport/Portal 和 DOM 细节。
 4. **交互体验**：JS Hover 延迟机制提供了更接近原生应用的嵌套菜单体验。
 5. **跨框架一致性**：React 组件 API 设计与 Vue 版本对齐，降低开发者认知负担。
+
+### 10.7 React 公共抽象层
+
+在菜单组件库基础上，进一步建立了 React 侧的公共抽象层，包括 Hooks、UI 组件和工厂函数。
+
+#### 10.7.1 useFormattingActions Hook
+
+**文件**：`src/components/editor/react_app/hooks/useFormattingActions.ts`
+
+**背景**：`StaticToolbar.tsx` 和 `CustomFormattingToolbar.tsx` 存在大量重复的格式化函数定义（约 60 行）。
+
+**Hook API**：
+
+```typescript
+const {
+  toggleBold,
+  toggleItalic,
+  toggleUnderline,
+  toggleStrike,
+  toggleCode,
+  createLink,
+  removeLink,
+  getSelectedLinkUrl,
+  insertMath,
+  nestBlock,
+  unnestBlock,
+} = useFormattingActions(editor);
+```
+
+**集成变更**：
+
+| 文件                          | 变更                       |
+| :---------------------------- | :------------------------- |
+| `StaticToolbar.tsx`           | 使用 hook 替代内联函数定义 |
+| `CustomFormattingToolbar.tsx` | 使用 hook 替代内联函数定义 |
+
+#### 10.7.2 EditableBlockWrapper 组件
+
+**文件**：`src/components/editor/react_app/ui/EditableBlockWrapper.tsx`
+
+**背景**：多个 Block 组件（MermaidBlock, IncludeBlock, VueComponentBlock）实现了相似的编辑/预览双模式 UI。
+
+**组件 Props**：
+
+```typescript
+interface EditableBlockWrapperProps {
+  isEditing: boolean;
+  onSave: () => void;
+  onCancel: () => void;
+  onEnterEdit?: () => void;
+  editingContent: ReactNode;
+  previewContent: ReactNode;
+  editingHeader?: ReactNode;
+  saveDisabled?: boolean;
+  // ...
+}
+```
+
+**统一功能**：
+
+- 键盘快捷键：`Escape` 取消，`Ctrl+Enter` 保存
+- 底部操作栏：取消/确定按钮（带快捷键提示）
+- 一致的边框和背景样式
+
+#### 10.7.3 createBlockInserter 工厂函数
+
+**文件**：`src/components/editor/react_app/SlashMenuItems.tsx`
+
+**背景**：11 个自定义 SlashMenu 项都有相似的 `onItemClick` 模式。
+
+**工厂函数**：
+
+```typescript
+const createBlockInserter = (
+  blockType: string,
+  props: Record<string, any> = {},
+  moveCursor: boolean = false
+) => {
+  return () => {
+    editor.insertBlocks([{ type: blockType, props }], ...);
+    if (moveCursor) { editor.setTextCursorPosition(...); }
+  };
+};
+```
+
+**代码简化**：
+
+```tsx
+// Before (每项约 10 行)
+{
+  title: "数学公式",
+  onItemClick: () => {
+    editor.insertBlocks([{ type: "math", props: { formula: "" } }], ...);
+    editor.setTextCursorPosition(...);
+  },
+  // ...
+}
+
+// After (每项约 3 行)
+{
+  title: "数学公式",
+  onItemClick: createBlockInserter("math", { formula: "" }, true),
+  // ...
+}
+```
+
+**效果**：减少约 100 行重复代码。

@@ -2,6 +2,30 @@ import { getDefaultReactSlashMenuItems } from "@blocknote/react";
 import { Icon } from "@iconify/react";
 
 export const getCustomSlashMenuItems = (editor: any) => {
+  /**
+   * 创建块插入器工厂函数
+   * 简化 SlashMenu 项的 onItemClick 定义
+   */
+  const createBlockInserter = (
+    blockType: string,
+    props: Record<string, any> = {},
+    moveCursor: boolean = false
+  ) => {
+    return () => {
+      editor.insertBlocks(
+        [{ type: blockType, props } as any],
+        editor.getTextCursorPosition().block,
+        "after"
+      );
+      if (moveCursor) {
+        editor.setTextCursorPosition(
+          editor.getTextCursorPosition().nextBlock!,
+          "end"
+        );
+      }
+    };
+  };
+
   // 1. Filter default items
   const defaultItems = getDefaultReactSlashMenuItems(editor).filter(
     (item) =>
@@ -18,17 +42,7 @@ export const getCustomSlashMenuItems = (editor: any) => {
     // Math Block
     {
       title: "数学公式",
-      onItemClick: () => {
-        editor.insertBlocks(
-          [{ type: "math", props: { formula: "" } } as any],
-          editor.getTextCursorPosition().block,
-          "after"
-        );
-        editor.setTextCursorPosition(
-          editor.getTextCursorPosition().nextBlock!,
-          "end"
-        );
-      },
+      onItemClick: createBlockInserter("math", { formula: "" }, true),
       aliases: ["math", "formula", "latex", "gs", "gongshi", "shuxue"],
       group: "高级功能",
       icon: <Icon icon="lucide:sigma" />,
@@ -37,17 +51,7 @@ export const getCustomSlashMenuItems = (editor: any) => {
     // Mermaid Block
     {
       title: "Mermaid 图表",
-      onItemClick: () => {
-        editor.insertBlocks(
-          [{ type: "mermaid", props: { code: "" } }],
-          editor.getTextCursorPosition().block,
-          "after"
-        );
-        editor.setTextCursorPosition(
-          editor.getTextCursorPosition().nextBlock!,
-          "end"
-        );
-      },
+      onItemClick: createBlockInserter("mermaid", { code: "" }, true),
       aliases: ["mermaid", "flowchart", "diagram", "mm", "tubiao", "liucheng"],
       group: "高级功能",
       icon: <Icon icon="lucide:network" />,
@@ -56,18 +60,10 @@ export const getCustomSlashMenuItems = (editor: any) => {
     // E2.5: Shiki Code Block
     {
       title: "代码块",
-      onItemClick: () => {
-        editor.insertBlocks(
-          [
-            {
-              type: "shikiCode",
-              props: { code: "", language: "text" },
-            },
-          ],
-          editor.getTextCursorPosition().block,
-          "after"
-        );
-      },
+      onItemClick: createBlockInserter("shikiCode", {
+        code: "",
+        language: "text",
+      }),
       aliases: ["code", "pre", "shiki", "daima"],
       group: "基础",
       icon: <Icon icon="lucide:code-2" />,
@@ -76,13 +72,7 @@ export const getCustomSlashMenuItems = (editor: any) => {
     // E2.4: Quote Block
     {
       title: "引用",
-      onItemClick: () => {
-        editor.insertBlocks(
-          [{ type: "quote", props: {} }],
-          editor.getTextCursorPosition().block,
-          "after"
-        );
-      },
+      onItemClick: createBlockInserter("quote", {}),
       aliases: ["quote", "blockquote", "yy", "yinyong"],
       group: "基础",
       icon: <Icon icon="lucide:quote" />,
@@ -91,13 +81,7 @@ export const getCustomSlashMenuItems = (editor: any) => {
     // Container: Tip
     {
       title: "提示",
-      onItemClick: () => {
-        editor.insertBlocks(
-          [{ type: "container", props: { containerType: "tip" } }],
-          editor.getTextCursorPosition().block,
-          "after"
-        );
-      },
+      onItemClick: createBlockInserter("container", { containerType: "tip" }),
       aliases: ["tip", "ts", "hint", "tishi"],
       group: "容器",
       icon: <Icon icon="lucide:lightbulb" />,
@@ -106,13 +90,7 @@ export const getCustomSlashMenuItems = (editor: any) => {
     // Container: Info
     {
       title: "信息",
-      onItemClick: () => {
-        editor.insertBlocks(
-          [{ type: "container", props: { containerType: "info" } }],
-          editor.getTextCursorPosition().block,
-          "after"
-        );
-      },
+      onItemClick: createBlockInserter("container", { containerType: "info" }),
       aliases: ["info", "xx", "xinxi"],
       group: "容器",
       icon: <Icon icon="lucide:info" />,
@@ -121,13 +99,9 @@ export const getCustomSlashMenuItems = (editor: any) => {
     // Container: Warning
     {
       title: "警告",
-      onItemClick: () => {
-        editor.insertBlocks(
-          [{ type: "container", props: { containerType: "warning" } }],
-          editor.getTextCursorPosition().block,
-          "after"
-        );
-      },
+      onItemClick: createBlockInserter("container", {
+        containerType: "warning",
+      }),
       aliases: ["warning", "jg", "jinggao"],
       group: "容器",
       icon: <Icon icon="lucide:triangle-alert" />,
@@ -136,13 +110,9 @@ export const getCustomSlashMenuItems = (editor: any) => {
     // Container: Danger
     {
       title: "危险",
-      onItemClick: () => {
-        editor.insertBlocks(
-          [{ type: "container", props: { containerType: "danger" } }],
-          editor.getTextCursorPosition().block,
-          "after"
-        );
-      },
+      onItemClick: createBlockInserter("container", {
+        containerType: "danger",
+      }),
       aliases: ["danger", "wx", "weixian"],
       group: "容器",
       icon: <Icon icon="lucide:flame" />,
@@ -151,13 +121,9 @@ export const getCustomSlashMenuItems = (editor: any) => {
     // Container: Details
     {
       title: "折叠详情",
-      onItemClick: () => {
-        editor.insertBlocks(
-          [{ type: "container", props: { containerType: "details" } }],
-          editor.getTextCursorPosition().block,
-          "after"
-        );
-      },
+      onItemClick: createBlockInserter("container", {
+        containerType: "details",
+      }),
       aliases: ["details", "xq", "collapse", "xiangqing", "zhedie"],
       group: "容器",
       icon: <Icon icon="lucide:list-collapse" />,
@@ -166,22 +132,11 @@ export const getCustomSlashMenuItems = (editor: any) => {
     // E2.4: Vue Component Block
     {
       title: "Vue 组件",
-      onItemClick: () => {
-        editor.insertBlocks(
-          [
-            {
-              type: "vueComponent",
-              props: {
-                componentName: "",
-                attributesJson: "{}",
-                selfClosing: true,
-              },
-            },
-          ],
-          editor.getTextCursorPosition().block,
-          "after"
-        );
-      },
+      onItemClick: createBlockInserter("vueComponent", {
+        componentName: "",
+        attributesJson: "{}",
+        selfClosing: true,
+      }),
       aliases: ["vue", "component", "zj", "zujian"],
       group: "VitePress",
       icon: <Icon icon="mdi:vuejs" />,
@@ -190,18 +145,11 @@ export const getCustomSlashMenuItems = (editor: any) => {
     // E2.4: Include Block
     {
       title: "文件包含",
-      onItemClick: () => {
-        editor.insertBlocks(
-          [
-            {
-              type: "include",
-              props: { path: "", lineRange: "", region: "" },
-            },
-          ],
-          editor.getTextCursorPosition().block,
-          "after"
-        );
-      },
+      onItemClick: createBlockInserter("include", {
+        path: "",
+        lineRange: "",
+        region: "",
+      }),
       aliases: ["include", "import", "bh", "baohan", "yinyong"],
       group: "VitePress",
       icon: <Icon icon="mdi:file-import" />,

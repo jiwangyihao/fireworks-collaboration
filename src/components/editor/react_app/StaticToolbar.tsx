@@ -30,6 +30,7 @@ import {
   ToolbarInput,
   ToolbarToggle,
 } from "./ToolbarControls";
+import { useFormattingActions } from "./hooks";
 
 interface StaticToolbarProps {
   editor: BlockNoteEditor<any, any, any>;
@@ -377,64 +378,43 @@ export function StaticToolbar({ editor }: StaticToolbarProps) {
     };
   }, [editor]);
 
-  // 格式化操作
-  const toggleBold = () => editor.toggleStyles({ bold: true });
-  const toggleItalic = () => editor.toggleStyles({ italic: true });
-  const toggleUnderline = () => editor.toggleStyles({ underline: true });
-  const toggleStrike = () => editor.toggleStyles({ strike: true });
-  const toggleCode = () => editor.toggleStyles({ code: true });
+  // 格式化操作 (from hook)
+  const {
+    toggleBold,
+    toggleItalic,
+    toggleUnderline,
+    toggleStrike,
+    toggleCode,
+    createLink,
+    removeLink,
+    getSelectedLinkUrl,
+    insertMath,
+    nestBlock,
+    unnestBlock,
+  } = useFormattingActions(editor);
 
   const toggleLink = () => {
     // 打开链接编辑弹出层
-    const existingUrl = editor.getSelectedLinkUrl() || "";
+    const existingUrl = getSelectedLinkUrl();
     setCurrentLinkUrl(existingUrl);
     setIsLinkPopoverOpen(true);
   };
 
   const handleLinkConfirm = (url: string) => {
     if (isLinkActive) {
-      // 更新现有链接 - 先移除再创建
-      editor.removeStyles({ link: true });
+      removeLink();
     }
-    editor.createLink(url);
+    createLink(url);
     setIsLinkPopoverOpen(false);
   };
 
   const handleLinkRemove = () => {
-    editor.removeStyles({ link: true });
+    removeLink();
     setIsLinkPopoverOpen(false);
   };
 
   const handleLinkClose = () => {
     setIsLinkPopoverOpen(false);
-  };
-
-  const insertMath = () => {
-    editor.insertInlineContent([
-      {
-        type: "inlineMath",
-        props: { formula: "" },
-      },
-    ]);
-  };
-
-  const nestBlock = () => {
-    // @ts-ignore
-    if (editor.canNestBlock ? editor.canNestBlock() : true) {
-      // @ts-ignore
-      if (editor.nestBlock) {
-        // @ts-ignore
-        editor.nestBlock();
-      }
-    }
-  };
-
-  const unnestBlock = () => {
-    // @ts-ignore
-    if (editor.unnestBlock) {
-      // @ts-ignore
-      editor.unnestBlock();
-    }
   };
 
   // 处理块类型选择

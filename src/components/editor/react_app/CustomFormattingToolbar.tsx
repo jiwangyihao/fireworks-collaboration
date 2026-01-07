@@ -13,6 +13,7 @@ import {
   MemoizedCustomActions,
 } from "./StaticToolbar";
 import { getRegisteredBlockTypes, blockRegistry } from "./BlockCapabilities";
+import { useFormattingActions } from "./hooks";
 
 interface CustomFormattingToolbarProps {
   editor: BlockNoteEditor<any, any, any>;
@@ -79,56 +80,36 @@ export function CustomFormattingToolbar({
   // Capabilities
   const capabilities = blockRegistry.get(currentBlockType);
 
-  // Actions
-  const toggleBold = () => editor.toggleStyles({ bold: true });
-  const toggleItalic = () => editor.toggleStyles({ italic: true });
-  const toggleUnderline = () => editor.toggleStyles({ underline: true });
-  const toggleStrike = () => editor.toggleStyles({ strike: true });
-  const toggleCode = () => editor.toggleStyles({ code: true });
+  // Actions (from hook)
+  const {
+    toggleBold,
+    toggleItalic,
+    toggleUnderline,
+    toggleStrike,
+    toggleCode,
+    createLink,
+    removeLink,
+    getSelectedLinkUrl,
+    insertMath,
+    nestBlock,
+    unnestBlock,
+  } = useFormattingActions(editor);
 
   const toggleLink = () => {
-    const existingUrl = editor.getSelectedLinkUrl() || "";
+    const existingUrl = getSelectedLinkUrl();
     setCurrentLinkUrl(existingUrl);
     setIsLinkPopoverOpen(true);
   };
 
   const handleLinkConfirm = (url: string) => {
-    if (isLinkActive) editor.removeStyles({ link: true });
-    editor.createLink(url);
+    if (isLinkActive) removeLink();
+    createLink(url);
     setIsLinkPopoverOpen(false);
   };
 
   const handleLinkRemove = () => {
-    editor.removeStyles({ link: true });
+    removeLink();
     setIsLinkPopoverOpen(false);
-  };
-
-  const insertMath = () => {
-    editor.insertInlineContent([
-      {
-        type: "inlineMath",
-        props: { formula: "" },
-      },
-    ]);
-  };
-
-  const nestBlock = () => {
-    // @ts-ignore
-    if (editor.canNestBlock ? editor.canNestBlock() : true) {
-      // @ts-ignore
-      if (editor.nestBlock) {
-        // @ts-ignore
-        editor.nestBlock();
-      }
-    }
-  };
-
-  const unnestBlock = () => {
-    // @ts-ignore
-    if (editor.unnestBlock) {
-      // @ts-ignore
-      editor.unnestBlock();
-    }
   };
 
   // Check style support
