@@ -11,6 +11,7 @@ import { Icon } from "@iconify/react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEditorContext, useGlobalEditorContext } from "../EditorContext";
 import { blockRegistry } from "../BlockCapabilities";
+import { BasePopover, BaseMenu } from "../menu";
 
 // 递归文件树节点组件
 const IGNORED_NAMES = [
@@ -144,42 +145,65 @@ const FileTreeNode = ({
       return null;
     }
 
+    // Hover state for submenu
+    const [isHovered, setIsHovered] = useState(false);
+    const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const triggerRef = useRef<HTMLDivElement>(null);
+
+    const OPEN_DELAY = 50;
+    const CLOSE_DELAY = 200;
+
+    const handleMouseEnter = () => {
+      if (hoverTimerRef.current) {
+        clearTimeout(hoverTimerRef.current);
+      }
+      hoverTimerRef.current = setTimeout(() => {
+        setIsHovered(true);
+      }, OPEN_DELAY);
+    };
+
+    const handleMouseLeave = () => {
+      if (hoverTimerRef.current) {
+        clearTimeout(hoverTimerRef.current);
+      }
+      hoverTimerRef.current = setTimeout(() => {
+        setIsHovered(false);
+      }, CLOSE_DELAY);
+    };
+
     return (
-      <li>
-        <div className="dropdown dropdown-hover dropdown-right p-0 !bg-transparent !border-none">
+      <li onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
+        <div
+          ref={triggerRef}
+          tabIndex={0}
+          role="button"
+          className={`grid grid-cols-[auto_1fr_auto] w-full items-center gap-2 py-1.5 px-2 rounded-md border transition-all cursor-pointer ${
+            isActive
+              ? "border-primary/30 bg-primary/5 text-primary font-medium"
+              : "border-transparent hover:border-base-content/20 hover:bg-base-200"
+          }`}
+        >
+          <Icon
+            icon="ph:folder"
+            className={`h-4 w-4 flex-shrink-0 ${isActive ? "text-primary" : "text-warning"}`}
+          />
           <div
-            tabIndex={0}
-            role="button"
-            className={`grid grid-cols-[auto_1fr_auto] w-full items-center gap-2 py-1.5 px-2 rounded-md border transition-all ${
-              isActive
-                ? "border-primary/30 bg-primary/5 text-primary font-medium"
-                : "border-transparent hover:border-base-content/20 hover:bg-base-200"
-            }`}
+            className={`truncate text-left ${isActive ? "" : "text-base-content/70 font-semibold"}`}
           >
-            <Icon
-              icon="ph:folder"
-              className={`h-4 w-4 flex-shrink-0 ${isActive ? "text-primary" : "text-warning"}`}
-            />
-            <div
-              className={`truncate text-left !whitespace-nowrap ${isActive ? "" : "text-base-content/70 font-semibold"}`}
-              style={{
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              {node.name}
-            </div>
-            <Icon
-              icon="ph:caret-right"
-              className={`h-3 w-3 flex-shrink-0 ${isActive ? "text-primary opacity-80" : "opacity-50"}`}
-            />
+            {node.name}
           </div>
-          <ul
-            tabIndex={0}
-            className="dropdown-content z-[2] menu menu-xs bg-base-100 rounded-xl w-56 shadow-xl border border-base-content/10 -ml-1 p-1.5"
-            style={{ top: "50%", transform: "translateY(calc(-50% - 9px))" }}
-          >
+          <Icon
+            icon="ph:caret-right"
+            className={`h-3 w-3 flex-shrink-0 ${isActive ? "text-primary opacity-80" : "opacity-50"}`}
+          />
+        </div>
+        <BasePopover
+          isOpen={isHovered}
+          triggerElement={triggerRef.current}
+          placement="right-center"
+          offset={4}
+        >
+          <BaseMenu className="w-56">
             {visibleChildren.map((child: any) => (
               <FileTreeNode
                 key={child.path || child.name}
@@ -190,8 +214,8 @@ const FileTreeNode = ({
                 onSelect={onSelect}
               />
             ))}
-          </ul>
-        </div>
+          </BaseMenu>
+        </BasePopover>
       </li>
     );
   }
@@ -553,10 +577,7 @@ export const IncludeBlock = createReactBlockSpec(
                     选择文件
                   </span>
                 </label>
-                <div
-                  ref={fileDropdownRef}
-                  className={`dropdown w-full ${isFileDropdownOpen ? "dropdown-open" : ""}`}
-                >
+                <div ref={fileDropdownRef} className="w-full">
                   <div
                     role="button"
                     className="btn btn-sm w-full justify-between border-base-300 bg-base-100"
@@ -572,14 +593,17 @@ export const IncludeBlock = createReactBlockSpec(
                     </span>
                     <Icon icon="ph:caret-down" className="h-4 w-4" />
                   </div>
-                  {isFileDropdownOpen && (
-                    <ul
-                      tabIndex={0}
-                      className="dropdown-content z-[10] menu menu-xs bg-base-100 rounded-xl w-64 shadow-xl border border-base-content/10 mt-1 p-2"
-                    >
+                  <BasePopover
+                    isOpen={isFileDropdownOpen}
+                    triggerElement={fileDropdownRef.current}
+                    placement="bottom-start"
+                    offset={4}
+                    onClickOutside={() => setIsFileDropdownOpen(false)}
+                  >
+                    <BaseMenu className="w-64">
                       {fileTree.length === 0 ? (
                         <li className="disabled">
-                          <span className="text-base-content/50">
+                          <span className="text-base-content/50 py-2 px-2">
                             加载中...
                           </span>
                         </li>
@@ -598,8 +622,8 @@ export const IncludeBlock = createReactBlockSpec(
                           />
                         ))
                       )}
-                    </ul>
-                  )}
+                    </BaseMenu>
+                  </BasePopover>
                 </div>
               </div>
 

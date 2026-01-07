@@ -16,6 +16,7 @@ import { createReactBlockSpec } from "@blocknote/react";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import CodeMirror, { ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { Icon } from "@iconify/react";
+import { DropdownMenu, MenuItem, BaseMenu } from "../menu";
 import { javascript } from "@codemirror/lang-javascript";
 import { html } from "@codemirror/lang-html";
 import { css } from "@codemirror/lang-css";
@@ -498,6 +499,8 @@ export const ShikiCodeBlock = createReactBlockSpec(
       const [showLangMenu, setShowLangMenu] = useState(false);
 
       const editorRef = useRef<ReactCodeMirrorRef>(null);
+      const langButtonRef = useRef<HTMLDivElement>(null);
+      const fileButtonRef = useRef<HTMLDivElement>(null);
 
       // 同步 Props -> UI State (当 activeTabIndex 切换或 Props 外部更新时)
       useEffect(() => {
@@ -911,7 +914,7 @@ export const ShikiCodeBlock = createReactBlockSpec(
           {/* Header / Toolbar */}
           <div className="flex flex-wrap items-center gap-1 p-1.5 bg-gray-50/50 border-b border-gray-100 text-xs rounded-t-lg">
             {/* Language Selector */}
-            <div className="relative z-20">
+            <div className="relative z-20" ref={langButtonRef}>
               <div
                 role="button"
                 className="btn btn-xs btn-ghost gap-1 h-6 min-h-0 px-2 font-normal text-gray-600 hover:bg-gray-200 border-transparent hover:border-gray-300"
@@ -927,39 +930,30 @@ export const ShikiCodeBlock = createReactBlockSpec(
                   className="w-3 h-3 opacity-50"
                 />
               </div>
-              {showLangMenu && (
-                <>
-                  <div
-                    className="fixed inset-0 z-50"
-                    onClick={() => setShowLangMenu(false)}
-                  ></div>
-                  <ul className="absolute top-full left-0 mt-1 z-[60] menu flex flex-col flex-nowrap p-1 shadow-lg bg-base-100 rounded-lg w-40 max-h-64 overflow-y-auto border border-base-200 text-xs gap-0.5">
-                    {LANGUAGES.map((lang) => (
-                      <li key={lang.value}>
-                        <button
-                          onClick={() => {
-                            handleLanguageChange(lang.value);
-                            setShowLangMenu(false);
-                          }}
-                          className={`py-1.5 px-2 rounded-md border transition-all ${
-                            localLang === lang.value
-                              ? "border-primary/30 bg-primary/5 text-primary font-medium"
-                              : "border-transparent hover:border-base-content/20 hover:bg-base-200 text-base-content/80"
-                          }`}
-                        >
-                          {lang.label}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
+              <DropdownMenu
+                isOpen={showLangMenu}
+                triggerElement={langButtonRef.current}
+                position="bottom-left"
+                onClose={() => setShowLangMenu(false)}
+              >
+                {LANGUAGES.map((lang) => (
+                  <MenuItem
+                    key={lang.value}
+                    label={lang.label}
+                    active={localLang === lang.value}
+                    onClick={() => {
+                      handleLanguageChange(lang.value);
+                      setShowLangMenu(false);
+                    }}
+                  />
+                ))}
+              </DropdownMenu>
             </div>
 
             {/* Filename Input & Switcher */}
             <div className="flex items-center text-gray-400 relative z-10 gap-1">
               {/* Dropdown Toggle */}
-              <div className="relative">
+              <div className="relative" ref={fileButtonRef}>
                 <div
                   role="button"
                   className={`btn btn-xs btn-ghost gap-1 h-6 min-h-0 px-2 text-gray-600 hover:bg-gray-200 border-transparent hover:border-gray-300 ${localTabs.length > 1 ? "text-blue-600" : ""}`}
@@ -976,71 +970,55 @@ export const ShikiCodeBlock = createReactBlockSpec(
                   />
                 </div>
 
-                {/* Dropdown Menu */}
-                {showFileMenu && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-50"
-                      onClick={() => setShowFileMenu(false)}
-                    ></div>
-                    <div className="absolute top-full left-0 mt-1 w-36 bg-base-100 border border-base-200 shadow-xl rounded-lg z-[60] p-1.5 text-xs flex flex-col justify-stretch gap-0.5 animate-in fade-in zoom-in-95 duration-100">
-                      <ul className="list-none m-0! p-0 gap-0.5 max-h-60 overflow-y-auto flex flex-col flex-nowrap w-full">
-                        {localTabs.map((tab, idx) => (
-                          <li key={idx} className="w-full">
-                            <div
-                              className={`grid grid-cols-[1fr_auto] gap-2 items-center py-1.5 px-2 rounded-md border transition-all w-full ${
-                                idx === activeTabIndex
-                                  ? "border-primary/30 bg-primary/5 text-primary font-medium"
-                                  : "border-transparent hover:border-base-content/20 hover:bg-base-200 text-base-content/80"
-                              }`}
-                              onClick={() => {
-                                handleTabSwitch(idx);
-                                setShowFileMenu(false);
-                              }}
-                            >
-                              <span className="truncate font-mono">
-                                {tab.filename || "Untitled"}
-                              </span>
-                              {localTabs.length > 1 && (
-                                <button
-                                  className="btn btn-ghost btn-xs btn-square h-5 w-5 min-h-0 hover:bg-error/20 hover:text-error truncate"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleRemoveTab(idx, e);
-                                  }}
-                                  title="Delete File"
-                                >
-                                  <Icon
-                                    icon="lucide:trash-2"
-                                    className="w-3 h-3"
-                                  />
-                                </button>
-                              )}
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                      <div className="divider m-0 h-px bg-base-content/10"></div>
-                      <ul className="list-none m-0! p-0 w-full">
-                        <li className="w-full">
+                {/* Dropdown Menu using DropdownMenu */}
+                <DropdownMenu
+                  isOpen={showFileMenu}
+                  triggerElement={fileButtonRef.current}
+                  position="bottom-left"
+                  width={144}
+                  onClose={() => setShowFileMenu(false)}
+                >
+                  {localTabs.map((tab, idx) => (
+                    <MenuItem
+                      key={idx}
+                      icon="lucide:file"
+                      label={tab.filename || "Untitled"}
+                      active={idx === activeTabIndex}
+                      onClick={() => {
+                        handleTabSwitch(idx);
+                        setShowFileMenu(false);
+                      }}
+                      rightContent={
+                        localTabs.length > 1 ? (
                           <button
-                            className="text-primary hover:bg-primary/10 active:bg-primary/20 py-1.5 px-2 w-full text-left truncate rounded-md flex items-center transition-all border border-transparent hover:border-base-content/20"
-                            onClick={() => {
-                              handleAddTab();
-                              setShowFileMenu(false);
+                            className="btn btn-ghost btn-xs btn-square h-5 w-5 min-h-0 hover:bg-error/20 hover:text-error"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveTab(idx, e);
                             }}
+                            title="Delete File"
                           >
-                            <Icon
-                              icon="lucide:plus"
-                              className="w-3.5 h-3.5 mr-1"
-                            />
-                            Add New File
+                            <Icon icon="lucide:trash-2" className="w-3 h-3" />
                           </button>
-                        </li>
-                      </ul>
-                    </div>
-                  </>
-                )}
+                        ) : undefined
+                      }
+                    />
+                  ))}
+                  {/* Add New File Button */}
+                  <li className="w-full border-t border-base-content/10 mt-1 pt-1">
+                    <a
+                      role="button"
+                      className="flex items-center gap-2 py-1.5 px-2 rounded-md text-primary hover:bg-primary/10 cursor-pointer transition-all border border-transparent hover:border-base-content/20"
+                      onClick={() => {
+                        handleAddTab();
+                        setShowFileMenu(false);
+                      }}
+                    >
+                      <Icon icon="lucide:plus" className="w-4 h-4" />
+                      <span>Add New File</span>
+                    </a>
+                  </li>
+                </DropdownMenu>
               </div>
 
               <input

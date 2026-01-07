@@ -779,9 +779,79 @@ if (align === "center") {
 </ContextMenu>
 ```
 
-### 10.5 设计收益
+### 10.5 React 菜单组件库
 
-1. **代码复用**：所有 Popover 逻辑集中在 `BasePopover`，无需在各处重复 `Teleport` 和定位代码。
-2. **样式一致性**：`BaseMenu` 和 `MenuItem` 确保了所有菜单的视觉风格统一。
-3. **可维护性**：新增菜单功能只需组合现有组件，无需了解底层 Teleport 和 DOM 细节。
+为了在编辑器的 React 部分保持与 Vue 侧一致的菜单体验，本阶段同步创建了 React 版本的菜单组件库。
+
+**新增文件**：`src/components/editor/react_app/menu/`
+
+| 组件               | 职责                                                                  |
+| :----------------- | :-------------------------------------------------------------------- |
+| `BasePopover.tsx`  | React Portal 实现，12 点定位算法（与 Vue 版本一致），z-index 管理     |
+| `BaseMenu.tsx`     | 菜单容器，统一样式 + `maxHeight` 可配置滚动                           |
+| `MenuItem.tsx`     | 菜单项，支持 `string` (Iconify) 或 `ReactNode` 图标，描述、快捷键布局 |
+| `DropdownMenu.tsx` | 触发式下拉菜单，封装 `BasePopover` + `BaseMenu`                       |
+| `ContextMenu.tsx`  | 右键菜单，接收 `x`, `y` 坐标                                          |
+| `index.ts`         | Barrel export                                                         |
+
+**React 与 Vue 组件对比**：
+
+| 能力                | Vue (`BasePopover.vue`) | React (`BasePopover.tsx`)          |
+| :------------------ | :---------------------- | :--------------------------------- |
+| 渲染到 body         | `<Teleport to="body">`  | `createPortal(..., document.body)` |
+| 12 点定位           | ✓                       | ✓（相同算法）                      |
+| 点击外部关闭        | `v-click-outside` 指令  | `onClickOutside` prop + effect     |
+| 悬浮延迟（SubMenu） | JS hover + timer        | React state + useRef timer         |
+
+**React 集成变更**：
+
+| 文件                                  | 变更类型 | 说明                                                                  |
+| :------------------------------------ | :------- | :-------------------------------------------------------------------- |
+| `react_app/ToolbarControls.tsx`       | 重构     | `ToolbarDropdown` 使用 `DropdownMenu` + `MenuItem`                    |
+| `react_app/BlockTypeDropdown.tsx`     | 重构     | 块类型选择器使用 `DropdownMenu` + `MenuItem`，图标移至左侧            |
+| `react_app/blocks/ShikiCodeBlock.tsx` | 重构     | 语言选择器和文件切换器使用 `DropdownMenu` + `MenuItem`                |
+| `react_app/blocks/IncludeBlock.tsx`   | 重构     | 文件选择器使用 `BasePopover` + `BaseMenu`，嵌套子菜单使用悬浮延迟逻辑 |
+
+**代码简化示例 (BlockTypeDropdown)**：
+
+```tsx
+// Before: 内联实现
+{isOpen && (
+  <>
+    <div className="fixed inset-0 z-50" onClick={() => setIsOpen(false)}></div>
+    <ul className="absolute top-full mt-1 z-[60] menu ...">
+      {items.map((option) => (
+        <li key={option.value}>
+          <button className={...}>{option.label}</button>
+        </li>
+      ))}
+    </ul>
+  </>
+)}
+
+// After: 使用 DropdownMenu 组件
+<DropdownMenu
+  isOpen={isOpen}
+  triggerElement={buttonRef.current}
+  position="bottom-left"
+  onClose={() => setIsOpen(false)}
+>
+  {items.map((option) => (
+    <MenuItem
+      key={option.value}
+      icon={option.icon}
+      label={option.label}
+      active={isOptionActive(option)}
+      onClick={() => handleSelect(option)}
+    />
+  ))}
+</DropdownMenu>
+```
+
+### 10.6 设计收益
+
+1. **代码复用**：所有 Popover 逻辑集中在 `BasePopover`（Vue/React 各一份），无需在各处重复 `Teleport`/`Portal` 和定位代码。
+2. **样式一致性**：`BaseMenu` 和 `MenuItem` 确保了所有菜单的视觉风格统一，Vue 和 React 侧保持一致体验。
+3. **可维护性**：新增菜单功能只需组合现有组件，无需了解底层 Teleport/Portal 和 DOM 细节。
 4. **交互体验**：JS Hover 延迟机制提供了更接近原生应用的嵌套菜单体验。
+5. **跨框架一致性**：React 组件 API 设计与 Vue 版本对齐，降低开发者认知负担。

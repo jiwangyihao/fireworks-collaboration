@@ -2,11 +2,14 @@
  * ToolbarControls.tsx - StaticToolbar 的扩展控件组件
  *
  * 提供：ToolbarDropdown, ToolbarInput, ToolbarToggle
+ *
+ * 已重构为使用 menu/ 组件库
  */
 
 import React, { useState, useRef, useEffect, memo } from "react";
 import { RiArrowDownSLine } from "react-icons/ri";
 import type { DropdownOption } from "./BlockCapabilities";
+import { DropdownMenu, MenuItem } from "./menu";
 
 // --- Toolbar Dropdown ---
 
@@ -19,10 +22,6 @@ interface ToolbarDropdownProps {
   iconOnly?: boolean; // 只显示图标，不显示当前选中值
 }
 
-import { createPortal } from "react-dom";
-
-// ... (other imports)
-
 export const ToolbarDropdown = memo(function ToolbarDropdown({
   icon,
   label,
@@ -32,96 +31,15 @@ export const ToolbarDropdown = memo(function ToolbarDropdown({
   iconOnly = false,
 }: ToolbarDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null); // Ref for the button/wrapper
-  const menuRef = useRef<HTMLUListElement>(null); // Ref for the portal menu
-  const [position, setPosition] = useState<{
-    top: number;
-    left: number;
-  } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
   // Current selected option
   const selectedOption = options.find((opt) => opt.value === value);
 
-  // Close when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      // Check if click is inside button (dropdownRef) or menu (menuRef)
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node) &&
-        menuRef.current &&
-        !menuRef.current.contains(event.target as Node)
-      ) {
-        setIsOpen(false);
-      }
-    };
-
-    if (isOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [isOpen]);
-
-  // Update position when opening or scrolling/resizing
-  const updatePosition = () => {
-    if (dropdownRef.current) {
-      const rect = dropdownRef.current.getBoundingClientRect();
-      setPosition({
-        top: rect.bottom + 5,
-        left: rect.left,
-      });
-    }
-  };
-
-  useEffect(() => {
-    if (isOpen) {
-      updatePosition();
-      window.addEventListener("scroll", updatePosition, true);
-      window.addEventListener("resize", updatePosition);
-    }
-    return () => {
-      window.removeEventListener("scroll", updatePosition, true);
-      window.removeEventListener("resize", updatePosition);
-    };
-  }, [isOpen]);
-
-  const menu = (
-    <ul
-      ref={menuRef}
-      className="fixed mt-1 menu flex flex-col flex-nowrap p-1 shadow-xl bg-white rounded-lg w-36 max-h-64 overflow-y-auto border border-gray-200 text-xs gap-0.5"
-      style={{
-        zIndex: 99999,
-        top: position?.top ?? 0,
-        left: position?.left ?? 0,
-      }}
-    >
-      {options.map((option) => (
-        <li key={option.value} className="m-0! p-0!">
-          <button
-            type="button"
-            onClick={() => {
-              onChange(option.value);
-              setIsOpen(false);
-            }}
-            className={`py-1.5 px-2 rounded-md border flex items-center gap-2 w-full transition-all ${
-              option.value === value
-                ? "border-primary/30 bg-primary/5 text-primary font-medium"
-                : "border-transparent hover:border-base-content/20 hover:bg-base-200 text-base-content/80"
-            }`}
-          >
-            {option.icon && <span className="opacity-70">{option.icon}</span>}
-            {option.label}
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative">
       <button
+        ref={buttonRef}
         type="button"
         className="btn btn-xs btn-ghost gap-1 h-6 min-h-0 px-2 font-normal text-gray-600 hover:bg-gray-200 border-transparent hover:border-gray-300"
         onClick={() => setIsOpen(!isOpen)}
@@ -142,7 +60,25 @@ export const ToolbarDropdown = memo(function ToolbarDropdown({
         />
       </button>
 
-      {isOpen && createPortal(menu, document.body)}
+      <DropdownMenu
+        isOpen={isOpen}
+        triggerElement={buttonRef.current}
+        position="bottom-left"
+        onClose={() => setIsOpen(false)}
+      >
+        {options.map((option) => (
+          <MenuItem
+            key={option.value}
+            icon={option.icon}
+            label={option.label}
+            active={option.value === value}
+            onClick={() => {
+              onChange(option.value);
+              setIsOpen(false);
+            }}
+          />
+        ))}
+      </DropdownMenu>
     </div>
   );
 });
