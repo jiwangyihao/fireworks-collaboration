@@ -9,9 +9,12 @@
  * - 每个配置项可单独删除
  * - 根据字段类型渲染对应输入控件
  */
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { useDocumentStore } from "@/stores/document";
 import BaseIcon from "@/components/BaseIcon.vue";
+import DropdownMenu from "@/components/DropdownMenu.vue";
+import MenuItem from "@/components/MenuItem.vue";
+import SubMenu from "@/components/SubMenu.vue";
 
 // ========== 类型定义 ==========
 interface FieldConfig {
@@ -196,17 +199,12 @@ const docStore = useDocumentStore();
 const frontmatter = ref<Frontmatter>({});
 const isAddDropdownOpen = ref(false);
 const addButtonRef = ref<HTMLButtonElement | null>(null);
-const menuRef = ref<HTMLUListElement | null>(null);
 const menuPosition = ref<{ top: number; left: number } | null>(null);
 
 // Select Dropdown State
 const activeSelectKey = ref<string | null>(null);
-const selectMenuRef = ref<HTMLUListElement | null>(null);
-const selectMenuPosition = ref<{
-  top: number;
-  left: number;
-  width: number;
-} | null>(null);
+const selectTriggerRef = ref<HTMLElement | null>(null);
+// 移除手动计算的 position，改用 triggerRef 传递给 TeleportDropdown
 
 // ========== 计算属性 ==========
 
@@ -288,13 +286,10 @@ function updateFrontmatter() {
 
 // 切换添加菜单
 function toggleAddDropdown() {
-  if (!isAddDropdownOpen.value && addButtonRef.value) {
-    // 计算按钮位置，设置菜单位置
-    const rect = addButtonRef.value.getBoundingClientRect();
-    menuPosition.value = {
-      top: rect.bottom + 4, // 按钮下方 4px
-      left: rect.left,
-    };
+  if (!isAddDropdownOpen.value) {
+    // 简单切换，Position logic moved to TeleportDropdown (but we can still pass rect if needed or rely on ref)
+    // Actually TeleportDropdown calculates position on open.
+    // For add button, we use `addButtonRef` as trigger.
   }
   isAddDropdownOpen.value = !isAddDropdownOpen.value;
   activeSelectKey.value = null; // 关闭其他菜单
@@ -303,12 +298,7 @@ function toggleAddDropdown() {
 // 打开选择菜单
 function openSelectMenu(key: string, event: MouseEvent) {
   const target = event.currentTarget as HTMLElement;
-  const rect = target.getBoundingClientRect();
-  selectMenuPosition.value = {
-    top: rect.bottom + 4,
-    left: rect.left,
-    width: rect.width,
-  };
+  selectTriggerRef.value = target; // Store reference for TeleportDropdown
   activeSelectKey.value = key;
   isAddDropdownOpen.value = false; // 关闭添加菜单
 }
@@ -327,25 +317,47 @@ function handleClickOutside(event: MouseEvent) {
   const target = event.target as Node;
 
   // 处理添加菜单关闭
+  // TeleportDropdown handles its own positioning, but for clicking outside to close:
+  // We can use a global click handler, or if TeleportDropdown exposes a way.
+  // Currently TeleportDropdown doesn't have built-in click-outside logic (it's just a teleport wrapper basically).
+  // So we kept the global click handler logic here, but need to check if click is inside the dropdown content.
+  // Since TeleportDropdown renders to body, we need references to the dropdown content.
+  // TeleportDropdown uses `menuRef` internally. We might need to listen to close event or similar?
+  // Or check if target is inside the generic dropdown container.
+
+  // Simplified strategy: Check if click is on triggers. If not, close.
+  // Wait, if we click inside the menu, `handleClickOutside` fires. The menu is in `body`.
+  // We need to check if `event.target` is contained within the menu element.
+  // But we don't have direct access to `TeleportDropdown`'s internal ref from here easily unless we usage `ref`.
+
+  // For now, let's assume we update TeleportDropdown to emit 'close' or we check a specific class?
+  // Actually the previous logic used `menuRef` which was directly on the `ul`.
+  // Now `ul` is inside `TeleportDropdown`.
+
+  // Let's modify TeleportDropdown to emit an event on click outside? Or use a directive?
+  // Given we are extracting, maybe keeping the click-outside logic in parent is safer for now if we can access the ref.
+  // But `TeleportDropdown` is a component.
+
+  // Alternative: Check if target is inside `.fixed.z-[99999].menu` (the class we used).
+  const targetEl = target as HTMLElement;
+  const isClickInsideDropdown = targetEl.closest(".fixed.z-\\[99999\\]"); // simplistic check
+
   const isClickOnAddButton = addButtonRef.value?.contains(target);
-  const isClickOnAddMenu = menuRef.value?.contains(target);
-  if (!isClickOnAddButton && !isClickOnAddMenu) {
+  if (!isClickOnAddButton && !isClickInsideDropdown) {
     isAddDropdownOpen.value = false;
   }
 
-  // 处理选择菜单关闭
-  const isClickOnSelectMenu = selectMenuRef.value?.contains(target);
-  // 注意：触发按钮点击由 openSelectMenu 处理，不需要在这里判断，
-  // 但为了防止点击触发按钮时先关闭后打开导致闪烁，这里通常不需要特别处理触发器，
-  // 因为 openSelectMenu 会重新设置 activeSelectKey。
-  // 不过如果点的是同一个触发器，最好不要 toggle，而是保持打开或关闭。
-  // 这里简化处理：只要不是点击在菜单上，且 activeSelectKey不为空，就关闭。
-  // 对于触发按钮的点击，事件冒泡会先触发 clickOutside 吗？通常不会，clickOutside 是 document 级的。
-  // 为了安全，我们可以判断是否点击了 "select-trigger" class 的元素？或者更简单的，在打开逻辑里 stopPropagation
-  if (!isClickOnSelectMenu && activeSelectKey.value !== null) {
-    // 检查是否点击了触发器（通过 openSelectMenu stopPropagation 可以避免这里误关）
-    // 但简单的做法是：让 openSelectMenu 使用 @click.stop
-    activeSelectKey.value = null;
+  // Handle select menu
+  // If we click inside any dropdown, do not close active select.
+  if (activeSelectKey.value !== null) {
+    if (!isClickInsideDropdown) {
+      // Check if click on trigger (already handled by stopPropagation usually but let's be safe)
+      // The trigger for select is dynamic. `selectTriggerRef` holds current trigger.
+      if (selectTriggerRef.value && selectTriggerRef.value.contains(target)) {
+        return;
+      }
+      activeSelectKey.value = null;
+    }
   }
 }
 
@@ -404,8 +416,9 @@ const selectedFileName = computed(() => {
               class="form-control bg-base-100 p-3 rounded-md border border-base-200 relative group"
             >
               <!-- Delete Button -->
+              <!-- Delete Button -->
               <button
-                class="btn btn-ghost btn-xs btn-circle absolute -top-1.5 -right-1.5 opacity-0 group-hover:opacity-100 transition-opacity bg-base-100 border border-base-300 shadow-sm"
+                class="btn btn-xs btn-ghost btn-circle absolute -top-1.5 -right-1.5 opacity-0 group-hover:opacity-100 transition-opacity bg-base-100 border border-base-300 shadow-sm h-6 w-6 min-h-0"
                 @click="removeField(key)"
                 title="移除配置"
               >
@@ -500,93 +513,51 @@ const selectedFileName = computed(() => {
   </Transition>
 
   <!-- Teleport: Add Field Dropdown Menu -->
-  <Teleport to="body">
-    <ul
-      v-if="
-        isAddDropdownOpen && availableFieldsByGroup.length > 0 && menuPosition
-      "
-      ref="menuRef"
-      class="fixed z-[99999] menu menu-xs bg-base-100 rounded-xl w-48 shadow-xl border border-base-content/10 p-2 gap-1"
-      :style="{ top: menuPosition.top + 'px', left: menuPosition.left + 'px' }"
+  <DropdownMenu
+    :is-open="isAddDropdownOpen"
+    :trigger-element="addButtonRef"
+    position="bottom-left"
+    :width="200"
+  >
+    <SubMenu
+      v-for="group in availableFieldsByGroup"
+      :key="group.key"
+      :label="group.label"
+      :icon="group.icon"
     >
-      <li v-for="group in availableFieldsByGroup" :key="group.key">
-        <!-- Group with Submenu -->
-        <div
-          class="dropdown dropdown-hover dropdown-right dropdown-center p-0 !bg-transparent !border-none"
-        >
-          <div
-            tabindex="0"
-            role="button"
-            class="flex items-center gap-2 w-full py-1.5 px-2 rounded-md border border-transparent hover:border-base-content/20 hover:bg-base-200 transition-all"
-          >
-            <BaseIcon :icon="group.icon" size="sm" class="opacity-60" />
-            <span class="flex-1 text-left font-medium">{{ group.label }}</span>
-            <BaseIcon icon="ph:caret-right" size="xs" class="opacity-50" />
-          </div>
-          <!-- Field Items (use -ml-1 + pl-2 to create overlap bridge) -->
-          <ul
-            tabindex="0"
-            class="dropdown-content z-[100000] menu menu-xs bg-base-100 rounded-xl w-56 shadow-xl border border-base-content/10 -ml-1 pl-2 p-1.5 gap-1 overflow-hidden"
-          >
-            <li
-              class="w-full overflow-hidden"
-              v-for="field in group.fields"
-              :key="field.key"
-            >
-              <a
-                class="flex flex-col items-start gap-0.5 py-2 px-3 rounded-md border border-transparent hover:border-primary/30 hover:bg-primary/5 transition-all w-full overflow-hidden"
-                @click.stop="addField(field)"
-              >
-                <span class="font-medium text-base-content">{{
-                  field.label
-                }}</span>
-                <span
-                  v-if="field.description"
-                  class="text-[10px] opacity-60 leading-tight truncate w-full"
-                  >{{ field.description }}</span
-                >
-              </a>
-            </li>
-          </ul>
-        </div>
-      </li>
-    </ul>
+      <MenuItem
+        v-for="field in group.fields"
+        :key="field.key"
+        :label="field.label"
+        :description="field.description"
+        @click.stop="addField(field)"
+      />
+    </SubMenu>
+  </DropdownMenu>
 
-    <!-- Shared Select Dropdown Menu -->
-    <ul
-      v-if="activeSelectKey && selectMenuPosition"
-      ref="selectMenuRef"
-      class="fixed z-[99999] menu menu-xs bg-base-100 rounded-xl shadow-xl border border-base-content/10 p-2 gap-1 overflow-y-auto max-h-60"
-      :style="{
-        top: selectMenuPosition.top + 'px',
-        left: selectMenuPosition.left + 'px',
-        width: selectMenuPosition.width + 'px',
-      }"
+  <!-- Shared Select Dropdown Menu -->
+  <DropdownMenu
+    :is-open="!!activeSelectKey"
+    :trigger-element="selectTriggerRef"
+    width="trigger"
+  >
+    <MenuItem
+      v-for="opt in getFieldConfig(activeSelectKey || '')?.options || []"
+      :key="String(opt.value)"
+      :label="opt.label"
+      :active="frontmatter[activeSelectKey!] === opt.value"
+      @click.stop="handleOptionSelect(opt.value)"
     >
-      <li
-        v-for="opt in getFieldConfig(activeSelectKey)?.options || []"
-        :key="String(opt.value)"
-      >
-        <a
-          class="flex items-center gap-2 py-1.5 px-2 rounded-md border border-transparent transition-all"
-          :class="[
-            frontmatter[activeSelectKey] === opt.value
-              ? '!border-primary bg-primary/5 text-primary font-medium'
-              : 'hover:border-base-content/20 hover:bg-base-200 text-base-content',
-          ]"
-          @click.stop="handleOptionSelect(opt.value)"
-        >
-          {{ opt.label }}
-          <BaseIcon
-            v-if="frontmatter[activeSelectKey] === opt.value"
-            icon="ph:check"
-            size="xs"
-            class="ml-auto"
-          />
-        </a>
-      </li>
-    </ul>
-  </Teleport>
+      <template #right>
+        <BaseIcon
+          v-if="frontmatter[activeSelectKey!] === opt.value"
+          icon="ph:check"
+          size="xs"
+          class="ml-auto"
+        />
+      </template>
+    </MenuItem>
+  </DropdownMenu>
 </template>
 
 <style scoped>

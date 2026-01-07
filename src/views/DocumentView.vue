@@ -21,7 +21,9 @@ import DocumentTree from "../components/document/DocumentTree.vue";
 import InputModal from "../components/InputModal.vue";
 import ConfirmModal from "../components/ConfirmModal.vue";
 import FrontmatterPanel from "../components/editor/FrontmatterPanel.vue";
-import EditorToolbar from "../components/editor/EditorToolbar.vue";
+import ContextMenu from "../components/ContextMenu.vue";
+import DropdownMenu from "../components/DropdownMenu.vue";
+import MenuItem from "../components/MenuItem.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -327,6 +329,8 @@ const devServerUrl = ref(""); // 完整的当前文档预览 URL
 const devServerBaseUrl = ref(""); // 基础 URL（用于 Block 组件预览）
 const devServerPid = ref<number | null>(null);
 const isPreviewOpen = ref(false);
+const isPreviewMenuOpen = ref(false);
+const previewMenuTriggerRef = ref<HTMLElement | null>(null);
 const previewIframeRef = ref<HTMLIFrameElement | null>(null);
 
 async function handleStartDevServer() {
@@ -535,6 +539,9 @@ watch(
   }
 );
 
+// Context Menu Computed Rect (Removed as it is now handled by ContextMenu component)
+// const contextMenuRect = computed(...) -> ContextMenu takes x, y
+
 function handleContextMenu({
   event,
   node,
@@ -542,6 +549,7 @@ function handleContextMenu({
   event: MouseEvent;
   node: DocTreeNode;
 }) {
+  event.preventDefault(); // Prevent native context menu
   contextMenu.value = {
     visible: true,
     x: event.clientX,
@@ -707,56 +715,45 @@ async function handleDeleteConfirm() {
         <!-- Preview Controls -->
         <template v-if="!needsInstall">
           <!-- Running State: Dropdown -->
-          <div
-            v-if="isDevServerRunning"
-            class="dropdown dropdown-end self-stretch"
-          >
+          <!-- Running State: Dropdown -->
+          <div v-if="isDevServerRunning" class="self-stretch flex items-center">
             <div
-              tabindex="0"
+              ref="previewMenuTriggerRef"
               role="button"
               class="btn btn-xs btn-primary gap-1.5"
+              @click="isPreviewMenuOpen = !isPreviewMenuOpen"
             >
               <BaseIcon icon="ph--check-circle" size="xs" />
               预览运行中
               <BaseIcon icon="ph--caret-down" size="xs" />
             </div>
-            <ul
-              tabindex="0"
-              class="dropdown-content z-[2] menu menu-xs p-2 shadow-xl bg-base-100 rounded-xl w-48 border border-base-content/10 gap-0.5 mt-1 text-base-content/80 font-medium not-prose m-0 list-none [&_li>*]:rounded-md [&_li>*]:py-1.5 [&_li>*]:px-2"
+
+            <DropdownMenu
+              :is-open="isPreviewMenuOpen"
+              :trigger-element="previewMenuTriggerRef"
+              position="bottom-left"
             >
-              <li>
-                <a
-                  class="border border-transparent hover:border-base-content/10 hover:bg-base-200"
-                  @click="handleOpenBrowser"
-                >
-                  <BaseIcon icon="ph--globe" size="sm" /> 浏览器打开
-                </a>
-              </li>
-              <li>
-                <a
-                  class="border border-transparent hover:border-base-content/10 hover:bg-base-200"
-                  @click="handleOpenInternal"
-                >
-                  <BaseIcon icon="ph--browsers" size="sm" /> 内置预览
-                </a>
-              </li>
-              <li>
-                <a
-                  class="border border-transparent hover:border-base-content/10 hover:bg-base-200"
-                  @click="handleRestartDevServer"
-                >
-                  <BaseIcon icon="ph--arrow-clockwise" size="sm" /> 重启预览
-                </a>
-              </li>
-              <li>
-                <a
-                  class="text-error hover:text-error border border-transparent hover:border-error/20 hover:bg-error/5"
-                  @click="handleStopDevServer"
-                >
-                  <BaseIcon icon="ph--stop-circle" size="sm" /> 停止服务
-                </a>
-              </li>
-            </ul>
+              <MenuItem
+                label="浏览器打开"
+                icon="ph--globe"
+                @click="handleOpenBrowser"
+              />
+              <MenuItem
+                label="内置预览"
+                icon="ph--browsers"
+                @click="handleOpenInternal"
+              />
+              <MenuItem
+                label="重启预览"
+                icon="ph--arrow-clockwise"
+                @click="handleRestartDevServer"
+              />
+              <MenuItem
+                label="停止服务"
+                icon="ph--stop-circle"
+                @click="handleStopDevServer"
+              />
+            </DropdownMenu>
           </div>
 
           <!-- Idle State: Start Button -->
@@ -1161,47 +1158,38 @@ async function handleDeleteConfirm() {
     </div>
 
     <!-- Context Menu -->
-    <div
-      v-if="contextMenu.visible"
-      class="fixed z-50 bg-base-100 min-w-[160px] max-w-xs rounded-xl shadow-xl border border-base-content/10 p-2 transform origin-top-left flex flex-col gap-0.5 not-prose text-base font-normal my-0 mx-0"
-      :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
-      @click.stop
+    <ContextMenu
+      :model-value="contextMenu.visible"
+      @update:model-value="contextMenu.visible = $event"
+      :x="contextMenu.x"
+      :y="contextMenu.y"
     >
-      <ul
-        class="menu menu-xs p-0 gap-0.5 w-full m-0 list-none [&_li>*]:rounded-md [&_li>*]:py-1.5 [&_li>*]:px-2 text-base-content/80 font-medium inset-0"
-      >
-        <!-- Folder Actions -->
-        <template v-if="contextMenu.node?.nodeType === 'folder'">
-          <li @click="handleContextAction('new-file')">
-            <a
-              class="border border-transparent hover:border-base-content/10 hover:bg-base-200 hover:text-base-content"
-              ><BaseIcon icon="ph--file-plus" size="sm" />新建文件</a
-            >
-          </li>
-          <li @click="handleContextAction('new-folder')">
-            <a
-              class="border border-transparent hover:border-base-content/10 hover:bg-base-200 hover:text-base-content"
-              ><BaseIcon icon="ph--folder-plus" size="sm" />新建文件夹</a
-            >
-          </li>
-          <div class="h-px bg-base-content/10 my-0.5 mx-1"></div>
-        </template>
+      <!-- Folder Actions -->
+      <template v-if="contextMenu.node?.nodeType === 'folder'">
+        <MenuItem
+          label="新建文件"
+          icon="ph--file-plus"
+          @click="handleContextAction('new-file')"
+        />
+        <MenuItem
+          label="新建文件夹"
+          icon="ph--folder-plus"
+          @click="handleContextAction('new-folder')"
+        />
+      </template>
 
-        <!-- Common Actions -->
-        <li @click="handleContextAction('rename')">
-          <a
-            class="border border-transparent hover:border-base-content/10 hover:bg-base-200 hover:text-base-content"
-            ><BaseIcon icon="ph--pencil" size="sm" />重命名</a
-          >
-        </li>
-        <li @click="handleContextAction('delete')">
-          <a
-            class="text-error hover:text-error border border-transparent hover:border-error/20 hover:bg-error/5"
-            ><BaseIcon icon="ph--trash" size="sm" />删除</a
-          >
-        </li>
-      </ul>
-    </div>
+      <!-- Common Actions -->
+      <MenuItem
+        label="重命名"
+        icon="ph--pencil"
+        @click="handleContextAction('rename')"
+      />
+      <MenuItem
+        label="删除"
+        icon="ph--trash"
+        @click="handleContextAction('delete')"
+      />
+    </ContextMenu>
 
     <!-- Modals -->
     <InputModal

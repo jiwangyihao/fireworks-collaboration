@@ -3,7 +3,7 @@
 > **文档密级**：内部技术资料
 > **适用对象**：前端开发组、架构师
 > **最后更新**：2026-01-07
-> **版本**：v2.5 (E2.5 UI/UX 深度定制: Toolbar/SlashMenu/Icons)
+> **版本**：v2.6 (E2.6 菜单组件层级重构: BasePopover/ContextMenu)
 
 ---
 
@@ -677,3 +677,111 @@ const FIELD_REGISTRY: FieldConfig[] = [
 - **逻辑：**
   生成的预览 Markdown 文件现自动注入 `exclude: true` Frontmatter。
   这确保了 `vitepress-sidebar` 等自动侧边栏插件会忽略产生的临时预览文件，避免其污染侧边栏目录导航。
+
+---
+
+## 10. E2.6 菜单组件层级重构 (Menu Component Hierarchy Refactoring)
+
+E2.6 阶段对应用中的菜单和下拉系统进行了深度重构，建立了统一的组件层级，实现了 Popover 逻辑的复用和样式的一致性。
+
+### 10.1 核心组件架构
+
+本次重构引入了 6 个新组件，形成了清晰的职责分层：
+
+| 组件               | 职责                                                                    | 渲染层级 |
+| :----------------- | :---------------------------------------------------------------------- | :------- |
+| `BasePopover.vue`  | **Popover 引擎**：Teleport 到 `body`，12 点定位算法，z-index 管理，动画 | 底层     |
+| `BaseMenu.vue`     | **菜单容器**：统一的背景、边框、阴影、圆角样式 (DaisyUI `menu` class)   | 底层     |
+| `MenuItem.vue`     | **菜单项**：标准化的图标、标签、描述、快捷键布局，激活/禁用状态         | 原子组件 |
+| `SubMenu.vue`      | **嵌套菜单**：Hover 事件驱动 (JS)，内含 `BasePopover` 实现悬浮嵌套      | 复合组件 |
+| `DropdownMenu.vue` | **触发式菜单**：由按钮/元素触发打开，内含 `BasePopover` + `BaseMenu`    | 复合组件 |
+| `ContextMenu.vue`  | **右键菜单**：接收 `x`, `y` 坐标，内含 `BasePopover` + `BaseMenu`       | 复合组件 |
+
+**组件依赖关系图**：
+
+```mermaid
+graph TD
+    BasePopover --> DropdownMenu
+    BasePopover --> SubMenu
+    BasePopover --> ContextMenu
+    BaseMenu --> DropdownMenu
+    BaseMenu --> SubMenu
+    BaseMenu --> ContextMenu
+    MenuItem --> DropdownMenu
+    MenuItem --> SubMenu
+    MenuItem --> ContextMenu
+```
+
+### 10.2 BasePopover 12 点定位系统
+
+**文件**：`src/components/BasePopover.vue`
+
+**核心能力**：
+
+- **placement 属性**：支持 `top/bottom/left/right` × `start/center/end` 共 12 种组合。
+- **动态尺寸测量**：通过 `ref` 获取弹出层实际宽高，确保 `center` 和 `end` 对齐的准确性。
+- **双触发源**：可通过 `trigger-element` (HTMLElement) 或 `trigger-rect` (DOMRect) 指定锚点。
+
+```typescript
+// 定位算法核心逻辑
+const [side, align] = props.placement.split("-");
+
+if (side === "bottom") {
+  top = rect.bottom + props.offset + scrollTop;
+}
+if (align === "center") {
+  left = rect.left + rect.width / 2 - popWidth / 2 + scrollLeft;
+}
+```
+
+### 10.3 SubMenu JS Hover 交互
+
+**文件**：`src/components/SubMenu.vue`
+
+**痛点**：纯 CSS `:hover` 无法处理父菜单项与子菜单弹出层之间的物理间隙，导致鼠标移动时子菜单意外关闭。
+
+**解决方案**：
+
+- **JS 事件代理**：`mouseenter` / `mouseleave` 统一管理 `isOpen` 状态。
+- **延迟机制**：
+  - `OPEN_DELAY = 50ms`：防止鼠标快速划过时误触发。
+  - `CLOSE_DELAY = 200ms`：给用户足够时间移动到子菜单区域。
+- **根元素为 `<li>`**：确保与 `BaseMenu` (`<ul>`) 的语义兼容，避免样式重复应用。
+
+### 10.4 集成变更
+
+**变更文件汇总**：
+
+| 文件                                         | 变更类型 | 说明                                                        |
+| :------------------------------------------- | :------- | :---------------------------------------------------------- |
+| `src/components/editor/EditorToolbar.vue`    | 删除     | 功能合并至 `StaticToolbar.tsx` (React)                      |
+| `src/components/editor/FrontmatterPanel.vue` | 重构     | 使用 `DropdownMenu`, `SubMenu`, `MenuItem` 替代原有内联实现 |
+| `src/views/DocumentView.vue`                 | 重构     | 预览下拉菜单使用 `DropdownMenu`，右键菜单使用 `ContextMenu` |
+
+**代码简化示例 (DocumentView Context Menu)**：
+
+```vue
+<!-- Before: 内联实现 -->
+<div v-if="contextMenu.visible" class="fixed z-50 ..." :style="{ top, left }">
+  <ul class="menu ...">
+    <li @click="..."><a>...</a></li>
+  </ul>
+</div>
+
+<!-- After: 使用 ContextMenu 组件 -->
+<ContextMenu
+  :model-value="contextMenu.visible"
+  :x="contextMenu.x"
+  :y="contextMenu.y"
+>
+  <MenuItem label="新建文件" icon="ph--file-plus" @click="..." />
+  <MenuItem label="删除" icon="ph--trash" @click="..." />
+</ContextMenu>
+```
+
+### 10.5 设计收益
+
+1. **代码复用**：所有 Popover 逻辑集中在 `BasePopover`，无需在各处重复 `Teleport` 和定位代码。
+2. **样式一致性**：`BaseMenu` 和 `MenuItem` 确保了所有菜单的视觉风格统一。
+3. **可维护性**：新增菜单功能只需组合现有组件，无需了解底层 Teleport 和 DOM 细节。
+4. **交互体验**：JS Hover 延迟机制提供了更接近原生应用的嵌套菜单体验。
