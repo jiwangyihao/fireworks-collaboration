@@ -169,7 +169,7 @@ const DEFAULT_CONTENT_TYPE: ContentType = {
 // 注册表类
 // ============================================================================
 
-class ContentRegistry {
+export class ContentRegistry {
   // 块类型 -> 能力配置
   private types: Map<string, Partial<ContentType>> = new Map();
 

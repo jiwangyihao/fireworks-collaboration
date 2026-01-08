@@ -39,7 +39,7 @@ export const useGlobalEditorContext = () => {
     listeners.add(listener);
 
     // Also sync if global store is already newer (though rare in this pattern)
-    if (globalContext !== context) {
+    if (globalContext !== context && Object.keys(globalContext).length > 0) {
       setContext(globalContext);
     }
 

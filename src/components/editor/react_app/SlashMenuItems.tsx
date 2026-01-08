@@ -92,3 +92,16 @@ export const getCustomSlashMenuItems = (editor: any) => {
     return groupA.localeCompare(groupB);
   });
 };
+
+/**
+ * 过滤 SlashMenu 项 (支持别名搜索)
+ */
+export const filterSlashMenuItems = (items: any[], query: string) => {
+  return items.filter(
+    (item) =>
+      item.title.toLowerCase().includes(query.toLowerCase()) ||
+      item.aliases?.some((alias: string) =>
+        alias.toLowerCase().includes(query.toLowerCase())
+      )
+  );
+};

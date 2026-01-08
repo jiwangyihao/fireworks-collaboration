@@ -23,7 +23,10 @@ import { useEffect } from "react";
 import { CustomDragHandleMenu } from "./CustomSideMenu";
 import { BlockInputRules } from "./extensions/InputRules";
 import { QuoteKeyboardShortcuts } from "./extensions/KeyboardShortcuts";
-import { getCustomSlashMenuItems } from "./SlashMenuItems";
+import {
+  getCustomSlashMenuItems,
+  filterSlashMenuItems,
+} from "./SlashMenuItems";
 import { EditorContext, updateGlobalContext } from "./EditorContext";
 import { StaticToolbar } from "./StaticToolbar";
 import { getRegisteredBlockTypes, contentRegistry } from "./ContentRegistry";
@@ -139,12 +142,9 @@ export function BlockNoteEditor({
           <SuggestionMenuController
             triggerCharacter={"/"}
             getItems={async (query) =>
-              getCustomSlashMenuItems(editor).filter(
-                (item) =>
-                  item.title.toLowerCase().includes(query.toLowerCase()) ||
-                  item.aliases?.some((alias) =>
-                    alias.toLowerCase().includes(query.toLowerCase())
-                  )
+              filterSlashMenuItems(
+                getCustomSlashMenuItems(editor),
+                query
               ) as any
             }
             onItemClick={(item: any) => item.onItemClick()}
