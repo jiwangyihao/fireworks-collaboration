@@ -113,7 +113,7 @@ describe("DevServerStatus", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     await nextTick();
 
-    expect(api.stopDevServer).toHaveBeenCalledWith(1234);
+    expect(api.stopDevServer).toHaveBeenCalledWith(1234, "/test/path");
     expect(wrapper.text()).toContain("Stopped");
   });
 });
