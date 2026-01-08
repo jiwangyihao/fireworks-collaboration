@@ -46,7 +46,7 @@ export default defineConfig(() => {
       },
     },
     test: {
-      environment: "happy-dom",
+      environment: "jsdom",
       setupFiles: ["./vitest.setup.ts"],
       coverage: {
         provider: "v8",
