@@ -2,8 +2,8 @@
 
 > **文档密级**：内部技术资料
 > **适用对象**：前端开发组、架构师
-> **最后更新**：2026-01-07
-> **版本**：v2.6 (E2.6 菜单组件层级重构: BasePopover/ContextMenu)
+> **最后更新**：2026-01-09
+> **版本**：v2.7 (E2.6 测试框架完善 & React 19 兼容性)
 
 ---
 
@@ -20,7 +20,7 @@
 - **交互体验**：引入了 MathLive 和 CodeMirror 等重型组件，将专业领域的编辑体验带入通用文本编辑器中。
 - **UI/UX 重构 (E2.5)**：全面接管 BlockNote 默认 UI，实现了基于 Iconify 的统一图标系统、高度定制的 Slash Menu (中文优化) 以及可扩展的 Toolbar Action 注册机制。
 
-**完成状态**：✅ E2.1-E2.5 全阶段交付闭环
+**完成状态**：✅ E2.1-E2.6 全阶段交付闭环（含 252+ 测试覆盖）
 
 ---
 
@@ -46,7 +46,7 @@
 | `src/components/editor/react_app/SlashMenuItems.tsx`    | `getCustomSlashMenuItems` | **指令集配置中心**<br>定义 `/` 菜单的各项指令。实现了基于**拼音别名**的混合搜索算法（如 `/gs` -> 公式），极大提升了中文输入体验。                    |
 | `src/components/editor/react_app/StaticToolbar.tsx`     | `<StaticToolbar />`       | **自定义工具栏** (E2.5)<br>完全重写默认 Toolbar，移除冗余样式按钮，集成 `BlockCapabilities` 动态动作系统，统一使用 Iconify 图标。                    |
 | `src/components/editor/react_app/blocks/InlineMath.tsx` | `<InlineMath />`          | **行内公式组件**<br>封装 `math-field` Web Component。**关键贡献**：实现了捕获阶段的键盘事件拦截，解决了 ProseMirror 光标无法进入 Shadow DOM 的难题。 |
-| `src/components/editor/react_app/BlockCapabilities.ts`  | `blockRegistry`           | **能力注册表** (E2.5)<br>集中管理所有 Block 的元数据（图标、Label）及上下文 Toolbar Actions（如公式的“键盘/菜单”切换按钮）。                         |
+| `src/components/editor/react_app/ContentRegistry.ts`    | `contentRegistry`         | **能力注册表** (E2.6)<br>取代了 E2.5 的 `BlockCapabilities`。集中管理所有 Block 的元数据（图标、Label）及上下文 Toolbar Actions。                    |
 
 ### 2.3 宿主集成层 (Host Integration Layer)
 
@@ -546,7 +546,7 @@ E2.5 阶段聚焦于打磨编辑器 "最后一公里" 的用户体验，移除�
 
 **重构行动**：
 
-- **全面替换**：从底层 `BlockCapabilities.ts` 到 UI 组件 `StaticToolbar.tsx`，将所有图标替换为 `@iconify/react` (`lucide:` 集合)。
+- **全面替换**：从底层 `ContentRegistry.ts` 到 UI 组件 `StaticToolbar.tsx`，将所有图标替换为 `@iconify/react` (`lucide:` 集合)。
 - **收益**：包体积减少，视觉风格完全统一。
 
 ### 8.2 静态/浮动工具栏重写 (Toolbar Override)
@@ -557,14 +557,14 @@ E2.5 阶段聚焦于打磨编辑器 "最后一公里" 的用户体验，移除�
 
 1.  **屏蔽原生 UI**：`<BlockNoteView formattingToolbar={false} />`
 2.  **构建自定义 Toolbar (`StaticToolbar.tsx`)**：
-    - 集成 `BlockRegistry` 获取上下文操作。
+    - 集成 `ContentRegistry` 获取上下文操作。
     - **UI 基础设施 (`ToolbarControls.tsx`)**：
       - `ToolbarDropdown`：使用 React Portal 将菜单渲染到 Body 层级，彻底解决了在 overflow:hidden 容器（如表格或布局容器）中下拉菜单被裁剪的问题。
       - `ToolbarInput`：内置防抖 (Debounce) 的输入组件，用于属性编辑。
 
 ```typescript
-// src/components/editor/react_app/BlockCapabilities.ts
-blockRegistry.register("math", {
+// src/components/editor/react_app/ContentRegistry.ts
+contentRegistry.register("math", {
   actions: [
     { type: "button", id: "toggleKeyboard", icon: ... },
     { type: "button", id: "toggleMenu", icon: ... }
@@ -996,7 +996,7 @@ BlockNote 编辑器已完成向统一 `ContentRegistry` 系统的迁移，实现
 
 **4. 典型代码模式**
 
-```tsx
+````tsx
 // 1. 在 Block 组件中注册
 contentRegistry.register("myBlock", {
   label: "My Block",
@@ -1004,11 +1004,164 @@ contentRegistry.register("myBlock", {
   sideMenuActions: [{ ... }]
 });
 
+**ContentRegistry 架构图**：
+
+```mermaid
+classDiagram
+    class ContentRegistry {
+        +register(type, config)
+        +getSlashMenuItems()
+        +getSideMenuActions(type)
+        +registerExecutor(id, actionId, impl)
+    }
+    class BlockComponent {
+        +SlashMenuItems
+        +SideMenuActions
+    }
+    class Toolbar {
+        +getActions(selection)
+    }
+    class SlashMenu {
+        +getItems(query)
+    }
+
+    BlockComponent --> ContentRegistry : Registers Capabilities
+    Toolbar --> ContentRegistry : Queries Actions
+    SlashMenu --> ContentRegistry : Queries Items
+````
+
 // 2. 在组件挂载时注册执行器
 useEffect(() => {
-  contentRegistry.registerExecutor(block.id, "myAction", {
-    execute: () => { ... }
-  });
-  return () => contentRegistry.unregisterExecutors(block.id);
+contentRegistry.registerExecutor(block.id, "myAction", {
+execute: () => { ... }
+});
+return () => contentRegistry.unregisterExecutors(block.id);
 }, []);
+
+````
+
+### 10.9 测试与质量保证
+
+E2.6 阶段专注于建立稳健的测试框架，并确保关键编辑器组件和工具的稳定性。
+
+#### 核心变更
+
+1. **测试基础设施**:
+   - 框架: **Vitest** + **JSDOM** (为了更好的兼容性，从 happy-dom 切换)。
+   - 库: `@testing-library/react`, `@testing-library/dom`。
+   - Polyfills: 在 `vitest.setup.ts` 中添加了 `CSS.escape` polyfill。
+   - **注意**: 已移除 `@testing-library/jest-dom`（项目未使用其 matchers，且其内部 `css.escape` 导入与 Vitest ESM 不兼容）。
+
+2. **组件可测试性**:
+   - `ContainerBlock.tsx` 重构为单独导出 `ContainerBlockContent`。这允许在不实例化完整 BlockNote 编辑器的情况下对 React 组件逻辑进行单元测试。
+
+#### 完整测试套件
+
+> **测试统计**：总计 250+ 新增测试，覆盖率 100% (Green)
+
+##### Phase 1: Adapter Layer (62 tests)
+
+核心数据转换层的测试，确保 Markdown ↔ Block 双向转换的正确性。
+
+| 文件                         | 测试数 | 覆盖内容                                                                                  |
+| ---------------------------- | ------ | ----------------------------------------------------------------------------------------- |
+| `markdown-to-blocks.test.ts` | 21     | Container 解析、Math displayMode、Code Group 聚合、Vue 组件、@include 指令、表格、Mermaid |
+| `blocks-to-markdown.test.ts` | 18     | Container 序列化、Math 格式化、ShikiCode 元数据、Quote、Table、Vue 组件                   |
+| `blocknote-adapter.test.ts`  | 23     | 双向转换、InlineContent 样式映射、Quote groupId 合并、Table 结构                          |
+
+##### Phase 2: Block Components (21 tests)
+
+自定义块组件的配置和接口测试。
+
+| 文件                         | 测试数 | 覆盖内容                                                                 |
+| ---------------------------- | ------ | ------------------------------------------------------------------------ |
+| `MathBlock.test.tsx`         | 7      | Block schema、prop 定义、slash menu 配置、toolbar actions、executor 接口 |
+| `MermaidBlock.test.tsx`      | 10     | Block schema、默认模板、slash menu 配置、初始化选项、图表类型支持        |
+| `IncludeBlock.test.tsx`      | 10     | 规格定义、prop schema、行范围解析逻辑                                    |
+| `VueComponentBlock.test.tsx` | 9      | JSON 属性序列化/反序列化、标签配置                                       |
+
+##### Phase 3: Additional Block & Menu Components (60 tests)
+
+扩展块组件和菜单系统的测试。
+
+| 文件                    | 测试数 | 覆盖内容                                                     |
+| ----------------------- | ------ | ------------------------------------------------------------ |
+| `InlineMath.test.tsx`   | 15     | 类型定义、公式处理、键盘导航、ContentRegistry 配置           |
+| `QuoteBlock.test.tsx`   | 15     | groupId 逻辑、isFirstInGroup 标记、CSS 类应用、Markdown 往返 |
+| `BasePopover.test.tsx`  | 20     | 12点定位算法、Props 接口、垂直/水平定位计算、点击外部关闭    |
+| `DropdownMenu.test.tsx` | 10     | Props 接口、position 到 placement 映射、组件组合             |
+
+##### Phase 4: Menu, Toolbar & Extensions (93 tests)
+
+菜单组件、工具栏和 TipTap 扩展的测试。
+
+| 文件                               | 测试数 | 覆盖内容                                                                       |
+| ---------------------------------- | ------ | ------------------------------------------------------------------------------ |
+| `ContextMenu.test.tsx`             | 10     | 坐标定位、虚拟 DOMRect 创建                                                    |
+| `MenuItem.test.tsx`                | 17     | 图标渲染、状态样式（激活/禁用/危险）、点击事件                                 |
+| `StaticToolbar.test.tsx`           | 27     | 动态 Action 渲染、Registry 集成、格式化操作、块类型切换                        |
+| `CustomFormattingToolbar.test.tsx` | 7      | 核心按钮存在性、Action 集成、链接处理逻辑                                      |
+| `InputRules.test.ts`               | 20     | Markdown 快捷输入规则：$$ → Math、```mermaid → Mermaid、$formula$ → InlineMath |
+| `KeyboardShortcuts.test.ts`        | 12     | Quote Enter/Shift+Enter 行为、groupId 保留                                     |
+
+##### Core & Logic Tests (16 tests)
+
+| 文件                           | 描述                                             |
+| ------------------------------ | ------------------------------------------------ |
+| `EditorContext.test.tsx`       | Global Store Hack 同步机制、React Context 优先级 |
+| `ContentRegistry.test.ts`      | 注册表 API、别名聚合、Executor 管理              |
+| `useFormattingActions.test.ts` | Toolbar Hook 逻辑                                |
+| `SlashMenuItems.test.tsx`      | 过滤逻辑                                         |
+| `BlockEditor.test.ts`          | Vue 包装器初始化                                 |
+| `transformer.test.ts`          | Markdown ↔ Block 往返一致性                     |
+
+#### 新增依赖
+
+```json
+{
+  "@testing-library/dom": "^10.4.1",
+  "@testing-library/react": "^16.3.1",
+  "jsdom": "^27.4.0"
+}
 ```
+
+### 10.10 Veaury React 19 兼容性配置
+
+由于项目使用 React 19，需要在应用入口手动配置 veaury 的 `createRoot`。
+
+**文件**：`src/main.ts`
+
+```typescript
+// 配置 veaury 兼容 React 19 (E2.1)
+// react-dom 19 不再支持动态判断 render/createRoot，需要手动配置
+import { createRoot } from "react-dom/client";
+import { setVeauryOptions } from "veaury";
+setVeauryOptions({
+  react: {
+    createRoot,
+  },
+});
+```
+
+> [!IMPORTANT]
+> 如果未配置 `createRoot`，veaury 在 React 19 环境下会抛出以下错误：
+> `'react-dom 19' no longer supports dynamically determining whether to use 'render' or 'createRoot'`
+
+---
+
+## 11. 未来展望与已知问题 (Future Work & Known Issues)
+
+### 11.1 已知问题
+
+1.  **~~Vitest setupFiles 兼容性~~ (已解决)**:
+    移除了不必要的 `@testing-library/jest-dom` 依赖（项目中未使用其 matchers）。`setupFiles` 现已正常启用，仅包含 CSS.escape polyfill。
+
+2.  **TypeScript 类型严格度**:
+    部分 Block Props 定义仍使用 `any` 或宽松类型。计划在 E3 阶段引入 Zod Schema 进行运行时和静态类型双重验证。
+
+### 11.2 下一步计划 (E3 Preview)
+
+- **E2E 自动化测试**: 引入 Playwright 对关键编辑路径（输入公式、拖拽块、Markdown 粘贴）进行端到端测试。
+- **性能优化**: 针对超大文档（>10k words）的编辑性能进行 Profiling 和优化，特别是 CodeMirror 和 MathLive 的实例化开销。
+- **协作编辑**: 探索 Yjs 集成，为即时协作打下基础。
+````
