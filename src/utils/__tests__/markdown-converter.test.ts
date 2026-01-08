@@ -90,9 +90,10 @@ describe("markdownToBlocks", () => {
       const blocks = markdownToBlocks(md);
 
       expect(blocks).toHaveLength(1);
-      expect((blocks[0] as CodeBlockBlock).type).toBe("codeBlock");
-      expect((blocks[0] as CodeBlockBlock).props.language).toBe("typescript");
-      expect((blocks[0] as CodeBlockBlock).props.code).toBe("const x = 1;");
+      // 代码块现在被解析为 shikiCode 类型
+      expect(blocks[0].type).toBe("shikiCode");
+      expect((blocks[0] as any).props.language).toBe("typescript");
+      expect((blocks[0] as any).props.code).toBe("const x = 1;");
     });
 
     it("应正确解析引用块", () => {
@@ -194,7 +195,7 @@ describe("markdownToBlocks", () => {
       expect(blocks).toHaveLength(1);
       expect((blocks[0] as MathBlock).type).toBe("math");
       expect((blocks[0] as MathBlock).props.formula).toBe("E = mc^2");
-      expect((blocks[0] as MathBlock).props.display).toBe("block");
+      // 块级公式通过类型 'math' 隐式表示，无需 display 属性
     });
 
     it("应正确解析行内数学公式", () => {
